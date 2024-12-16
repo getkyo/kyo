@@ -32,10 +32,10 @@ object Resource:
                 case Result.Success(_) => ()
                 case _ =>
                     throw new Closed(
-                        "Resource finalizer queue already closed. This may happen if " +
-                            "a background fiber escapes the scope of a 'Resource.run' call.",
+                        "Finalizer",
                         finalizer.createdAt,
-                        frame
+                        "The finalizer queue is already closed. This may happen if " +
+                            "a background fiber escapes the scope of a 'Resource.run' call."
                     )
             }
         }

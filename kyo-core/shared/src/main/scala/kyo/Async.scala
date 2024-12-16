@@ -166,7 +166,7 @@ object Async:
                     IO.Unsafe {
                         val sleepFiber = clock.unsafe.sleep(after)
                         val task       = IOTask[Ctx, E | Timeout, A](v, trace, context)
-                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Fail(Timeout(frame)))))
+                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Fail(Timeout()))))
                         task.onComplete(_ => discard(sleepFiber.interrupt()))
                         Async.get(task)
                     }

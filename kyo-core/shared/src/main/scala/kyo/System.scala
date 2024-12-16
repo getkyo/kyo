@@ -200,46 +200,51 @@ object System:
           * @return
           *   A Result containing either the parsed value or an error.
           */
-        def apply(s: String): Result[E, A]
+        def apply(s: String)(using Frame): Result[E, A]
     end Parser
 
     /** Companion object for Parser, containing default implementations. */
     object Parser:
-        given Parser[Nothing, String]                    = v => Result.success(v)
-        given Parser[NumberFormatException, Int]         = v => Result.catching[NumberFormatException](v.toInt)
-        given Parser[NumberFormatException, Long]        = v => Result.catching[NumberFormatException](v.toLong)
-        given Parser[NumberFormatException, Float]       = v => Result.catching[NumberFormatException](v.toFloat)
-        given Parser[NumberFormatException, Double]      = v => Result.catching[NumberFormatException](v.toDouble)
-        given Parser[IllegalArgumentException, Boolean]  = v => Result.catching[IllegalArgumentException](v.toBoolean)
-        given Parser[NumberFormatException, Byte]        = v => Result.catching[NumberFormatException](v.toByte)
-        given Parser[NumberFormatException, Short]       = v => Result.catching[NumberFormatException](v.toShort)
-        given Parser[Duration.InvalidDuration, Duration] = v => Duration.parse(v)
+        def apply[E, A](f: Frame ?=> String => Result[E, A]) =
+            new Parser[E, A]:
+                def apply(s: String)(using Frame) = f(s)
+
+        given Parser[Nothing, String]                    = Parser(v => Result.success(v))
+        given Parser[NumberFormatException, Int]         = Parser(v => Result.catching[NumberFormatException](v.toInt))
+        given Parser[NumberFormatException, Long]        = Parser(v => Result.catching[NumberFormatException](v.toLong))
+        given Parser[NumberFormatException, Float]       = Parser(v => Result.catching[NumberFormatException](v.toFloat))
+        given Parser[NumberFormatException, Double]      = Parser(v => Result.catching[NumberFormatException](v.toDouble))
+        given Parser[IllegalArgumentException, Boolean]  = Parser(v => Result.catching[IllegalArgumentException](v.toBoolean))
+        given Parser[NumberFormatException, Byte]        = Parser(v => Result.catching[NumberFormatException](v.toByte))
+        given Parser[NumberFormatException, Short]       = Parser(v => Result.catching[NumberFormatException](v.toShort))
+        given Parser[Duration.InvalidDuration, Duration] = Parser(v => Duration.parse(v))
 
         given Parser[IllegalArgumentException, java.util.UUID] =
-            v => Result.catching[IllegalArgumentException](java.util.UUID.fromString(v))
+            Parser(v => Result.catching[IllegalArgumentException](java.util.UUID.fromString(v)))
 
         given Parser[DateTimeParseException, java.time.LocalDate] =
-            v => Result.catching[DateTimeParseException](java.time.LocalDate.parse(v))
+            Parser(v => Result.catching[DateTimeParseException](java.time.LocalDate.parse(v)))
 
         given Parser[DateTimeParseException, java.time.LocalTime] =
-            v => Result.catching[DateTimeParseException](java.time.LocalTime.parse(v))
+            Parser(v => Result.catching[DateTimeParseException](java.time.LocalTime.parse(v)))
 
         given Parser[DateTimeParseException, java.time.LocalDateTime] =
-            v => Result.catching[DateTimeParseException](java.time.LocalDateTime.parse(v))
+            Parser(v => Result.catching[DateTimeParseException](java.time.LocalDateTime.parse(v)))
 
         given Parser[URISyntaxException, java.net.URI] =
-            v => Result.catching[URISyntaxException](new java.net.URI(v))
+            Parser(v => Result.catching[URISyntaxException](new java.net.URI(v)))
 
         given Parser[MalformedURLException, java.net.URL] =
-            v => Result.catching[MalformedURLException](new java.net.URL(v))
+            Parser(v => Result.catching[MalformedURLException](new java.net.URL(v)))
 
         given [E, A](using p: Parser[E, A], frame: Frame): Parser[E, Seq[A]] =
-            v => Result.collect(Chunk.from(v.split(",")).map(v => p(v.trim())))
+            Parser(v => Result.collect(Chunk.from(v.split(",")).map(v => p(v.trim()))))
 
         given Parser[IllegalArgumentException, Char] =
-            v =>
+            Parser { v =>
                 if v.length() == 1 then Result.success(v(0))
                 else Result.fail(new IllegalArgumentException("String must have exactly one character"))
+            }
 
     end Parser
 

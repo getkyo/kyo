@@ -49,7 +49,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                 case l: Linked[E, A] @unchecked =>
                     interruptsLoop(l.p)
                 case _ =>
-                    discard(other.interrupt(Result.Panic(Interrupt(frame))))
+                    discard(other.interrupt(Result.Panic(Interrupt())))
         interruptsLoop(this)
     end interrupts
 
@@ -185,7 +185,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                             import kyo.AllowUnsafe.embrace.danger
                             if isNull(result) then
                                 if deadline.isOverdue() then
-                                    return Result.fail(Timeout(frame))
+                                    return Result.fail(Timeout())
                                 val timeLeft = deadline.timeLeft()
                                 if !timeLeft.isFinite then
                                     LockSupport.park(this)
@@ -218,8 +218,6 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
 end IOPromise
 
 private[kyo] object IOPromise:
-
-    case class Interrupt(origin: Frame) extends Exception with NoStackTrace
 
     type State[+E, +A] = Result[E, A] | Pending[E, A] | Linked[E, A]
 

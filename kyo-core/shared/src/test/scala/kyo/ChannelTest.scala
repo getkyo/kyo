@@ -531,9 +531,9 @@ class ChannelTest extends Test:
                 stream = c.stream().mapChunk(ch => Chunk(ch))
                 v <- Abort.run(stream.run)
             yield v match
-                case Result.Success(v)            => fail(s"Stream succeeded unexpectedly: ${v}")
-                case Result.Fail(Closed(_, _, _)) => assert(true)
-                case Result.Panic(ex)             => fail(s"Stream panicked unexpectedly: ${ex}")
+                case Result.Success(v)      => fail(s"Stream succeeded unexpectedly: ${v}")
+                case Result.Fail(_: Closed) => assert(true)
+                case Result.Panic(ex)       => fail(s"Stream panicked unexpectedly: ${ex}")
         }
     }
 

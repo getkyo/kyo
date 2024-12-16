@@ -296,7 +296,7 @@ object Queue:
             final protected val _closed = AtomicRef.Unsafe.init(Maybe.empty[Result.Error[Closed]])
 
             final def close()(using frame: Frame, allow: AllowUnsafe) =
-                val fail = Result.Fail(Closed("Queue", initFrame, frame))
+                val fail = Result.Fail(Closed("Queue", initFrame))
                 Maybe.when(_closed.compareAndSet(Maybe.empty, Maybe(fail)))(_drain())
             end close
 
