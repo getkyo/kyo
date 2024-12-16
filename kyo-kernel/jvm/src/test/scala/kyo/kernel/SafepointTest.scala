@@ -193,8 +193,20 @@ class SafepointTest extends Test:
                         executed = true
                         true
 
-                Safepoint.immediate(interceptor)((1: Int < Any).map(_ + 1).eval)
+                Safepoint.immediate(interceptor)((1: Int < Any).map(_ + 1)).eval
                 assert(executed)
+            }
+
+            "eval removes the interceptor" in {
+                var executed = false
+                val interceptor = new TestInterceptor:
+                    def ensure(f: () => Unit): Unit = ()
+                    def enter(frame: Frame, value: Any): Boolean =
+                        executed = true
+                        true
+
+                Safepoint.immediate(interceptor)((1: Int < Any).map(_ + 1).eval)
+                assert(!executed)
             }
 
             "restore previous interceptor" in {
@@ -212,7 +224,7 @@ class SafepointTest extends Test:
                         true
 
                 Safepoint.immediate(interceptor1) {
-                    Safepoint.immediate(interceptor2)((1: Int < Any).map(_ + 1).eval)
+                    Safepoint.immediate(interceptor2)((1: Int < Any).map(_ + 1))
                 }.eval
 
                 assert(count == 11)
@@ -508,8 +520,8 @@ class SafepointTest extends Test:
                         assert(interceptor.ensuresAdded.size == 1)
                         assert(interceptor.ensuresRemoved.isEmpty)
                         42
-                    }.eval
-                }
+                    }
+                }.eval
 
                 assert(interceptor.ensuresAdded.size == 1)
                 assert(interceptor.ensuresRemoved.size == 1)
@@ -525,8 +537,8 @@ class SafepointTest extends Test:
                 Safepoint.immediate(interceptor) {
                     testEnsure {
                         42
-                    }.eval
-                }
+                    }
+                }.eval
 
                 assert(interceptor.ensuresRemoved.size == 1)
             }
@@ -544,8 +556,8 @@ class SafepointTest extends Test:
                                 42
                             }
                         }
-                    }.eval
-                }
+                    }
+                }.eval
 
                 assert(interceptor.ensuresAdded.size == 3)
                 assert(interceptor.ensuresRemoved.size == 3)

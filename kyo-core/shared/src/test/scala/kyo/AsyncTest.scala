@@ -1014,4 +1014,59 @@ class AsyncTest extends Test:
         }
     }
 
+    "preemption is properly handled in nested Async computations" - {
+        "simple" in run {
+            Async.run(Async.run(Async.delay(100.millis)(42))).map(_.get).map(_.get).map { result =>
+                assert(result == 42)
+            }
+        }
+        "with nested eval" in run {
+            import AllowUnsafe.embrace.danger
+            val task = IO.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(42)))
+            Async.run(task).map(_.get).map(_.get).map { result =>
+                assert(result == 42)
+            }
+        }
+        "with multiple nested evals" in run {
+            import AllowUnsafe.embrace.danger
+            val innerTask  = IO.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(42)))
+            val middleTask = IO.Unsafe.evalOrThrow(Async.run(innerTask))
+            val outerTask  = IO.Unsafe.evalOrThrow(Async.run(middleTask))
+            Async.run(outerTask).map(_.get).map(_.get).map(_.get).map(_.get).map { result =>
+                assert(result == 42)
+            }
+        }
+        "with eval inside async computation" in run {
+            import AllowUnsafe.embrace.danger
+            Async.run {
+                Async.delay(100.millis) {
+                    IO.Unsafe.evalOrThrow(Async.run(42)).get
+                }
+            }.map(_.get).map { result =>
+                assert(result == 42)
+            }
+        }
+        "with interleaved evals and delays" in run {
+            import AllowUnsafe.embrace.danger
+            val task1 = IO.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(1)))
+            val task2 = Async.delay(100.millis) {
+                IO.Unsafe.evalOrThrow(Async.run(task1)).get
+            }
+            val task3 = IO.Unsafe.evalOrThrow(Async.run(task2))
+            Async.run(task3).map(_.get).map(_.get).map(_.get).map { result =>
+                assert(result == 1)
+            }
+        }
+        "with race" in run {
+            Async.run {
+                Async.race(
+                    Async.run(Async.delay(100.millis)(1)).map(_.get),
+                    Async.run(Async.delay(200.millis)(2)).map(_.get)
+                )
+            }.map(_.get).map { result =>
+                assert(result == 1)
+            }
+        }
+    }
+
 end AsyncTest

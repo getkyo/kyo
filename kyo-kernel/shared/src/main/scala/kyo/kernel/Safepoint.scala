@@ -43,6 +43,10 @@ final class Safepoint private () extends Trace.Owner:
         interceptor = newInterceptor
         state = state.withInterceptor(newInterceptor != null)
 
+    override def toString(): String =
+        val currentState = state
+        s"Safepoint(depth=${currentState.depth}, threadId=${currentState.threadId}, interceptor=${interceptor})"
+
 end Safepoint
 
 object Safepoint:
@@ -166,8 +170,12 @@ object Safepoint:
     private[kernel] inline def eval[A](
         inline f: Safepoint ?=> A
     )(using inline frame: Frame): A =
-        val self = Safepoint.get
-        self.withNewTrace(f(using self))
+        val self            = Safepoint.get
+        val prevInterceptor = self.interceptor
+        self.setInterceptor(null)
+        try self.withNewTrace(f(using self))
+        finally
+            self.interceptor = prevInterceptor
     end eval
 
     private[kernel] inline def handle[V, A, S](value: V)(
