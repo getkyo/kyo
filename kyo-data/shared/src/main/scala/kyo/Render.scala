@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Schedule.done
+import scala.annotation.nowarn
 import scala.language.implicitConversions
 
 /** Provides Text representation of a type. Needed for customizing how to display opaque types as alternative to toString
@@ -20,6 +21,7 @@ object Render extends LowPriorityRenders:
 
     import scala.compiletime.*
 
+    @nowarn("msg=anonymous")
     private inline def sumRender[A, M <: scala.deriving.Mirror.ProductOf[A]](label: String, mir: M): Render[A] =
         val shows = summonAll[Tuple.Map[mir.MirroredElemTypes, Render]]
         new Render[A]:
@@ -43,6 +45,7 @@ object Render extends LowPriorityRenders:
         end new
     end sumRender
 
+    @nowarn("msg=anonymous")
     inline given [A](using mir: scala.deriving.Mirror.Of[A]): Render[A] = inline mir match
         case sumMir: scala.deriving.Mirror.SumOf[?] =>
             val shows = summonAll[Tuple.Map[sumMir.MirroredElemTypes, Render]]
@@ -77,15 +80,12 @@ object Render extends LowPriorityRenders:
 
 end Render
 
-sealed trait Rendered:
-    private[kyo] def textValue: Text
+type Rendered = Rendered.Value
 
 object Rendered:
-    given [A](using r: Render[A]): Conversion[A, Rendered] with
-        def apply(a: A): Rendered =
-            new Rendered:
-                private[kyo] def textValue: Text = r.asText(a)
-    end given
+    opaque type Value <: Text = Text
+    implicit def apply[A](value: A)(using render: Render[A]): Rendered =
+        render.asText(value)
 end Rendered
 
 extension (sc: StringContext)
@@ -95,6 +95,6 @@ extension (sc: StringContext)
         val ai         = args.iterator
         var text: Text = pi.next()
         while ai.hasNext do
-            text = text + ai.next.textValue
+            text = text + ai.next
             text = text + StringContext.processEscapes(pi.next())
         text

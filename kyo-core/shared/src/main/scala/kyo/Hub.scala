@@ -80,7 +80,7 @@ class Hub[A] private[kyo] (
       *   a Maybe containing any remaining elements in the Hub
       */
     def close(using frame: Frame): Maybe[Seq[A]] < IO =
-        fiber.interruptDiscard(Result.Panic(Closed("Hub", initFrame, frame))).andThen {
+        fiber.interruptDiscard(Result.Panic(Closed("Hub", initFrame))).andThen {
             ch.close.map { r =>
                 IO {
                     val array = listeners.toArray()
@@ -111,7 +111,7 @@ class Hub[A] private[kyo] (
       *   a new Listener
       */
     def listen(bufferSize: Int)(using frame: Frame): Listener[A] < (IO & Abort[Closed]) =
-        def fail = Abort.fail(Closed("Hub", initFrame, frame))
+        def fail = Abort.fail(Closed("Hub", initFrame))
         closed.map {
             case true => fail
             case false =>

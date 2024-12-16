@@ -72,7 +72,7 @@ object Parse:
         Var.use[State](s => fail(Seq(s), message))
 
     private def fail(states: Seq[State], message: String)(using frame: Frame): Nothing < Abort[ParseFailed] =
-        Abort.fail(ParseFailed(frame, states, message))
+        Abort.fail(ParseFailed(states, message))
 
     /** Reads and consumes characters from the input as long as they satisfy the given predicate.
       *
@@ -915,7 +915,4 @@ object Parse:
 
 end Parse
 
-case class ParseFailed(frame: Frame, states: Seq[Parse.State], message: String) extends Exception with Serializable:
-
-    override def getMessage() = frame.render("Parse failed! ".red.bold + message, states)
-end ParseFailed
+case class ParseFailed(states: Seq[Parse.State], message: String)(using Frame) extends KyoException(message, Render.asText(states))

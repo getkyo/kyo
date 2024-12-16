@@ -20,7 +20,7 @@ object Duration:
     inline given Flat[Duration]               = Flat.unsafe.bypass
 
     /** Exception thrown for invalid duration parsing. */
-    case class InvalidDuration(message: String) extends Exception(message)
+    class InvalidDuration(message: Text)(using Frame) extends KyoException(message)
 
     /** Parses a string representation of a duration.
       *
@@ -29,7 +29,7 @@ object Duration:
       * @return
       *   A Result containing either the parsed Duration or an InvalidDuration error
       */
-    def parse(s: String): Result[InvalidDuration, Duration] =
+    def parse(s: String)(using Frame): Result[InvalidDuration, Duration] =
         val pattern = """(\d+)\s*([a-zA-Z]+)""".r
         s.trim.toLowerCase match
             case "infinity" | "inf" => Result.success(Infinity)

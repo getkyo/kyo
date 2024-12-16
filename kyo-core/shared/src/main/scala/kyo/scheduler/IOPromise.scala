@@ -49,11 +49,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                 case l: Linked[E, A] @unchecked =>
                     interruptsLoop(l.p)
                 case _ =>
-                    try discard(other.interrupt(Result.Panic(Interrupt(frame))))
-                    catch
-                        case ex if NonFatal(ex) =>
-                            import AllowUnsafe.embrace.danger
-                            Log.live.unsafe.error("uncaught exception", ex)
+                    discard(other.interrupt(Result.Panic(Interrupt())))
         interruptsLoop(this)
     end interrupts
 
@@ -128,12 +124,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                 case l: Linked[E, A] @unchecked =>
                     onCompleteLoop(l.p)
                 case v =>
-                    try f(v.asInstanceOf[Result[E, A]])
-                    catch
-                        case ex if NonFatal(ex) =>
-                            given Frame = Frame.internal
-                            import AllowUnsafe.embrace.danger
-                            Log.live.unsafe.error("uncaught exception", ex)
+                    IOPromise.eval(f, v.asInstanceOf[Result[E, A]])
         onCompleteLoop(this)
     end onComplete
 
@@ -194,7 +185,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                             import kyo.AllowUnsafe.embrace.danger
                             if isNull(result) then
                                 if deadline.isOverdue() then
-                                    return Result.fail(Timeout(frame))
+                                    return Result.fail(Timeout())
                                 val timeLeft = deadline.timeLeft()
                                 if !timeLeft.isFinite then
                                     LockSupport.park(this)
@@ -229,8 +220,6 @@ end IOPromise
 
 private[kyo] object IOPromise:
 
-    case class Interrupt(origin: Frame) extends Exception with NoStackTrace
-
     type State[+E, +A] = Result[E, A] | Pending[E, A] | Linked[E, A]
 
     case class Linked[+E, +A](p: IOPromise[E, A])
@@ -247,16 +236,10 @@ private[kyo] object IOPromise:
             new Pending[E, A]:
                 def waiters: Int = self.waiters + 1
                 def interrupt[E2 >: E](error: Error[E2]) =
-                    f(error.asInstanceOf[Error[E]])
+                    eval(f, error.asInstanceOf[Error[E]])
                     self
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
-                    try f(v.asInstanceOf[Result[E, A]])
-                    catch
-                        case ex if NonFatal(ex) =>
-                            given Frame = Frame.internal
-                            import AllowUnsafe.embrace.danger
-                            Log.live.unsafe.error("uncaught exception", ex)
-                    end try
+                    eval(f, v.asInstanceOf[Result[E, A]])
                     self
                 end run
 
@@ -273,7 +256,7 @@ private[kyo] object IOPromise:
         inline def onInterrupt(inline f: Error[E] => Unit): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt[E2 >: E](error: Error[E2]) =
-                    f(error.asInstanceOf[Error[E]])
+                    eval(f, error.asInstanceOf[Error[E]])
                     self
                 def waiters: Int = self.waiters + 1
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
@@ -326,4 +309,14 @@ private[kyo] object IOPromise:
             def run[E2, A2](v: Result[E2, A2])         = this
         end Empty
     end Pending
+
+    private inline def eval[A, B](inline f: A => Unit, value: A): Unit =
+        try f(value)
+        catch
+            case ex if NonFatal(ex) =>
+                given Frame = Frame.internal
+                import AllowUnsafe.embrace.danger
+                Log.live.unsafe.error("uncaught exception", ex)
+        end try
+    end eval
 end IOPromise

@@ -72,7 +72,7 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(Duration.Infinity))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(Timeout(_)) => succeed
+                    case Result.Fail(_: Timeout) => succeed
                     case v                       => fail(v.toString())
                 }
         }
@@ -82,7 +82,7 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(Timeout(_)) => succeed
+                    case Result.Fail(_: Timeout) => succeed
                     case v                       => fail(v.toString())
                 }
         }
@@ -92,7 +92,7 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(Timeout(_)) => succeed
+                    case Result.Fail(_: Timeout) => succeed
                     case v                       => fail(v.toString())
                 }
         }
@@ -520,7 +520,7 @@ class AsyncTest extends Test:
                 yield value
 
             Abort.run[Timeout](result).map {
-                case Result.Fail(Timeout(_)) => succeed
+                case Result.Fail(_: Timeout) => succeed
                 case other                   => fail(s"Expected Timeout, got $other")
             }
         }
