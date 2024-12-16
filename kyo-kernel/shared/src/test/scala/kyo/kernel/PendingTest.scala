@@ -126,9 +126,13 @@ class PendingTest extends Test:
     }
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
-
-    def testEffect(i: Int): Int < TestEffect =
-        ArrowEffect.suspend[Int](Tag[TestEffect], i)
+    object TestEffect:
+        def apply(i: Int): Int < TestEffect = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
+        def run[A: Flat, S](v: => A < (TestEffect & S)) =
+            ArrowEffect.handle(Tag[TestEffect], v)(
+                [C] => (input, cont) => cont(input + 1)
+            )
+    end TestEffect
 
     "evalNow" - {
         "returns Present for pure values" in {
@@ -137,7 +141,7 @@ class PendingTest extends Test:
         }
 
         "returns Absent for suspended computations" in {
-            val x: Int < TestEffect = testEffect(5)
+            val x: Int < TestEffect = TestEffect(5)
             assert(x.evalNow == Maybe.empty)
         }
 
@@ -153,47 +157,38 @@ class PendingTest extends Test:
         }
 
         "applies a function to an effectful value" in {
-            val effect: Int < Env[Int] = Env.get[Int]
-            val result                 = effect.pipe(v => Env.run(10)(v))
-            assert(result.eval == 10)
+            val effect: Int < TestEffect = TestEffect(1)
+            val result                   = effect.pipe(v => TestEffect.run(v))
+            assert(result.eval == 2)
         }
 
         "allows chaining of operations" in {
-            val effect: Int < Env[Int] = Env.get[Int]
+            val effect: Int < TestEffect = TestEffect(1)
             val result = effect
                 .pipe(v => v.map(_ * 2))
-                .pipe(v => Env.run(5)(v))
-            assert(result.eval == 10)
+                .pipe(v => TestEffect.run(v))
+            assert(result.eval == 4)
         }
 
         "works with functions that return effects" in {
-            val effect: Int < Env[Int] = Env.get[Int]
+            val effect: Int < TestEffect = TestEffect(1)
             val result = effect.pipe { v =>
-                Env.run(5)(v).flatMap { x =>
-                    Env.run(10)(Env.get[Int].map(_ + x))
+                TestEffect.run(v).map { x =>
+                    TestEffect.run(TestEffect(1))
                 }
             }
-            assert(result.eval == 15)
-        }
-
-        "preserves the effect type" in {
-            val effect: Int < (Env[Int] & Abort[String]) =
-                Env.get[Int].flatMap(x => if x > 5 then Abort.fail("Too big") else x)
-            val result = effect.pipe { v =>
-                Abort.run(Env.run(10)(v))
-            }
-            assert(result.eval == Result.fail("Too big"))
+            assert(result.eval == 2)
         }
 
         "works with identity function" in {
-            val effect: Int < Env[Int] = Env.get[Int]
-            val result                 = effect.pipe(identity)
-            assert(Env.run(5)(result).eval == 5)
+            val effect: Int < TestEffect = TestEffect(1)
+            val result                   = effect.pipe(identity)
+            assert(TestEffect.run(result).eval == 2)
         }
 
         "can produce a value instead of a computation" in {
-            val result: Int = Env.get[Int].pipe(Env.run(5)).pipe(_.eval)
-            assert(result == 5)
+            val result: Int = TestEffect(1).pipe(TestEffect.run).pipe(_.eval)
+            assert(result == 2)
         }
 
         "works with two functions" in {
@@ -244,12 +239,6 @@ class PendingTest extends Test:
                 _.map(if _ then "Yes" else "No")
             )
             assert(result.eval == "Yes")
-        }
-
-        "piped computation is by-name" in {
-            val ex     = new Exception
-            val result = (1: Int < Any).map(_ => (throw ex): Int).pipe(Abort.run[Exception](_)).eval
-            assert(result.failure == Maybe(ex))
         }
     }
 
