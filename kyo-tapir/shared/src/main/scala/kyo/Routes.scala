@@ -40,11 +40,22 @@ object Routes:
         }
     end run
 
+    /** Runs the routes using a specified NettyKyoServer.
+      *
+      * @param server
+      *   The NettyKyoServer to use
+      * @param v
+      *   The routes to run
+      * @param update
+      *   A function that allows updates to the underlying server endpoints before starting the server
+      * @return
+      *   A NettyKyoServerBinding wrapped in an asynchronous effect
+      */
     def run[A, S](server: NettyKyoServer)(
         v: Unit < (Routes & S)
-    )(f: List[ServerEndpoint[Any, M]] => List[ServerEndpoint[Any, M]])(using Frame): NettyKyoServerBinding < (Async & S) =
+    )(update: List[ServerEndpoint[Any, M]] => List[ServerEndpoint[Any, M]])(using Frame): NettyKyoServerBinding < (Async & S) =
         Emit.run[Route].apply[Unit, Async & S](v).map { (routes, _) =>
-            IO(server.addEndpoints(f(routes.toSeq.map(_.endpoint).toList)).start()): NettyKyoServerBinding < (Async & S)
+            IO(server.addEndpoints(update(routes.toSeq.map(_.endpoint).toList)).start()): NettyKyoServerBinding < (Async & S)
         }
     end run
 
