@@ -282,7 +282,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.22"
+            libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.23"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -350,9 +350,9 @@ lazy val `kyo-reactive-streams` =
         .settings(
             `kyo-settings`,
             libraryDependencies ++= Seq(
-                "org.reactivestreams" % "reactive-streams" % "1.0.4",
-                "org.reactivestreams" % "reactive-streams-tck" % "1.0.4" % Test,
-                "org.scalatestplus" %% "testng-7-5" % "3.2.17.0" % Test
+                "org.reactivestreams" % "reactive-streams"     % "1.0.4",
+                "org.reactivestreams" % "reactive-streams-tck" % "1.0.4"    % Test,
+                "org.scalatestplus"  %% "testng-7-5"           % "3.2.17.0" % Test
             )
         )
         .jvmSettings(mimaCheck(false))
