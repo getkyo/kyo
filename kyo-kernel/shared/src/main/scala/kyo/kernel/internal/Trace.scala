@@ -6,6 +6,19 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
+/** Trace maintains a fixed-size circular buffer of [[Frame]] objects that record the execution trace.
+  *
+  * Each Trace instance can store up to [[maxTraceFrames]] frames in its circular buffer. When the buffer is full, new frames replace the
+  * oldest ones. This ensures that the most recent execution context is always available while keeping memory usage bounded.
+  *
+  * Traces are managed through a pooling system (see [[TracePool]]) to minimize allocation overhead. The pool maintains both thread-local
+  * and global sets of reusable Trace instances.
+  *
+  * @param frames
+  *   The circular buffer array storing Frame objects
+  * @param index
+  *   Current position in the circular buffer
+  */
 final private[kyo] class Trace(
     private[kernel] var frames: Array[Frame],
     private[kernel] var index: Int
