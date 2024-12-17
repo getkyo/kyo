@@ -1,10 +1,6 @@
 package kyo
 
 import Tagged.*
-import kyo.Clock.Deadline
-import kyo.Clock.Stopwatch
-import kyo.Clock.Unsafe
-import kyo.internal.LayerMacros.Validated.succeed
 import org.scalatest.compatible.Assertion
 import scala.collection.mutable.ListBuffer
 import scala.util.Try

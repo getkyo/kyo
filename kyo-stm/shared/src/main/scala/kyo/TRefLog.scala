@@ -1,7 +1,6 @@
 package kyo
 
 import scala.collection.immutable.Map
-import scala.collection.mutable.TreeMap
 
 /** A log of transactional operations performed on TRefs within an STM transaction.
   *

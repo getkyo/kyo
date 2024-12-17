@@ -2,10 +2,8 @@ package kyo.interop.flow
 
 import kyo.*
 import kyo.Duration
-import kyo.debug.Debug.values
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
 import kyo.kernel.ArrowEffect
-import scala.annotation.tailrec
 
 abstract private class PublisherToSubscriberTest extends Test:
     import PublisherToSubscriberTest.*

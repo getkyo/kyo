@@ -1,11 +1,6 @@
 package kyo
 
 import kyo.*
-import kyo.kernel.Platform
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.freespec.AsyncFreeSpec
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
 
 class PollTest extends Test:
 

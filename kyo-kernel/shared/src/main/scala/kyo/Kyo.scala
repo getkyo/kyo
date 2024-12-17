@@ -1,7 +1,7 @@
 package kyo
 
 import kernel.Loop
-import kyo.kernel.Safepoint
+import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
 
 /** Object containing utility functions for working with Kyo effects. */

@@ -1,7 +1,7 @@
-package kyo.kernel
+package kyo.kernel.internal
 
-import internal.*
 import kyo.Frame
+import kyo.kernel.internal.*
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace

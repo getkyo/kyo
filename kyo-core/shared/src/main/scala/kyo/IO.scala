@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Tag
 import kyo.kernel.*
+import kyo.kernel.internal.Safepoint
 
 /** Represents an IO effect for handling side effects in a pure functional manner.
   *

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Ack.*
-import kyo.kernel.Reducible
 
 class StreamTest extends Test:
 

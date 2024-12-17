@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Maybe.*
 import kyo.Maybe.internal.PresentAbsent
-import scala.languageFeature.implicitConversions
 
 class MaybeTest extends Test:
 

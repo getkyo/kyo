@@ -4,7 +4,6 @@ import kernel.ArrowEffect
 import kyo.Result.*
 import kyo.Tag
 import kyo.kernel.Effect
-import kyo.kernel.Reducible
 import scala.annotation.targetName
 
 /** The Abort effect allows for short-circuiting computations with failure values. This effect is used for handling errors and early

@@ -1,7 +1,6 @@
 package kyo
 
 import Chunk.Indexed
-import java.util.Arrays
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.StrictOptimizedSeqFactory

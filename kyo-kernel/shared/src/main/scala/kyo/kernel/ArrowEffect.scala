@@ -1,10 +1,7 @@
 package kyo.kernel
 
-import internal.*
-import kyo.Const
-import kyo.Flat
-import kyo.Frame
-import kyo.Tag
+import kyo.*
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 

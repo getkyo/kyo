@@ -1,7 +1,6 @@
 package kyo.kernel
 
-import kyo.Tag
-import kyo.Test
+import kyo.*
 import kyo.kernel.*
 
 class RuntimeEffectTest extends Test:

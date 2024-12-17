@@ -1,10 +1,10 @@
-package kyo.kernel
+package kyo.kernel.internal
 
-import internal.*
+import Safepoint.*
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Frame
 import kyo.isNull
-import kyo.kernel.Safepoint.*
+import kyo.kernel.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 

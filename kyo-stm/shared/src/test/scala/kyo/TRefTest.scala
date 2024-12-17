@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.debug.Debug
-
 class TRefTest extends Test:
 
     "init and get" in run {

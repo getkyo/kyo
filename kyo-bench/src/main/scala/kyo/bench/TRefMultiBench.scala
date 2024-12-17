@@ -1,7 +1,5 @@
 package kyo.bench
 
-import java.util.concurrent.locks.LockSupport
-
 class TRefMultiBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
 
     def this() = this(Runtime.getRuntime().availableProcessors() * 2)

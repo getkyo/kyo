@@ -1,7 +1,7 @@
-package kyo.kernel
+package kyo.kernel.internal
 
-import internal.*
 import java.util.Arrays
+import kyo.kernel.internal.*
 import org.jctools.queues.MessagePassingQueue.Consumer
 import org.jctools.queues.MpmcArrayQueue
 

@@ -1,13 +1,10 @@
 package kyo.interop.reactivestreams
 
-import java.lang.Thread
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
-import kyo.Result.*
 import kyo.interop.flow.StreamSubscriber
 import kyo.interop.flow.StreamSubscriber.*
 import org.reactivestreams.*
-import org.reactivestreams.FlowAdapters
 import org.reactivestreams.tck.SubscriberBlackboxVerification
 import org.reactivestreams.tck.SubscriberWhiteboxVerification
 import org.reactivestreams.tck.SubscriberWhiteboxVerification.SubscriberPuppet

@@ -1,10 +1,8 @@
 package kyo.kernel
 
-import kyo.Const
-import kyo.Maybe
-import kyo.Tag
-import kyo.Test
+import kyo.*
 import kyo.kernel.*
+import kyo.kernel.internal.*
 
 class ArrowEffectTest extends Test:
 

@@ -1,7 +1,6 @@
-package kyo.kernel
+package kyo.kernel.internal
 
-import kyo.Test
-import kyo.discard
+import kyo.*
 
 class WeakFlatTest extends Test:
 

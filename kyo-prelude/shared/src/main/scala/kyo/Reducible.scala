@@ -1,4 +1,4 @@
-package kyo.kernel
+package kyo
 
 /** Represents Kyo's mechanism for safely eliding effects in specific situations.
   *
@@ -25,7 +25,7 @@ object Reducible extends LowPriorityReducibles:
     /** Marker trait indicating an effect can be safely eliminated. */
     trait Eliminable[S]
 
-    private[kernel] val cached =
+    private[kyo] val cached =
         new Reducible[Any]:
             type SReduced = Any
             def apply[A, S1](value: A < (S1 & Any)) = value.asInstanceOf[A < (S1 & SReduced)]

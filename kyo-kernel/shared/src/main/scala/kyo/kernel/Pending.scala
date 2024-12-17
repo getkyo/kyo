@@ -1,8 +1,7 @@
 package kyo.kernel
 
-import internal.*
 import kyo.*
-import kyo.Maybe
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions

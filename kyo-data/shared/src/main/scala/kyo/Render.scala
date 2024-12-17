@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Schedule.done
 import scala.annotation.nowarn
 import scala.language.implicitConversions
 
