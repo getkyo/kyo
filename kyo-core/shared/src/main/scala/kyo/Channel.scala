@@ -1,6 +1,5 @@
 package kyo
 
-import org.jctools.queues.MessagePassingQueue.Consumer
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 

@@ -1,11 +1,8 @@
-package kyo.kernel
+package kyo.kernel.internal
 
-import internal.*
 import java.util.Arrays
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
 import kyo.discard
-import scala.annotation.tailrec
 
 private[kernel] object TracePool:
     inline def globalCapacity: Int = 8192
