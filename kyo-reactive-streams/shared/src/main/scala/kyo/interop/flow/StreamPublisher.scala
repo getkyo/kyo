@@ -33,8 +33,6 @@ object StreamPublisher:
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
     ): StreamPublisher[V, Ctx] < (Resource & IO & Ctx) =
-        inline def interruptPanic = Result.Panic(Fiber.Interrupted(scala.compiletime.summonInline[Frame]))
-
         def discardSubscriber(subscriber: Subscriber[? >: V]): Unit =
             subscriber.onSubscribe(new Subscription:
                 override def request(n: Long): Unit = ()
@@ -52,7 +50,7 @@ object StreamPublisher:
                     for
                         subscription <- IO.Unsafe(new StreamSubscription[V, Ctx](stream, subscriber))
                         fiber        <- subscription.subscribe.andThen(subscription.consume)
-                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(interruptPanic).unit)
+                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupt())).unit)
                     yield ()
             )
 

@@ -16,9 +16,12 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Resource] wit
 
     def run(v: Future[Assertion] < (Async & Resource)): Future[Assertion] =
         import AllowUnsafe.embrace.danger
-        val a = Async.run(Resource.run(v))
-        val b = a.map(_.toFuture).map(_.flatten)
-        IO.Unsafe.evalOrThrow(b)
+        v.pipe(
+            Resource.run,
+            Async.run,
+            _.map(_.toFuture).map(_.flatten),
+            IO.Unsafe.evalOrThrow
+        )
     end run
 
     type Assertion = org.scalatest.compatible.Assertion
