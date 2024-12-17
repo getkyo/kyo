@@ -40,13 +40,13 @@ object Routes:
         }
     end run
 
-    def runCustom[A, S](server: NettyKyoServer)(
+    def run[A, S](server: NettyKyoServer)(
         v: Unit < (Routes & S)
     )(f: List[ServerEndpoint[Any, M]] => List[ServerEndpoint[Any, M]])(using Frame): NettyKyoServerBinding < (Async & S) =
         Emit.run[Route].apply[Unit, Async & S](v).map { (routes, _) =>
             IO(server.addEndpoints(f(routes.toSeq.map(_.endpoint).toList)).start()): NettyKyoServerBinding < (Async & S)
         }
-    end runCustom
+    end run
 
     /** Adds a new route to the collection.
       *
