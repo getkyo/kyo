@@ -98,6 +98,7 @@ lazy val kyoJVM = project
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
+        `kyo-reactive-streams`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
         `kyo-caliban`.jvm,
@@ -337,6 +338,22 @@ lazy val `kyo-cache` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-reactive-streams` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-reactive-streams"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies ++= Seq(
+                "org.reactivestreams" % "reactive-streams" % "1.0.4",
+                "org.reactivestreams" % "reactive-streams-tck" % "1.0.4" % Test,
+                "org.scalatestplus" %% "testng-7-5" % "3.2.17.0" % Test
+            )
         )
         .jvmSettings(mimaCheck(false))
 
