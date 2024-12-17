@@ -20,7 +20,7 @@ import scala.util.control.NoStackTrace
   *   Current position in the circular buffer
   */
 final private[kyo] class Trace(
-    private[kernel] var frames: Array[Frame],
+    private[kernel] val frames: Array[Frame],
     private[kernel] var index: Int
 )
 
