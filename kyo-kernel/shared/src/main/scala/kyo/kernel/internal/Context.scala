@@ -6,6 +6,11 @@ import kyo.Tag
 import kyo.bug
 import kyo.kernel.*
 
+/** Storage for effect values used by ContextEffect.
+  *
+  * Context maintains a type-safe mapping between effect tags and their values. It provides the underlying storage mechanism that allows
+  * ContextEffect to request, store, and retrieve values. It also handles isolation behavior for effects that extend ContextEffect.Isolated.
+  */
 private[kyo] opaque type Context = Map[Tag[Any], AnyRef]
 
 private[kyo] object Context:
@@ -19,6 +24,11 @@ private[kyo] object Context:
         def contains[E <: (ContextEffect[?] | IsolationFlag)](tag: Tag[E]): Boolean =
             self.contains(tag.erased)
 
+        /** Creates a new context for crossing computational boundaries.
+          *
+          * Uses the IsolationFlag to efficiently determine if isolation is needed without scanning the entire context. Only filters out
+          * isolated effects if the flag is present.
+          */
         def inherit: Context =
             if !contains(Tag[IsolationFlag]) then self
             else
@@ -33,6 +43,7 @@ private[kyo] object Context:
         private[kyo] def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
             getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $self"))
 
+        /** Sets a value, adding the IsolationFlag if the effect is isolated. */
         private[kernel] def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
             val newContext = self.updated(tag.erased, value.asInstanceOf[AnyRef])
             if tag <:< Tag[ContextEffect.Isolated] then
