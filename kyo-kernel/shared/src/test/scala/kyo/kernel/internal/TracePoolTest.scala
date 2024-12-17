@@ -1,4 +1,4 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.Frame
 import kyo.Test

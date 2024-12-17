@@ -3,10 +3,8 @@ package kyo.interop.flow
 import StreamSubscription.*
 import java.util.concurrent.Flow.*
 import kyo.*
-import kyo.interop.flow.*
 import kyo.kernel.ArrowEffect
 import kyo.kernel.Boundary
-import kyo.kernel.Safepoint
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOTask
 

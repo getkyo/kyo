@@ -1,7 +1,7 @@
-package kyo.kernel
+package kyo.kernel.internal
 
-import kyo.Tag
-import kyo.Test
+import kyo.*
+import kyo.kernel.*
 
 class ContextTest extends Test:
 

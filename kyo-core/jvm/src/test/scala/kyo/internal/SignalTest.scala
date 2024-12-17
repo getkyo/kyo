@@ -3,7 +3,6 @@ package kyo.internal
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kyo.Test
-import kyo.kernel.Platform
 
 class SignalTest extends Test:
 

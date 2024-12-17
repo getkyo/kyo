@@ -1,12 +1,8 @@
 package kyo.kernel
 
-import internal.*
-import kyo.Flat
-import kyo.Frame
-import kyo.Tag
-import kyo.bug
+import kyo.*
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
-import scala.util.NotGiven
 
 /** Represents the requirement for a value that will be provided later by a handler.
   *

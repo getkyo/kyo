@@ -1,8 +1,9 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import kyo.*
 import kyo.Tag
 import kyo.Tagged.*
+import kyo.kernel.*
 import scala.concurrent.Await
 import scala.concurrent.Future
 

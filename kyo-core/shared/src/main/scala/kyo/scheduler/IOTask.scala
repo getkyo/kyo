@@ -4,6 +4,7 @@ import kyo.*
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.ArrowEffect
+import kyo.kernel.internal.*
 import kyo.scheduler.IOTask.*
 import scala.util.control.NonFatal
 

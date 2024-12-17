@@ -1,9 +1,8 @@
 package kyo.kernel
 
-import internal.*
 import kyo.Ansi.*
 import kyo.Frame
-import scala.annotation.implicitNotFound
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.quoted.*
 

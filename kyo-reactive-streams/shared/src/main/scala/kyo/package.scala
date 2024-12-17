@@ -3,7 +3,6 @@ package kyo
 import java.util.concurrent.Flow.*
 import kyo.*
 import kyo.interop.flow.*
-import kyo.interop.flow.StreamSubscriber.EmitStrategy
 
 object StreamReactiveStreamsExtensions:
     extension [T, Ctx](stream: Stream[T, Ctx])

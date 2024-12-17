@@ -3,7 +3,6 @@ package kyo
 import org.scalatest.Assertion
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
-import scala.compiletime.testing.Error
 import scala.compiletime.testing.typeCheckErrors
 import scala.util.Try
 

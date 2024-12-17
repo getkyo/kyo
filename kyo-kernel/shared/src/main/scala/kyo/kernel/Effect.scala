@@ -1,7 +1,7 @@
 package kyo.kernel
 
-import internal.*
 import kyo.Frame
+import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 

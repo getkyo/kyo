@@ -1,9 +1,6 @@
 package kyo.kernel
 
-import kyo.Const
-import kyo.Maybe
-import kyo.Tag
-import kyo.Test
+import kyo.*
 import kyo.kernel.*
 
 class EffectTest extends Test:

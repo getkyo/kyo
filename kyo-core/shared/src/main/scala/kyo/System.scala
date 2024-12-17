@@ -5,7 +5,6 @@ import java.lang.System as JSystem
 import java.net.MalformedURLException
 import java.net.URISyntaxException
 import java.time.format.DateTimeParseException
-import kyo.kernel.Reducible
 
 /** Represents a system environment with various operations.
   *

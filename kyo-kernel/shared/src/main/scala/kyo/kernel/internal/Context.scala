@@ -1,9 +1,10 @@
-package kyo.kernel
+package kyo.kernel.internal
 
 import Context.internal.*
 import kyo.Flat
 import kyo.Tag
 import kyo.bug
+import kyo.kernel.*
 
 private[kyo] opaque type Context = Map[Tag[Any], AnyRef]
 

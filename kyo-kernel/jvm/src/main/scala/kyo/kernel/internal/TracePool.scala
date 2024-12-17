@@ -1,17 +1,15 @@
-package kyo.kernel
+package kyo.kernel.internal
 
-import internal.*
 import java.util.Arrays
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
-import kyo.discard
-import scala.annotation.tailrec
+import kyo.kernel.internal.*
+import org.jctools.queues.MessagePassingQueue.Consumer
+import org.jctools.queues.MpmcArrayQueue
 
 private[kernel] object TracePool:
     inline def globalCapacity: Int = 8192
     inline def localCapacity: Int  = 32
 
-    private val global = new ConcurrentLinkedQueue[Trace]()
+    private val global = new MpmcArrayQueue[Trace](globalCapacity)
 
     abstract class Local:
         final private val pool = new Array[Trace](localCapacity)
@@ -19,22 +17,28 @@ private[kernel] object TracePool:
 
         final def borrow(): Trace =
             if size == 0 then
-                val trace = global.poll()
-                if trace != null then trace else Trace.init
-            else
-                size -= 1
-                val buffer = pool(size)
-                pool(size) = null
-                buffer
+                if global.drain(add, localCapacity - size) == 0 then
+                    return Trace.init
+            size -= 1
+            val buffer = pool(size)
+            pool(size) = null
+            buffer
         end borrow
+
+        final private val add: Consumer[Trace] =
+            (trace: Trace) =>
+                if size < localCapacity then
+                    pool(size) = trace
+                    size += 1
 
         final def release(trace: Trace): Unit =
             clear(trace)
             if size < localCapacity then
                 pool(size) = trace
                 size += 1
-            else if global.size() < globalCapacity then
-                discard(global.offer(trace))
+            else
+                global.offer(trace)
+                ()
             end if
         end release
 

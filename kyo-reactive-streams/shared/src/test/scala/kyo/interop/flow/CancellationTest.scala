@@ -2,7 +2,6 @@ package kyo.interop.flow
 
 import java.util.concurrent.Flow.*
 import kyo.*
-import kyo.interop.flow.StreamSubscription
 
 final class CancellationTest extends Test:
     final class Sub[A](b: AtomicBoolean) extends Subscriber[A]:

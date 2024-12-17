@@ -1,9 +1,7 @@
 package kyo
 
-import java.util.Arrays
 import kyo.Result.Fail
 import scala.annotation.tailrec
-import scala.util.control.NoStackTrace
 
 /** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
   */

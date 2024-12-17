@@ -4,7 +4,6 @@ import StreamSubscriber.EmitStrategy
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Flow.*
 import kyo.*
-import kyo.Maybe.*
 
 final class JavaSubscription(subscriber: Subscriber[? >: Int], batchSize: Int, counter: java.util.concurrent.atomic.AtomicInteger)
     extends Subscription:

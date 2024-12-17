@@ -2,7 +2,6 @@ package kyo
 
 import Layer.internal.*
 import kyo.Tag
-import kyo.kernel.Reducible
 
 /** Represents a composable layer of functionality in an application.
   *

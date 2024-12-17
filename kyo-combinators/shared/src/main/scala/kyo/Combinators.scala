@@ -2,7 +2,6 @@ package kyo
 
 import kyo.debug.Debug
 import kyo.kernel.Boundary
-import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven

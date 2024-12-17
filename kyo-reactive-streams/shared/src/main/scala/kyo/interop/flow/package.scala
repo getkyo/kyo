@@ -2,10 +2,7 @@ package kyo.interop
 
 import java.util.concurrent.Flow.*
 import kyo.*
-import kyo.interop.flow.*
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
-import kyo.kernel.Boundary
-import org.reactivestreams.FlowAdapters
 import scala.annotation.nowarn
 
 package object flow:

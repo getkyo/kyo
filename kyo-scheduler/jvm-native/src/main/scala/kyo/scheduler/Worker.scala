@@ -1,8 +1,6 @@
 package kyo.scheduler
 
 import Worker.State
-import java.lang.invoke.MethodHandles
-import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.LongAdder
