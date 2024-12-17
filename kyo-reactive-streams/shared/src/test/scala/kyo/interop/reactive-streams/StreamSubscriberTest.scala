@@ -12,31 +12,25 @@ import org.reactivestreams.tck.SubscriberWhiteboxVerification.WhiteboxSubscriber
 import org.reactivestreams.tck.TestEnvironment
 import org.scalatestplus.testng.*
 
-class EagerStreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
+class StreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
     import AllowUnsafe.embrace.danger
     private val counter = new AtomicInteger()
 
     def createSubscriber(
         p: SubscriberWhiteboxVerification.WhiteboxSubscriberProbe[Int]
     ): Subscriber[Int] =
-        IO.Unsafe.evalOrThrow(StreamSubscriber[Int](bufferSize = 1).map(s => new WhiteboxSubscriber(s, p)))
+        val streamSubscriber = Random.nextInt(2)
+            .map:
+                case 0 => StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Buffer)
+                case 1 => StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Eager)
+            .map: s =>
+                new WhiteboxSubscriber(s, p)
+
+        IO.Unsafe.evalOrThrow(streamSubscriber)
+    end createSubscriber
 
     def createElement(i: Int): Int = counter.getAndIncrement
-end EagerStreamSubscriberTest
-
-class BufferStreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
-    import AllowUnsafe.embrace.danger
-    private val counter = new AtomicInteger()
-
-    def createSubscriber(
-        p: SubscriberWhiteboxVerification.WhiteboxSubscriberProbe[Int]
-    ): Subscriber[Int] =
-        IO.Unsafe.evalOrThrow(StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Buffer).map(s =>
-            new WhiteboxSubscriber(s, p)
-        ))
-
-    def createElement(i: Int): Int = counter.getAndIncrement
-end BufferStreamSubscriberTest
+end StreamSubscriberTest
 
 final class WhiteboxSubscriber[V](
     sub: StreamSubscriber[V],
@@ -105,30 +99,21 @@ final class StreamSubscriberWrapper[V](val streamSubscriber: StreamSubscriber[V]
     override def onComplete(): Unit          = streamSubscriber.onComplete()
 end StreamSubscriberWrapper
 
-final class EagerSubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
+final class SubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
     import AllowUnsafe.embrace.danger
     private val counter = new AtomicInteger()
 
     def createSubscriber(): StreamSubscriberWrapper[Int] =
-        new StreamSubscriberWrapper(IO.Unsafe.evalOrThrow(StreamSubscriber[Int](bufferSize = 1)))
+        val streamSubscriber = Random.nextInt(2)
+            .map:
+                case 0 => StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Buffer)
+                case 1 => StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Eager)
+        new StreamSubscriberWrapper(IO.Unsafe.evalOrThrow(streamSubscriber))
+    end createSubscriber
 
     override def triggerRequest(s: Subscriber[? >: Int]): Unit =
         val computation: Long < IO = s.asInstanceOf[StreamSubscriberWrapper[Int]].streamSubscriber.request
         discard(IO.Unsafe.evalOrThrow(computation))
 
     def createElement(i: Int): Int = counter.incrementAndGet()
-end EagerSubscriberBlackboxSpec
-
-final class BufferSubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
-    import AllowUnsafe.embrace.danger
-    private val counter = new AtomicInteger()
-
-    override def createSubscriber(): Subscriber[Int] =
-        new StreamSubscriberWrapper(IO.Unsafe.evalOrThrow(StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Buffer)))
-
-    override def triggerRequest(s: Subscriber[? >: Int]): Unit =
-        val computation: Long < IO = s.asInstanceOf[StreamSubscriberWrapper[Int]].streamSubscriber.request
-        discard(IO.Unsafe.evalOrThrow(computation))
-
-    def createElement(i: Int): Int = counter.incrementAndGet()
-end BufferSubscriberBlackboxSpec
+end SubscriberBlackboxSpec

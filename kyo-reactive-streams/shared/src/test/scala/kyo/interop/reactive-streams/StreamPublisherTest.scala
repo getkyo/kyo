@@ -17,12 +17,7 @@ final class StreamPublisherTest extends PublisherVerification[Int](new TestEnvir
             Stream.empty[Int]
         else
             val chunkSize = Math.sqrt(n).floor.intValue
-            Stream.range(0, n, 1, chunkSize).map { int =>
-                Random
-                    .use(_.nextInt(50))
-                    .map(millis => Async.sleep(Duration.fromUnits(millis, Duration.Units.Millis)))
-                    .andThen(int)
-            }
+            Stream.range(0, n, 1, chunkSize)
 
     override def createPublisher(n: Long): Publisher[Int] =
         if n > Int.MaxValue then
