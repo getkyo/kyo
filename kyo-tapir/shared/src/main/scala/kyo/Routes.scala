@@ -15,6 +15,10 @@ opaque type Routes <: (Emit[Route] & Async) = Emit[Route] & Async
 
 object Routes:
 
+    def get[A: Flat, S](v: A < (Routes & S))(using Frame): Chunk[Route] =
+        val (routes: Chunk[Route], _: A) = Emit.run[Route].apply[A, Async & S](v)
+        routes
+
     /** Runs the routes using the default NettyKyoServer.
       *
       * @param v
