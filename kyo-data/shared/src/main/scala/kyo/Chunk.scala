@@ -42,8 +42,29 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   a new Chunk containing the first n elements
       */
     override def take(n: Int): Chunk[A] =
+        takeLeft(n)
+
+    /** Takes the first n elements of the Chunk.
+      *
+      * @param n
+      *   the number of elements to take
+      * @return
+      *   a new Chunk containing the first n elements
+      */
+    final def takeLeft(n: Int): Chunk[A] =
         if n == length then this
         else dropLeftAndRight(0, length - Math.min(Math.max(0, n), length))
+
+    /** Takes the last n elements of the Chunk.
+      *
+      * @param n
+      *   the number of elements to take
+      * @return
+      *   a new Chunk containing the last n elements
+      */
+    override def takeRight(n: Int): Chunk[A] =
+        if n == length then this
+        else dropLeftAndRight(length - Math.min(Math.max(0, n), length), 0)
 
     /** Drops the first n elements of the Chunk.
       *
@@ -328,7 +349,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
                 case c: Compact[A] =>
                     val l = c.array.length
                     if l > 0 then
-                        System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
+                        Array.copy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
                 case c: FromSeq[A] =>
                     val seq    = c.value
                     val length = Math.min(end, c.value.length - dropLeft - dropRight)
