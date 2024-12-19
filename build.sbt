@@ -164,7 +164,7 @@ lazy val `kyo-scheduler` =
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.12"         % Test
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.13"         % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(
@@ -265,7 +265,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12" % Test
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.13" % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
