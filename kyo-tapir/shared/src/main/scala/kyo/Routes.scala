@@ -15,6 +15,11 @@ opaque type Routes <: (Emit[Route] & Async) = Emit[Route] & Async
 
 object Routes:
 
+    def get[A: Flat, S](v: A < (Routes & S))(using Frame): Chunk[Route] < (Async & S) =
+        Emit.run[Route].apply[A, Async & S](v).map { (routes, _) =>
+            routes
+        }
+
     /** Runs the routes using the default NettyKyoServer.
       *
       * @param v
@@ -37,6 +42,25 @@ object Routes:
     def run[A, S](server: NettyKyoServer)(v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
         Emit.run[Route].apply[Unit, Async & S](v).map { (routes, _) =>
             IO(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & S)
+        }
+    end run
+
+    /** Runs the routes using a specified NettyKyoServer.
+      *
+      * @param server
+      *   The NettyKyoServer to use
+      * @param v
+      *   The routes to run
+      * @param update
+      *   A function that allows updates to the underlying server endpoints before starting the server
+      * @return
+      *   A NettyKyoServerBinding wrapped in an asynchronous effect
+      */
+    def run[A, S](server: NettyKyoServer)(
+        v: Unit < (Routes & S)
+    )(update: List[ServerEndpoint[Any, M]] => List[ServerEndpoint[Any, M]])(using Frame): NettyKyoServerBinding < (Async & S) =
+        Emit.run[Route].apply[Unit, Async & S](v).map { (routes, _) =>
+            IO(server.addEndpoints(update(routes.toSeq.map(_.endpoint).toList)).start()): NettyKyoServerBinding < (Async & S)
         }
     end run
 
@@ -90,5 +114,13 @@ object Routes:
       */
     def collect(init: (Unit < Routes)*)(using Frame): Unit < Routes =
         Kyo.collect(init).unit
+
+    def from(endpoints: IterableOnce[ServerEndpoint[Any, KyoSttpMonad.M]])(using Frame): Unit < Routes =
+        var routes: Unit < Routes = ()
+        for endpoint <- endpoints.iterator do
+            routes = routes.andThen(Emit(Route(endpoint)).unit)
+        end for
+        routes
+    end from
 
 end Routes
