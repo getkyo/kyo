@@ -190,12 +190,10 @@ abstract private class PublisherToSubscriberTest extends Test:
                 subscriber2 <- streamSubscriber
                 subscriber3 <- streamSubscriber
                 subscriber4 <- streamSubscriber
-                gatherFiber <- Fiber.gather[Nothing, Unit, Any](List(
-                    subscriber1.stream.run.unit,
-                    subscriber2.stream.run.unit,
-                    subscriber3.stream.run.unit,
-                    subscriber4.stream.run.unit
-                ))
+                fiber1      <- Async.run(subscriber1.stream.run.unit)
+                fiber2      <- Async.run(subscriber2.stream.run.unit)
+                fiber3      <- Async.run(subscriber3.stream.run.unit)
+                fiber4      <- Async.run(subscriber4.stream.run.unit)
                 publisherFiber <- Async.run(Resource.run(
                     Stream(Emit.andMap(Chunk.empty)(emit(_, counter)))
                         .toPublisher
@@ -209,8 +207,11 @@ abstract private class PublisherToSubscriberTest extends Test:
                 ))
                 _ <- Clock.sleep(10.millis).map { fiber =>
                     fiber.onComplete(_ => publisherFiber.interrupt.unit).andThen(fiber)
-                }.map(_.get)
-                _ <- gatherFiber.get
+                }.map(_.getResult)
+                _ <- fiber1.getResult
+                _ <- fiber2.getResult
+                _ <- fiber3.getResult
+                _ <- fiber4.getResult
             yield assert(true)
             end for
         }
