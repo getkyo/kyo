@@ -44,11 +44,12 @@ object Server extends KyoApp:
             val handler = await(Env.run(db)(Handler.init))
 
             await(Console.printLine(s"Server starting on port $port..."))
+            val binding = await(Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))))
             // This Works
-            val binding = await(Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))) { endpoints =>
-                // Also include Swagger documentation generation
-                endpoints ++ (SwaggerInterpreter().fromServerEndpoints(endpoints, "Ledger API", "1.0"))
-            })
+            // val binding = await(Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))) { endpoints =>
+            //     // Also include Swagger documentation generation
+            //     endpoints ++ (SwaggerInterpreter().fromServerEndpoints(endpoints, "Ledger API", "1.0"))
+            // })
             await(Console.printLine(s"Server started: ${binding.localSocket}"))
         }
     }
