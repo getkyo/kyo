@@ -34,7 +34,7 @@ private[kyo] object Validate:
             case Apply(TypeApply(Ident("defer"), List(t)), List(v)) =>
                 fail(tree, "Nested `defer` blocks are not allowed.")
             case tree: Term if tree.tpe.typeSymbol.name == "<" =>
-                fail(tree, "Effectful computation must be inside an `await` block.")
+                fail(tree, "Effectful computation must be wrapped with `~`.")
             case tree @ ValDef(_, _, _) if show(tree).startsWith("var ") =>
                 fail(tree, "`var` declarations are not allowed inside a `defer` block.")
             case Return(_, _) =>
@@ -42,9 +42,9 @@ private[kyo] object Validate:
             case tree @ ValDef(_, _, _) if show(tree).startsWith("lazy val ") =>
                 fail(tree, "`lazy val` declarations are not allowed inside a `defer` block.")
             case Lambda(_, body) if !pure(body) =>
-                fail(tree, "Lambda functions containing `await` are not supported.")
+                fail(tree, "Lambda functions containing `~` are not supported.")
             case DefDef(_, _, _, Some(body)) if !pure(body) =>
-                fail(tree, "`def` declarations containing `await` are not supported.")
+                fail(tree, "`def` declarations containing `~` are not supported.")
             case Try(_, _, _) =>
                 fail(tree, "`try/catch` blocks are not supported inside a `defer` block.")
             case ClassDef(_, _, _, _, _) =>
