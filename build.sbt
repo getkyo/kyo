@@ -9,7 +9,7 @@ val scala3Version   = "3.6.2"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
-val zioVersion       = "2.1.13"
+val zioVersion       = "2.1.14"
 val catsVersion      = "3.5.7"
 val scalaTestVersion = "3.2.19"
 
