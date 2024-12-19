@@ -15,9 +15,10 @@ opaque type Routes <: (Emit[Route] & Async) = Emit[Route] & Async
 
 object Routes:
 
-    def get[A: Flat, S](v: A < (Routes & S))(using Frame): Chunk[Route] =
-        val (routes: Chunk[Route], _: A) = Emit.run[Route].apply[A, Async & S](v)
-        routes
+    def get[A: Flat, S](v: A < (Routes & S))(using Frame): Chunk[Route] < (Async & S) =
+        Emit.run[Route].apply[A, Async & S](v).map { (routes, _) =>
+            routes
+        }
 
     /** Runs the routes using the default NettyKyoServer.
       *
@@ -113,5 +114,13 @@ object Routes:
       */
     def collect(init: (Unit < Routes)*)(using Frame): Unit < Routes =
         Kyo.collect(init).unit
+
+    def from(endpoints: IterableOnce[ServerEndpoint[Any, KyoSttpMonad.M]])(using Frame): Unit < Routes =
+        var routes: Unit < Routes = ()
+        for endpoint <- endpoints.iterator do
+            routes = routes.andThen(Emit(Route(endpoint)).unit)
+        end for
+        routes
+    end from
 
 end Routes
