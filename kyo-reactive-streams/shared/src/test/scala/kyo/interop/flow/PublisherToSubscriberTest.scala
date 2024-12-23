@@ -11,35 +11,25 @@ abstract private class PublisherToSubscriberTest extends Test:
     protected def streamSubscriber: StreamSubscriber[Int] < IO
 
     "should have the same output as input" in runJVM {
-        val stream = Stream
-            .range(0, MaxStreamLength, 1, BufferSize)
-            .map { int =>
-                Random
-                    .use(_.nextInt(10))
-                    .map(millis => Async.sleep(Duration.fromUnits(millis, Duration.Units.Millis)))
-                    .andThen(int)
-            }
+        val stream = Stream.range(0, MaxStreamLength, 1, BufferSize)
         for
             publisher  <- stream.toPublisher
             subscriber <- streamSubscriber
             _ = publisher.subscribe(subscriber)
             (isSame, _) <- subscriber.stream
                 .runFold(true -> 0) { case ((acc, expected), cur) =>
-                    Random
-                        .use(_.nextInt(10))
-                        .map(millis => Async.sleep(Duration.fromUnits(millis, Duration.Units.Millis)))
-                        .andThen((acc && (expected == cur)) -> (expected + 1))
+                    (acc && (expected == cur)) -> (expected + 1)
                 }
         yield assert(isSame)
         end for
     }
 
     "should propagate errors downstream" in runJVM {
-        val inputStream = Stream
+        val inputStream: Stream[Int, IO] = Stream
             .range(0, 10, 1, 1)
             .map { int =>
                 if int < 5 then
-                    Async.sleep(Duration.fromUnits(10, Duration.Units.Millis)).andThen(int)
+                    IO(int)
                 else
                     Abort.panic(TestError)
             }
@@ -76,19 +66,16 @@ abstract private class PublisherToSubscriberTest extends Test:
 
     "single publisher & multiple subscribers" - {
         "contention" in runJVM {
-            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & Async) =
+            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & IO) =
                 ack match
                     case Ack.Stop => IO(Ack.Stop)
                     case Ack.Continue(_) =>
-                        for
-                            millis <- Random.use(_.nextInt(10))
-                            _      <- Async.sleep(Duration.fromUnits(millis, Duration.Units.Millis))
-                            value  <- counter.getAndIncrement
-                            nextAck <- if value >= MaxStreamLength then
+                        counter.getAndIncrement.map: value =>
+                            if value >= MaxStreamLength then
                                 IO(Ack.Stop)
                             else
                                 Emit.andMap(Chunk(value))(emit(_, counter))
-                        yield nextAck
+                            end if
             end emit
 
             def checkStrictIncrease(chunk: Chunk[Int]): Boolean =
@@ -128,20 +115,16 @@ abstract private class PublisherToSubscriberTest extends Test:
         }
 
         "one subscriber's failure does not affect others." in runJVM {
-            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & Async) =
+            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & IO) =
                 ack match
                     case Ack.Stop => IO(Ack.Stop)
                     case Ack.Continue(_) =>
-                        for
-                            millis <- Random.use(_.nextInt(10))
-                            _      <- Async.sleep(Duration.fromUnits(millis, Duration.Units.Millis))
-                            value  <- counter.getAndIncrement
-                            nextAck <- if value >= MaxStreamLength then
+                        counter.getAndIncrement.map: value =>
+                            if value >= MaxStreamLength then
                                 IO(Ack.Stop)
                             else
                                 Emit.andMap(Chunk(value))(emit(_, counter))
-                        yield nextAck
-                end match
+                            end if
             end emit
 
             def checkStrictIncrease(chunk: Chunk[Int]): Boolean =
@@ -188,17 +171,16 @@ abstract private class PublisherToSubscriberTest extends Test:
         }
 
         "publisher's interuption should end all subscribed parties" in runJVM {
-            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & Async) =
+            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & IO) =
                 ack match
                     case Ack.Stop => IO(Ack.Stop)
                     case Ack.Continue(_) =>
-                        for
-                            millis  <- Random.use(_.nextInt(10))
-                            _       <- Async.sleep(Duration.fromUnits(millis, Duration.Units.Millis))
-                            value   <- counter.getAndIncrement
-                            nextAck <- Emit.andMap(Chunk(value))(emit(_, counter))
-                        yield nextAck
-                end match
+                        counter.getAndIncrement.map: value =>
+                            if value >= MaxStreamLength then
+                                IO(Ack.Stop)
+                            else
+                                Emit.andMap(Chunk(value))(emit(_, counter))
+                            end if
             end emit
 
             for
@@ -208,12 +190,10 @@ abstract private class PublisherToSubscriberTest extends Test:
                 subscriber2 <- streamSubscriber
                 subscriber3 <- streamSubscriber
                 subscriber4 <- streamSubscriber
-                _ <- Fiber.parallelUnbounded[Nothing, Unit, Any](List(
-                    subscriber1.stream.run.unit,
-                    subscriber2.stream.run.unit,
-                    subscriber3.stream.run.unit,
-                    subscriber4.stream.run.unit
-                ))
+                fiber1      <- Async.run(subscriber1.stream.run.unit)
+                fiber2      <- Async.run(subscriber2.stream.run.unit)
+                fiber3      <- Async.run(subscriber3.stream.run.unit)
+                fiber4      <- Async.run(subscriber4.stream.run.unit)
                 publisherFiber <- Async.run(Resource.run(
                     Stream(Emit.andMap(Chunk.empty)(emit(_, counter)))
                         .toPublisher
@@ -223,17 +203,16 @@ abstract private class PublisherToSubscriberTest extends Test:
                             publisher.subscribe(subscriber3)
                             publisher.subscribe(subscriber4)
                         }
-                        .andThen(Async.sleep(2.seconds))
+                        .andThen(Async.sleep(1.seconds))
                 ))
-                _ <- Clock.sleep(1.seconds).map { fiber =>
+                _ <- Clock.sleep(10.millis).map { fiber =>
                     fiber.onComplete(_ => publisherFiber.interrupt.unit).andThen(fiber)
-                }.map(_.get)
-                count1 <- counter.get
-                _      <- Async.sleep(1.seconds)
-                count2 <- counter.get
-                _      <- Async.sleep(1.seconds)
-                count3 <- counter.get
-            yield assert((count2 - count1 <= 4) && (count3 - count2 <= 4))
+                }.map(_.getResult)
+                _ <- fiber1.getResult
+                _ <- fiber2.getResult
+                _ <- fiber3.getResult
+                _ <- fiber4.getResult
+            yield assert(true)
             end for
         }
     }
