@@ -3,7 +3,10 @@ package examples.ledger.api
 import examples.ledger.db.DB
 import java.util.concurrent.Executors
 import kyo.*
+import kyo.internal.KyoSttpMonad
+import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.*
+import sttp.tapir.swagger.bundle.SwaggerInterpreter
 
 object Server extends KyoApp:
 
@@ -42,6 +45,11 @@ object Server extends KyoApp:
 
             await(Console.printLine(s"Server starting on port $port..."))
             val binding = await(Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))))
+            // This Works
+            // val binding = await(Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))) { endpoints =>
+            //     // Also include Swagger documentation generation
+            //     endpoints ++ (SwaggerInterpreter().fromServerEndpoints(endpoints, "Ledger API", "1.0"))
+            // })
             await(Console.printLine(s"Server started: ${binding.localSocket}"))
         }
     }
