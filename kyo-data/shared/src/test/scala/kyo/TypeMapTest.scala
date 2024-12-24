@@ -280,11 +280,10 @@ class TypeMapTest extends Test:
             assert(p.size == 3)
         }
         "intersection" in pendingUntilFixed {
-            assertCompiles("""
-                |val e = TypeMap(true, "")
-                |val p = e.prune[Boolean & String]
-                |assert(p.size == 2)
-                |""".stripMargin)
+            val e = TypeMap(true, "")
+            val p = e.prune[Boolean & String] // so clearly subtype of intersection is broken
+            assert(p.size == 2)
+            ()
         }
     }
 
@@ -298,8 +297,8 @@ class TypeMapTest extends Test:
                     "scala.Char -> c, " +
                     "scala.Int -> 42, " +
                     "scala.None$ -> None, " +
-                    "scala.collection.immutable.List -> List(), " +
-                    "scala.collection.immutable.Map -> Map(k -> v)" +
+                    "scala.collection.immutable.List[scala.Any] -> List(), " +
+                    "scala.collection.immutable.Map[scala.Char, scala.Char] -> Map(k -> v)" +
                     ")"
             assert(t.show == expected)
         }
