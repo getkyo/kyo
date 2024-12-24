@@ -19,51 +19,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && await(IO(True))
+                    True && ~IO(True)
                 }
             }
             "True/False" - {
                 runLiftTest(False) {
-                    True && await(IO(False))
+                    True && ~IO(False)
                 }
             }
             "False/NotExpected" - {
                 runLiftTest(False) {
-                    False && await(IO(NotExpected))
+                    False && ~IO(NotExpected)
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IO(True)) && True
+                    ~IO(True) && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IO(True)) && False
+                    ~IO(True) && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IO(False)) && NotExpected
+                    ~IO(False) && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IO(True)) && await(IO(True))
+                    ~IO(True) && ~IO(True)
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IO(True)) && await(IO(False))
+                    ~IO(True) && ~IO(False)
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IO(False)) && await(IO(NotExpected))
+                    ~IO(False) && ~IO(NotExpected)
                 }
             }
         }
@@ -77,51 +77,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || await(IO(False))
+                    False || ~IO(False)
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || await(IO(True))
+                    False || ~IO(True)
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || await(IO(NotExpected))
+                    True || ~IO(NotExpected)
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IO(False)) || False
+                    ~IO(False) || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IO(False)) || True
+                    ~IO(False) || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IO(True)) || NotExpected
+                    ~IO(True) || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IO(False)) || await(IO(False))
+                    ~IO(False) || ~IO(False)
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IO(False)) || await(IO(True))
+                    ~IO(False) || ~IO(True)
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IO(True)) || await(IO(NotExpected))
+                    ~IO(True) || ~IO(NotExpected)
                 }
             }
         }
