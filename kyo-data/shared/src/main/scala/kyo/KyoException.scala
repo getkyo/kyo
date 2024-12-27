@@ -7,7 +7,7 @@ import scala.util.control.NoStackTrace
 class KyoException private[kyo] (
     message: Text = null,
     cause: Text | Throwable = null
-)(using val frame: Frame) extends Exception with NoStackTrace:
+)(using val frame: Frame) extends Exception() with NoStackTrace:
 
     override def getCause(): Throwable =
         cause match
