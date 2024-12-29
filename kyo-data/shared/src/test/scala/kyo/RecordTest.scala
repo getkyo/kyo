@@ -279,28 +279,28 @@ class RecordTest extends Test:
     }
 
     "AsFields behavior" - {
-        "complex union types" in {
+        "complex intersection types" in {
             type Complex = "a" ~ Int & "b" ~ String & "c" ~ Boolean
             val fields = Record.AsFields["a" ~ Int & "b" ~ String & "c" ~ Int]
             assert(fields.size == 3)
             assert(fields.map(_.name).toSet == Set("a", "b", "c"))
         }
 
-        "nested union types" in {
+        "nested intersection types" in {
             type Nested = "outer" ~ Int & ("inner1" ~ String & "inner2" ~ Boolean)
             val fields = Record.AsFields[Nested]
             assert(fields.size == 3)
             assert(fields.map(_.name).toSet == Set("outer", "inner1", "inner2"))
         }
 
-        "unions with 4 fields" in {
+        "intersections with 4 fields" in {
             type Fields4 = "a" ~ Int & "b" ~ String & "c" ~ Boolean & "d" ~ List[Int]
             val fields = Record.AsFields[Fields4]
             assert(fields.size == 4)
             assert(fields.map(_.name).toSet == Set("a", "b", "c", "d"))
         }
 
-        "unions up to 22 fields" in {
+        "intersections up to 22 fields" in {
             type Fields22 =
                 "1" ~ Int & "2" ~ Int & "3" ~ Int & "4" ~ Int & "5" ~ Int & "6" ~ Int & "7" ~ Int & "8" ~ Int & "9" ~ Int & "10" ~ Int &
                     "11" ~ Int & "12" ~ Int & "13" ~ Int & "14" ~ Int & "15" ~ Int & "16" ~ Int & "17" ~ Int & "18" ~ Int & "19" ~ Int &
@@ -308,7 +308,7 @@ class RecordTest extends Test:
             assertCompiles("Record.AsFields[Fields22]")
         }
 
-        "unions with more than 22 fields" in pendingUntilFixed {
+        "intersections with more than 22 fields" in pendingUntilFixed {
             type Fields23 =
                 "1" ~ Int & "2" ~ Int & "3" ~ Int & "4" ~ Int & "5" ~ Int & "6" ~ Int & "7" ~ Int & "8" ~ Int & "9" ~ Int & "10" ~ Int &
                     "11" ~ Int & "12" ~ Int & "13" ~ Int & "14" ~ Int & "15" ~ Int & "16" ~ Int & "17" ~ Int & "18" ~ Int & "19" ~ Int &
@@ -316,7 +316,7 @@ class RecordTest extends Test:
             assertCompiles("Record.AsFields[Fields23]")
         }
 
-        "unions with duplicate field names but different types" in {
+        "intersections with duplicate field names but different types" in {
             type DupeFields = "value" ~ Int & "value" ~ String
             val fields = Record.AsFields[DupeFields]
             assert(fields.size == 2)
