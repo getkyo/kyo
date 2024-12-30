@@ -1,28 +1,29 @@
 package kyo
 
 import Record.Field
+import kyo.Record.AsRecord.FieldsOf
 
 class RecordTest extends Test:
 
     "creation" - {
 
         "single field" in {
-            val record = "name" ~ "Alice"
-            assert(record("name") == "Alice")
+            val record = "name" ~ "Alice" & "name" ~ 10
+            assert(record.name == "Alice")
         }
 
         "multiple fields" in {
             val record = "name" ~ "Alice" & "age" ~ 30
-            assert(record("name") == "Alice")
-            assert(record("age") == 30)
+            assert(record.name == "Alice")
+            assert(record.age == 30)
         }
 
         "from product types" in {
             case class Person(name: String, age: Int)
             val person = Person("Alice", 30)
             val record = Record.fromProduct(person)
-            assert(record("name") == "Alice")
-            assert(record("age") == 30)
+            assert(record.name == "Alice")
+            assert(record.age == 30)
         }
 
     }
@@ -36,9 +37,9 @@ class RecordTest extends Test:
             val person  = Person("Alice", address)
             val record  = Record.fromProduct(person)
 
-            assert(record("name") == "Alice")
-            assert(record("address").street == "123 Main St")
-            assert(record("address").city == "Springfield")
+            assert(record.name == "Alice")
+            assert(record.address.street == "123 Main St")
+            assert(record.address.city == "Springfield")
         }
 
         "option fields" in {
@@ -49,8 +50,8 @@ class RecordTest extends Test:
             val record1 = Record.fromProduct(user1)
             val record2 = Record.fromProduct(user2)
 
-            assert(record1("email").contains("bob@email.com"))
-            assert(record2("email").isEmpty)
+            assert(record1.email.contains("bob@email.com"))
+            assert(record2.email.isEmpty)
         }
 
         "collection fields" in {
@@ -58,9 +59,9 @@ class RecordTest extends Test:
             val team   = Team("Engineering", List("Alice", "Bob", "Charlie"))
             val record = Record.fromProduct(team)
 
-            assert(record("name") == "Engineering")
-            assert(record("members").length == 3)
-            assert(record("members").contains("Alice"))
+            assert(record.name == "Engineering")
+            assert(record.members.length == 3)
+            assert(record.members.contains("Alice"))
         }
 
         "sealed trait hierarchy" in {
@@ -70,36 +71,36 @@ class RecordTest extends Test:
 
             val dog       = Dog("Rex", 5)
             val dogRecord = Record.fromProduct(dog)
-            assert(dogRecord("name") == "Rex")
-            assert(dogRecord("age") == 5)
+            assert(dogRecord.name == "Rex")
+            assert(dogRecord.age == 5)
         }
 
         "generic case classes" in {
             case class Box[T](value: T)
             val box    = Box(42)
             val record = Record.fromProduct(box)
-            assert(record("value") == 42)
+            assert(record.value == 42)
         }
     }
 
     "field access" - {
         "type-safe access" in {
             val record = "name" ~ "Bob" & "age" ~ 25
-            assert(record("name") == "Bob")
-            assert(record("age") == 25)
+            assert(record.name == "Bob")
+            assert(record.age == 25)
         }
 
         "incorrect type access should not compile" in {
             assertDoesNotCompile("""
                 val record = "name" ~ "Bob"
-                val name = record[Int]("name")
+                val name: Int = record.name
             """)
         }
 
         "non-existent field access should not compile" in {
             assertDoesNotCompile("""
                 val record = "name" ~ "Bob"
-                val city: String = record[String]("city")
+                val city = record.city
             """)
         }
     }
@@ -107,19 +108,19 @@ class RecordTest extends Test:
     "edge cases" - {
         "empty string fields" in {
             val record = "name" ~ "" & "value" ~ ""
-            assert(record("name").isEmpty)
-            assert(record("value").isEmpty)
+            assert(record.name.isEmpty)
+            assert(record.value.isEmpty)
         }
 
         "special characters in field names" in {
             val record = "user-name" ~ "Alice" & "_internal" ~ 42
-            assert(record("user-name") == "Alice")
-            assert(record("_internal") == 42)
+            assert(record.`user-name` == "Alice")
+            assert(record._internal == 42)
         }
 
         "null values" in {
             val record = "name" ~ null
-            assert(record("name") == null)
+            assert(record.name == null)
         }
 
         "empty case class" in {
@@ -157,8 +158,8 @@ class RecordTest extends Test:
             val large  = Large(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
             val record = Record.fromProduct(large)
             assert(record.size == 23)
-            assert(record("f1") == 1)
-            assert(record("f23") == 23)
+            assert(record.f1 == 1)
+            assert(record.f23 == 23)
         }
     }
 
@@ -166,15 +167,15 @@ class RecordTest extends Test:
         "adding new fields" in {
             val record1 = "name" ~ "Charlie"
             val record2 = record1 & "age" ~ 25
-            assert(record2("name") == "Charlie")
-            assert(record2("age") == 25)
+            assert(record2.name == "Charlie")
+            assert(record2.age == 25)
         }
 
         "updating existing fields" in {
             val record1 = "name" ~ "Charlie" & "age" ~ 25
             val record2 = record1 & "age" ~ 26
-            assert(record2("name") == "Charlie")
-            assert(record2("age") == 26)
+            assert(record2.name == "Charlie")
+            assert(record2.age == 26)
         }
     }
 
@@ -184,10 +185,10 @@ class RecordTest extends Test:
             val record2 = "city" ~ "Paris" & "country" ~ "France"
             val merged  = record1 & record2
 
-            assert(merged("name") == "Eve")
-            assert(merged("age") == 30)
-            assert(merged("city") == "Paris")
-            assert(merged("country") == "France")
+            assert(merged.name == "Eve")
+            assert(merged.age == 30)
+            assert(merged.city == "Paris")
+            assert(merged.country == "France")
         }
 
         "merge with overlapping fields" in {
@@ -195,17 +196,17 @@ class RecordTest extends Test:
             val record2 = "age" ~ 31 & "city" ~ "Paris"
             val merged  = record1 & record2
 
-            assert(merged("name") == "Eve")
-            assert(merged("age") == 31)
-            assert(merged("city") == "Paris")
+            assert(merged.name == "Eve")
+            assert(merged.age == 31)
+            assert(merged.city == "Paris")
         }
 
         "merge with type conflicts" in {
             val record1 = "value" ~ "string"
             val record2 = "value" ~ 42
             val merged  = record1 & record2
-            assert(merged[Int]("value") == 42)
-            assert(merged[String]("value") == "string")
+            assert((merged.value: Int) == 42)
+            assert((merged.value: String) == "string")
         }
     }
 
@@ -226,17 +227,17 @@ class RecordTest extends Test:
             case class Node(value: Int, next: Option[Node])
             val node   = Node(1, Some(Node(2, None)))
             val record = Record.fromProduct(node)
-            assert(record("value") == 1)
-            assert(record("next").isDefined)
-            assert(record("next").get.value == 2)
+            assert(record.value == 1)
+            assert(record.next.isDefined)
+            assert(record.next.get.value == 2)
         }
 
         "preserve type parameters in nested structures" in {
             case class Wrapper[A, B](first: List[A], second: Map[String, B])
             val wrapper = Wrapper(List(1, 2, 3), Map("key" -> true))
             val record  = Record.fromProduct(wrapper)
-            assert(record("first").head == 1)
-            assert(record("second")("key") == true)
+            assert(record.first.head == 1)
+            assert(record.second.apply("key") == true)
         }
     }
 
@@ -263,8 +264,8 @@ class RecordTest extends Test:
             val compacted = record.compact
 
             assert(compacted.size == 2)
-            assert(compacted("name") == "Frank")
-            assert(compacted("age") == 40)
+            assert(compacted.name == "Frank")
+            assert(compacted.age == 40)
         }
 
         "removes extra fields" in {
@@ -273,7 +274,7 @@ class RecordTest extends Test:
             val compacted = record.compact
             assert(compacted.size == 1)
             assertDoesNotCompile("""
-                compacted("age")
+                compacted.age
             """)
         }
     }
@@ -329,15 +330,15 @@ class RecordTest extends Test:
         "derive for case class" in {
             case class Person(name: String, age: Int)
             val record = Record.fromProduct(Person("Alice", 30))
-            assert(record("name") == "Alice")
-            assert(record("age") == 30)
+            assert(record.name == "Alice")
+            assert(record.age == 30)
         }
 
         "derive for tuple" in {
             val tuple  = ("Alice", 30)
             val record = Record.fromProduct(tuple)
-            assert(record("_1") == "Alice")
-            assert(record("_2") == 30)
+            assert(record._1 == "Alice")
+            assert(record._2 == 30)
         }
     }
 
@@ -352,11 +353,11 @@ class RecordTest extends Test:
                 "name" ~ "Alice" & "age" ~ 30 & "city" ~ "Paris"
 
             val nameAge: Record["name" ~ String & "age" ~ Int] = full
-            assert(nameAge("name") == "Alice")
-            assert(nameAge("age") == 30)
+            assert(nameAge.name == "Alice")
+            assert(nameAge.age == 30)
 
             val nameOnly: Record["name" ~ String] = full
-            assert(nameOnly("name") == "Alice")
+            assert(nameOnly.name == "Alice")
         }
 
         "preserves type safety" in {
@@ -369,10 +370,10 @@ class RecordTest extends Test:
             val record = "name" ~ "Bob" & "age" ~ 25 & "city" ~ "London" & "active" ~ true
 
             def takesNameAge(r: Record["name" ~ String & "age" ~ Int]): String =
-                s"${r("name")} is ${r("age")}"
+                s"${r.name} is ${r.age}"
 
             def takesNameOnly(r: Record["name" ~ String]): String =
-                s"Name: ${r("name")}"
+                s"Name: ${r.name}"
 
             assert(takesNameAge(record) == "Bob is 25")
             assert(takesNameOnly(record) == "Name: Bob")
@@ -425,8 +426,8 @@ class RecordTest extends Test:
         "allows fields with same name but different types" in {
             val record = "value" ~ "string" & "value" ~ 42
 
-            assert(record[String]("value") == "string")
-            assert(record[Int]("value") == 42)
+            assert((record.value: String) == "string")
+            assert((record.value: Int) == 42)
         }
 
         "preserves both values when merging records" in {
@@ -434,16 +435,16 @@ class RecordTest extends Test:
             val record2 = "value" ~ 42
             val merged  = record1 & record2
 
-            assert(merged[String]("value") == "string")
-            assert(merged[Int]("value") == 42)
+            assert((merged.value: String) == "string")
+            assert((merged.value: Int) == 42)
         }
 
         "handles multiple duplicate fields" in {
             val record = "x" ~ "str" & "x" ~ 42 & "x" ~ true
 
-            assert(record[String]("x") == "str")
-            assert(record[Int]("x") == 42)
-            assert(record[Boolean]("x") == true)
+            assert((record.x: String) == "str")
+            assert((record.x: Int) == 42)
+            assert((record.x: Boolean) == true)
         }
     }
 

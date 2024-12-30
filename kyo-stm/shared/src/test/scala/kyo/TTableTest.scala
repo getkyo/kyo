@@ -10,8 +10,8 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(id))
             yield
                 assert(record.isDefined)
-                assert(record.get("name") == "Alice")
-                assert(record.get("age") == 30)
+                assert(record.get.name == "Alice")
+                assert(record.get.age == 30)
         }
 
         "update existing record" in run {
@@ -22,9 +22,9 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(id))
             yield
                 assert(prev.isDefined)
-                assert(prev.get("age") == 30)
+                assert(prev.get.age == 30)
                 assert(record.isDefined)
-                assert(record.get("age") == 31)
+                assert(record.get.age == 31)
         }
 
         "update non-existent record" in run {
@@ -41,8 +41,8 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(table.unsafeId(1)))
             yield
                 assert(record.isDefined)
-                assert(record.get("name") == "Alice")
-                assert(record.get("age") == 30)
+                assert(record.get.name == "Alice")
+                assert(record.get.age == 30)
         }
 
         "upsert existing record" in run {
@@ -53,7 +53,7 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(id))
             yield
                 assert(record.isDefined)
-                assert(record.get("age") == 31)
+                assert(record.get.age == 31)
         }
 
         "remove record" in run {
@@ -114,8 +114,8 @@ class TTableTest extends Test:
                 snapshot <- STM.run(table.snapshot)
             yield
                 assert(snapshot.size == 2)
-                assert(snapshot(id1)("name") == "Alice")
-                assert(snapshot(id2)("name") == "Bob")
+                assert(snapshot(id1).name == "Alice")
+                assert(snapshot(id2).name == "Bob")
         }
     }
 
@@ -140,8 +140,8 @@ class TTableTest extends Test:
                 results <- STM.run(table.query("name" ~ "Alice" & "age" ~ 30))
             yield
                 assert(results.size == 1)
-                assert(results.head("name") == "Alice")
-                assert(results.head("age") == 30)
+                assert(results.head.name == "Alice")
+                assert(results.head.age == 30)
         }
 
         "query with no matches" in run {
@@ -162,7 +162,7 @@ class TTableTest extends Test:
             yield
                 assert(aliceResults.isEmpty)
                 assert(bobResults.size == 1)
-                assert(bobResults.head("name") == "Bob")
+                assert(bobResults.head.name == "Bob")
         }
 
         "remove indexed record" in run {
@@ -182,7 +182,7 @@ class TTableTest extends Test:
             }
 
             "should not compile when querying partially indexed fields" in run {
-                for table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int] // only age is indexed
+                for table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
                 yield assertDoesNotCompile("""table.query("name" ~ "Alice" & "age" ~ 30)""")
             }
         }
@@ -251,9 +251,9 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(id))
             yield
                 assert(record.isDefined)
-                assert(record.get("email") == "alice@test.com")
-                assert(record.get("age") == 31)
-                assert(record.get("name") == "Alice")
+                assert(record.get.email == "alice@test.com")
+                assert(record.get.age == 31)
+                assert(record.get.name == "Alice")
         }
 
         "nested updates should maintain consistency" in run {
@@ -273,8 +273,8 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(id))
             yield
                 assert(record.isDefined)
-                assert(record.get("name") == "Charlie")
-                assert(record.get("age") == 32)
+                assert(record.get.name == "Charlie")
+                assert(record.get.age == 32)
         }
     }
 
@@ -341,8 +341,8 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(id))
             yield
                 assert(record.isDefined)
-                assert(record.get("name") == "Alice")
-                assert(record.get("age") == 30)
+                assert(record.get.name == "Alice")
+                assert(record.get.age == 30)
         }
 
         "partial updates within transaction should roll back" in run {
@@ -360,8 +360,8 @@ class TTableTest extends Test:
                 record <- STM.run(table.get(id))
             yield
                 assert(record.isDefined)
-                assert(record.get("name") == "Alice")
-                assert(record.get("email") == "alice@test.com")
+                assert(record.get.name == "Alice")
+                assert(record.get.email == "alice@test.com")
         }
     }
 
@@ -383,7 +383,7 @@ class TTableTest extends Test:
             yield
                 assert(byOriginalName.size == 1)
                 assert(byNewName.isEmpty)
-                assert(byOriginalName.head("name") == "Alice")
+                assert(byOriginalName.head.name == "Alice")
         }
 
         "multiple index values" in run {
@@ -396,8 +396,8 @@ class TTableTest extends Test:
             yield
                 assert(byName.size == 1)
                 assert(byAge.size == 2)
-                assert(byAge.exists(_("name") == "Alice"))
-                assert(byAge.exists(_("name") == "Bob"))
+                assert(byAge.exists(_.name == "Alice"))
+                assert(byAge.exists(_.name == "Bob"))
         }
 
         "index updates with multiple matching records" in run {
@@ -411,8 +411,8 @@ class TTableTest extends Test:
             yield
                 assert(byOldAge.size == 1)
                 assert(byNewAge.size == 1)
-                assert(byOldAge.head("name") == "Bob")
-                assert(byNewAge.head("name") == "Alice")
+                assert(byOldAge.head.name == "Bob")
+                assert(byNewAge.head.name == "Alice")
         }
 
         "querying with non-existent index values" in run {
@@ -446,8 +446,8 @@ class TTableTest extends Test:
                 }
                 (original, updated, afterRemove) = result
             yield
-                assert(original.isDefined && original.get("name") == "Alice")
-                assert(updated.isDefined && updated.get("name") == "Bob")
+                assert(original.isDefined && original.get.name == "Alice")
+                assert(updated.isDefined && updated.get.name == "Bob")
                 assert(afterRemove.isEmpty)
         }
 

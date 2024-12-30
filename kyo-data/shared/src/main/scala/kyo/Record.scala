@@ -1,10 +1,11 @@
 package kyo
 
-import Record.Field
+import Record.*
 import scala.annotation.implicitNotFound
 import scala.compiletime.constValue
 import scala.compiletime.summonInline
 import scala.deriving.Mirror
+import scala.language.dynamics
 import scala.language.implicitConversions
 import scala.util.NotGiven
 
@@ -72,7 +73,47 @@ import scala.util.NotGiven
   *   - Records with more than 22 fields have limited type-level support, though runtime support exists for larger structures
   *   - CanEqual and Render instances are not provided for Records
   */
-opaque type Record[+Fields] = Map[Field[?, ?], Any]
+class Record[+Fields](val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
+
+    /** Retrieves a value from the Record by field name.
+      *
+      * @param name
+      *   The field name to look up
+      */
+    def selectDynamic[Value](name: String)(using
+        @implicitNotFound("""
+        Cannot find field with type ${Value} in Record.
+        Possible causes:
+        1. The field does not exist in this Record
+        2. The field exists but has a different type than ${Value}
+        """)
+        ev: Fields <:< name.type ~ Value,
+        tag: Tag[Value]
+    ): Value =
+        toMap(Field(name, tag)).asInstanceOf[Value]
+
+    /** Combines this Record with another Record.
+      *
+      * @param other
+      *   The Record to combine with
+      * @return
+      *   A new Record containing all fields from both Records
+      */
+    def &[A](other: Record[A]): Record[Fields & A] =
+        Record(toMap ++ other.toMap)
+
+    /** Returns the set of fields in this Record.
+      *
+      * @return
+      *   A Set of Field instances
+      */
+    def fields: Set[Field[?, ?]] = toMap.keySet
+
+    /** Returns the number of fields in this Record.
+      */
+    def size: Int = toMap.size
+
+end Record
 
 export Record.`~`
 
@@ -100,6 +141,15 @@ object Record:
       */
     case class Field[Name <: String, Value](name: Name, tag: Tag[Value])
 
+    extension [Fields](self: Record[Fields])
+        /** Creates a new Record containing only the fields specified in the type parameter Fields.
+          *
+          * @return
+          *   A new Record with only the specified fields
+          */
+        def compact(using AsFields[Fields]): Record[Fields] =
+            Record(self.toMap.view.filterKeys(AsFields[Fields].contains(_)).toMap)
+
     extension (self: String)
         /** Creates a single-field Record with the string as the field name.
           *
@@ -107,63 +157,7 @@ object Record:
           *   The value to associate with the field
           */
         def ~[Value](value: Value)(using tag: Tag[Value]): Record[self.type ~ Value] =
-            Map(Field(self, tag) -> value)
-
-    extension [Fields](self: Record[Fields])
-
-        /** Retrieves a value from the Record by field name.
-          *
-          * @param name
-          *   The field name to look up
-          */
-        def apply[Value](name: String)(using
-            @implicitNotFound("""
-            Cannot find field with type ${Value} in Record.
-            Possible causes:
-            1. The field does not exist in this Record
-            2. The field exists but has a different type than ${Value}
-            """)
-            ev: Fields <:< name.type ~ Value,
-            tag: Tag[Value]
-        ): Value =
-            self(Field(name, tag)).asInstanceOf[Value]
-
-        /** Combines this Record with another Record.
-          *
-          * @param other
-          *   The Record to combine with
-          * @return
-          *   A new Record containing all fields from both Records
-          */
-        def &[A](other: Record[A]): Record[Fields & A] =
-            self ++ other
-
-        /** Converts the Record to a Map representation.
-          *
-          * @return
-          *   A Map containing all fields and their values
-          */
-        def toMap: Map[Field[?, ?], Any] = self
-
-        /** Returns the set of fields in this Record.
-          *
-          * @return
-          *   A Set of Field instances
-          */
-        def fields: Set[Field[?, ?]] = self.keySet
-
-        /** Returns the number of fields in this Record.
-          */
-        def size: Int = self.size
-
-        /** Creates a new Record containing only the fields specified in the type parameter Fields.
-          *
-          * @return
-          *   A new Record with only the specified fields
-          */
-        def compact(using AsFields[Fields]): Record[Fields] =
-            self.view.filterKeys(AsFields[Fields].contains(_)).toMap
-    end extension
+            Record(Map(Field(self, tag) -> value))
 
     /** Type class for converting types to Records.
       *
@@ -222,7 +216,7 @@ object Record:
             def asRecord(value: A): Record[Fields] =
                 val record_contents = rc.values(Tuple.fromProduct(value))
                 val map             = Map(record_contents*)
-                map.asInstanceOf[Record[Fields]]
+                Record(map).asInstanceOf[Record[Fields]]
             end asRecord
         end given
     end AsRecord
