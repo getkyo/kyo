@@ -9,7 +9,7 @@ class KyoException private[kyo] (
     cause: Text | Throwable = null
 )(using val frame: Frame) extends Exception(
         message match
-            case message: Text => message.toString; case _ => null,
+            case null => null; case _ => message.toString,
         cause match
             case cause: Throwable => cause; case _ => null
     ) with NoStackTrace:
