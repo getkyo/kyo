@@ -5,8 +5,8 @@ import kyo.Ansi.*
 import scala.util.control.NoStackTrace
 
 class KyoException private[kyo] (
-    message: Text = null,
-    cause: Text | Throwable = null
+    message: Text | Null = null,
+    cause: Text | Throwable | Null = null
 )(using val frame: Frame) extends Exception(
         message match
             case null => null; case _ => message.toString,
