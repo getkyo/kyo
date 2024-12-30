@@ -16,6 +16,19 @@ class ConstructorsTest extends Test:
             }
         }
 
+        "emit" - {
+            "should emit a value" in run {
+                val effect =
+                    for
+                        _ <- Kyo.emit(1)
+                        _ <- Kyo.emit(2)
+                        _ <- Kyo.emit(3)
+                    yield "done"
+                Emit.run(effect).map:
+                    case (values, result) => assert(values == Chunk(1, 2, 3) && result == "done")
+            }
+        }
+
         "fail" - {
             "should create an effect that fails with Abort[E]" in {
                 val effect = Kyo.fail("Error message")
