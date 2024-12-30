@@ -275,7 +275,7 @@ object Channel:
             def unapply(value: Put): Option[A] = unapplyValue(value)
     end PutType
 
-    sealed trait LowPriorityPutType:
+    sealed trait LowPriorityPutTypes2:
         given notNested[A]: PutType[A] with
             opaque type Put = A | Chunk[A]
             def apply(value: A): Put         = value
@@ -287,21 +287,35 @@ object Channel:
                 case result: Chunk[A] @unchecked => None
                 case a: A @unchecked             => Some(a)
         end notNested
-    end LowPriorityPutType
+    end LowPriorityPutTypes2
 
-    object PutType extends LowPriorityPutType:
-        sealed case class Wr[A](inner: Chunk[A])
-        given nested[A]: PutType[Chunk[A]] with
-            opaque type Put = Wr[A] | Chunk[Chunk[A]]
-            def apply(value: Chunk[A]): Put         = Wr(value)
-            def chunk(values: Chunk[Chunk[A]]): Put = values
-            def unapplyChunk(value: Chunk[Chunk[A]] | Wr[A]): Option[Chunk[Chunk[A]]] = value match
-                case chunk @ Chunk(inner) => Some(chunk)
-                case _                    => None
-            def unapplyValue(value: Put): Option[Chunk[A]] = value match
+    sealed trait LowPriorityPutTypes1 extends LowPriorityPutTypes2:
+        sealed case class Wr[A](inner: A)
+        given nestedUpper[Ch >: Seq[Any]]: PutType[Ch] with
+            opaque type Put = Wr[Ch] | Chunk[Ch]
+            def apply(value: Ch): Put         = Wr(value)
+            def chunk(values: Chunk[Ch]): Put = values
+            def unapplyChunk(value: Chunk[Ch] | Wr[Ch]): Option[Chunk[Ch]] = value match
+                case Wr(_)            => None
+                case chunk: Chunk[Ch] => Some(chunk)
+            def unapplyValue(value: Put): Option[Ch] = value match
                 case Wr(inner) => Some(inner)
                 case _         => None
-        end nested
+        end nestedUpper
+    end LowPriorityPutTypes1
+
+    object PutType extends LowPriorityPutTypes1:
+        given nestedLower[Ch <: Seq[Any]]: PutType[Ch] with
+            opaque type Put = Wr[Ch] | Chunk[Ch]
+            def apply(value: Ch): Put         = Wr(value)
+            def chunk(values: Chunk[Ch]): Put = values
+            def unapplyChunk(value: Chunk[Ch] | Wr[Ch]): Option[Chunk[Ch]] = value match
+                case Wr(_)            => None
+                case chunk: Chunk[Ch] => Some(chunk)
+            def unapplyValue(value: Put): Option[Ch] = value match
+                case Wr(inner) => Some(inner)
+                case _         => None
+        end nestedLower
     end PutType
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
