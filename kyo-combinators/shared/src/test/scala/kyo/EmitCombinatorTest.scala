@@ -21,12 +21,11 @@ class EmitCombinatorTest extends Test:
         }
 
         "foreachEmit" in run {
-            val emit = Loop(1)(i => if i == 4 then Loop.done(()) else Emit.andMap(i)(_ => Loop.continue(i + 1)))
-            val effect = emit.foreachEmit(i => Var.update[Int](v => v + i).unit)
-                // Get the final state
-                .map(_ => Var.get[Int])
-            Var.run(0)(effect).map: result =>
-                assert(result == 6)
+            val emit = Loop(1)(i => if i == 4 then Loop.done(()) else Emit.andMap(i)(_ => Loop.continue(i + 1))).map(_ => "done")
+            val effect = emit.foreachEmit(i => Var.update[Int](v => v + i).unit).map: result =>
+                Var.get[Int].map(v => (result, v))
+            Var.run(0)(effect).map:
+                case (res, state) => assert(res == "done" && state == 6)
         }
 
         "emitToChannel" in run {
