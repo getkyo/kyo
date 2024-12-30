@@ -74,6 +74,41 @@ class ChannelTest extends Test:
             v  <- f.get
         yield assert(!d1 && d2 && v == 1)
     }
+    "putBatch" - {
+        "should put a batch" in runNotJS {
+            for
+                c   <- Channel.init[Int](2)
+                _   <- c.putBatch(Chunk(1, 2))
+                res <- c.drain
+            yield assert(res == Chunk(1, 2))
+        }
+        "should put batch incrementally if exceeds channel size" in runNotJS {
+            for
+                c   <- Channel.init[Int](2)
+                f   <- Async.run(c.putBatch(Chunk(1, 2, 3, 4, 5, 6)))
+                res <- c.takeExactly(6)
+                _   <- Fiber.get(f)
+            yield assert(res == Chunk(1, 2, 3, 4, 5, 6))
+        }
+        "should put empty batch" in runNotJS {
+            for
+                c       <- Channel.init[Int](2)
+                _       <- c.putBatch(Chunk.empty)
+                isEmpty <- c.empty
+            yield assert(isEmpty)
+        }
+        "should fail when channel is closed" in runNotJS {
+            val effect =
+                for
+                    c <- Channel.init[Int](2)
+                    _ <- c.close
+                    _ <- c.putBatch(Chunk(1, 2))
+                yield ()
+            Abort.run[Closed](effect).map:
+                case Result.Fail(closed: Closed) => assert(true)
+                case other                       => fail(s"$other was not Result.Fail[Closed]")
+        }
+    }
     "takeExactly" - {
         "should return empty chunk if n <= 0" in runNotJS {
             for
@@ -514,7 +549,7 @@ class ChannelTest extends Test:
             yield assert(v.flattenChunk == Chunk.from(0 until 20))
         }
 
-        "should stream concurrently with ingest, with specified chunk size" in run {
+        "should stream concurrently with ingest, never exceeding specified chunk size" in run {
             for
                 c  <- Channel.init[Int](4)
                 bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
@@ -534,6 +569,16 @@ class ChannelTest extends Test:
                 case Result.Success(v)      => fail(s"Stream succeeded unexpectedly: ${v}")
                 case Result.Fail(_: Closed) => assert(true)
                 case Result.Panic(ex)       => fail(s"Stream panicked unexpectedly: ${ex}")
+        }
+
+        "should stream concurrently with ingest via putBatch, with consistent chunk size" in run {
+            for
+                c  <- Channel.init[Int](9)
+                bg <- Async.run(Loop(0)(i => c.putBatch(Chunk(i, i + 1, i + 2)).andThen(Loop.continue(i + 3))))
+                stream = c.stream(3).take(15).mapChunk(ch => Chunk(ch))
+                res <- stream.run
+                _   <- bg.interrupt
+            yield assert(res == Chunk(Chunk(0, 1, 2), Chunk(3, 4, 5), Chunk(6, 7, 8), Chunk(9, 10, 11), Chunk(12, 13, 14)))
         }
     }
 

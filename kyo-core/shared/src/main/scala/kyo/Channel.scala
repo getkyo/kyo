@@ -2,6 +2,7 @@ package kyo
 
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
+import scala.util.boundary
 
 /** A channel for communicating between fibers.
   *
@@ -63,6 +64,37 @@ object Channel:
                     case false => self.putFiber(value).safe.get
                 }
             }
+
+        /** Puts elements into the channel as a batch, asynchronously blocking if necessary. Breaks batch up if it exceeds channel capacity.
+          *
+          * @param values
+          *   Chunk of elements to put
+          */
+        def putBatch(values: Chunk[A])(using Frame): Unit < (Abort[Closed] & Async) =
+            if values.isEmpty then ()
+            else
+                IO.Unsafe {
+                    var i = 0
+                    val attempt = boundary[Maybe[Closed]]:
+                        values.foreach: value =>
+                            val attempt = self.offer(value)
+                            if attempt.contains(false) then boundary.break(Maybe.Absent)
+                            else if attempt.isFail then boundary.break(attempt.failure)
+                            i += 1
+                        Maybe.Absent
+                    attempt match
+                        case Maybe.Present(closed) =>
+                            Abort.fail(closed)
+                        case _ =>
+                            if i >= values.length then
+                                ()
+                            else if i == values.length - 1 then
+                                self.putFiber(values.last).safe.get
+                            else
+                                self.putBatchFiber(values.dropLeft(i)).safe.get
+                            end if
+                    end match
+                }
 
         /** Takes an element from the channel, asynchronously blocking if necessary.
           *
@@ -227,8 +259,50 @@ object Channel:
       * @warning
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
-    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < IO =
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using PutType[A], Frame): Channel[A] < IO =
         IO.Unsafe(Unsafe.init(capacity, access))
+
+    sealed trait PutType[A]:
+        type Put
+        def apply(value: A): Put
+        def chunk(values: Chunk[A]): Put
+        def unapplyChunk(value: Put): Option[Chunk[A]]
+        def unapplyValue(value: Put): Option[A]
+
+        object IsChunk:
+            def unapply(value: Put): Option[Chunk[A]] = unapplyChunk(value)
+        object IsValue:
+            def unapply(value: Put): Option[A] = unapplyValue(value)
+    end PutType
+
+    sealed trait LowPriorityPutType:
+        given notNested[A]: PutType[A] with
+            opaque type Put = A | Chunk[A]
+            def apply(value: A): Put         = value
+            def chunk(values: Chunk[A]): Put = values
+            def unapplyChunk(value: Put): Option[Chunk[A]] = value match
+                case result: Chunk[A] @unchecked => Some(result)
+                case _                           => None
+            def unapplyValue(value: Put): Option[A] = value match
+                case result: Chunk[A] @unchecked => None
+                case a: A @unchecked             => Some(a)
+        end notNested
+    end LowPriorityPutType
+
+    object PutType extends LowPriorityPutType:
+        sealed case class Wr[A](inner: Chunk[A])
+        given nested[A]: PutType[Chunk[A]] with
+            opaque type Put = Wr[A] | Chunk[Chunk[A]]
+            def apply(value: Chunk[A]): Put         = Wr(value)
+            def chunk(values: Chunk[Chunk[A]]): Put = values
+            def unapplyChunk(value: Chunk[Chunk[A]] | Wr[A]): Option[Chunk[Chunk[A]]] = value match
+                case chunk @ Chunk(inner) => Some(chunk)
+                case _                    => None
+            def unapplyValue(value: Put): Option[Chunk[A]] = value match
+                case Wr(inner) => Some(inner)
+                case _         => None
+        end nested
+    end PutType
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe[A]:
@@ -239,6 +313,7 @@ object Channel:
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
 
         def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
+        def putBatchFiber(values: Chunk[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
         def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A]
 
         def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
@@ -257,11 +332,12 @@ object Channel:
         def init[A](
             _capacity: Int,
             access: Access = Access.MultiProducerMultiConsumer
-        )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
+        )(using putType: PutType[A], initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
+            type Put = putType.Put
             new Unsafe[A]:
                 val queue = Queue.Unsafe.init[A](_capacity, access)
                 val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A]](8)
-                val puts  = new MpmcUnboundedXaddArrayQueue[(A, Promise.Unsafe[Closed, Unit])](8)
+                val puts  = new MpmcUnboundedXaddArrayQueue[(Put, Promise.Unsafe[Closed, Unit])](8)
 
                 def capacity = _capacity
 
@@ -287,11 +363,19 @@ object Channel:
 
                 def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
                     val promise = Promise.Unsafe.init[Closed, Unit]()
-                    val tuple   = (value, promise)
+                    val tuple   = (putType(value), promise)
                     puts.add(tuple)
                     flush()
                     promise
                 end putFiber
+
+                def putBatchFiber(values: Chunk[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
+                    val promise = Promise.Unsafe.init[Closed, Unit]()
+                    val tuple   = (putType.chunk(values), promise)
+                    puts.add(tuple)
+                    flush()
+                    promise
+                end putBatchFiber
 
                 def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A] =
                     val promise = Promise.Unsafe.init[Closed, A]()
@@ -329,6 +413,7 @@ object Channel:
                         val fail = queue.size() // Obtain the failed Result
                         takes.drain(_.completeDiscard(fail))
                         puts.drain(_._2.completeDiscard(fail.unit))
+                        puts.drain(_._2.completeDiscard(fail.unit))
                         flush()
                     else if queueSize > 0 && !takesEmpty then
                         // Attempt to transfer a value from the queue to
@@ -341,7 +426,7 @@ object Channel:
                                         // cannot accept the value back, enqueue a
                                         // placeholder put operation
                                         val placeholder = Promise.Unsafe.init[Nothing, Unit]()
-                                        discard(puts.add((value, placeholder)))
+                                        discard(puts.add((putType(value), placeholder)))
                                 case _ =>
                                     // Queue became empty, enqueue the take again
                                     discard(takes.add(promise))
@@ -350,15 +435,28 @@ object Channel:
                     else if queueSize < capacity && !putsEmpty then
                         // Attempt to transfer a value from a waiting
                         // put operation to the queue.
-                        Maybe(puts.poll()).foreach { tuple =>
-                            val (value, promise) = tuple
-                            if queue.offer(value).contains(true) then
-                                // Queue accepted the value, complete the put
-                                discard(promise.complete(Result.unit))
-                            else
-                                // Queue became full, enqueue the put again
-                                discard(puts.add(tuple))
-                            end if
+                        Maybe(puts.poll()).foreach {
+                            case (putType.IsChunk(chunk), promise) =>
+                                var i = 0
+                                boundary[Unit]:
+                                    chunk.foreach: value =>
+                                        if queue.offer(value).contains(false) then boundary.break(())
+                                        else i += 1
+                                if i >= chunk.length then
+                                    discard(promise.complete(Result.unit))
+                                else if i == (chunk.length - 1) then
+                                    discard(puts.add(putType(chunk.last), promise))
+                                else
+                                    discard(puts.add(putType.chunk(chunk.dropLeft(i)), promise))
+                                end if
+                            case tuple @ (putType.IsValue(value), promise) =>
+                                if queue.offer(value).contains(true) then
+                                    // Queue accepted the value, complete the put
+                                    discard(promise.complete(Result.unit))
+                                else
+                                    // Queue became full, enqueue the put again
+                                    discard(puts.add(tuple))
+                                end if
                         }
                         flush()
                     else if queueSize == 0 && !putsEmpty && !takesEmpty then
