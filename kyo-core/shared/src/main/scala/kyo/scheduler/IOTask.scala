@@ -4,6 +4,7 @@ import kyo.*
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.ArrowEffect
+import kyo.kernel.internal.*
 import kyo.scheduler.IOTask.*
 import scala.util.control.NonFatal
 
@@ -86,6 +87,9 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     end run
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
+
+    override def toString =
+        s"IOTask(state = ${stateString()}, preempt = ${{ shouldPreempt() }}, finalizers = ${finalizers.size()}, curr = ${curr})"
 
 end IOTask
 

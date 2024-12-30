@@ -1,7 +1,6 @@
 package kyo
 
 import cats.effect.unsafe.IORuntime
-import cats.effect.unsafe.IORuntime.global
 
 object KyoSchedulerIORuntime {
     implicit lazy val global: IORuntime = {

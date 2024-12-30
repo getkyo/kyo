@@ -1,13 +1,11 @@
 package kyo
 
-import java.util.Arrays
 import kyo.Result.Fail
 import scala.annotation.tailrec
-import scala.util.control.NoStackTrace
 
 /** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
   */
-case class FailedTransaction(frame: Frame) extends Exception(frame.position.show) with NoStackTrace
+class FailedTransaction()(using Frame) extends KyoException
 
 /** Software Transactional Memory (STM) provides concurrent access to shared state using optimistic locking. Rather than acquiring locks
   * upfront, transactions execute speculatively and automatically retry if conflicts are detected during commit. While this enables better
@@ -53,7 +51,7 @@ object STM:
       * @return
       *   Nothing, as this operation always aborts the transaction
       */
-    def retry(using frame: Frame): Nothing < STM = Abort.fail(FailedTransaction(frame))
+    def retry(using Frame): Nothing < STM = Abort.fail(FailedTransaction())
 
     /** Conditionally retries a transaction based on a boolean condition. If the condition is true, the transaction will be retried.
       * Otherwise, execution continues normally.
@@ -61,7 +59,7 @@ object STM:
       * @param cond
       *   The condition that determines whether to retry
       */
-    def retryIf(cond: Boolean)(using frame: Frame): Unit < STM = Abort.when(cond)(FailedTransaction(frame))
+    def retryIf(cond: Boolean)(using Frame): Unit < STM = Abort.when(cond)(FailedTransaction())
 
     /** Executes a transactional computation with explicit state isolation. This version of run supports additional effects beyond Abort and
       * Async through the provided isolate, which ensures proper state management during transaction retries and rollbacks.
@@ -103,9 +101,7 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
-        using frame: Frame
-    ): A < (Async & Abort[E | FailedTransaction]) =
+    def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(using Frame): A < (Async & Abort[E | FailedTransaction]) =
         TID.use {
             case -1L =>
                 // New transaction without a parent, use regular commit flow
@@ -128,7 +124,7 @@ object STM:
                                             ref.unlock(entry)
                                             result
                                         else
-                                            Abort.fail(FailedTransaction(frame))
+                                            Abort.fail(FailedTransaction())
                                         end if
                                     }
                                 case size =>
@@ -138,7 +134,7 @@ object STM:
                                         val array = new Array[Any](size * 2)
 
                                         try
-                                            def fail = throw new FailedTransaction(frame)
+                                            def fail = throw new FailedTransaction()
 
                                             var i = 0
                                             // Pre-validate and dump the log to the flat array

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.kernel.*
-import scala.util.control.NonFatal
 import zio.Exit
 import zio.FiberId
 import zio.Runtime

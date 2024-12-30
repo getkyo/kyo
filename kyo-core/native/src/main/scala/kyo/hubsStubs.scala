@@ -1,7 +1,6 @@
 package java.util.concurrent
 
 import java.util.function.Predicate
-import kyo.discard
 import scala.collection.mutable
 import scala.reflect.ClassTag
 

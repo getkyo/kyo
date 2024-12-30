@@ -4,12 +4,11 @@ export Fiber.Promise
 import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
-import kyo.Tag
 import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
+import kyo.kernel.internal.*
 import kyo.scheduler.*
 import scala.annotation.tailrec
-import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.NotGiven

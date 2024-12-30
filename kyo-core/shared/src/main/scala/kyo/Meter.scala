@@ -341,7 +341,7 @@ object Meter:
                 val st = state.getAndSet(Int.MinValue)
                 val ok = st != Int.MinValue // The meter wasn't already closed
                 if ok then
-                    val fail = Result.fail(Closed("Semaphore is closed", initFrame, frame))
+                    val fail = Result.fail(Closed("Meter", initFrame))
                     // Complete the closed promise to fail new operations
                     closed.completeDiscard(fail)
                     // Drain the pending waiters

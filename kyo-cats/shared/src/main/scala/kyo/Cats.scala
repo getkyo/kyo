@@ -5,7 +5,6 @@ import kyo.kernel.*
 import scala.concurrent.ExecutionContext
 import scala.util.Failure
 import scala.util.Success
-import scala.util.control.NonFatal
 
 object Cats:
 

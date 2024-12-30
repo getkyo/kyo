@@ -172,14 +172,11 @@ object TRef:
             }
         }
 
-    /** Creates a new transactional reference outside of any transaction.
+    /** Creates a new transactional reference.
       *
-      * WARNING: This operation:
-      *   - Cannot be rolled back
-      *   - Is not part of any transaction
-      *   - Will cause any containing transaction to retry if used within one, since it creates a reference with a newer transaction ID
-      *
-      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
+      * When called within an STM transaction, uses the current transaction ID. When called outside a transaction, creates a new transaction
+      * ID. Use `init` for most cases as it provides clearer semantics. Use `initNow` only for static initialization or when
+      * non-transactional creation is needed.
       *
       * @param value
       *   The initial value for the reference
@@ -187,7 +184,10 @@ object TRef:
       *   A new transactional reference containing the value, within the IO effect
       */
     def initNow[A](value: A)(using Frame): TRef[A] < IO =
-        IO.Unsafe(TRef.Unsafe.initNow(value))
+        TID.use {
+            case -1  => IO.Unsafe(TRef.Unsafe.initNow(value))
+            case tid => IO.Unsafe(TRef.Unsafe.init(tid, value))
+        }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:

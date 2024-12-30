@@ -1,7 +1,5 @@
 package kyo
 
-import scala.collection.mutable.ListBuffer
-
 abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abort[Throwable]]:
 
     final override protected def run[A: Flat](v: => A < (Async & Resource & Abort[Throwable]))(using Frame): Unit =

@@ -758,4 +758,84 @@ class IOPromiseTest extends Test:
         }
     }
 
+    "exception handling" - {
+        val ex = new RuntimeException("test exception")
+
+        "multiple callbacks with exceptions" in {
+            val p                     = new IOPromise[Nothing, Int]()
+            var firstCallbackExecuted = false
+            var lastCallbackExecuted  = false
+
+            p.onComplete(_ => firstCallbackExecuted = true)
+            p.onComplete(_ => throw ex)
+            p.onComplete(_ => throw ex)
+            p.onComplete(_ => lastCallbackExecuted = true)
+
+            p.complete(Result.success(42))
+            assert(firstCallbackExecuted)
+            assert(lastCallbackExecuted)
+        }
+
+        "exceptions in onInterrupt callbacks" in {
+            val p                     = new IOPromise[Nothing, Int]()
+            var firstCallbackExecuted = false
+            var lastCallbackExecuted  = false
+
+            p.onComplete(_ => firstCallbackExecuted = true)
+            p.onInterrupt(_ => throw ex)
+            p.onInterrupt(_ => lastCallbackExecuted = true)
+
+            p.interrupt(Result.Panic(new Exception("Test interrupt")))
+            assert(firstCallbackExecuted)
+            assert(lastCallbackExecuted)
+        }
+
+        "nested callbacks with exceptions" in {
+            val p1                    = new IOPromise[Nothing, Int]()
+            val p2                    = new IOPromise[Nothing, Int]()
+            var innerCallbackExecuted = false
+
+            p1.onComplete { _ =>
+                throw ex
+                discard(p2.complete(Result.success(42)))
+            }
+
+            p2.onComplete(_ => innerCallbackExecuted = true)
+
+            p1.complete(Result.success(1))
+            assert(!innerCallbackExecuted)
+
+            p2.complete(Result.success(42))
+            assert(innerCallbackExecuted)
+        }
+
+        "exceptions during promise chaining" in {
+            val p1             = new IOPromise[Nothing, Int]()
+            val p2             = new IOPromise[Nothing, Int]()
+            var chainCompleted = false
+
+            p1.onComplete { _ =>
+                p2.onComplete(_ => throw new RuntimeException("test exception"))
+                p2.onComplete(_ => chainCompleted = true)
+            }
+
+            p1.complete(Result.success(1))
+            p2.complete(Result.success(2))
+
+            assert(chainCompleted)
+        }
+
+        "exceptions with masked promises" in {
+            val original               = new IOPromise[Nothing, Int]()
+            val masked                 = original.mask()
+            var maskedCallbackExecuted = false
+
+            masked.onComplete(_ => throw ex)
+            masked.onComplete(_ => maskedCallbackExecuted = true)
+
+            original.complete(Result.success(42))
+            assert(maskedCallbackExecuted)
+        }
+    }
+
 end IOPromiseTest
