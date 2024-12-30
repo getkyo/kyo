@@ -3407,7 +3407,7 @@ object HelloService:
 
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable]) =
-            Kyo.suspendAttempt { // Adds IO & Abort[Throwable] effect
+            Kyo.suspendAttempt { // Introduces IO & Abort[Throwable] effect
                 println(s"Hello $saluee!")
             }
     end Live
@@ -3418,12 +3418,12 @@ val keepTicking: Nothing < (Async & Emit[String]) =
 
 val effect: Unit < (Async & Resource & Abort[Throwable] & Env[HelloService]) =
     for
-        nameService <- Kyo.service[HelloService]      // Adds Env[NameService] effect
-        _           <- keepTicking
-            .foreachEmit(Console.printLine)           // Handles Emit[String] effect and adds Abort[IOException] effect
-            .forkScoped                               // Adds Async and Resource effects
+        nameService <- Kyo.service[HelloService]      // Introduces Env[NameService]
+        _           <- keepTicking                    // Introduces Async and Emit[String]
+            .foreachEmit(Console.print)               // Handles Emit[String] and introduces Abort[IOException]
+            .forkScoped                               // Introduces Resource
         saluee      <- Console.readln
-        _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
+        _           <- Kyo.sleep(2.seconds)
         _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
     yield ()
     end for
@@ -3439,7 +3439,7 @@ IO.Unsafe.run {                        // Handles IO
                     .catching((thr: Throwable) =>             // Handles Abort[Throwable]
                         Kyo.debug(s"Failed printing to console: ${throwable}")
                     )
-                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but adds Memo effect
+                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but introduces Memo effect
         }
     }
 }
