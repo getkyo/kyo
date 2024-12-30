@@ -143,184 +143,119 @@ object Tag:
         end
     end findTypeEnd
 
-    private enum TypeKind derives CanEqual:
-        case ClassType, UnionType, IntersectionType, ParameterType
-
+    /** Subtype checking follows these formal rules:
+      *
+      * Base Rules: T <: T (Reflexivity) T <: Any (Top) Nothing <: T (Bottom)
+      *
+      * Variance Rules: [+T] A <: B => C[A] <: C[B] (Covariance) [-T] B <: A => C[A] <: C[B] (Contravariance) [=T] A = B => C[A] <: C[B]
+      * (Invariance)
+      *
+      * Union/Intersection Rules: A <: T & U <=> A <: T ∧ A <: U (Intersection) T | U <: A <=> T <: A ∧ U <: A (Union)
+      *
+      * Inheritance: C extends P => C <: P (Inheritance)
+      */
     private def isSubtype(child: String, parent: String): Boolean =
-        // Helper to find end of type, handling nested brackets
-        def findTypeEnd(s: String, start: Int, end: Int): Int =
-            var depth = 0
-            var i     = start
-            while i < end do
-                s.charAt(i) match
-                    case '<'                           => depth += 1
-                    case '>'                           => depth -= 1
-                    case '|' | ',' | '&' if depth == 0 => return i
-                    case _                             =>
-                end match
-                i += 1
-            end while
-            end
-        end findTypeEnd
+        if child == parent then return true
+        if child == "C:scala.Nothing:C:scala.Any" then return true
+        if parent == "C:scala.Any" then return true
 
-        // Helper to check if one class is subtype of another
-        def isClassSubtype(child: String, cStart: Int, cEnd: Int, parent: String, pStart: Int, pEnd: Int): Boolean =
-            // Extract class names
-            def extractClassName(s: String, start: Int, end: Int): String =
-                val baseStart = start + 2 // Skip "C:"
-                val anglePos  = s.indexOf('<', baseStart)
-                val colonPos  = s.indexOf(':', baseStart)
-                val nameEnd =
-                    if anglePos == -1 && colonPos == -1 then end
-                    else if anglePos == -1 then colonPos
-                    else if colonPos == -1 then anglePos
-                    else math.min(anglePos, colonPos)
-                s.substring(baseStart, nameEnd)
-            end extractClassName
+        def isSubtypeOf(child: String, cStart: Int, cEnd: Int, parent: String, pStart: Int, pEnd: Int, variance: Char = '='): Boolean =
+            assert(cStart >= 0 && cEnd <= child.length, s"Invalid child bounds: $cStart, $cEnd")
+            assert(pStart >= 0 && pEnd <= parent.length, s"Invalid parent bounds: $pStart, $pEnd")
+            assert(variance == '+' || variance == '-' || variance == '=', s"Invalid variance: $variance")
 
-            val childName  = extractClassName(child, cStart, cEnd)
-            val parentName = extractClassName(parent, pStart, pEnd)
+            if substringEquals(child, cStart, cEnd, "C:scala.Nothing:C:scala.Any", 0, 23) then return true
+            if substringEquals(parent, pStart, pEnd, "C:scala.Any", 0, 10) then return true
+            if substringEquals(child, cStart, cEnd, parent, pStart, pEnd) then return true
 
-            if childName == parentName then
-                // Same class - check type parameters if present
-                val cParams = child.indexOf('<', cStart)
-                val pParams = parent.indexOf('<', pStart)
-                if cParams != -1 && pParams != -1 then
-                    compareTypeParams(child, cParams + 1, cEnd - 1, parent, pParams + 1, pEnd - 1)
-                else true
-            else
-                // Check inheritance chain
-                var pos = child.indexOf(':', cStart)
-                while pos != -1 && pos < cEnd do
-                    val nextColon = child.indexOf(':', pos + 1)
-                    val nextAngle = child.indexOf('<', pos + 1)
-                    val segmentEnd =
-                        if nextColon == -1 && nextAngle == -1 then cEnd
-                        else if nextColon == -1 then nextAngle
-                        else if nextAngle == -1 then nextColon
-                        else math.min(nextColon, nextAngle)
-
-                    val superName = child.substring(pos + 1, segmentEnd)
-                    if superName == parentName then
-                        // Found parent - check type parameters if present
-                        if nextAngle != -1 && parent.indexOf('<', pStart) != -1 then
-                            if compareTypeParams(
-                                    child,
-                                    nextAngle + 1,
-                                    if nextColon == -1 then cEnd - 1 else nextColon,
-                                    parent,
-                                    parent.indexOf('<', pStart) + 1,
-                                    pEnd - 1
-                                )
-                            then
-                                return true
-                        else return true
-                    end if
-
-                    pos = if nextColon == -1 then -1 else nextColon
-                end while
-                false
-            end if
-        end isClassSubtype
-
-        // Helper to compare type parameters with variance
-        def compareTypeParams(child: String, cStart: Int, cEnd: Int, parent: String, pStart: Int, pEnd: Int): Boolean =
-            var ci = cStart
-            var pi = pStart
-            while ci < cEnd && pi < pEnd do
-                if !child.startsWith("P:", ci) || !parent.startsWith("P:", pi) then return false
-
-                val childVariance  = child.charAt(ci + 2)
-                val childTypeStart = ci + 4
-                val childTypeEnd   = findTypeEnd(child, childTypeStart, cEnd)
-
-                val parentVariance  = parent.charAt(pi + 2)
-                val parentTypeStart = pi + 4
-                val parentTypeEnd   = findTypeEnd(parent, parentTypeStart, pEnd)
-
-                val result = (childVariance, parentVariance) match
-                    case ('=', '=') =>
-                        // Invariant - types must be exactly equal
-                        child.substring(childTypeStart, childTypeEnd) == parent.substring(parentTypeStart, parentTypeEnd)
-                    case ('+', '+') =>
-                        // Covariant - child must be subtype of parent
-                        isSubtypeOf(child, childTypeStart, childTypeEnd, parent, parentTypeStart, parentTypeEnd)
-                    case ('-', '-') =>
-                        // Contravariant - parent must be subtype of child
-                        isSubtypeOf(parent, parentTypeStart, parentTypeEnd, child, childTypeStart, childTypeEnd)
-                    case _ => false
-
-                if !result then return false
-                ci = childTypeEnd + 1
-                pi = parentTypeEnd + 1
-            end while
-            (ci >= cEnd) && (pi >= pEnd)
-        end compareTypeParams
-
-        // Main recursive subtype check
-        def isSubtypeOf(child: String, cStart: Int, cEnd: Int, parent: String, pStart: Int, pEnd: Int): Boolean =
-            // Equal types are subtypes
-            if child.substring(cStart, cEnd) == parent.substring(pStart, pEnd) then return true
-
-            // Any type is subtype of Any
-            if parent.startsWith("C:scala.Any", pStart) then return true
-
-            // Handle different type kinds
             (child.charAt(cStart), parent.charAt(pStart)) match
                 case ('C', 'C') =>
-                    // Class subtyping
-                    isClassSubtype(child, cStart, cEnd, parent, pStart, pEnd)
+                    assert(cStart + 2 < cEnd, "Invalid class type format in child")
+                    assert(pStart + 2 < pEnd, "Invalid class type format in parent")
+
+                    var ci = cStart + 2
+                    var pi = pStart + 2
+
+                    var cNameEnd = ci
+                    var pNameEnd = pi
+                    while cNameEnd < cEnd && child.charAt(cNameEnd) != '<' && child.charAt(cNameEnd) != ':' do cNameEnd += 1
+                    while pNameEnd < pEnd && parent.charAt(pNameEnd) != '<' && parent.charAt(pNameEnd) != ':' do pNameEnd += 1
+
+                    assert(cNameEnd > ci, "Empty class name in child")
+                    assert(pNameEnd > pi, "Empty class name in parent")
+
+                    if substringEquals(child, ci, cNameEnd, parent, pi, pNameEnd) then
+                        if child.charAt(cNameEnd) == '<' && parent.charAt(pNameEnd) == '<' then
+                            assert(cNameEnd + 1 < cEnd, "Invalid type parameter format in child")
+                            assert(pNameEnd + 1 < pEnd, "Invalid type parameter format in parent")
+                            compareTypeParams(
+                                child,
+                                cNameEnd + 1,
+                                findTypeEnd(child, cNameEnd + 1, cEnd - 1),
+                                parent,
+                                pNameEnd + 1,
+                                findTypeEnd(parent, pNameEnd + 1, pEnd - 1),
+                                variance
+                            )
+                        else true
+                    else
+                        var i = cNameEnd
+                        while i < cEnd do
+                            if child.charAt(i) == ':' then
+                                val nextEnd = findTypeEnd(child, i + 1, cEnd)
+                                if isSubtypeOf(child, i + 1, nextEnd, parent, pStart, pEnd, variance) then return true
+                                i = nextEnd
+                            else i += 1
+                        end while
+                        false
+                    end if
 
                 case ('I', _) =>
-                    // Intersection is subtype if all members are
-                    var i = cStart + 2
-                    while i < cEnd do
-                        val nextDelim = findTypeEnd(child, i, cEnd)
-                        val memberEnd = if nextDelim == -1 then cEnd else nextDelim
-                        if !isSubtypeOf(child, i, memberEnd, parent, pStart, pEnd) then return false
-                        i = if nextDelim == -1 then cEnd else nextDelim + 1
-                    end while
-                    true
-
-                case (_, 'U') =>
-                    // Type is subtype of union if subtype of any member
-                    var i = pStart + 2
-                    while i < pEnd do
-                        val nextDelim = findTypeEnd(parent, i, pEnd)
-                        val memberEnd = if nextDelim == -1 then pEnd else nextDelim
-                        if isSubtypeOf(child, cStart, cEnd, parent, i, memberEnd) then return true
-                        i = if nextDelim == -1 then pEnd else nextDelim + 1
-                    end while
-                    false
-
-                case ('U', _) =>
-                    // Union is subtype if all members are
-                    var i = cStart + 2
-                    while i < cEnd do
-                        val nextDelim = findTypeEnd(child, i, cEnd)
-                        val memberEnd = if nextDelim == -1 then cEnd else nextDelim
-                        if !isSubtypeOf(child, i, memberEnd, parent, pStart, pEnd) then return false
-                        i = if nextDelim == -1 then cEnd else nextDelim + 1
-                    end while
-                    true
+                    // A & B <:< T  iff  A <:< T && B <:< T
+                    val parts = splitTypes(child, cStart + 2, cEnd, '&')
+                    parts.forall(p => isSubtypeOf(child, p._1, p._2, parent, pStart, pEnd))
 
                 case (_, 'I') =>
-                    // Type is subtype of intersection if subtype of all members
-                    var i = pStart + 2
-                    while i < pEnd do
-                        val nextDelim = findTypeEnd(parent, i, pEnd)
-                        val memberEnd = if nextDelim == -1 then pEnd else nextDelim
-                        if !isSubtypeOf(child, cStart, cEnd, parent, i, memberEnd) then return false
-                        i = if nextDelim == -1 then pEnd else nextDelim + 1
-                    end while
-                    true
+                    // T <:< A & B  iff  T <:< A && T <:< B
+                    val parts = splitTypes(parent, pStart + 2, pEnd, '&')
+                    parts.forall(p => isSubtypeOf(child, cStart, cEnd, parent, p._1, p._2))
+
+                case ('U', _) =>
+                    // A | B <:< T  iff  A <:< T && B <:< T
+                    val parts = splitTypes(child, cStart + 2, cEnd, '|')
+                    parts.forall(p => isSubtypeOf(child, p._1, p._2, parent, pStart, pEnd))
+
+                case (_, 'U') =>
+                    // T <:< A | B  iff  T <:< A || T <:< B
+                    val parts = splitTypes(parent, pStart + 2, pEnd, '|')
+                    parts.exists(p => isSubtypeOf(child, cStart, cEnd, parent, p._1, p._2))
 
                 case _ => false
             end match
         end isSubtypeOf
 
-        if child == "C:scala.Nothing:C:scala.Any" || parent == "C:scala.Any" then true
-        else isSubtypeOf(child, 0, child.length, parent, 0, parent.length)
+        // Helper method to split union/intersection types while respecting nested type parameters
+        def splitTypes(str: String, start: Int, end: Int, separator: Char): List[(Int, Int)] =
+            var result  = List.empty[(Int, Int)]
+            var depth   = 0
+            var current = start
+            var i       = start
+            while i < end do
+                str.charAt(i) match
+                    case '<' => depth += 1
+                    case '>' => depth -= 1
+                    case c if c == separator && depth == 0 =>
+                        result = (current, i) :: result
+                        current = i + 1
+                    case _ =>
+                end match
+                i += 1
+            end while
+            result = (current, end) :: result
+            result.reverse
+        end splitTypes
+
+        isSubtypeOf(child, 0, child.length, parent, 0, parent.length)
     end isSubtype
 
     /** Show type with type parameters
@@ -375,4 +310,13 @@ object Tag:
     private def bug(tag: Tag[Any], msg: String): Nothing =
         throw new IllegalArgumentException(s"Tag Parsing Error: $msg; Please open an issue at https://github.com/getkyo/kyo/issues - $tag")
     end bug
+
+    private def substringEquals(s1: String, start1: Int, end1: Int, s2: String, start2: Int, end2: Int): Boolean =
+        if end1 - start1 != end2 - start2 then return false
+        var i = 0
+        while i < end1 - start1 do
+            if s1.charAt(start1 + i) != s2.charAt(start2 + i) then return false
+            i += 1
+        true
+    end substringEquals
 end Tag

@@ -52,9 +52,18 @@ object TagMacro:
 
                                 if ctx.contains(arg.typeSymbol.fullName) then
                                     s"P:=:R:${arg.typeSymbol.fullName}"
+                                else if arg match
+                                        case AppliedType(_, _) => true // Check if it's a parameterized type
+                                        case _                 => false
+                                then
+                                    // For nested parameterized types (like Box[Int]), encode the full type
+                                    val encoded = encodeTypeImpl(arg, ctx.and(tpe.typeSymbol.fullName)).valueOrAbort
+                                    s"P:$variance:$encoded"
                                 else if arg.typeSymbol.isType && arg.typeSymbol.typeMembers.exists(_.isTypeParam) then
+                                    // For type constructors (like List, Monad), just use the class name
                                     s"P:=:C:${arg.typeSymbol.fullName}"
                                 else
+                                    // For concrete types, encode the full type
                                     val encoded = encodeTypeImpl(arg, ctx.and(tpe.typeSymbol.fullName)).valueOrAbort
                                     s"P:$variance:$encoded"
                                 end if
