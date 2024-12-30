@@ -917,14 +917,58 @@ extension [A, S](effect: Ack < (Emit[Chunk[A]] & S))
 private case object FinalEmit
 
 extension [A, B, S](effect: B < (Emit[A] & S))
-    /** Handle Emit[A], chunking emissions according to [[chunkSize]]
+    /** Handle Emit[A], returning all emitted values along with the original effect's result value.
+      *
+      * @return
+      *   A computation with handled Emit yielding a tuple of emitted values along with the original computation's result
+      */
+    def handleEmit(using Tag[A], Flat[B], Frame): (Chunk[A], B) < S = Emit.run[A](effect)
+
+    /** Handle Emit[A], returning only emitted values, discarding the original effect's result
+      *
+      * @return
+      *   A computation with handled Emit yielding emitted values only
+      */
+    def handleEmitDiscarding(using Tag[A], Flat[B], Frame): Chunk[A] < S = Emit.run[A](effect).map(_._1)
+
+    /** Handle Emit[A], executing function [[fn]] on each emitted value
+      *
+      * @param fn
+      *   Function to handle each emitted value
+      * @return
+      *   A computation with handled Emit
+      */
+    def foreachEmit[S1](
+        fn: A => Unit < S1
+    )(
+        using
+        tag: Tag[Emit[A]],
+        fl: Flat[B],
+        f: Frame
+    ): B < (S & S1) =
+        ArrowEffect.handle(tag, effect):
+            [C] =>
+                (a, cont) =>
+                    fn(a).map(_ => cont(Ack.Continue()))
+
+    /** Handle Emit[A] by passing emitted values to [[channel]]. Fails with Abort[Closed] on channel closure
+      *
+      * @param channel
+      *   Channel in which to put emitted values
+      * @return
+      *   Asynchronous computation with handled Emit that can fail with Abort[Closed]
+      */
+    def emitToChannel(channel: Channel[A])(using Tag[A], Flat[B], Frame): B < (S & Async & Abort[Closed]) =
+        effect.foreachEmit(a => channel.put(a))
+
+    /** Handle Emit[A], re-emitting in chunks according to [[chunkSize]]
       *
       * @param chunkSize
       *   maximum size of emitted chunks
       *
       * @return
       */
-    def chunkEmit(
+    def emitChunked(
         chunkSize: Int
     )(
         using
@@ -949,36 +993,48 @@ extension [A, B, S](effect: B < (Emit[A] & S))
                 else Emit.andMap(buffer)(_ => v)
         )
 
-    /** Convert an effect that emits type [[A]] while computing a result of type [[B]] to an asynchronous stream of the emission type [[A]]
-      * and a separate asynchronous effect that yields the result of the original effect after the stream has been handled.
+    /** Convert emitting effect to stream, chunking Emitted values in [[chunkSize]], and discarding result.
       *
       * @param chunkSize
-      *   size of the chunks to be emitted by the resulting stream
-      *
+      *   size of chunks to stream
       * @return
-      *   tuple of async stream of type [[A]] and async effect yield result [[B]]
+      *   Stream of emitted values
       */
-    def separateStreamChunking(
+    def emitChunkedToStreamDiscarding(
         chunkSize: Int
     )(
         using
-        tag: Tag[Emit[A]],
-        fr: Frame,
-        at: Tag[A],
-        fl: Flat[B]
-    ): (Stream[A, S & Async], B < Async) < Async =
-        val chunkedEffect = effect.chunkEmit(chunkSize)
+        NotGiven[B <:< Ack],
+        Tag[A],
+        Flat[B],
+        Frame
+    ): Stream[A, S] =
+        effect.emitChunked(chunkSize).emitToStreamDiscarding
 
-        for
-            c <- Channel.init[B](1)
-            streamEmit = chunkedEffect.map: b =>
-                c.put(b).map(_ => Ack.Continue()).orPanic
-        yield (Stream(streamEmit), c.take.orPanic)
-        end for
-    end separateStreamChunking
+    /** Convert an effect that emits values of type [[A]] while computing a result of type [[B]] to an asynchronous stream of the emission
+      * type [[A]] along with a separate asynchronous effect that yields the result of the original effect after the stream has been
+      * handled.
+      *
+      * @param chunkSize
+      *   Size of chunks to stream
+      * @return
+      *   Tuple of async stream of type [[A]] and async effect yielding result [[B]]
+      */
+    def emitChunkedToStreamAndResult(
+        using
+        Tag[A],
+        Flat[B],
+        Frame
+    )(chunkSize: Int): (Stream[A, S & Async], B < Async) < Async =
+        effect.emitChunked(chunkSize).emitToStreamAndResult
 end extension
 
 extension [A, B, S](effect: B < (Emit[Chunk[A]] & S))
+    /** Convert emitting effect to stream and discarding result.
+      *
+      * @return
+      *   Stream of emitted values
+      */
     def emitToStreamDiscarding(
         using
         NotGiven[B <:< Ack],
@@ -990,24 +1046,34 @@ extension [A, B, S](effect: B < (Emit[Chunk[A]] & S))
       * type [[A]] and a separate asynchronous effect that yields the result of the original effect after the stream has been handled.
       *
       * @return
-      *   tuple of async stream of type [[A]] and async effect yield result [[B]]
+      *   tuple of async stream of type [[A]] and async effect yielding result [[B]]
       */
-    def separateStream(
+    def emitToStreamAndResult(
         using
         Flat[B],
         Frame
     ): (Stream[A, S & Async], B < Async) < Async =
         for
-            c <- Channel.init[B](1)
+            p <- Promise.init[Nothing, B]
             streamEmit = effect.map: b =>
-                c.put(b).map(_ => Ack.Continue()).orPanic
-        yield (Stream(streamEmit), c.take.orPanic)
+                p.complete(Result.success(b)).map(_ => Ack.Continue())
+        yield (Stream(streamEmit), p.join)
 end extension
 
-extension [A, S](effect: Ack < (Emit[A] & S))
-    /** Convert streaming Emit effect to a [[Stream[A, S]]], chunking emissions by specified size
+extension [A, B, S](effect: Ack < (Emit[A] & S))
+    /** Convert emitting effect to stream, chunking Emitted values in [[chunkSize]].
       *
+      * @param chunkSize
+      *   Size of chunks to stream
       * @return
-      *   Stream representation of original effect
+      *   Stream of emitted values
       */
-    def emitChunkedToStream(chunkSize: Int)(using Tag[A], Frame): Stream[A, S] = Stream(effect.chunkEmit(chunkSize))
+    def emitChunkedToStream(
+        chunkSize: Int
+    )(
+        using
+        Tag[A],
+        Frame
+    ): Stream[A, S] =
+        effect.emitChunked(chunkSize).emitToStream
+end extension
