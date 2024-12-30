@@ -7,10 +7,10 @@ object TagMacro:
     def derive[A: Type](using q: Quotes): Expr[Tag[A]] =
         import q.reflect.*
         val raw = encodeType(TypeRepr.of[A])
-        '{ Tag.fromRaw[A](${ Expr(raw) }) }
+        '{ Tag.fromRaw[A]($raw) }
     end derive
 
-    private def encodeType(using q: Quotes)(tpe: q.reflect.TypeRepr): String =
+    private def encodeType(using q: Quotes)(tpe: q.reflect.TypeRepr): Expr[String] =
         import q.reflect.*
 
         case class Context(inheritanceChain: List[String] = Nil)
@@ -22,60 +22,84 @@ object TagMacro:
             end extension
         end Context
 
-        def encodeTypeImpl(tpe: TypeRepr, ctx: Context): String =
-            tpe.dealias match
+        def encodeTypeImpl(tpe: TypeRepr, ctx: Context): Expr[String] =
+            val dealiasedType = tpe.dealias
+            dealiasedType match
                 case OrType(left, right) =>
-                    s"U:${encodeTypeImpl(left, ctx)}|${encodeTypeImpl(right, ctx)}"
+                    val leftStr  = encodeTypeImpl(left, ctx).valueOrAbort
+                    val rightStr = encodeTypeImpl(right, ctx).valueOrAbort
+                    Expr(s"U:$leftStr|$rightStr")
+
                 case AndType(left, right) =>
-                    s"I:${encodeTypeImpl(left, ctx)}&${encodeTypeImpl(right, ctx)}"
-                case tpe if tpe.typeSymbol.isClassDef =>
-                    val className = tpe.typeSymbol.fullName
+                    val leftStr  = encodeTypeImpl(left, ctx).valueOrAbort
+                    val rightStr = encodeTypeImpl(right, ctx).valueOrAbort
+                    Expr(s"I:$leftStr&$rightStr")
 
-                    if ctx.contains(className) then
-                        s"R:$className"
-                    else
-                        val typeParams =
-                            if tpe.typeArgs.isEmpty then ""
-                            else
-                                tpe.typeArgs.zipWithIndex.map { case (arg, idx) =>
-                                    val variance = tpe.typeSymbol.typeMembers(idx).flags match
-                                        case flags if flags.is(Flags.Covariant)     => "+"
-                                        case flags if flags.is(Flags.Contravariant) => "-"
-                                        case _                                      => "="
+                case tpe @ AppliedType(tycon, args) =>
+                    val dealiasedTycon = tycon.dealias
+                    val className      = dealiasedTycon.typeSymbol.fullName
+                    val typeParams =
+                        if args.isEmpty then ""
+                        else
+                            args.zipWithIndex.map { case (arg, idx) =>
+                                // Get the type parameter for this specific index
+                                val typeParams = dealiasedTycon.typeSymbol.typeMembers.filter(_.isTypeParam)
+                                val typeParam  = typeParams(idx)
+                                val variance = typeParam.flags match
+                                    case flags if flags.is(Flags.Covariant)     => "+"
+                                    case flags if flags.is(Flags.Contravariant) => "-"
+                                    case _                                      => "="
 
-                                    // Important: Use original ctx for encoding type params.
-                                    val encoded = encodeTypeImpl(arg, ctx)
+                                if ctx.contains(arg.typeSymbol.fullName) then
+                                    s"P:=:R:${arg.typeSymbol.fullName}"
+                                else if arg.typeSymbol.isType && arg.typeSymbol.typeMembers.exists(_.isTypeParam) then
+                                    s"P:=:C:${arg.typeSymbol.fullName}"
+                                else
+                                    val encoded = encodeTypeImpl(arg, ctx.and(tpe.typeSymbol.fullName)).valueOrAbort
                                     s"P:$variance:$encoded"
-                                }.mkString("<", ",", ">")
+                                end if
+                            }.mkString("<", ",", ">")
 
-                        val parentCtx = ctx.and(className) // Get parent types - here we add to inheritance chain
-                        val parents = tpe.baseClasses.tail
-                            .filterNot(_.fullName == className)
-                            .map(sym => tpe.baseType(sym))
-                            .distinct
-                            .map { parentType =>
-                                val parentName = parentType.typeSymbol.fullName
-                                val parentParams =
-                                    if parentType.typeArgs.isEmpty then ""
-                                    else
-                                        parentType.typeArgs
-                                            .map(arg => encodeTypeImpl(arg, parentCtx))
-                                            .mkString("<", ",", ">")
-                                s":C:$parentName$parentParams"
-                            }
-                            .mkString
+                    Expr(s"C:$className$typeParams")
 
-                        s"C:$className$typeParams$parents"
-                    end if
+                case tpe if tpe.typeSymbol.isClassDef =>
+                    val baseTypes = tpe.baseClasses.tail.map { sym =>
+                        if ctx.contains(sym.fullName) then
+                            s":C:${sym.fullName}"
+                        else
+                            val baseType = tpe.baseType(sym)
+                            baseType match
+                                case AppliedType(tycon, args) =>
+                                    val params = args.zipWithIndex.map { case (arg, idx) =>
+                                        if arg.typeSymbol.fullName == tpe.typeSymbol.fullName ||
+                                            ctx.contains(arg.typeSymbol.fullName)
+                                        then
+                                            s"P:=:R:${arg.typeSymbol.fullName}"
+                                        else if arg.typeSymbol.isType && arg.typeSymbol.typeMembers.exists(_.isTypeParam) then
+                                            s"P:=:C:${arg.typeSymbol.fullName}"
+                                        else
+                                            val variance = tycon.typeSymbol.typeMembers(idx).flags match
+                                                case flags if flags.is(Flags.Covariant)     => "+"
+                                                case flags if flags.is(Flags.Contravariant) => "-"
+                                                case _                                      => "="
+                                            s"P:$variance:C:${arg.typeSymbol.fullName}"
+                                    }.mkString("<", ",", ">")
+                                    s":C:${sym.fullName}$params"
+                                case _ =>
+                                    s":C:${sym.fullName}"
+                            end match
+                    }.mkString("")
+
+                    val fullName = tpe.typeSymbol.fullName.replaceAll("\\(\\)", "")
+                    val result   = s"C:$fullName$baseTypes"
+                    if result.length > 10000 then
+                        report.errorAndAbort(s"Class type encoding too large (${result.length}): $result")
+                    Expr(result)
+
                 case _ =>
-                    report.errorAndAbort(
-                        s"""kyo.Tag: Macro failed to encode type.
-                         |Please report a bug: https://github.com/getkyo/kyo/issues
-                         |
-                         |Type: [${tpe.show}]
-                         |Context: [${ctx.inheritanceChain.mkString(",")}]
-                         |""".stripMargin.red
-                    )
+                    Expr(s"C:${tpe.show}")
+            end match
+        end encodeTypeImpl
 
         encodeTypeImpl(tpe, Context())
     end encodeType

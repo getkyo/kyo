@@ -36,9 +36,11 @@ object TagTestMacro:
         frame: Expr[Frame]
     )(using q: Quotes): Expr[Unit] =
         import q.reflect.*
-        val compilerSubtype   = TypeRepr.of[T1] <:< TypeRepr.of[T2]
-        val compilerSupertype = TypeRepr.of[T2] <:< TypeRepr.of[T1]
-        val compilerEquals    = TypeRepr.of[T1] =:= TypeRepr.of[T2]
+        val t1                = TypeRepr.of[T1]
+        val t2                = TypeRepr.of[T2]
+        val compilerSubtype   = t1 <:< t2
+        val compilerSupertype = t2 <:< t1
+        val compilerEquals    = t1 =:= t2
 
         '{
             def failure[A, B](op: String, kyo: Boolean, compiler: Boolean, izumi: Boolean)(a: Tag[A], b: Tag[B]): String =
@@ -54,7 +56,7 @@ object TagTestMacro:
                 |""".stripMargin.yellow
 
             val subtypeTest = Test(
-                s"${$k1.show} <:< ${$k2.show}",
+                s"${$k1.showTpe} <:< ${$k2.showTpe}",
                 () =>
                     val kresult = $k1 <:< $k2
                     val iresult = $i1 <:< $i2
@@ -67,7 +69,7 @@ object TagTestMacro:
             )
 
             val supertypeTest = Test(
-                s"${$k1.show} >:> ${$k2.show}",
+                s"${$k1.showTpe} >:> ${$k2.showTpe}",
                 () =>
                     val kresult = $k1 >:> $k2
                     val iresult = $i2 <:< $i1
@@ -80,10 +82,10 @@ object TagTestMacro:
             )
 
             val equalityTest = Test(
-                s"${$k2.showTpe} =:= ${$k1.showTpe}",
+                s"${$k1.showTpe} =:= ${$k2.showTpe}",
                 () =>
-                    val kresult = $k2 =:= $k1
-                    val iresult = $i2 =:= $i1
+                    val kresult = $k1 =:= $k2
+                    val iresult = $i1 =:= $i2
                     if ! $skipExpr && ${ Expr(compilerEquals) } != iresult then
                         println(izumiMismatch("=:=", ${ Expr(compilerEquals) }, iresult))
                     assert(
@@ -93,10 +95,10 @@ object TagTestMacro:
             )
 
             val inequalityTest = Test(
-                s"${$k2.showTpe} =!= ${$k1.showTpe}",
+                s"${$k1.showTpe} =!= ${$k2.showTpe}",
                 () =>
-                    val kresult = $k2 =!= $k1
-                    val iresult = !($i2 =:= $i1)
+                    val kresult = $k1 =!= $k2
+                    val iresult = !($i1 =:= $i2)
                     if ! $skipExpr && !${ Expr(compilerEquals) } != iresult then
                         println(izumiMismatch("=!=", !${ Expr(compilerEquals) }, iresult))
                     assert(

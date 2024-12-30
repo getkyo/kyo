@@ -88,21 +88,19 @@ class TypeMapTest extends Test:
     }
 
     ".get" - {
-        "A & B" in {
-            assertDoesNotCompile(
-                """
-                  | def intersection[A, B](m: TypeMap[A & B]) =
-                  |     m.get[A & B]
-                  |""".stripMargin
-            )
+        "A & B" in pendingUntilFixed {
+            given CanEqual[String | Comparable[String], String | Comparable[String]] = CanEqual.derived
+            def intersection[A, B](m: TypeMap[A & B]) =
+                m.get[A & B]
+            assert(intersection[String, Comparable[String]](TypeMap("hello")) == "hello")
+            ()
         }
-        "A | B" in {
-            assertDoesNotCompile(
-                """
-                  | def union[A, B](m: TypeMap[A & B]) =
-                  |     m.get[A | B]
-                  |""".stripMargin
-            )
+        "A | B" in pendingUntilFixed {
+            given CanEqual[String | Comparable[String], String | Comparable[String]] = CanEqual.derived
+            def union[A, B](m: TypeMap[A | B]) =
+                m.get[A | B]
+            assert(union[String, Comparable[String]](TypeMap("hello")) == "hello")
+            ()
         }
         "subtype" in {
             abstract class A
@@ -203,19 +201,18 @@ class TypeMapTest extends Test:
             assert(e2.get[Int] == 42)
             assert(e2.get[Boolean])
         }
-        "A & B" in {
-            assertDoesNotCompile("""
-                  | def intersection[A, B](ab: A & B) =
-                  |     TypeMap.empty.add(ab)
-                  |""".stripMargin)
+        "A & B" in pendingUntilFixed {
+            def intersection[A, B](ab: A & B) =
+                TypeMap.empty.add(ab)
+            assert(intersection[String, Comparable[String]]("hello").get[String] == "hello")
+            ()
         }
-        "A | B" in {
-            assertDoesNotCompile(
-                """
-                  | def union[A, B](ab: A | B) =
-                  |     TypeMap.empty.add(ab)
-                  |""".stripMargin
-            )
+        "A | B" in pendingUntilFixed {
+            given CanEqual[String | Comparable[String], String | Comparable[String]] = CanEqual.derived
+            def union[A, B](ab: A | B) =
+                TypeMap.empty.add(ab)
+            assert(union[String, Comparable[String]]("hello").get[String | Comparable[String]] == "hello")
+            ()
         }
         "subtype" in {
             abstract class A

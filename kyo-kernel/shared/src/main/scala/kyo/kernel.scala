@@ -32,7 +32,7 @@ private[kyo] object bug:
 
     def failTag[A, B, S](
         kyo: A < S,
-        expected: Tag.Full[B]
+        expected: Tag[B]
     ): Nothing =
         bug(s"Unexpected pending effect while handling ${expected.show}: " + kyo)
 

@@ -56,10 +56,10 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
         "subtype with type parameter" - {
             class Parent[A]
             class Child[A] extends Parent[String]
-            test[Child[Int], Parent[String]](pending = true)
+            test[Child[Int], Parent[String]]
         }
         "supertype with type parameter" - {
-            test[String, Comparable[String]](pending = true)
+            test[String, Comparable[String]]
         }
     }
 
@@ -319,20 +319,20 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
             test[Nothing, Any]
             test[Nothing, AnyRef]
             test[Nothing, AnyVal]
-            test[List[Nothing], List[Int]](pending = true)
+            test[List[Nothing], List[Int]]
         }
 
-        "Null" - {
-            test[Null, AnyRef](pending = true)
-            test[Null, String](pending = true)
-            test[List[Null], List[String]](pending = true)
-        }
+        // "Null" - {
+        //     test[Null, AnyRef]
+        //     test[Null, String]
+        //     test[List[Null], List[String]]
+        // }
 
         "Any" - {
             test[Any, Any]
             test[Any, AnyRef](skipIzumiWarning = true) // known izumi limitation
-            test[Any, AnyVal](pending = true)
-            test[List[Any], List[Int]](pending = true)
+            test[Any, AnyVal]
+            test[List[Any], List[Int]]
         }
     }
 
@@ -357,22 +357,22 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     // TOOD: fix the rendering of higher kinded types
-    // "higher kinded types" - {
-    //     type Id[A] = A
-    //     trait Higher[F[_]]
-    //     trait Monad[F[_]]
-    //     "simple higher kinded equality" {
-    //         test[Higher[List], Higher[List]]
-    //     }
+    "higher kinded types" - {
+        type Id[A] = A
+        trait Higher[F[_]]
+        trait Monad[F[_]]
+        "simple higher kinded equality" - {
+            test[Higher[List], Higher[List]]
+        }
 
-    //     "different higher kinded types" {
-    //         test[Higher[List], Higher[Vector]]
-    //     }
+        "different higher kinded types" - {
+            test[Higher[List], Higher[Vector]]
+        }
 
-    //     "nested higher kinded types" {
-    //         test[Monad[Id], Monad[List]]
-    //     }
-    // }
+        "nested higher kinded types" - {
+            test[Monad[Id], Monad[List]]
+        }
+    }
 
     "showTpe" - {
         "primitive" in {
@@ -432,10 +432,10 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
             trait X extends Comparable[X] with Ordering[X] with PartialOrdering[X]
             assert(Tag[X].showTpe == "kyo.TagTest.X")
         }
-        "higher-kinded types" in pendingUntilFixed {
+        "higher-kinded types" in {
+            trait IO[A]
             trait Monad[F[_]]
-            assert(Tag[Monad[List]].showTpe == "kyo.TagTest.Monad[scala.collection.immutable.List]", Tag[Monad[List]].raw)
-            ()
+            assert(Tag[Monad[IO]].showTpe == "kyo.TagTest.Monad[kyo.TagTest.IO]")
         }
     }
 
@@ -451,6 +451,36 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
         "Tag[Any]" in {
             assert(Tag[Any].raw == "C:scala.Any")
+        }
+    }
+
+    "members" - {
+        object Big:
+            trait Small
+            class Sub extends Small
+
+        "raw" in {
+            assert(Tag[Big.Small].raw == "C:kyo.TagTest._$Big$.Small:C:java.lang.Object:C:scala.Matchable:C:scala.Any")
+            assert(
+                Tag[Big.Sub].raw == "C:kyo.TagTest._$Big$.Sub:C:kyo.TagTest._$Big$.Small:C:java.lang.Object:C:scala.Matchable:C:scala.Any"
+            )
+        }
+
+        "equal" - {
+            test[Big.Small, Big.Small]
+        }
+
+        "subtype" - {
+            test[Big.Sub, Big.Small]
+        }
+
+        "generic" - {
+            class Box[A]
+            test[Box[Big.Small], Box[Big.Small]]
+
+            class Box2[A]
+            def test2[A: Tag: izumi.reflect.Tag] = test[Box2[A], Box2[A]]
+            test2[Big.Sub]
         }
     }
 
