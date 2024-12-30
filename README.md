@@ -3497,14 +3497,16 @@ val handled: Result[A | B | C, Int] < Any = effect.result
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
+val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
 
 // Manipulate single types from within the union
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
 val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
 val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
+val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap
 val aToAbsent: Int < Abort[Absent | B | C] = effect.forAbort[A].toAbsent
 val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toEmpty
-val aToThrowable: Int < (Abort[Throwable | B | C]) = effect.forAbort[A].toThrowable
+val aToThrowable: Int < Abort[Throwable | B | C] = effect.forAbort[A].toThrowable
 ```
 
 
