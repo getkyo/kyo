@@ -3413,13 +3413,15 @@ object HelloService:
     end Live
 end HelloService
 
-val keepTicking: Nothing < (Async & Abort[IOException]) =
-    (Console.print(".") *> Kyo.sleep(1.second)).forever
+val keepTicking: Nothing < (Async & Emit[String]) =
+    (Kyo.emit(".") *> Kyo.sleep(1.second)).forever
 
 val effect: Unit < (Async & Resource & Abort[Throwable] & Env[HelloService]) =
     for
         nameService <- Kyo.service[HelloService]      // Adds Env[NameService] effect
-        _           <- keepTicking.forkScoped         // Adds Async, Abort[IOException], and Resource effects
+        _           <- keepTicking
+            .foreachEmit(Console.printLine)           // Handles Emit[String] effect and adds Abort[IOException] effect
+            .forkScoped                               // Adds Async and Resource effects
         saluee      <- Console.readln
         _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
         _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
