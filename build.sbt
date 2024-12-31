@@ -396,8 +396,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.0",
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.0"
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.1",
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.1"
         )
         .jvmSettings(mimaCheck(false))
 
