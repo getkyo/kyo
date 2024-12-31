@@ -29,10 +29,10 @@ import scala.util.NotGiven
   * =Field Access=
   * Fields are accessed with compile-time verification of both existence and type:
   * {{{
-  * record("name") // Returns "Alice" as String
-  * record("age")  // Returns 30 as Int
-  * record[String]("nonexistent") // Won't compile
-  * record[Int]("name")           // Won't compile
+  * record.name // Returns "Alice" as String
+  * record.age  // Returns 30 as Int
+  * record.nonexistent // Won't compile
+  * (record.name: Int) // Won't compile
   * }}}
   *
   * =Field Subsetting=
@@ -62,8 +62,8 @@ import scala.util.NotGiven
   * Records support duplicate field names with different types, enabling flexible data modeling:
   * {{{
   * val record = "value" ~ "string" & "value" ~ 42
-  * record[String]("value") // Returns "string"
-  * record[Int]("value")    // Returns 42
+  * (record.value: String) // Returns "string"
+  * (record.value: Int)    // Returns 42
   * }}}
   *
   * =Known Limitations=
