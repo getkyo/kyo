@@ -50,6 +50,14 @@ class HubTest extends Test:
             v <- l.poll
         yield assert(b && v.isEmpty)
     }
+    "takeExactly" in runNotJS {
+        for
+            h   <- Hub.init[Int](3)
+            l   <- h.listen
+            _   <- Kyo.foreachDiscard(Seq(1, 2, 3))(h.put(_))
+            res <- l.takeExactly(3)
+        yield assert(res == Chunk(1, 2, 3))
+    }
     "close hub" in runNotJS {
         for
             h  <- Hub.init[Int](2)
@@ -131,6 +139,18 @@ class HubTest extends Test:
             v <- l.poll
         yield assert(v.isEmpty)
     }
+    "resource" in runNotJS {
+        val effect = Resource.run:
+            for
+                h <- Hub.init[Int](2)
+                l <- h.listen
+                _ <- h.put(1)
+                v <- l.take
+            yield (l, v)
+        effect.map:
+            case (l, v) => l.closed.map: isClosed =>
+                    assert(isClosed && v == 1)
+    }
     "contention" - {
         "writes" in runNotJS {
             for
@@ -162,18 +182,6 @@ class HubTest extends Test:
                 e2 <- Kyo.foreach(l)(_.empty)
             yield assert(t == Chunk.fill(100)(1) && e1 && e2 == Chunk.fill(100)(true))
         }
-    }
-    "resource" in runNotJS {
-        val effect = Resource.run:
-            for
-                h <- Hub.init[Int](2)
-                l <- h.listen
-                _ <- h.put(1)
-                v <- l.take
-            yield (l, v)
-        effect.map:
-            case (l, v) => l.closed.map: isClosed =>
-                    assert(isClosed && v == 1)
     }
     "stream" - {
         "multiple listeners should stream the same elements" in runNotJS {
