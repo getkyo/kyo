@@ -77,25 +77,20 @@ object Channel:
             else
                 IO.Unsafe {
                     var i = 0
-                    val attempt = boundary[Maybe[Closed]]:
+                    boundary[Unit < (Abort[Closed] & Async)]:
                         values.foreach: value =>
-                            val attempt = self.offer(value)
-                            if attempt.contains(false) then boundary.break(Maybe.Absent)
-                            else if attempt.isFail then boundary.break(attempt.failure)
-                            i += 1
-                        Maybe.Absent
-                    attempt match
-                        case Maybe.Present(closed) =>
-                            Abort.fail(closed)
-                        case _ =>
-                            if i >= values.length then
-                                ()
-                            else if i == values.length - 1 then
-                                self.putFiber(values.last).safe.get
-                            else
-                                self.putBatchFiber(values.dropLeft(i)).safe.get
-                            end if
-                    end match
+                            self.offer(value) match
+                                case Result.Success(true) =>
+                                    i += 1
+                                case Result.Success(false) =>
+                                    boundary.break:
+                                        if i == values.length - 1 then
+                                            self.putFiber(values.last).safe.get
+                                        else
+                                            self.putBatchFiber(values.dropLeft(i)).safe.get
+                                        end if
+                                case Result.Fail(cl) =>
+                                    boundary.break(Abort.fail(cl))
                 }
 
         /** Takes an element from the channel, asynchronously blocking if necessary.
@@ -268,13 +263,12 @@ object Channel:
         type Put
         def apply(value: A): Put
         def chunk(values: Chunk[A]): Put
-        def unapplyChunk(value: Put): Option[Chunk[A]]
-        def unapplyValue(value: Put): Option[A]
+        def fold[B](put: Put)(isValue: A => B)(isChunk: Chunk[A] => B): B
 
         object IsChunk:
-            def unapply(value: Put): Option[Chunk[A]] = unapplyChunk(value)
+            def unapply(value: Put): Option[Chunk[A]] = fold(value)(_ => None)(Some(_))
         object IsValue:
-            def unapply(value: Put): Option[A] = unapplyValue(value)
+            def unapply(value: Put): Option[A] = fold(value)(Some(_))(_ => None)
     end PutType
 
     sealed trait LowPriorityPutTypes:
@@ -283,26 +277,22 @@ object Channel:
             opaque type Put = Wr[A] | Chunk[A]
             def apply(value: A): Put         = Wr(value)
             def chunk(values: Chunk[A]): Put = values
-            def unapplyChunk(value: Chunk[A] | Wr[A]): Option[Chunk[A]] = value match
-                case Wr(_)           => None
-                case chunk: Chunk[A] => Some(chunk)
-            def unapplyValue(value: Put): Option[A] = value match
-                case Wr(inner) => Some(inner)
-                case _         => None
+            def fold[B](put: Put)(isValue: A => B)(isChunk: Chunk[A] => B): B = put match
+                case Wr(a)           => isValue(a)
+                case chunk: Chunk[A] => isChunk(chunk)
         end nested
     end LowPriorityPutTypes
 
     object PutType extends LowPriorityPutTypes:
+        // For any type that could not be a Chunk, there is no need to wrap the non-chunk
+        // value. (Using Seq as bounds because Chunk is not covariant.)
         given notNested[A](using NotGiven[A <:< Seq[Any]], NotGiven[Seq[Any] <:< A]): PutType[A] with
             opaque type Put = A | Chunk[A]
             def apply(value: A): Put         = value
             def chunk(values: Chunk[A]): Put = values
-            def unapplyChunk(value: Put): Option[Chunk[A]] = value match
-                case result: Chunk[A] @unchecked => Some(result)
-                case _                           => None
-            def unapplyValue(value: Put): Option[A] = value match
-                case result: Chunk[A] @unchecked => None
-                case a: A @unchecked             => Some(a)
+            def fold[B](put: Put)(isValue: A => B)(isChunk: Chunk[A] => B): B = put match
+                case chunk: Chunk[A] @unchecked => isChunk(chunk)
+                case a: A @unchecked            => isValue(a)
         end notNested
     end PutType
 
