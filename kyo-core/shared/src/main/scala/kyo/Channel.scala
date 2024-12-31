@@ -89,10 +89,8 @@ object Channel:
                                         else
                                             self.putBatchFiber(Chunk.from(values).dropLeft(i)).safe.get
                                         end if
-                                case Result.Fail(cl) =>
-                                    boundary.break(Abort.fail(cl))
-                                case Result.Panic(e) =>
-                                    boundary.break(Abort.panic(e))
+                                case err: Result.Error[Closed] @unchecked =>
+                                    boundary.break(Abort.get(err))
                 }
 
         /** Takes an element from the channel, asynchronously blocking if necessary.
