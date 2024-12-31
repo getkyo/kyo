@@ -146,10 +146,13 @@ class HubTest extends Test:
                 l <- h.listen
                 _ <- h.put(1)
                 v <- l.take
-            yield (l, v)
+            yield (h, l, v)
         effect.map:
-            case (l, v) => l.closed.map: isClosed =>
-                    assert(isClosed && v == 1)
+            case (h, l, v) =>
+                for
+                    lClosed <- l.closed
+                    hClosed <- h.closed
+                yield assert(lClosed && !hClosed && v == 1)
     }
     "contention" - {
         "writes" in runNotJS {
@@ -205,7 +208,7 @@ class HubTest extends Test:
                     fp <- Async.run(Kyo.foreachDiscard(0 until 4)(h.put(_)))
                     _ <- l.stream().runForeach: v =>
                         Var.update[Chunk[Int]](_.append(v)).map: _ =>
-                            if v == 3 then l.close.map(_ => ()) else ()
+                            if v == 3 then l.close.unit else ()
                     res <- Var.get[Chunk[Int]]
                 yield res
             Var.run(Chunk.empty[Int])(effect).map: res =>
@@ -218,7 +221,7 @@ class HubTest extends Test:
                     l  <- h.listen
                     fp <- Async.run(Kyo.foreachDiscard(0 until 4)(h.put(_)))
                     _ <- l.streamFailing().runForeach: v =>
-                        if v == 3 then l.close.map(_ => ()) else ()
+                        if v == 3 then l.close.unit else ()
                 yield ()
             Abort.run[Closed](effect).map:
                 case Result.Fail(_: Closed) => succeed

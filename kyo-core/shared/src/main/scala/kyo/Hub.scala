@@ -127,7 +127,7 @@ class Hub[A] private[kyo] (
                                 }
                             case false =>
                                 Resource.acquireRelease(new Listener[A](this, child)): listener =>
-                                    listener.close.map(_ => ())
+                                    listener.close.unit
                         }
                     }
                 }
