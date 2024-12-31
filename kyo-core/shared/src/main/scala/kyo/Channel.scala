@@ -72,7 +72,7 @@ object Channel:
           * @param values
           *   Chunk of elements to put
           */
-        def putBatch(values: Chunk[A])(using Frame): Unit < (Abort[Closed] & Async) =
+        def putBatch(values: Seq[A])(using Frame): Unit < (Abort[Closed] & Async) =
             if values.isEmpty then ()
             else
                 IO.Unsafe {
@@ -87,10 +87,12 @@ object Channel:
                                         if i == values.length - 1 then
                                             self.putFiber(values.last).safe.get
                                         else
-                                            self.putBatchFiber(values.dropLeft(i)).safe.get
+                                            self.putBatchFiber(Chunk.from(values).dropLeft(i)).safe.get
                                         end if
                                 case Result.Fail(cl) =>
                                     boundary.break(Abort.fail(cl))
+                                case Result.Panic(e) =>
+                                    boundary.break(Abort.panic(e))
                 }
 
         /** Takes an element from the channel, asynchronously blocking if necessary.
@@ -256,45 +258,8 @@ object Channel:
       * @warning
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
-    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using PutType[A], Frame): Channel[A] < IO =
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < IO =
         IO.Unsafe(Unsafe.init(capacity, access))
-
-    sealed abstract class PutType[A]:
-        type Put
-        def apply(value: A): Put
-        def chunk(values: Chunk[A]): Put
-        def fold[B](put: Put)(isValue: A => B)(isChunk: Chunk[A] => B): B
-
-        object IsChunk:
-            def unapply(value: Put): Option[Chunk[A]] = fold(value)(_ => None)(Some(_))
-        object IsValue:
-            def unapply(value: Put): Option[A] = fold(value)(Some(_))(_ => None)
-    end PutType
-
-    sealed trait LowPriorityPutTypes:
-        sealed case class Wr[A](inner: A)
-        given nested[A]: PutType[A] with
-            opaque type Put = Wr[A] | Chunk[A]
-            def apply(value: A): Put         = Wr(value)
-            def chunk(values: Chunk[A]): Put = values
-            def fold[B](put: Put)(isValue: A => B)(isChunk: Chunk[A] => B): B = put match
-                case Wr(a)           => isValue(a)
-                case chunk: Chunk[A] => isChunk(chunk)
-        end nested
-    end LowPriorityPutTypes
-
-    object PutType extends LowPriorityPutTypes:
-        // For any type that could not be a Chunk, there is no need to wrap the non-chunk
-        // value. (Using Seq as bounds because Chunk is not covariant.)
-        given notNested[A](using NotGiven[A <:< Seq[Any]], NotGiven[Seq[Any] <:< A]): PutType[A] with
-            opaque type Put = A | Chunk[A]
-            def apply(value: A): Put         = value
-            def chunk(values: Chunk[A]): Put = values
-            def fold[B](put: Put)(isValue: A => B)(isChunk: Chunk[A] => B): B = put match
-                case chunk: Chunk[A] @unchecked => isChunk(chunk)
-                case a: A @unchecked            => isValue(a)
-        end notNested
-    end PutType
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe[A]:
@@ -321,16 +286,21 @@ object Channel:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
+        private enum Put[A]:
+            val promise: Promise.Unsafe[Closed, Unit]
+            case Batch(batch: Chunk[A], override val promise: Promise.Unsafe[Closed, Unit])
+            case Value(value: A, override val promise: Promise.Unsafe[Closed, Unit])
+        end Put
+
         def init[A](
             _capacity: Int,
             access: Access = Access.MultiProducerMultiConsumer
-        )(using putType: PutType[A], initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
-            import putType.Put
+        )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
 
             new Unsafe[A]:
                 val queue = Queue.Unsafe.init[A](_capacity, access)
                 val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A]](8)
-                val puts  = new MpmcUnboundedXaddArrayQueue[(Put, Promise.Unsafe[Closed, Unit])](8)
+                val puts  = new MpmcUnboundedXaddArrayQueue[Put[A]](8)
 
                 def capacity = _capacity
 
@@ -356,16 +326,16 @@ object Channel:
 
                 def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
                     val promise = Promise.Unsafe.init[Closed, Unit]()
-                    val tuple   = (putType(value), promise)
-                    puts.add(tuple)
+                    val put     = Put.Value(value, promise)
+                    puts.add(put)
                     flush()
                     promise
                 end putFiber
 
                 def putBatchFiber(values: Chunk[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
                     val promise = Promise.Unsafe.init[Closed, Unit]()
-                    val tuple   = (putType.chunk(values), promise)
-                    puts.add(tuple)
+                    val put     = Put.Batch(values, promise)
+                    puts.add(put)
                     flush()
                     promise
                 end putBatchFiber
@@ -405,8 +375,8 @@ object Channel:
                         // Queue is closed, drain all takes and puts
                         val fail = queue.size() // Obtain the failed Result
                         takes.drain(_.completeDiscard(fail))
-                        puts.drain(_._2.completeDiscard(fail.unit))
-                        puts.drain(_._2.completeDiscard(fail.unit))
+                        puts.drain(_.promise.completeDiscard(fail.unit))
+                        puts.drain(_.promise.completeDiscard(fail.unit))
                         flush()
                     else if queueSize > 0 && !takesEmpty then
                         // Attempt to transfer a value from the queue to
@@ -419,7 +389,7 @@ object Channel:
                                         // cannot accept the value back, enqueue a
                                         // placeholder put operation
                                         val placeholder = Promise.Unsafe.init[Nothing, Unit]()
-                                        discard(puts.add((putType(value), placeholder)))
+                                        discard(puts.add(Put.Value(value, placeholder)))
                                 case _ =>
                                     // Queue became empty, enqueue the take again
                                     discard(takes.add(promise))
@@ -429,7 +399,7 @@ object Channel:
                         // Attempt to transfer a value from a waiting
                         // put operation to the queue.
                         Maybe(puts.poll()).foreach {
-                            case (putType.IsChunk(chunk), promise) =>
+                            case Put.Batch(chunk, promise) =>
                                 var i = 0
                                 boundary[Unit]:
                                     chunk.foreach: value =>
@@ -438,33 +408,42 @@ object Channel:
                                 if i >= chunk.length then
                                     discard(promise.complete(Result.unit))
                                 else if i == (chunk.length - 1) then
-                                    discard(puts.add(putType(chunk.last), promise))
+                                    discard(puts.add(Put.Value(chunk.last, promise)))
                                 else
-                                    discard(puts.add(putType.chunk(chunk.dropLeft(i)), promise))
+                                    discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
                                 end if
-                            case tuple @ (putType.IsValue(value), promise) =>
+                            case put @ Put.Value(value, promise) =>
                                 if queue.offer(value).contains(true) then
                                     // Queue accepted the value, complete the put
                                     discard(promise.complete(Result.unit))
                                 else
                                     // Queue became full, enqueue the put again
-                                    discard(puts.add(tuple))
+                                    discard(puts.add(put))
                                 end if
                         }
                         flush()
                     else if queueSize == 0 && !putsEmpty && !takesEmpty then
                         // Directly transfer a value from a producer to a
                         // consumer when the queue is empty.
-                        Maybe(puts.poll()).foreach { putTuple =>
-                            val (value, putPromise) = putTuple
-                            Maybe(takes.poll()) match
-                                case Present(takePromise) if takePromise.complete(Result.success(value)) =>
-                                    // Value transfered to the pending take, complete put
-                                    putPromise.completeDiscard(Result.unit)
-                                case _ =>
-                                    // No pending take available or the pending take is already
-                                    // completed due to interruption. Enqueue the put again.
-                                    discard(puts.add(putTuple))
+                        Maybe(puts.poll()).foreach { put =>
+                            put match
+                                case Put.Value(value, promise) =>
+                                    Maybe(takes.poll()) match
+                                        case Present(takePromise) if takePromise.complete(Result.success(value)) =>
+                                            promise.completeDiscard(Result.unit)
+                                        case _ => discard(puts.add(put))
+
+                                case Put.Batch(batch, promise) =>
+                                    boundary[Unit]:
+                                        var i: Int = 0
+                                        batch.foreach: value =>
+                                            Maybe(takes.poll()) match
+                                                case Present(takePromise) if takePromise.complete(Result.success(value)) =>
+                                                    promise.completeDiscard(Result.unit)
+                                                    i += 1
+                                                case _ =>
+                                                    discard(puts.add(Put.Batch(batch.dropLeft(i), promise)))
+                                                    boundary.break(())
                             end match
                         }
                         flush()
