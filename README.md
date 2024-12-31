@@ -2423,27 +2423,34 @@ val b: Boolean < (IO & Abort[Closed]) =
 // only receive messages sent after
 // their cration. To create call
 // `listen`:
-val c: Listener[Int] < (IO & Abort[Closed]) =
+val c: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen)
 
 // Each listener can have an
 // additional message buffer
-val d: Listener[Int] < (IO & Abort[Closed]) =
+val d: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen(bufferSize = 3))
 
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
 // poll, takeFiber, take
-val e: Int < (Async & Abort[Closed]) =
+val e: Int < (Async & Abort[Closed] & Resource) =
     d.map(_.take)
 
 // A listener can be closed
 // individually. If successful,
 // a Some with the backlog of
 // pending messages is returned
-val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
+val f: Maybe[Seq[Int]] < (IO & Abort[Closed] & Resource) =
     d.map(_.close)
+
+// Listeners are also managed
+// resources. They are closed 
+// when their `Resource` effect
+// is handled
+val g: Int < (Async & Abort[Closed]) =
+    Resource.run(e)
 
 // If the Hub is closed, all
 // listeners are automatically
@@ -2451,7 +2458,7 @@ val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
 // only include items pending in
 // the hub's buffer. The listener
 // buffers are discarded
-val g: Maybe[Seq[Int]] < IO =
+val h: Maybe[Seq[Int]] < IO =
     a.map(_.close)
 ```
 
