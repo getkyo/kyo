@@ -25,7 +25,7 @@ sealed abstract class Chunk[+A]
 
     import Chunk.internal.*
 
-    inline given [B]: ClassTag[B] = erasedTag[B]
+    private inline given [B]: ClassTag[B] = erasedTag[B]
 
     //////////////////
     // O(1) methods //
@@ -128,11 +128,11 @@ sealed abstract class Chunk[+A]
       * @return
       *   a new Chunk with the element appended
       */
-    final def append[B >: A](a: B): Chunk[B] =
-        Append(self, a, length + 1)
+    final def append[B >: A](b: B): Chunk[B] =
+        Append(self, b, length + 1)
 
-    final override def appended[B >: A](a: B): Chunk[B] =
-        append(a)
+    final override def appended[B >: A](b: B): Chunk[B] =
+        append(b)
 
     /** Returns the first element of the Chunk wrapped in a Maybe.
       *
