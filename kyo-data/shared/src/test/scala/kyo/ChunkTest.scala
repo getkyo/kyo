@@ -332,14 +332,9 @@ class ChunkTest extends Test:
     }
 
     "toSeq" - {
-        "converts a Chunk to an IndexedSeq" in {
+        "returns same instance" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            assert(chunk == IndexedSeq(1, 2, 3, 4, 5))
-        }
-
-        "converts an empty Chunk to an empty IndexedSeq" in {
-            val chunk = Chunk.empty[Int]
-            assert(chunk.toSeq.isEmpty)
+            assert(chunk.toSeq eq chunk)
         }
     }
 
@@ -872,7 +867,7 @@ class ChunkTest extends Test:
     }
 
     "Chunk.empty" in {
-        assert(Chunk.empty[Int].toSeq.isEmpty)
+        assert(Chunk.empty[Int].isEmpty)
     }
 
     "toString" - {

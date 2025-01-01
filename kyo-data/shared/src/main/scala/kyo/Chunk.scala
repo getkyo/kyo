@@ -5,7 +5,6 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableFactoryDefaults
 import scala.collection.StrictOptimizedSeqFactory
-import scala.collection.immutable.IndexedSeq
 import scala.collection.immutable.StrictOptimizedSeqOps
 import scala.reflect.ClassTag
 
@@ -185,10 +184,10 @@ sealed abstract class Chunk[+A]
     override def apply(index: Int): A =
         def outOfBounds = throw new IndexOutOfBoundsException(s"Index out of range: $index")
         @tailrec
-        def loop(chunk: Chunk[A], index: Int): A =
-            if index < 0 || index >= chunk.length then outOfBounds
+        def loop(c: Chunk[A], index: Int): A =
+            if index < 0 || index >= c.length then outOfBounds
             else
-                chunk match
+                c match
                     case c: Indexed[A] @unchecked => c(index)
                     case Drop(c, left, right, _)  => loop(c, index + left)
                     case Append(c, value, len)    => if index == len - 1 then value else loop(c, index)
@@ -358,11 +357,9 @@ sealed abstract class Chunk[+A]
       *   an Array containing all elements of this Chunk
       */
     final override def toArray[B >: A: ClassTag]: Array[B] =
-        if isEmpty then Array.empty
-        else
-            val array = new Array[B](length)
-            copyTo(array, 0)
-            array
+        val array = new Array[B](length)
+        copyTo(array, 0)
+        array
     end toArray
 
     final private def toArrayInternal[B >: A]: Array[B] =
