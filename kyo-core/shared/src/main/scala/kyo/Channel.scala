@@ -398,10 +398,9 @@ object Channel:
                                     chunk.foreach: value =>
                                         if queue.offer(value).contains(false) then boundary.break(())
                                         else i += 1
-                                if i >= chunk.length then
+                                val remaining = chunk.dropLeft(i)
+                                if remaining.isEmpty then
                                     discard(promise.complete(Result.unit))
-                                else if i == (chunk.length - 1) then
-                                    discard(puts.add(Put.Value(chunk.last, promise)))
                                 else
                                     discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
                                 end if
