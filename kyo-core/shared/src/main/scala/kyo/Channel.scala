@@ -402,7 +402,7 @@ object Channel:
                                 if remaining.isEmpty then
                                     discard(promise.complete(Result.unit))
                                 else
-                                    discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
+                                    discard(puts.add(Put.Batch(remaining, promise)))
                                 end if
                             case put @ Put.Value(value, promise) =>
                                 if queue.offer(value).contains(true) then
