@@ -264,7 +264,7 @@ object Channel:
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
 
         def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
-        def putBatchFiber(values: Chunk[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
+        def putBatchFiber(values: Seq[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
         def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A]
 
         def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
@@ -326,9 +326,9 @@ object Channel:
                     promise
                 end putFiber
 
-                def putBatchFiber(values: Chunk[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
+                def putBatchFiber(values: Seq[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
                     val promise = Promise.Unsafe.init[Closed, Unit]()
-                    val put     = Put.Batch(values, promise)
+                    val put     = Put.Batch(Chunk.from(values), promise)
                     puts.add(put)
                     flush()
                     promise
@@ -393,21 +393,22 @@ object Channel:
                         // put operation to the queue.
                         Maybe(puts.poll()).foreach {
                             case Put.Batch(chunk, promise) =>
-                                var i = 0
-                                boundary[Unit]:
-                                    chunk.foreach: value =>
-                                        if queue.offer(value).contains(false) then boundary.break(())
-                                        else i += 1
-                                val remaining = chunk.dropLeft(i)
-                                if remaining.isEmpty then
-                                    discard(promise.complete(Result.unit))
-                                else
-                                    discard(puts.add(Put.Batch(remaining, promise)))
-                                end if
+                                // NB: this is only efficient if chunk is effectively indexed
+                                // (i.e. Chunk.Indexed or Chunk.Drop with Chunk.Indexed underlying)
+                                @tailrec
+                                def loop(i: Int): Unit =
+                                    if i >= chunk.length then
+                                        promise.completeDiscard(Result.unit)
+                                    else if !queue.offer(chunk(i)).contains(true) then
+                                        discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
+                                    else loop(i + 1)
+
+                                loop(0)
+
                             case put @ Put.Value(value, promise) =>
                                 if queue.offer(value).contains(true) then
                                     // Queue accepted the value, complete the put
-                                    discard(promise.complete(Result.unit))
+                                    promise.completeDiscard(Result.unit)
                                 else
                                     // Queue became full, enqueue the put again
                                     discard(puts.add(put))
@@ -425,17 +426,23 @@ object Channel:
                                             promise.completeDiscard(Result.unit)
                                         case _ => discard(puts.add(put))
 
-                                case Put.Batch(batch, promise) =>
-                                    boundary[Unit]:
-                                        var i: Int = 0
-                                        batch.foreach: value =>
+                                case Put.Batch(chunk, promise) =>
+                                    // NB: this is only efficient if chunk is effectively indexed
+                                    // (i.e. Chunk.Indexed or Chunk.Drop with Chunk.Indexed underlying)
+                                    @tailrec
+                                    def loop(i: Int): Unit =
+                                        if i >= chunk.length then
+                                            promise.completeDiscard(Result.unit)
+                                        else
                                             Maybe(takes.poll()) match
-                                                case Present(takePromise) if takePromise.complete(Result.success(value)) =>
-                                                    promise.completeDiscard(Result.unit)
-                                                    i += 1
+                                                case Present(takePromise) if takePromise.complete(Result.success(chunk(i))) =>
+                                                    loop(i + 1)
                                                 case _ =>
-                                                    discard(puts.add(Put.Batch(batch.dropLeft(i), promise)))
-                                                    boundary.break(())
+                                                    discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
+                                        end if
+                                    end loop
+
+                                    loop(0)
                             end match
                         }
                         flush()
