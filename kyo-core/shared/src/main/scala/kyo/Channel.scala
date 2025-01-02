@@ -84,11 +84,7 @@ object Channel:
                                     i += 1
                                 case Result.Success(false) =>
                                     boundary.break:
-                                        if i == values.length - 1 then
-                                            self.putFiber(values.last).safe.get
-                                        else
-                                            self.putBatchFiber(Chunk.from(values).dropLeft(i)).safe.get
-                                        end if
+                                        self.putBatchFiber(Chunk.from(values).dropLeft(i)).safe.get
                                 case err: Result.Error[Closed] @unchecked =>
                                     boundary.break(Abort.get(err))
                 }
@@ -373,7 +369,6 @@ object Channel:
                         // Queue is closed, drain all takes and puts
                         val fail = queue.size() // Obtain the failed Result
                         takes.drain(_.completeDiscard(fail))
-                        puts.drain(_.promise.completeDiscard(fail.unit))
                         puts.drain(_.promise.completeDiscard(fail.unit))
                         flush()
                     else if queueSize > 0 && !takesEmpty then
