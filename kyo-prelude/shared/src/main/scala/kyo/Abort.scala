@@ -329,6 +329,27 @@ object Abort:
                 case ct(ex) => Abort.fail(ex)
                 case ex     => Abort.panic(ex)
             }
+
+        /** Catches exceptions of type E, transforms and converts them to Abort failures.
+          *
+          * @param v
+          *   The computation to run and catch exceptions from
+          * @tparam A
+          *   The return type of the computation
+          * @tparam S
+          *   The effect type of the computation
+          * @return
+          *   A computation that may fail with an Abort[E1] if an exception of type E is caught
+          */
+        def apply[A, S, E1](f: E => E1)(v: => A < S)(
+            using
+            ct: SafeClassTag[E],
+            frame: Frame
+        ): A < (Abort[E1] & S) =
+            Effect.catching(v) {
+                case ct(ex) => Abort.fail(f(ex))
+                case ex     => Abort.panic(ex)
+            }
     end CatchingOps
 
     /** Catches exceptions and converts them to Abort failures. This is useful for integrating exception-based code with the Abort effect.
