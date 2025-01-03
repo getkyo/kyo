@@ -11,7 +11,7 @@ import kyo.kernel.*
   * @tparam V
   *   The type of values that can be emitted
   */
-sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Ack]]
+sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Unit]]
 
 object Emit:
 
@@ -22,7 +22,7 @@ object Emit:
       * @return
       *   An effect that emits the given value
       */
-    inline def apply[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
+    inline def apply[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Unit < Emit[V] =
         ArrowEffect.suspend[Any](tag, value)
 
     /** Emits a single value and maps the resulting Ack.
@@ -34,7 +34,7 @@ object Emit:
       * @return
       *   The result of applying f to the Ack
       */
-    inline def andMap[V, A, S](inline value: V)(inline f: Ack => A < S)(
+    inline def andMap[V, A, S](inline value: V)(inline f: Unit => A < S)(
         using
         inline tag: Tag[Emit[V]],
         inline frame: Frame
@@ -51,7 +51,7 @@ object Emit:
           */
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
             ArrowEffect.handleState(tag, Chunk.empty[V], v)(
-                handle = [C] => (input, state, cont) => (state.append(input), cont(Ack.Continue())),
+                handle = [C] => (input, state, cont) => (state.append(input), cont(())),
                 done = (state, res) => (state, res)
             )
     end RunOps
@@ -71,7 +71,7 @@ object Emit:
           * @return
           *   A tuple of the final accumulator value and the result of the computation
           */
-        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => (A, Ack) < S)(v: B < (Emit[V] & S2))(
+        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(
             using
             tag: Tag[Emit[V]],
             frame: Frame
@@ -79,7 +79,7 @@ object Emit:
             ArrowEffect.handleState(tag, acc, v)(
                 handle = [C] =>
                     (input, state, cont) =>
-                        f(state, input).map((a, ack) => (a, cont(ack))),
+                        f(state, input).map(a => (a, cont(()))),
                 done = (state, res) => (state, res)
             )
     end RunFoldOps
@@ -96,7 +96,7 @@ object Emit:
           */
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < S =
             ArrowEffect.handle(tag, v)(
-                handle = [C] => (input, cont) => cont(Ack.Stop)
+                handle = [C] => (input, cont) => cont(())
             )
     end RunDiscardOps
 
@@ -108,11 +108,11 @@ object Emit:
           * @param v
           *   The computation with Emit effect
           * @param f
-          *   A function to process each emitted value and return an Ack
+          *   A function to process each emitted value
           * @return
           *   The result of the computation
           */
-        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Ack < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Unit < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
             ArrowEffect.handle(tag, v)(
                 [C] => (input, cont) => f(input).map(cont)
             )
@@ -131,16 +131,16 @@ object Emit:
           *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
           *   - A continuation function that takes an Ack and returns the remaining computation
           */
-        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Maybe[V], Ack => A < (Emit[V] & S)) < S =
+        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Maybe[V], () => A < (Emit[V] & S)) < S =
             ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
                         // Effect found, return the input an continuation
-                        (Maybe(input), cont),
+                        (Maybe(input), () => cont(())),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation
                     // that returns the result of the computation
-                    (Maybe.empty[V], (_: Ack) => r: A < (Emit[V] & S))
+                    (Maybe.empty[V], () => r: A < (Emit[V] & S))
             )
         end apply
     end RunFirstOps
@@ -169,10 +169,7 @@ object Emit:
                     Loop(state: Seq[V]) {
                         case Seq() => Loop.done
                         case head +: tail =>
-                            Emit.andMap(head) {
-                                case Ack.Stop => Loop.done
-                                case _        => Loop.continue(tail)
-                            }
+                            Emit.andMap(head)(_ => Loop.continue(tail))
                     }.andThen(v)
                 end restore
 
