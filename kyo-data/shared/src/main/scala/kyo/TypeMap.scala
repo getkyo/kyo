@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Tag.Intersection
 import scala.collection.immutable.TreeSeqMap
 
 /** `TypeMap` provides a type-safe heterogeneous map implementation, allowing you to store and retrieve values of different types using
@@ -104,7 +103,7 @@ object TypeMap:
           */
         def show: String = self.map { case (tag, value) => s"${tag.showTpe} -> $value" }.toList.sorted.mkString("TypeMap(", ", ", ")")
 
-        private[kyo] inline def tag: Intersection[?] = Intersection(self.keySet.toIndexedSeq)
+        private[kyo] inline def tag: Tag[Any] = ??? // Tag.Intersection(self.keySet.toIndexedSeq)
 
         private[kyo] inline def <:<[T](tag: Tag[T]): Boolean =
             self.keySet.exists(_ <:< tag)
