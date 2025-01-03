@@ -51,6 +51,17 @@ sealed abstract class Chunk[+A]
         if n >= length then self
         else dropLeftAndRight(0, length - Math.max(0, n))
 
+    /** Takes the last n elements of the Chunk.
+      *
+      * @param n
+      *   the number of elements to take
+      * @return
+      *   a new Chunk containing the last n elements
+      */
+    override def takeRight(n: Int): Chunk[A] =
+        if n == length then this
+        else dropLeftAndRight(length - Math.min(Math.max(0, n), length), 0)
+
     /** Drops the first n elements of the Chunk.
       *
       * @param n
@@ -338,8 +349,8 @@ sealed abstract class Chunk[+A]
                 case c: Compact[A] @unchecked =>
                     val l = c.array.length
                     if l > 0 then
-                        System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
-                case c: FromSeq[A] @unchecked =>
+                        Array.copy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
+                case c: FromSeq[A] =>
                     val seq    = c.value
                     val length = Math.min(end, c.value.length - dropLeft - dropRight)
                     @tailrec def loop(index: Int): Unit =
