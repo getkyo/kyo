@@ -190,10 +190,11 @@ abstract private class PublisherToSubscriberTest extends Test:
                 subscriber2 <- streamSubscriber
                 subscriber3 <- streamSubscriber
                 subscriber4 <- streamSubscriber
-                fiber1      <- Async.run(subscriber1.stream.run.unit)
-                fiber2      <- Async.run(subscriber2.stream.run.unit)
-                fiber3      <- Async.run(subscriber3.stream.run.unit)
-                fiber4      <- Async.run(subscriber4.stream.run.unit)
+                latch       <- Latch.init(5)
+                fiber1      <- Async.run(latch.release.andThen(subscriber1.stream.run.unit))
+                fiber2      <- Async.run(latch.release.andThen(subscriber2.stream.run.unit))
+                fiber3      <- Async.run(latch.release.andThen(subscriber3.stream.run.unit))
+                fiber4      <- Async.run(latch.release.andThen(subscriber4.stream.run.unit))
                 publisherFiber <- Async.run(Resource.run(
                     Stream(Emit.andMap(Chunk.empty)(emit(_, counter)))
                         .toPublisher
@@ -203,11 +204,9 @@ abstract private class PublisherToSubscriberTest extends Test:
                             publisher.subscribe(subscriber3)
                             publisher.subscribe(subscriber4)
                         }
-                        .andThen(Async.sleep(1.seconds))
+                        .andThen(latch.release.andThen(Async.sleep(1.seconds)))
                 ))
-                _ <- Clock.sleep(10.millis).map { fiber =>
-                    fiber.onComplete(_ => publisherFiber.interrupt.unit).andThen(fiber)
-                }.map(_.getResult)
+                _ <- latch.await.andThen(publisherFiber.interrupt.unit)
                 _ <- fiber1.getResult
                 _ <- fiber2.getResult
                 _ <- fiber3.getResult
