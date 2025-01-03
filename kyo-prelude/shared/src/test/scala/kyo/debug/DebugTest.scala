@@ -173,7 +173,7 @@ class DebugTest extends Test:
                 "DebugTest.scala:63:28",
                 "6",
                 "DebugTest.scala:64:14",
-                "Seq(Seq(Seq(7)))"
+                "IndexedSeq(IndexedSeq(IndexedSeq(7)))"
             ) {
                 choiceComputation.eval
             }
