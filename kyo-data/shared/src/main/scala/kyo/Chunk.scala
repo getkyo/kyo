@@ -7,6 +7,8 @@ import scala.collection.IterableFactoryDefaults
 import scala.collection.StrictOptimizedSeqFactory
 import scala.collection.immutable.IndexedSeq
 import scala.collection.immutable.IndexedSeqOps
+import scala.collection.immutable.Seq
+import scala.collection.immutable.SeqOps
 import scala.collection.immutable.StrictOptimizedSeqOps
 import scala.reflect.ClassTag
 
@@ -19,8 +21,8 @@ import scala.reflect.ClassTag
   *   the type of elements in this Chunk
   */
 sealed abstract class Chunk[+A]
-    extends IndexedSeq[A]
-    with IndexedSeqOps[A, Chunk, Chunk[A]]
+    extends Seq[A]
+    with SeqOps[A, Chunk, Chunk[A]]
     with StrictOptimizedSeqOps[A, Chunk, Chunk[A]]
     with IterableFactoryDefaults[A, Chunk]
     derives CanEqual:
@@ -50,7 +52,7 @@ sealed abstract class Chunk[+A]
       * @return
       *   a new Chunk containing the first n elements
       */
-    final override def take(n: Int): Chunk[A] =
+    override def take(n: Int): Chunk[A] =
         if n >= length then self
         else dropLeftAndRight(0, length - Math.max(0, n))
 
@@ -61,7 +63,7 @@ sealed abstract class Chunk[+A]
       * @return
       *   a new Chunk with the first n elements removed
       */
-    final override def drop(n: Int): Chunk[A] =
+    override def drop(n: Int): Chunk[A] =
         dropLeft(n)
 
     /** Drops the first n elements of the Chunk.
@@ -134,7 +136,7 @@ sealed abstract class Chunk[+A]
     final def append[B >: A](b: B): Chunk[B] =
         Append(self, b, length + 1)
 
-    final override def appended[B >: A](b: B): Chunk[B] =
+    override def appended[B >: A](b: B): Chunk[B] =
         append(b)
 
     /** Returns the first element of the Chunk wrapped in a Maybe.
@@ -381,7 +383,11 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       * @tparam A
       *   the type of elements in the Indexed Chunk
       */
-    sealed abstract class Indexed[A] extends Chunk[A]:
+    sealed abstract class Indexed[A] extends Chunk[A]
+        with IndexedSeq[A]
+        with IndexedSeqOps[A, Indexed, Indexed[A]]
+        with StrictOptimizedSeqOps[A, Indexed, Indexed[A]]
+        with IterableFactoryDefaults[A, Indexed]:
         self =>
 
         //////////////////
@@ -436,6 +442,9 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
                 case c: Tail[A] @unchecked    => c.chunk.iterator.drop(c.offset)
 
         final override def iterableFactory: StrictOptimizedSeqFactory[Indexed] = Indexed
+
+        final override def appended[B >: A](b: B): Indexed[B] =
+            super[StrictOptimizedSeqOps].appended(b)
 
     end Indexed
     object Indexed extends StrictOptimizedSeqFactory[Indexed]:
