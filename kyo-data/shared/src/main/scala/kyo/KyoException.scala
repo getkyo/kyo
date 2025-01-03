@@ -5,9 +5,14 @@ import kyo.Ansi.*
 import scala.util.control.NoStackTrace
 
 class KyoException private[kyo] (
-    message: Text = null,
-    cause: Text | Throwable = null
-)(using val frame: Frame) extends Exception with NoStackTrace:
+    message: Text | Null = null,
+    cause: Text | Throwable | Null = null
+)(using val frame: Frame) extends Exception(
+        Option(message) match
+            case Some(message) => message.toString; case _ => null,
+        cause match
+            case cause: Throwable => cause; case _ => null
+    ) with NoStackTrace:
 
     override def getCause(): Throwable =
         cause match
