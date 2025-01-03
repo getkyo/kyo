@@ -87,6 +87,16 @@ extension (kyoObject: Kyo.type)
     def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
         Console.printLine(message)
 
+    /** Emits a value
+      *
+      * @param value
+      *   Value to emit
+      * @return
+      *   An effect that emits a value
+      */
+    def emit[A](value: A)(using Tag[A], Frame): Ack < Emit[A] =
+        Emit(value)
+
     /** Creates an effect that fails with Abort[E].
       *
       * @param error
