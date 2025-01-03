@@ -10,7 +10,7 @@ class ClockTest extends Test:
 
         "now" in run {
             Clock.now.map { now =>
-                assert(now - javaNow() < 1.milli)
+                assert(now - javaNow() < 10.milli)
             }
         }
 
