@@ -76,17 +76,11 @@ object Channel:
             if values.isEmpty then ()
             else
                 IO.Unsafe {
-                    var i = 0
-                    boundary[Unit < (Abort[Closed] & Async)]:
-                        values.foreach: value =>
-                            self.offer(value) match
-                                case Result.Success(true) =>
-                                    i += 1
-                                case Result.Success(false) =>
-                                    boundary.break:
-                                        self.putBatchFiber(Chunk.from(values).dropLeft(i)).safe.get
-                                case err: Result.Error[Closed] @unchecked =>
-                                    boundary.break(Abort.get(err))
+                    self.offerAll(values) match
+                        case Result.Success(remaining) =>
+                            if remaining.isEmpty then ()
+                            else self.putBatchFiber(remaining).safe.get
+                        case err @ Result.Error(_) => Abort.get(err).unit
                 }
 
         /** Takes an element from the channel, asynchronously blocking if necessary.
@@ -261,6 +255,7 @@ object Channel:
         def size()(using AllowUnsafe): Result[Closed, Int]
 
         def offer(value: A)(using AllowUnsafe): Result[Closed, Boolean]
+        def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Seq[A]]
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
 
         def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
@@ -305,6 +300,20 @@ object Channel:
                     if result.contains(true) then flush()
                     result
                 end offer
+
+                def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Seq[A]] =
+                    @tailrec
+                    def loop(current: Seq[A]): Result[Closed, Seq[A]] =
+                        if current.isEmpty then Result.Success(Chunk.empty)
+                        else
+                            val result = queue.offer(current.head)
+                            if result.isFail then result.map(_ => current)
+                            else if result.contains(false) then
+                                Result.Success(current)
+                            else loop(current.tail)
+                            end if
+                    loop(values)
+                end offerAll
 
                 def poll()(using AllowUnsafe) =
                     val result = queue.poll()
