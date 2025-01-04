@@ -5,6 +5,7 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableFactoryDefaults
 import scala.collection.StrictOptimizedSeqFactory
+import scala.collection.immutable.SeqOps
 import scala.collection.immutable.StrictOptimizedSeqOps
 import scala.reflect.ClassTag
 
@@ -18,6 +19,7 @@ import scala.reflect.ClassTag
   */
 sealed abstract class Chunk[+A]
     extends Seq[A]
+    with SeqOps[A, Chunk, Chunk[A]]
     with StrictOptimizedSeqOps[A, Chunk, Chunk[A]]
     with IterableFactoryDefaults[A, Chunk]
     derives CanEqual:
@@ -338,7 +340,7 @@ sealed abstract class Chunk[+A]
                 case c: Compact[A] @unchecked =>
                     val l = c.array.length
                     if l > 0 then
-                        System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
+                        Array.copy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
                 case c: FromSeq[A] @unchecked =>
                     val seq    = c.value
                     val length = Math.min(end, c.value.length - dropLeft - dropRight)
@@ -438,19 +440,24 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
     object Indexed extends StrictOptimizedSeqFactory[Indexed]:
         def empty[A]: Indexed[A] = cachedEmpty.asInstanceOf[Indexed[A]]
 
-        def from[A](source: Array[A]): Indexed[A] =
+        def from[A: ClassTag](source: Array[A]): Indexed[A] =
             if source.isEmpty then empty[A]
             else
-                Compact(Array.copyAs(source, source.length)(using erasedTag[A]))
+                Compact(Array.copyAs(source, source.length))
 
-        def from[A](source: IterableOnce[A]): Indexed[A] =
+        def from[A](source: IterableOnce[A]): Indexed[A] = fromUnboxed(using erasedTag[A])(source)
+
+        def fromUnboxed[A](using ClassTag[A])(source: IterableOnce[A]): Indexed[A] =
             if source.knownSize == 0 then empty[A]
             else
                 source match
                     case chunk: Chunk.Indexed[A] @unchecked => chunk
                     case seq: IndexedSeq[A]                 => FromSeq(seq)
-                    case _                                  => Compact(source.iterator.toArray(using erasedTag[A]))
-        def newBuilder[A]: collection.mutable.Builder[A, Indexed[A]] = ChunkBuilder.init[A]
+                    case _                                  => Compact(source.iterator.toArray)
+
+        def newBuilder[A]: collection.mutable.Builder[A, Indexed[A]] = newBuilderUnboxed(using erasedTag[A])
+
+        def newBuilderUnboxed[A: ClassTag]: collection.mutable.Builder[A, Indexed[A]] = ChunkBuilder.init[A]
     end Indexed
 
     /** Returns an empty Chunk.
@@ -471,7 +478,7 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       * @return
       *   a new Chunk.Indexed containing the elements from the Array
       */
-    def from[A](values: Array[A]): Chunk.Indexed[A] = Indexed.from(values)
+    def from[A: ClassTag](values: Array[A]): Chunk.Indexed[A] = Indexed.from(values)
 
     private[kyo] def fromNoCopy[A](values: Array[A]): Chunk.Indexed[A] =
         if values.isEmpty then Indexed.empty[A]
@@ -491,6 +498,8 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       */
     def from[A](source: IterableOnce[A]): Chunk[A] = Indexed.from(source)
 
+    def fromUnboxed[A: ClassTag](source: IterableOnce[A]): Chunk[A] = Indexed.fromUnboxed(source)
+
     /** Creates a new **mutable** builder for constructing Chunks.
       *
       * @tparam A
@@ -498,7 +507,9 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       * @return
       *   a mutable Builder that constructs a Chunk[A]
       */
-    override def newBuilder[A]: collection.mutable.Builder[A, Chunk[A]] = ChunkBuilder.init[A]
+    override def newBuilder[A]: collection.mutable.Builder[A, Chunk[A]] = newBuilderUnboxed(using erasedTag[A])
+
+    def newBuilderUnboxed[A: ClassTag]: collection.mutable.Builder[A, Chunk[A]] = ChunkBuilder.init[A]
 
     private[kyo] object internal:
         inline def erasedTag[A]: ClassTag[A] = ClassTag.Any.asInstanceOf[ClassTag[A]]
