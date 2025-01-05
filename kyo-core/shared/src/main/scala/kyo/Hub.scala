@@ -100,7 +100,7 @@ class Hub[A] private[kyo] (
       * @return
       *   a new Listener
       */
-    def listen(using Frame): Listener[A] < (IO & Abort[Closed]) =
+    def listen(using Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
         listen(0)
 
     /** Creates a new listener for this Hub with specified buffer size.
@@ -110,7 +110,7 @@ class Hub[A] private[kyo] (
       * @return
       *   a new Listener
       */
-    def listen(bufferSize: Int)(using frame: Frame): Listener[A] < (IO & Abort[Closed]) =
+    def listen(bufferSize: Int)(using frame: Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
         def fail = Abort.fail(Closed("Hub", initFrame))
         closed.map {
             case true => fail
@@ -126,7 +126,8 @@ class Hub[A] private[kyo] (
                                     fail
                                 }
                             case false =>
-                                new Listener[A](this, child)
+                                Resource.acquireRelease(new Listener[A](this, child)): listener =>
+                                    listener.close.unit
                         }
                     }
                 }
@@ -221,6 +222,15 @@ object Hub:
           */
         def take(using Frame): A < (Async & Abort[Closed]) = child.take
 
+        /** Takes [[n]] elements from the Listener's buffer, semantically blocking until enough elements are present. Note that if enough
+          * elements are not added to the buffer it can block indefinitely.
+          *
+          * @return
+          *   Chunk of [[n]] elements
+          */
+        def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
+            child.takeExactly(n)
+
         /** Checks if the Listener is closed.
           *
           * @return
@@ -235,6 +245,30 @@ object Hub:
           */
         def close(using Frame): Maybe[Seq[A]] < IO =
             hub.remove(child).andThen(child.close)
+
+        /** Stream elements from listener, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
+          * be limited only by buffer capacity or the number of buffered elements at a given time. (Chunks can still be larger than buffer
+          * capacity.) Stops streaming when listener is closed.
+          *
+          * @param maxChunkSize
+          *   Maximum number of elements to take for each chunk
+          *
+          * @return
+          *   Asynchronous stream of elements from listener
+          */
+        def stream(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
+            child.streamUntilClosed(maxChunkSize)
+
+        /** Like stream, but fails when listener is closed.
+          *
+          * @param maxChunkSize
+          *   Maximum number of elements to take for each chunk
+          *
+          * @return
+          *   Asynchronous stream of elements from listener
+          */
+        def streamFailing(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Abort[Closed] & Async] =
+            child.stream(maxChunkSize)
 
     end Listener
 end Hub

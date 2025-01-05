@@ -12,7 +12,7 @@ import org.reactivestreams.tck.SubscriberWhiteboxVerification.WhiteboxSubscriber
 import org.reactivestreams.tck.TestEnvironment
 import org.scalatestplus.testng.*
 
-class StreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(10L)), TestNGSuiteLike:
+class StreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(50L)), TestNGSuiteLike:
     import AllowUnsafe.embrace.danger
     private val counter = new AtomicInteger()
 

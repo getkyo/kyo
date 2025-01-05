@@ -2423,27 +2423,34 @@ val b: Boolean < (IO & Abort[Closed]) =
 // only receive messages sent after
 // their cration. To create call
 // `listen`:
-val c: Listener[Int] < (IO & Abort[Closed]) =
+val c: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen)
 
 // Each listener can have an
 // additional message buffer
-val d: Listener[Int] < (IO & Abort[Closed]) =
+val d: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen(bufferSize = 3))
 
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
 // poll, takeFiber, take
-val e: Int < (Async & Abort[Closed]) =
+val e: Int < (Async & Abort[Closed] & Resource) =
     d.map(_.take)
 
 // A listener can be closed
 // individually. If successful,
 // a Some with the backlog of
 // pending messages is returned
-val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
+val f: Maybe[Seq[Int]] < (IO & Abort[Closed] & Resource) =
     d.map(_.close)
+
+// Listeners are also managed
+// resources. They are closed 
+// when their `Resource` effect
+// is handled
+val g: Int < (Async & Abort[Closed]) =
+    Resource.run(e)
 
 // If the Hub is closed, all
 // listeners are automatically
@@ -2451,7 +2458,7 @@ val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
 // only include items pending in
 // the hub's buffer. The listener
 // buffers are discarded
-val g: Maybe[Seq[Int]] < IO =
+val h: Maybe[Seq[Int]] < IO =
     a.map(_.close)
 ```
 
@@ -3407,21 +3414,23 @@ object HelloService:
 
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable]) =
-            Kyo.suspendAttempt { // Adds IO & Abort[Throwable] effect
+            Kyo.suspendAttempt { // Introduces IO & Abort[Throwable] effect
                 println(s"Hello $saluee!")
             }
     end Live
 end HelloService
 
-val keepTicking: Nothing < (Async & Abort[IOException]) =
-    (Console.print(".") *> Kyo.sleep(1.second)).forever
+val keepTicking: Nothing < (Async & Emit[String]) =
+    (Kyo.emit(".") *> Kyo.sleep(1.second)).forever
 
 val effect: Unit < (Async & Resource & Abort[Throwable] & Env[HelloService]) =
     for
-        nameService <- Kyo.service[HelloService]      // Adds Env[NameService] effect
-        _           <- keepTicking.forkScoped         // Adds Async, Abort[IOException], and Resource effects
+        nameService <- Kyo.service[HelloService]      // Introduces Env[NameService]
+        _           <- keepTicking                    // Introduces Async and Emit[String]
+            .foreachEmit(Console.print)               // Handles Emit[String] and introduces Abort[IOException]
+            .forkScoped                               // Introduces Resource
         saluee      <- Console.readln
-        _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
+        _           <- Kyo.sleep(2.seconds)
         _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
     yield ()
     end for
@@ -3437,7 +3446,7 @@ IO.Unsafe.run {                        // Handles IO
                     .catching((thr: Throwable) =>             // Handles Abort[Throwable]
                         Kyo.debug(s"Failed printing to console: ${throwable}")
                     )
-                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but adds Memo effect
+                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but introduces Memo effect
         }
     }
 }
@@ -3497,14 +3506,16 @@ val handled: Result[A | B | C, Int] < Any = effect.result
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
+val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
 
 // Manipulate single types from within the union
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
 val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
 val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
+val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap
 val aToAbsent: Int < Abort[Absent | B | C] = effect.forAbort[A].toAbsent
 val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toEmpty
-val aToThrowable: Int < (Abort[Throwable | B | C]) = effect.forAbort[A].toThrowable
+val aToThrowable: Int < Abort[Throwable | B | C] = effect.forAbort[A].toThrowable
 ```
 
 
