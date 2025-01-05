@@ -9,6 +9,14 @@ class QueueTest extends Test:
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
+                "use" in run {
+                    Queue.use[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield assert(b && v == Maybe(1))
+                    }
+                }
                 "isEmpty" in run {
                     for
                         q <- Queue.init[Int](2, access)

@@ -152,6 +152,19 @@ object Hub:
       *   a new Hub instance
       */
     def init[A](capacity: Int)(using Frame): Hub[A] < IO =
+        use[A](capacity)(identity)
+
+    /** Uses a new Hub with the given type and capacity.
+      * @param capacity
+      *   the maximum number of elements the Hub can hold
+      * @param f
+      *   The function to apply to the new Hub
+      * @tparam A
+      *   the type of elements in the Hub
+      * @return
+      *   The result of applying the function
+      */
+    def use[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & IO) =
         Channel.init[A](capacity).map { ch =>
             IO {
                 val listeners = new CopyOnWriteArraySet[Channel[A]]
@@ -168,7 +181,7 @@ object Hub:
                         }
                     }
                 }.map { fiber =>
-                    new Hub(ch, fiber, listeners)
+                    f(new Hub(ch, fiber, listeners))
                 }
             }
         }

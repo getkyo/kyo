@@ -37,12 +37,24 @@ object Latch:
 
     /** Creates a new Latch initialized with the given count.
       *
-      * @param n
+      * @param count
       *   The initial count for the latch
       * @return
       *   A new Latch instance wrapped in an IO effect
       */
-    def init(n: Int)(using Frame): Latch < IO = IO.Unsafe(Latch(Unsafe.init(n)))
+    def init(count: Int)(using Frame): Latch < IO =
+        use(count)(identity)
+
+    /** Uses a new Latch with the provided count.
+      * @param count
+      *   The initial count for the latch
+      * @param f
+      *   The function to apply to the new Latch
+      * @return
+      *   The result of applying the function
+      */
+    inline def use[A, S](count: Int)(inline f: Latch => A < S)(using inline frame: Frame): A < (S & IO) =
+        IO.Unsafe(f(Latch(Unsafe.init(count))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:

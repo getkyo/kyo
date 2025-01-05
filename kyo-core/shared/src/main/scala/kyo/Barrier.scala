@@ -30,12 +30,23 @@ object Barrier:
 
     /** Creates a new Barrier instance.
       *
-      * @param n
+      * @param parties
       *   The number of parties that must call await before the barrier is released
       * @return
       *   A new Barrier instance
       */
-    def init(n: Int)(using Frame): Barrier < IO = IO.Unsafe(Barrier(Unsafe.init(n)))
+    def init(parties: Int)(using Frame): Barrier < IO = use(parties)(identity)
+
+    /** Uses a new Barrier with the provided number of parties.
+      * @param parties
+      *   The number of parties that must call await before the barrier is released
+      * @param f
+      *   The function to apply to the new Barrier
+      * @return
+      *   The result of applying the function
+      */
+    inline def use[A, S](parties: Int)(inline f: Barrier => A < S)(using inline frame: Frame): A < (S & IO) =
+        IO.Unsafe(f(Barrier(Unsafe.init(parties))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
