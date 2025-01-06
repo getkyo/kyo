@@ -127,12 +127,11 @@ sealed abstract class Stream[V, -S]:
             Stream[V, S](ArrowEffect.handleState(tag, n, emit)(
                 [C] =>
                     (input, state, cont) =>
-                        debug.Debug((state, input)).andThen:
-                            if state == 0 then (0, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
-                            else
-                                val c   = input.take(state)
-                                val nst = state - c.size
-                                Emit.andMap(c)(unit => (nst, cont(unit)))
+                        if state == 0 then (0, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
+                        else
+                            val c   = input.take(state)
+                            val nst = state - c.size
+                            Emit.andMap(c)(unit => (nst, cont(unit)))
             ))
 
     /** Drops the first n elements from the stream.
@@ -167,7 +166,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V, S & S2](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
                 (input, state, cont) =>
-                    if !state then (false, cont(()))
+                    if !state then (false, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
                     else
                         Kyo.takeWhile(input)(f).map { c =>
                             Emit.andMap(c)(unit => (c.size == input.size, cont(unit)))
