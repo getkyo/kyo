@@ -130,7 +130,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                 case l: Linked[E, A] @unchecked =>
                     onCompleteLoop(l.p)
                 case v =>
-                    IOPromise.eval(f, v.asInstanceOf[Result[E, A]])
+                    IOPromise.eval(f(v.asInstanceOf[Result[E, A]]))
         onCompleteLoop(this)
     end onComplete
 
@@ -245,10 +245,10 @@ private[kyo] object IOPromise:
             new Pending[E, A]:
                 def waiters: Int = self.waiters + 1
                 def interrupt[E2 >: E](error: Error[E2]) =
-                    eval(f, error.asInstanceOf[Error[E]])
+                    eval(f(error.asInstanceOf[Error[E]]))
                     self
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
-                    eval(f, v.asInstanceOf[Result[E, A]])
+                    eval(f(v.asInstanceOf[Result[E, A]]))
                     self
                 end run
 
@@ -265,7 +265,7 @@ private[kyo] object IOPromise:
         inline def onInterrupt(inline f: Error[E] => Unit): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt[E2 >: E](error: Error[E2]) =
-                    eval(f, error.asInstanceOf[Error[E]])
+                    eval(f(error.asInstanceOf[Error[E]]))
                     self
                 def waiters: Int = self.waiters + 1
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
@@ -319,8 +319,8 @@ private[kyo] object IOPromise:
         end Empty
     end Pending
 
-    private inline def eval[A, B](inline f: A => Unit, value: A): Unit =
-        try f(value)
+    private inline def eval[A](inline f: => Unit): Unit =
+        try f
         catch
             case ex if NonFatal(ex) =>
                 given Frame = Frame.internal
