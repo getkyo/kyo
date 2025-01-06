@@ -34,6 +34,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
+    private inline def locally[A](inline f: A): A = f
+
     final private def eval(startMillis: Long, clock: InternalClock)(using Safepoint) =
         try
             curr = Boundary.restoring(trace, this) {
