@@ -102,8 +102,8 @@ object Emit:
 
     inline def runDiscard[V >: Nothing]: RunDiscardOps[V] = RunDiscardOps(())
 
-    final class RunAckOps[V](dummy: Unit) extends AnyVal:
-        /** Runs an Emit effect, allowing custom handling of each emitted value via an Ack.
+    final class RunForeachOps[V](dummy: Unit) extends AnyVal:
+        /** Runs an Emit effect, allowing custom handling of each emitted value.
           *
           * @param v
           *   The computation with Emit effect
@@ -116,9 +116,27 @@ object Emit:
             ArrowEffect.handle(tag, v)(
                 [C] => (input, cont) => f(input).map(cont)
             )
-    end RunAckOps
+    end RunForeachOps
 
-    inline def runAck[V >: Nothing]: RunAckOps[V] = RunAckOps(())
+    inline def runForeach[V >: Nothing]: RunForeachOps[V] = RunForeachOps(())
+
+    final class RunWhileOps[V](dummy: Unit) extends AnyVal:
+        /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
+          *
+          * @param v
+          *   The computation with Emit effect
+          * @param f
+          *   A function to process each emitted value
+          * @return
+          *   The result of the computation
+          */
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Boolean < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+            ArrowEffect.handleState(tag, true, v)(
+                [C] => (input, cond, cont) => if cond then f(input).map(c => (c, cont(()))) else (cond, cont(()))
+            )
+    end RunWhileOps
+
+    inline def runWhile[V >: Nothing]: RunWhileOps[V] = RunWhileOps(())
 
     final class RunFirstOps[V](dummy: Unit) extends AnyVal:
 

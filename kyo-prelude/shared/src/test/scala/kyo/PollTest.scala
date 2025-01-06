@@ -5,12 +5,7 @@ import kyo.*
 class PollTest extends Test:
 
     "one" - {
-        "with acknowledgment" in {
-            val result = Poll.run(Chunk.empty)(Poll.one[Int](Ack.Continue()))
-            assert(result.eval == Maybe.empty)
-        }
-
-        "without explicit acknowledgment" in {
+        "empty" in {
             val result = Poll.run(Chunk.empty)(Poll.one[Int])
             assert(result.eval == Maybe.empty)
         }
@@ -20,14 +15,15 @@ class PollTest extends Test:
             assert(result.eval == Maybe(1))
         }
 
-        "with multiple acknowledgments" in {
-            val result = Poll.run(Chunk(1, 2, 3)) {
+        "multiple" in {
+            val result = Poll.run(Chunk(1, 2)) {
                 for
-                    v1 <- Poll.one[Int](Ack.Continue())
-                    v2 <- Poll.one[Int](Ack.Stop)
-                yield (v1, v2)
+                    v1 <- Poll.one[Int]
+                    v2 <- Poll.one[Int]
+                    v3 <- Poll.one[Int]
+                yield (v1, v2, v3)
             }
-            assert(result.eval == (Maybe(1), Maybe.empty))
+            assert(result.eval == (Maybe(1), Maybe(2), Maybe.empty))
         }
 
         "with nested effects" in {
@@ -133,20 +129,18 @@ class PollTest extends Test:
     "runFirst" - {
         "basic operation" in run {
             for
-                (v1, cont1) <- Poll.runFirst(Poll.fold[Int](0)(_ + _))
-                (v2, cont2) <- Poll.runFirst(cont1(Maybe(1)))
-                (v3, cont3) <- Poll.runFirst(cont2(Maybe(2)))
-                result      <- Poll.run(Chunk(4, 5, 6))(cont3(Maybe.empty))
-            yield
-                assert(v1 != Ack.Stop && v2 != Ack.Stop && v3 != Ack.Stop)
-                assert(result == 3)
+                cont1  <- Poll.runFirst(Poll.fold[Int](0)(_ + _))
+                cont2  <- Poll.runFirst(cont1(Maybe(1)))
+                cont3  <- Poll.runFirst(cont2(Maybe(2)))
+                result <- Poll.run(Chunk(4, 5, 6))(cont3(Maybe.empty))
+            yield assert(result == 3)
             end for
         }
 
         "empty" in run {
             for
-                (v1, cont1) <- Poll.runFirst(Poll.andMap[Int](Ack.Stop)(_ => 42))
-                result      <- Poll.run(Chunk.empty)(cont1(Maybe.empty))
+                cont1  <- Poll.runFirst(Poll.andMap[Int](_ => 42))
+                result <- Poll.run(Chunk.empty)(cont1(Maybe.empty))
             yield assert(result == 42)
             end for
         }
@@ -155,9 +149,9 @@ class PollTest extends Test:
             for
                 result <- Var.runTuple(0) {
                     for
-                        (v1, cont1) <- Poll.runFirst(Poll.one[Int].map(_ => Var.update[Int](_ + 1)))
-                        (v2, cont2) <- Poll.runFirst(cont1(Maybe(1)))
-                        result      <- Poll.run(Chunk.empty)(cont2(Maybe.empty))
+                        cont1  <- Poll.runFirst(Poll.one[Int].map(_ => Var.update[Int](_ + 1)))
+                        cont2  <- Poll.runFirst(cont1(Maybe(1)))
+                        result <- Poll.run(Chunk.empty)(cont2(Maybe.empty))
                     yield result
                 }
             yield
@@ -179,36 +173,6 @@ class PollTest extends Test:
             assert(result.eval == Maybe(2))
         }
 
-        "early termination with Ack.Stop" in {
-            val result = Poll.run(Chunk(1, 2, 3, 4)) {
-                Poll.one[Int](Ack.Stop)
-            }
-            assert(result.eval.isEmpty)
-        }
-
-        "with conditional acknowledgments" in {
-            val result = Poll.run(Chunk(1, 2, 3, 4)) {
-                for
-                    v1 <- Poll.one[Int](Ack.Continue())
-                    v2 <- Poll.one[Int](if v1.contains(1) then Ack.Stop else Ack.Continue())
-                yield (v1, v2)
-            }
-            assert(result.eval == (Maybe(1), Maybe.empty))
-        }
-
-        "with effects and acknowledgments" in {
-            val result = Env.run(2) {
-                Poll.run(Chunk(1, 2, 3, 4)) {
-                    for
-                        threshold <- Env.get[Int]
-                        v1        <- Poll.one[Int](Ack.Continue())
-                        v2        <- Poll.one[Int](if v1.exists(_ < threshold) then Ack.Continue() else Ack.Stop)
-                    yield (v1, v2)
-                }
-            }
-            assert(result.eval == (Maybe(1), Maybe(2)))
-        }
-
         "with nested polls" in {
             val result = Poll.run(Chunk(1, 2, 3)) {
                 for
@@ -225,7 +189,7 @@ class PollTest extends Test:
     "run Emit" - {
         "one" in {
             val result = Poll.run(Emit(1))(Poll.one[Int])
-            assert(result.eval == (Ack.Continue(), Maybe(1)))
+            assert(result.eval == ((), Maybe(1)))
         }
 
         "two" in {
@@ -235,7 +199,7 @@ class PollTest extends Test:
                     case Present(v) => Maybe(v * 3)
                 }
             }
-            assert(result.eval == (Ack.Stop, Maybe(3)))
+            assert(result.eval == ((), Maybe(3)))
         }
 
         "basic emit-poll cycle" in run {
@@ -259,15 +223,15 @@ class PollTest extends Test:
         "early poller termination" in run {
             val emitter =
                 for
-                    ack1 <- Emit(1)
-                    ack2 <- Emit(2)
-                    ack3 <- Emit(3)
-                yield (ack1, ack2, ack3, "emitted")
+                    _ <- Emit(1)
+                    _ <- Emit(2)
+                    _ <- Emit(3)
+                yield "emitted"
 
-            val poller = Poll.one[Int](Ack.Stop)
+            val poller = Poll.one[Int]
 
             val result = Poll.run(emitter)(poller)
-            assert(result.eval == ((Ack.Stop, Ack.Stop, Ack.Stop, "emitted"), Maybe(1)))
+            assert(result.eval == ("emitted", Maybe(1)))
         }
 
         "fold with emit" in run {
