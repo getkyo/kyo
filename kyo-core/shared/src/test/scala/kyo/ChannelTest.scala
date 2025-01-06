@@ -109,6 +109,55 @@ class ChannelTest extends Test:
                     case Result.Fail(closed: Closed) => assert(true)
                     case other                       => fail(s"$other was not Result.Fail[Closed]")
             }
+            "should notify waiting takers immediately" in runNotJS {
+                for
+                    c     <- Channel.init[Int](2)
+                    take1 <- c.takeFiber
+                    take2 <- c.takeFiber
+                    _     <- c.putBatch(Seq(1, 2))
+                    v1    <- take1.get
+                    v2    <- take2.get
+                yield assert(v1 == 1 && v2 == 2)
+            }
+            "should handle channel at capacity" in runNotJS {
+                for
+                    c     <- Channel.init[Int](2)
+                    _     <- c.put(1)
+                    _     <- c.put(2)
+                    take1 <- c.takeFiber
+                    fiber <- Async.run(c.putBatch(Seq(3, 4)))
+                    v1    <- take1.get
+                    done1 <- fiber.done
+                    take2 <- c.takeFiber
+                    v2    <- take2.get
+                    _     <- fiber.get
+                yield assert(v1 == 1 && v2 == 2 && !done1)
+            }
+            "should handle empty sequence" in runNotJS {
+                for
+                    c   <- Channel.init[Int](2)
+                    res <- c.putBatch(Seq())
+                yield assert(true)
+            }
+            "should fail when channel is closed" in runNotJS {
+                for
+                    c      <- Channel.init[Int](2)
+                    _      <- c.close
+                    result <- Abort.run(c.putBatch(Seq(1, 2)))
+                yield result match
+                    case Result.Fail(_: Closed) => assert(true)
+                    case other                  => fail(s"Expected Fail(Closed) but got $other")
+            }
+            "should preserve elements put before closure during partial batch put" in runNotJS {
+                for
+                    c     <- Channel.init[Int](2)
+                    fiber <- Async.run(c.putBatch(Chunk(1, 2, 3, 4, 5)))
+                    v1    <- c.take
+                    v2    <- c.take
+                    _     <- c.close
+                    res   <- fiber.getResult
+                yield assert(res.isFail && v1 == 1 && v2 == 2)
+            }
         }
         "nested upper bound" - {
             given ch[A]: CanEqual[Chunk[Any], Chunk[A]] = CanEqual.derived
@@ -297,6 +346,34 @@ class ChannelTest extends Test:
                 r <- c.drainUpTo(2)
                 s <- c.size
             yield assert(r == Seq(1, 2) && s == 2)
+        }
+        "should consider pending puts" in pendingUntilFixed {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](2)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    result    <- c.drainUpTo(3)
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            }
+            ()
+        }
+        "should consider pending puts - zero capacity" in pendingUntilFixed {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](0)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    result    <- c.drainUpTo(3)
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            }
+            ()
         }
     }
     "close" - {
@@ -566,6 +643,57 @@ class ChannelTest extends Test:
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
+
+        "putBatch and take" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+
+                putFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 60).grouped(3).toSeq.map(batch =>
+                        channel.putBatch(batch).andThen(batch)
+                    )))
+                )
+                takeFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 60).map(_ =>
+                        channel.take
+                    )))
+                )
+                _         <- latch.release
+                putRes    <- putFiber.get
+                takeRes   <- takeFiber.get
+                finalSize <- channel.size
+            yield assert(putRes.flatten.toSet == takeRes.toSet))
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
+        }
+
+        "putBatch and takeExactly" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+
+                putFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 60).grouped(3).toSeq.map(batch =>
+                        channel.putBatch(batch).andThen(batch)
+                    )))
+                )
+                takeFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 6).map(_ =>
+                        channel.takeExactly(10)
+                    )))
+                )
+                _         <- latch.release
+                putRes    <- putFiber.get
+                takeRes   <- takeFiber.get
+                finalSize <- channel.size
+            yield assert(putRes.flatten.toSet == takeRes.flatten.toSet))
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
+        }
+
     }
 
     "stream" - {
