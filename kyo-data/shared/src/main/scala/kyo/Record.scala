@@ -160,7 +160,7 @@ object Record:
           *   The value to associate with the field
           */
         def ~[Value](value: Value)(using tag: Tag[Value]): Record[self.type ~ Value] =
-            Record(Map(Field(self, tag) -> value))
+            Record(Map.empty.updated(Field(self, tag), value))
 
     /** Type class for converting types to Records.
       *
