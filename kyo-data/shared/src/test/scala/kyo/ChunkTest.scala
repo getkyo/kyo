@@ -10,7 +10,7 @@ class ChunkTest extends Test:
                 val array = Array("a", "b", "c")
                 val chunk = Chunk.from(array)
                 assert(chunk.isInstanceOf[Chunk.Indexed[String]])
-                assert(chunk.toSeq == Seq("a", "b", "c"))
+                assert(chunk == Seq("a", "b", "c"))
             }
 
             "creates an empty Chunk from an empty Array" in {
@@ -32,7 +32,7 @@ class ChunkTest extends Test:
                 val seq   = Seq("a", "b", "c")
                 val chunk = Chunk.from(seq)
                 assert(chunk.isInstanceOf[Chunk.Indexed[String]])
-                assert(chunk.toSeq == Seq("a", "b", "c"))
+                assert(chunk == Seq("a", "b", "c"))
             }
 
             "creates an empty Chunk from an empty Seq" in {
@@ -45,13 +45,13 @@ class ChunkTest extends Test:
                 "List" in {
                     val list  = List(1, 2, 3)
                     val chunk = Chunk.from(list)
-                    assert(chunk.toSeq == Seq(1, 2, 3))
+                    assert(chunk == Seq(1, 2, 3))
                 }
 
                 "Vector" in {
                     val vector = Vector(1, 2, 3)
                     val chunk  = Chunk.from(vector)
-                    assert(chunk.toSeq == Seq(1, 2, 3))
+                    assert(chunk == Seq(1, 2, 3))
                 }
             }
 
@@ -332,14 +332,9 @@ class ChunkTest extends Test:
     }
 
     "toSeq" - {
-        "converts a Chunk to an IndexedSeq" in {
+        "returns same instance" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            assert(chunk.toSeq == Chunk(1, 2, 3, 4, 5))
-        }
-
-        "converts an empty Chunk to an empty IndexedSeq" in {
-            val chunk = Chunk.empty[Int]
-            assert(chunk.toSeq.isEmpty)
+            assert(chunk.toSeq eq chunk)
         }
     }
 
@@ -526,6 +521,7 @@ class ChunkTest extends Test:
         "appends" in {
             val chunk: Chunk[Chunk[Int]] =
                 Chunk(Chunk.empty[Int].append(1).append(2), Chunk(3, 4).append(5), Chunk(6, 7).append(8).append(9))
+
             assert(chunk.flattenChunk == Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9))
         }
     }
@@ -871,7 +867,7 @@ class ChunkTest extends Test:
     }
 
     "Chunk.empty" in {
-        assert(Chunk.empty[Int].toSeq.isEmpty)
+        assert(Chunk.empty[Int].isEmpty)
     }
 
     "toString" - {

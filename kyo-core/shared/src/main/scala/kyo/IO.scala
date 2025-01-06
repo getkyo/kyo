@@ -42,7 +42,7 @@ object IO:
       *   The suspended computation wrapped in an IO effect.
       */
     inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (IO & S) =
-        Effect.defer(f)
+        Effect.deferInline(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
       *
@@ -69,7 +69,7 @@ object IO:
     object Unsafe:
 
         inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
-            Effect.defer {
+            Effect.deferInline {
                 import AllowUnsafe.embrace.danger
                 f
             }

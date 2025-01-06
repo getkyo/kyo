@@ -56,7 +56,7 @@ object ChunkBuilder:
             override def clear(): Unit = builder.foreach(_.clear())
 
             override def result(): Chunk.Indexed[A] =
-                val chunk = builder.fold(Chunk.indexedEmpty[A])(b => Chunk.fromNoCopy(b.result()))
+                val chunk = builder.fold(Chunk.Indexed.empty[A])(b => Chunk.fromNoCopy(b.result()))
                 builder.foreach(_.clear())
                 chunk
             end result

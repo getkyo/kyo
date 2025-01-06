@@ -50,6 +50,14 @@ class HubTest extends Test:
             v <- l.poll
         yield assert(b && v.isEmpty)
     }
+    "takeExactly" in runNotJS {
+        for
+            h   <- Hub.init[Int](3)
+            l   <- h.listen
+            _   <- Kyo.foreachDiscard(Seq(1, 2, 3))(h.put(_))
+            res <- l.takeExactly(3)
+        yield assert(res == Chunk(1, 2, 3))
+    }
     "close hub" in runNotJS {
         for
             h  <- Hub.init[Int](2)
@@ -131,6 +139,21 @@ class HubTest extends Test:
             v <- l.poll
         yield assert(v.isEmpty)
     }
+    "resource" in runNotJS {
+        val effect = Resource.run:
+            for
+                h <- Hub.init[Int](2)
+                l <- h.listen
+                _ <- h.put(1)
+                v <- l.take
+            yield (h, l, v)
+        effect.map:
+            case (h, l, v) =>
+                for
+                    lClosed <- l.closed
+                    hClosed <- h.closed
+                yield assert(lClosed && !hClosed && v == 1)
+    }
     "contention" - {
         "writes" in runNotJS {
             for
@@ -161,6 +184,48 @@ class HubTest extends Test:
                 e1 <- h.empty
                 e2 <- Kyo.foreach(l)(_.empty)
             yield assert(t == Chunk.fill(100)(1) && e1 && e2 == Chunk.fill(100)(true))
+        }
+    }
+    "stream" - {
+        "multiple listeners should stream the same elements" in runNotJS {
+            for
+                h  <- Hub.init[Int](2)
+                l1 <- h.listen
+                l2 <- h.listen
+                l3 <- h.listen
+                f  <- Async.run(Kyo.foreachDiscard(0 until 4)(h.put(_)))
+                res <- Async.parallelUnbounded:
+                    Seq(l1, l2, l3).map: l =>
+                        l.stream().take(4).run
+                empty <- h.empty
+            yield assert(empty && res.size == 3 && res.forall(_ == Chunk(0, 1, 2, 3)))
+        }
+        "stream should end on closure" in runNotJS {
+            val effect =
+                for
+                    h  <- Hub.init[Int](4)
+                    l  <- h.listen
+                    fp <- Async.run(Kyo.foreachDiscard(0 until 4)(h.put(_)))
+                    _ <- l.stream().runForeach: v =>
+                        Var.update[Chunk[Int]](_.append(v)).map: _ =>
+                            if v == 3 then l.close.unit else ()
+                    res <- Var.get[Chunk[Int]]
+                yield res
+            Var.run(Chunk.empty[Int])(effect).map: res =>
+                assert(res == Chunk(0, 1, 2, 3))
+        }
+        "streamFailing should fail on closure" in runNotJS {
+            val effect =
+                for
+                    h  <- Hub.init[Int](4)
+                    l  <- h.listen
+                    fp <- Async.run(Kyo.foreachDiscard(0 until 4)(h.put(_)))
+                    _ <- l.streamFailing().runForeach: v =>
+                        if v == 3 then l.close.unit else ()
+                yield ()
+            Abort.run[Closed](effect).map:
+                case Result.Fail(_: Closed) => succeed
+                case other                  => fail(s"Stream did not abort with Closed")
         }
     }
 end HubTest

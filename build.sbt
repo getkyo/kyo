@@ -365,7 +365,7 @@ lazy val `kyo-sttp` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.1"
+            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.2"
         )
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
@@ -396,8 +396,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.0",
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.0"
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.1",
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.1"
         )
         .jvmSettings(mimaCheck(false))
 
