@@ -329,7 +329,8 @@ object Channel:
 
                 def drainUpTo(max: Int)(using AllowUnsafe) =
                     val result = queue.drainUpTo(max).map { chunk =>
-                        if chunk.length >= max then chunk
+                        val cl = chunk.length
+                        if cl >= max then chunk
                         else
                             val builder = Chunk.newBuilder[A]
                             @tailrec def loop(i: Int): Unit =
@@ -347,9 +348,10 @@ object Channel:
                                         case _ => ()
                                     end match
                             end loop
-                            loop(max)
+                            loop(max - cl)
                             val nextChunk = builder.result()
                             chunk.concat(nextChunk)
+                        end if
                     }
 
                     if result.exists(_.nonEmpty) then flush()

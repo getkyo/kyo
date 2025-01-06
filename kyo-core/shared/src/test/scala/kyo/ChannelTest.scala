@@ -384,7 +384,7 @@ class ChannelTest extends Test:
                     _         <- c.putFiber(4)
                     result    <- c.drainUpTo(3)
                     finalSize <- c.size
-                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 1)
             }
         }
         "should consider pending puts - zero capacity" in run {
