@@ -254,7 +254,7 @@ object Channel:
         def size()(using AllowUnsafe): Result[Closed, Int]
 
         def offer(value: A)(using AllowUnsafe): Result[Closed, Boolean]
-        def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Seq[A]]
+        def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]]
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
 
         def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
@@ -300,9 +300,9 @@ object Channel:
                     result
                 end offer
 
-                def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Seq[A]] =
+                def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]] =
                     @tailrec
-                    def loop(current: Seq[A], offered: Boolean = false): Result[Closed, Seq[A]] =
+                    def loop(current: Chunk[A], offered: Boolean = false): Result[Closed, Chunk[A]] =
                         if current.isEmpty then
                             if offered then flush()
                             Result.Success(Chunk.empty)
@@ -318,7 +318,7 @@ object Channel:
                                     result.map(_ => current)
                         end if
                     end loop
-                    loop(values)
+                    loop(Chunk.from(values))
                 end offerAll
 
                 def poll()(using AllowUnsafe) =
