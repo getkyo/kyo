@@ -328,7 +328,30 @@ object Channel:
                 end poll
 
                 def drainUpTo(max: Int)(using AllowUnsafe) =
-                    val result = queue.drainUpTo(max)
+                    val result = queue.drainUpTo(max).map { chunk =>
+                        if chunk.length >= max then chunk
+                        else
+                            val builder = Chunk.newBuilder[A]
+                            @tailrec def loop(i: Int): Unit =
+                                if i == 0 then ()
+                                else
+                                    puts.poll() match
+                                        case Put.Value(v, promise) =>
+                                            builder.addOne(v)
+                                            promise.completeDiscard(Result.Success(()))
+                                            loop(i - 1)
+                                        case Put.Batch(c, promise) =>
+                                            builder.addAll(c)
+                                            promise.completeDiscard(Result.Success(()))
+                                            loop(i - 1)
+                                        case _ => ()
+                                    end match
+                            end loop
+                            loop(max)
+                            val nextChunk = builder.result()
+                            chunk.concat(nextChunk)
+                    }
+
                     if result.exists(_.nonEmpty) then flush()
                     result
                 end drainUpTo
@@ -357,7 +380,25 @@ object Channel:
                 end takeFiber
 
                 def drain()(using AllowUnsafe) =
-                    val result = queue.drain()
+                    val result = queue.drain().map { chunk =>
+                        val builder = Chunk.newBuilder[A]
+                        @tailrec def loop(): Unit =
+                            puts.poll() match
+                                case Put.Value(v, promise) =>
+                                    builder.addOne(v)
+                                    promise.completeDiscard(Result.Success(()))
+                                    loop()
+                                case Put.Batch(c, promise) =>
+                                    builder.addAll(c)
+                                    promise.completeDiscard(Result.Success(()))
+                                    loop()
+                                case _ => ()
+                            end match
+                        end loop
+                        loop()
+                        val nextChunk = builder.result()
+                        chunk.concat(nextChunk)
+                    }
                     if result.exists(_.nonEmpty) then flush()
                     result
                 end drain
