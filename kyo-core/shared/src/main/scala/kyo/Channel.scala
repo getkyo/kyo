@@ -413,8 +413,10 @@ object Channel:
                                 @tailrec
                                 def loop(i: Int): Unit =
                                     if i >= chunk.length then
+                                        // All items offered, complete put
                                         promise.completeDiscard(Result.unit)
                                     else if !queue.offer(chunk(i)).contains(true) then
+                                        // Queue became full, add pending put for the rest of the batch
                                         discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
                                     else loop(i + 1)
 
@@ -438,8 +440,12 @@ object Channel:
                                 case Put.Value(value, promise) =>
                                     Maybe(takes.poll()) match
                                         case Present(takePromise) if takePromise.complete(Result.success(value)) =>
+                                            // Value transfered, complete put
                                             promise.completeDiscard(Result.unit)
-                                        case _ => discard(puts.add(put))
+
+                                        case _ =>
+                                            // Take promise was interrupted, return put to the queue
+                                            discard(puts.add(put))
 
                                 case Put.Batch(chunk, promise) =>
                                     // NB: this is only efficient if chunk is effectively indexed
@@ -447,15 +453,19 @@ object Channel:
                                     @tailrec
                                     def loop(i: Int): Unit =
                                         if i >= chunk.length then
+                                            // All items transfered, complete put
                                             promise.completeDiscard(Result.unit)
                                         else
                                             Maybe(takes.poll()) match
                                                 case Present(takePromise) =>
                                                     if takePromise.complete(Result.success(chunk(i))) then
+                                                        // Item transfered, move to the next one
                                                         loop(i + 1)
                                                     else
+                                                        // Take was interrupted, retry current item
                                                         loop(i)
                                                 case _ =>
+                                                    // No more pending takes, enqueue put again for the remaining items
                                                     discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
                                         end if
                                     end loop
