@@ -108,7 +108,6 @@ object Channel:
                 Loop(Chunk.empty[A]): lastChunk =>
                     val nextN = n - lastChunk.size
                     Channel.drainUpTo(self)(nextN).map: chunk =>
-                        // IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
                         val chunk1 = lastChunk.concat(chunk)
                         if chunk1.size == n then Loop.done(chunk1)
                         else
@@ -303,15 +302,22 @@ object Channel:
 
                 def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Seq[A]] =
                     @tailrec
-                    def loop(current: Seq[A]): Result[Closed, Seq[A]] =
-                        if current.isEmpty then Result.Success(Chunk.empty)
+                    def loop(current: Seq[A], offered: Boolean = false): Result[Closed, Seq[A]] =
+                        if current.isEmpty then
+                            if offered then flush()
+                            Result.Success(Chunk.empty)
                         else
-                            val result = queue.offer(current.head)
-                            if result.isFail then result.map(_ => current)
-                            else if result.contains(false) then
-                                Result.Success(current)
-                            else loop(current.tail)
-                            end if
+                            queue.offer(current.head) match
+                                case Result.Success(true) =>
+                                    loop(current.tail, true)
+                                case Result.Success(false) =>
+                                    if offered then flush()
+                                    Result.success(current)
+                                case result =>
+                                    if offered then flush()
+                                    result.map(_ => current)
+                        end if
+                    end loop
                     loop(values)
                 end offerAll
 
@@ -444,8 +450,11 @@ object Channel:
                                             promise.completeDiscard(Result.unit)
                                         else
                                             Maybe(takes.poll()) match
-                                                case Present(takePromise) if takePromise.complete(Result.success(chunk(i))) =>
-                                                    loop(i + 1)
+                                                case Present(takePromise) =>
+                                                    if takePromise.complete(Result.success(chunk(i))) then
+                                                        loop(i + 1)
+                                                    else
+                                                        loop(i)
                                                 case _ =>
                                                     discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
                                         end if
