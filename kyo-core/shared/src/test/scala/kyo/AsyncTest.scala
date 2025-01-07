@@ -1069,4 +1069,111 @@ class AsyncTest extends Test:
         }
     }
 
+    "memoize" - {
+        "caches successful results" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    counter.incrementAndGet.map(_ => 42)
+                }
+                v1    <- memoized()
+                v2    <- memoized()
+                v3    <- memoized()
+                count <- counter.get
+            yield
+                assert(v1 == 42)
+                assert(v2 == 42)
+                assert(v3 == 42)
+                assert(count == 1)
+        }
+
+        "retries after failure" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    counter.incrementAndGet.map { count =>
+                        if count == 1 then throw new RuntimeException("First attempt fails")
+                        else 42
+                    }
+                }
+                r1    <- Abort.run(memoized())
+                v2    <- memoized()
+                v3    <- memoized()
+                count <- counter.get
+            yield
+                assert(r1.isPanic)
+                assert(v2 == 42)
+                assert(v3 == 42)
+                assert(count == 2)
+        }
+
+        "works with async operations" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    for
+                        _     <- Async.sleep(1.millis)
+                        count <- counter.incrementAndGet
+                    yield count
+                }
+                v1    <- memoized()
+                v2    <- memoized()
+                v3    <- memoized()
+                count <- counter.get
+            yield
+                assert(v1 == 1)
+                assert(v2 == 1)
+                assert(v3 == 1)
+                assert(count == 1)
+        }
+
+        "handles concurrent access" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    for
+                        _     <- Async.sleep(1.millis)
+                        count <- counter.incrementAndGet
+                    yield count
+                }
+                results <- Async.parallel(
+                    memoized(),
+                    memoized(),
+                    memoized()
+                )
+                count <- counter.get
+            yield
+                assert(results._1 == 1)
+                assert(results._2 == 1)
+                assert(results._3 == 1)
+                assert(count == 1)
+        }
+
+        "handles interruption during initialization" in run {
+            for
+                counter  <- AtomicInt.init(0)
+                started  <- Latch.init(1)
+                sleeping <- Latch.init(1)
+                done     <- Latch.init(1)
+                memoized <- Async.memoize {
+                    IO.ensure(done.release) {
+                        for
+                            _     <- started.release
+                            _     <- Async.sleep(50.millis)
+                            count <- counter.incrementAndGet
+                        yield count
+                    }
+                }
+                fiber <- Async.run(memoized())
+                _     <- started.await
+                _     <- fiber.interrupt
+                _     <- done.await
+                v2    <- memoized()
+                count <- counter.get
+            yield
+                assert(v2 == 1)
+                assert(count == 1)
+        }
+    }
+
 end AsyncTest
