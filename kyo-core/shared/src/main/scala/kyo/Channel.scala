@@ -343,7 +343,7 @@ object Channel:
                                             loop(i - 1)
                                         case Put.Batch(c, promise) =>
                                             builder.addAll(c)
-                                            promise.completeDiscard(Result.Success(()))
+                                            promise.completeDiscard(Result.unit)
                                             loop(i - 1)
                                         case _ => ()
                                     end match
