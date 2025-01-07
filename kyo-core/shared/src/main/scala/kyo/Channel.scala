@@ -105,16 +105,18 @@ object Channel:
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
             if n <= 0 then Chunk.empty
             else
-                Loop(Chunk.empty[A]): lastChunk =>
-                    val nextN = n - lastChunk.size
+                Loop(Chunk.empty[A], 0): (lastChunk, lastSize) =>
+                    val nextN = n - lastSize
                     Channel.drainUpTo(self)(nextN).map: chunk =>
                         val chunk1 = lastChunk.concat(chunk)
+                        val size1  = chunk1.size
                         if chunk1.size == n then Loop.done(chunk1)
                         else
                             self.take.map: a =>
                                 val chunk2 = chunk1.append(a)
-                                if chunk2.size == n then Loop.done(chunk2)
-                                else Loop.continue(chunk2)
+                                val size2  = size1 + 1
+                                if size2 == n then Loop.done(chunk2)
+                                else Loop.continue(chunk2, size2)
                         end if
 
         /** Creates a fiber that puts an element into the channel.
@@ -342,9 +344,15 @@ object Channel:
                                             promise.completeDiscard(Result.Success(()))
                                             loop(i - 1)
                                         case Put.Batch(c, promise) =>
-                                            builder.addAll(c)
-                                            promise.completeDiscard(Result.Success(()))
-                                            loop(i - 1)
+                                            val bs = c.length
+                                            if bs <= i then
+                                                builder.addAll(c)
+                                                promise.completeDiscard(Result.Success(()))
+                                                loop(i - bs)
+                                            else
+                                                builder.addAll(c.take(i))
+                                                discard(puts.offer(Put.Batch(c.drop(i), promise)))
+                                            end if
                                         case null => ()
                                     end match
                             end loop
