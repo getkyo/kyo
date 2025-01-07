@@ -149,9 +149,8 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
-                        val size    = indexed.size
                         Loop.indexed { idx =>
-                            if idx == size then Loop.done
+                            if idx == indexed.size then Loop.done
                             else f(indexed(idx)).andThen(Loop.continue)
                         }
                 end match
@@ -184,9 +183,8 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
-                        val size    = indexed.size
                         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
-                            if idx == size then Loop.done(acc)
+                            if idx == indexed.size then Loop.done(acc)
                             else
                                 val curr = indexed(idx)
                                 f(curr).map {
@@ -222,9 +220,8 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
-                        val size    = indexed.size
                         Loop.indexed(acc) { (idx, acc) =>
-                            if idx == size then Loop.done(acc)
+                            if idx == indexed.size then Loop.done(acc)
                             else f(acc, indexed(idx)).map(Loop.continue(_))
                         }
                 end match
@@ -281,9 +278,8 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
-                        val size    = indexed.size
                         Loop.indexed { idx =>
-                            if idx == size then Loop.done
+                            if idx == indexed.size then Loop.done
                             else indexed(idx).map(_ => Loop.continue)
                         }
                 end match
@@ -316,9 +312,8 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
-                        val size    = indexed.size
                         Loop.indexed { idx =>
-                            if idx == size then Loop.done(Maybe.empty)
+                            if idx == indexed.size then Loop.done(Maybe.empty)
                             else
                                 f(indexed(idx)).map {
                                     case Absent     => Loop.continue
@@ -354,9 +349,8 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
-                        val size    = indexed.size
                         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
-                            if idx == size then Loop.done(acc)
+                            if idx == indexed.size then Loop.done(acc)
                             else
                                 val curr = indexed(idx)
                                 f(curr).map {
@@ -393,9 +387,8 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
-                        val size    = indexed.size
                         Loop.indexed { idx =>
-                            if idx == size then Loop.done(Chunk.empty)
+                            if idx == indexed.size then Loop.done(Chunk.empty)
                             else
                                 val curr = indexed(idx)
                                 f(curr).map {
