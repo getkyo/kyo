@@ -330,40 +330,22 @@ object Channel:
                 end poll
 
                 def drainUpTo(max: Int)(using AllowUnsafe) =
-                    val result = queue.drainUpTo(max).map { chunk =>
-                        val cl = chunk.length
-                        if cl >= max then chunk
+                    def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
+                        if i == 0 then Result.Success(current)
                         else
-                            val builder = Chunk.newBuilder[A]
-                            @tailrec def loop(i: Int): Unit =
-                                if i == 0 then ()
-                                else
-                                    puts.poll() match
-                                        case Put.Value(v, promise) =>
-                                            builder.addOne(v)
-                                            promise.completeDiscard(Result.unit)
-                                            loop(i - 1)
-                                        case Put.Batch(c, promise) =>
-                                            val bs = c.length
-                                            if bs <= i then
-                                                builder.addAll(c)
-                                                promise.completeDiscard(Result.Success(()))
-                                                loop(i - bs)
-                                            else
-                                                builder.addAll(c.take(i))
-                                                discard(puts.offer(Put.Batch(c.drop(i), promise)))
-                                            end if
-                                        case null => ()
-                                    end match
-                            end loop
-                            loop(max - cl)
-                            val nextChunk = builder.result()
-                            chunk.concat(nextChunk)
+                            val next = queue.drainUpTo(i)
+                            next match
+                                case Result.Success(c) =>
+                                    if c.isEmpty then Result.Success(current)
+                                    else
+                                        flush()
+                                        loop(current.concat(c), i - c.length)
+                                case other => other
+                            end match
                         end if
-                    }
+                    end loop
 
-                    if result.exists(_.nonEmpty) then flush()
-                    result
+                    loop(Chunk.empty, max)
                 end drainUpTo
 
                 def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
@@ -390,27 +372,19 @@ object Channel:
                 end takeFiber
 
                 def drain()(using AllowUnsafe) =
-                    val result = queue.drain().map { chunk =>
-                        val builder = Chunk.newBuilder[A]
-                        @tailrec def loop(): Unit =
-                            puts.poll() match
-                                case Put.Value(v, promise) =>
-                                    builder.addOne(v)
-                                    promise.completeDiscard(Result.unit)
-                                    loop()
-                                case Put.Batch(c, promise) =>
-                                    builder.addAll(c)
-                                    promise.completeDiscard(Result.Success(()))
-                                    loop()
-                                case null => ()
-                            end match
-                        end loop
-                        loop()
-                        val nextChunk = builder.result()
-                        chunk.concat(nextChunk)
-                    }
-                    if result.exists(_.nonEmpty) then flush()
-                    result
+                    def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
+                        val next = queue.drain()
+                        next match
+                            case Result.Success(c) =>
+                                if c.isEmpty then Result.Success(current)
+                                else
+                                    flush()
+                                    loop(current.concat(c))
+                            case other => other
+                        end match
+                    end loop
+
+                    loop(Chunk.empty)
                 end drain
 
                 def close()(using frame: Frame, allow: AllowUnsafe) =

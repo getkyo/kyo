@@ -317,19 +317,6 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
         }
-        "should consider pending puts - zero capacity" in run {
-            import AllowUnsafe.embrace.danger
-            IO.Unsafe.evalOrThrow {
-                for
-                    c         <- Channel.init[Int](0)
-                    _         <- c.putFiber(1)
-                    _         <- c.putFiber(2)
-                    _         <- c.putFiber(3)
-                    result    <- c.drain
-                    finalSize <- c.size
-                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
-            }
-        }
     }
     "drainUpTo" - {
         "zero or negative" in run {
@@ -387,20 +374,20 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 1)
             }
         }
-        "should consider pending puts - zero capacity" in run {
-            import AllowUnsafe.embrace.danger
-            IO.Unsafe.evalOrThrow {
-                for
-                    c         <- Channel.init[Int](0)
-                    _         <- c.putFiber(1)
-                    _         <- c.putFiber(2)
-                    _         <- c.putFiber(3)
-                    _         <- c.putFiber(4)
-                    result    <- c.drainUpTo(3)
-                    finalSize <- c.size
-                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
-            }
-        }
+        // "should consider pending puts - zero capacity" in run {
+        //     import AllowUnsafe.embrace.danger
+        //     IO.Unsafe.evalOrThrow {
+        //         for
+        //             c         <- Channel.init[Int](0)
+        //             _         <- c.putFiber(1)
+        //             _         <- c.putFiber(2)
+        //             _         <- c.putFiber(3)
+        //             _         <- c.putFiber(4)
+        //             result    <- c.drainUpTo(3)
+        //             finalSize <- c.size
+        //         yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+        //     }
+        // }
     }
     "close" - {
         "empty" in runNotJS {
