@@ -345,7 +345,7 @@ object Channel:
                                             builder.addAll(c)
                                             promise.completeDiscard(Result.Success(()))
                                             loop(i - 1)
-                                        case _ => ()
+                                        case null => ()
                                     end match
                             end loop
                             loop(max - cl)
@@ -394,7 +394,7 @@ object Channel:
                                     builder.addAll(c)
                                     promise.completeDiscard(Result.Success(()))
                                     loop()
-                                case _ => ()
+                                case null => ()
                             end match
                         end loop
                         loop()
