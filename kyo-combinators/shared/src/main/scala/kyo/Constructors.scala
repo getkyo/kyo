@@ -95,7 +95,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that emits a value
       */
     def emit[A](value: A)(using Tag[A], Frame): Ack < Emit[A] =
-        Emit(value)
+        Emit.value(value)
 
     /** Creates an effect that fails with Abort[E].
       *

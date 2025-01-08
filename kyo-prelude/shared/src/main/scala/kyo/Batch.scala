@@ -32,7 +32,7 @@ object Batch:
       * results for each input.
       */
     inline def source[A, B, S](f: Seq[A] => (A => B < S) < S)(using inline frame: Frame): A => B < (Batch & S) =
-        (v: A) => ArrowEffect.suspendAndMap(Tag[Batch], Call(v, f))(identity)
+        (v: A) => ArrowEffect.suspendWith(Tag[Batch], Call(v, f))(identity)
 
     /** Creates a batched computation from a source function that returns a Map.
       *
@@ -92,7 +92,7 @@ object Batch:
       *   A batched computation that produces a single value of type B
       */
     inline def foreach[A, B, S](seq: Seq[A])(inline f: A => B < S): B < (Batch & S) =
-        ArrowEffect.suspendAndMap[A](Tag[Batch], Eval(seq))(f)
+        ArrowEffect.suspendWith[A](Tag[Batch], Eval(seq))(f)
 
     /** Runs a computation with Batch effect, executing all batched operations.
       *

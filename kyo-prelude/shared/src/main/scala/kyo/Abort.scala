@@ -47,7 +47,7 @@ object Abort:
       *   A computation that immediately fails with the given error value
       */
     inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
-        ArrowEffect.suspendAndMap[Any](erasedTag[E], e)(_ => ???)
+        ArrowEffect.suspendWith[Any](erasedTag[E], e)(_ => ???)
 
     /** Fails the computation if the condition is true.
       *

@@ -49,12 +49,12 @@ abstract private class PublisherToSubscriberTest extends Test:
         def emit(ack: Ack, cur: Int, stopPromise: Fiber.Promise[Nothing, Unit]): Ack < (Emit[Chunk[Int]] & IO) =
             ack match
                 case Ack.Stop        => stopPromise.completeDiscard(Result.success(())).andThen(Ack.Stop)
-                case Ack.Continue(_) => Emit.andMap(Chunk(cur))(emit(_, cur + 1, stopPromise))
+                case Ack.Continue(_) => Emit.valueWith(Chunk(cur))(emit(_, cur + 1, stopPromise))
         end emit
 
         for
             stopPromise <- Fiber.Promise.init[Nothing, Unit]
-            stream = Stream(Emit.andMap(Chunk.empty[Int])(emit(_, 0, stopPromise)))
+            stream = Stream(Emit.valueWith(Chunk.empty[Int])(emit(_, 0, stopPromise)))
             publisher  <- stream.toPublisher
             subscriber <- streamSubscriber
             _ = publisher.subscribe(subscriber)
@@ -74,7 +74,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                             if value >= MaxStreamLength then
                                 IO(Ack.Stop)
                             else
-                                Emit.andMap(Chunk(value))(emit(_, counter))
+                                Emit.valueWith(Chunk(value))(emit(_, counter))
                             end if
             end emit
 
@@ -85,7 +85,7 @@ abstract private class PublisherToSubscriberTest extends Test:
 
             for
                 counter <- AtomicInt.init(0)
-                inputStream = Stream(Emit.andMap(Chunk.empty)(emit(_, counter)))
+                inputStream = Stream(Emit.valueWith(Chunk.empty)(emit(_, counter)))
                 publisher   <- inputStream.toPublisher
                 subscriber1 <- streamSubscriber
                 subscriber2 <- streamSubscriber
@@ -123,7 +123,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                             if value >= MaxStreamLength then
                                 IO(Ack.Stop)
                             else
-                                Emit.andMap(Chunk(value))(emit(_, counter))
+                                Emit.valueWith(Chunk(value))(emit(_, counter))
                             end if
             end emit
 
@@ -140,7 +140,7 @@ abstract private class PublisherToSubscriberTest extends Test:
 
             for
                 counter <- AtomicInt.init(0)
-                inputStream = Stream(Emit.andMap(Chunk.empty)(emit(_, counter)))
+                inputStream = Stream(Emit.valueWith(Chunk.empty)(emit(_, counter)))
                 publisher   <- inputStream.toPublisher
                 subscriber1 <- streamSubscriber
                 subscriber2 <- streamSubscriber
@@ -179,13 +179,13 @@ abstract private class PublisherToSubscriberTest extends Test:
                             if value >= MaxStreamLength then
                                 IO(Ack.Stop)
                             else
-                                Emit.andMap(Chunk(value))(emit(_, counter))
+                                Emit.valueWith(Chunk(value))(emit(_, counter))
                             end if
             end emit
 
             for
                 counter     <- AtomicInt.init(0)
-                publisher   <- Stream(Emit.andMap(Chunk.empty)(emit(_, counter))).toPublisher
+                publisher   <- Stream(Emit.valueWith(Chunk.empty)(emit(_, counter))).toPublisher
                 subscriber1 <- streamSubscriber
                 subscriber2 <- streamSubscriber
                 subscriber3 <- streamSubscriber
@@ -196,7 +196,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                 fiber3      <- Async.run(latch.release.andThen(subscriber3.stream.run.unit))
                 fiber4      <- Async.run(latch.release.andThen(subscriber4.stream.run.unit))
                 publisherFiber <- Async.run(Resource.run(
-                    Stream(Emit.andMap(Chunk.empty)(emit(_, counter)))
+                    Stream(Emit.valueWith(Chunk.empty)(emit(_, counter)))
                         .toPublisher
                         .map { publisher =>
                             publisher.subscribe(subscriber1)
