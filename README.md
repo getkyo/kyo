@@ -406,7 +406,7 @@ val preserved = defer {
 val combined = defer {
     val effect1: Int < IO = IO(1).later   // Effect preserved
     val effect2: Int = IO(2).now          // Effect sequenced
-    effect1.now + effect2             // Combine results
+    effect1.now + effect2                 // Combine results
 }
 ```
 
