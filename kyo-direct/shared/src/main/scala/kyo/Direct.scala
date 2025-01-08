@@ -8,23 +8,51 @@ import kyo.Ansi.*
 import scala.annotation.tailrec
 import scala.quoted.*
 
-/** Defers the execution of a block of code, allowing the use of `~` (await) within it.
+/** Defers the execution of a block of code, allowing the use of `.now` and `.later` for effect handling.
   *
-  * This macro transforms the given block of code to work with effectful computations, enabling the use of `~` to handle various types of
-  * effects. The `defer` block is desugared into regular monadic composition using `map`, making it equivalent to writing out the monadic
-  * code explicitly.
+  * This macro transforms the given block of code to work with effectful computations. Effects can be:
+  *   - Sequenced immediately using `.now` when you need their results
+  *   - Preserved using `.later` (advanced API) for more controlled effect composition
+  *
+  * The `.later` operation is an advanced feature that gives more control over effect sequencing, but requires a deeper understanding of
+  * effect composition.
+  *
+  * The `defer` block is desugared into regular monadic composition using Kyo's monadic bind (`map`).
   *
   * @tparam A
   *   The type of the value returned by the deferred block
   * @param f
   *   The block of code to be deferred
   * @return
-  *   A value of type `A < S`, where `S` represents the combined effects of all `~` calls
+  *   A value of type `A < S`, where `S` represents the combined effects of all operations
   */
 transparent inline def defer[A](inline f: A) = ${ impl[A]('f) }
 
 extension [A, S](inline self: A < S)
-    inline def now: A       = ${ nowImpl('self) }
+
+    /** Sequences an effect immediately, making its result available for use.
+      *
+      * Must be used within a `defer` block. This operation tells the direct syntax to execute the effect at this point in the computation,
+      * allowing you to use its result in subsequent operations.
+      *
+      * @return
+      *   The unwrapped value of type `A` from the effect
+      * @throws RuntimeException
+      *   if used outside a `defer` block
+      */
+    inline def now: A = ${ nowImpl('self) }
+
+    /** Preserves an effect without immediate sequencing (advanced API).
+      *
+      * Must be used within a `defer` block. This advanced operation preserves the effect in its wrapped form without sequencing it,
+      * providing more control over effect composition. Use this when building reusable effect combinations or when explicit control over
+      * effect sequencing is needed.
+      *
+      * @return
+      *   The preserved effect of type `A < S`
+      * @throws RuntimeException
+      *   if used outside a `defer` block
+      */
     inline def later: A < S = ${ laterImpl('self) }
 end extension
 
