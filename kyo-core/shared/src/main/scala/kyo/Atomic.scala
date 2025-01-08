@@ -105,7 +105,7 @@ object AtomicInt:
       * @return
       *   A new AtomicInt instance initialized to 0
       */
-    def init(using Frame): AtomicInt < IO = use(0)(identity)
+    def init(using Frame): AtomicInt < IO = initWith(0)(identity)
 
     /** Creates a new AtomicInt with the given initial value.
       * @param v
@@ -113,7 +113,7 @@ object AtomicInt:
       * @return
       *   A new AtomicInt instance
       */
-    def init(initialValue: Int)(using Frame): AtomicInt < IO = use(initialValue)(identity)
+    def init(initialValue: Int)(using Frame): AtomicInt < IO = initWith(initialValue)(identity)
 
     /** Uses a new AtomicInt with initial value 0 in the given function.
       * @param f
@@ -121,8 +121,8 @@ object AtomicInt:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](inline f: AtomicInt => A < S)(using inline frame: Frame): A < (S & IO) =
-        use(0)(f)
+    inline def initWith[A, S](inline f: AtomicInt => A < S)(using inline frame: Frame): A < (S & IO) =
+        initWith(0)(f)
 
     /** Uses a new AtomicInt with the given initial value in the function.
       * @param initialValue
@@ -132,7 +132,7 @@ object AtomicInt:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](initialValue: Int)(inline f: AtomicInt => A < S)(using inline frame: Frame): A < (S & IO) =
+    inline def initWith[A, S](initialValue: Int)(inline f: AtomicInt => A < S)(using inline frame: Frame): A < (S & IO) =
         IO.Unsafe(f(AtomicInt(Unsafe.init(initialValue))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
@@ -275,7 +275,7 @@ object AtomicLong:
       *   A new AtomicLong instance
       */
     def init(initialValue: Long)(using Frame): AtomicLong < IO =
-        use(initialValue)(identity)
+        initWith(initialValue)(identity)
 
     /** Uses a new AtomicLong with initial value 0 in the given function.
       * @param f
@@ -283,8 +283,8 @@ object AtomicLong:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](inline f: AtomicLong => A < S)(using inline frame: Frame): A < (S & IO) =
-        use(0)(f)
+    inline def initWith[A, S](inline f: AtomicLong => A < S)(using inline frame: Frame): A < (S & IO) =
+        initWith(0)(f)
 
     /** Uses a new AtomicLong with the given initial value in the function.
       * @param initialValue
@@ -294,7 +294,7 @@ object AtomicLong:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](initialValue: Long)(inline f: AtomicLong => A < S)(using inline frame: Frame): A < (S & IO) =
+    inline def initWith[A, S](initialValue: Long)(inline f: AtomicLong => A < S)(using inline frame: Frame): A < (S & IO) =
         IO.Unsafe(f(AtomicLong(Unsafe.init(initialValue))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
@@ -397,7 +397,7 @@ object AtomicBoolean:
       *   A new AtomicBoolean instance
       */
     def init(initialValue: Boolean)(using Frame): AtomicBoolean < IO =
-        use(initialValue)(identity)
+        initWith(initialValue)(identity)
 
     /** Uses a new AtomicBoolean with initial value false in the given function.
       * @param f
@@ -405,8 +405,8 @@ object AtomicBoolean:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](inline f: AtomicBoolean => A < S)(using inline frame: Frame): A < (S & IO) =
-        use(false)(f)
+    inline def initWith[A, S](inline f: AtomicBoolean => A < S)(using inline frame: Frame): A < (S & IO) =
+        initWith(false)(f)
 
     /** Uses a new AtomicBoolean with the given initial value in the function.
       * @param initialValue
@@ -416,7 +416,7 @@ object AtomicBoolean:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](initialValue: Boolean)(inline f: AtomicBoolean => A < S)(using inline frame: Frame): A < (S & IO) =
+    inline def initWith[A, S](initialValue: Boolean)(inline f: AtomicBoolean => A < S)(using inline frame: Frame): A < (S & IO) =
         IO.Unsafe(f(AtomicBoolean(Unsafe.init(initialValue))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
@@ -527,7 +527,7 @@ object AtomicRef:
       *   The type of the referenced value
       */
     def init[A](initialValue: A)(using Frame): AtomicRef[A] < IO =
-        use(initialValue)(identity)
+        initWith(initialValue)(identity)
 
     /** Uses a new AtomicRef with the given initial value in the function.
       * @param initialValue
@@ -539,7 +539,7 @@ object AtomicRef:
       * @tparam A
       *   The type of the referenced value
       */
-    inline def use[A, B, S](initialValue: A)(inline f: AtomicRef[A] => B < S)(using inline frame: Frame): B < (S & IO) =
+    inline def initWith[A, B, S](initialValue: A)(inline f: AtomicRef[A] => B < S)(using inline frame: Frame): B < (S & IO) =
         IO.Unsafe(f(AtomicRef(Unsafe.init(initialValue))))
 
     opaque type Unsafe[A] = j.AtomicReference[A]

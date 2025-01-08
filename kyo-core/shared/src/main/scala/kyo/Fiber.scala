@@ -645,7 +645,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A new Promise
           */
-        def init[E, A](using Frame): Promise[E, A] < IO = use[E, A](identity)
+        def init[E, A](using Frame): Promise[E, A] < IO = initWith[E, A](identity)
 
         /** Uses a new Promise with the provided type parameters.
           * @param f
@@ -653,7 +653,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   The result of applying the function
           */
-        inline def use[E, A](using inline frame: Frame)[B, S](inline f: Promise[E, A] => B < S): B < (S & IO) =
+        inline def initWith[E, A](using inline frame: Frame)[B, S](inline f: Promise[E, A] => B < S): B < (S & IO) =
             IO(f(IOPromise()))
 
         extension [E, A](self: Promise[E, A])

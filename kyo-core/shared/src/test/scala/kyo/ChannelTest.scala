@@ -2,8 +2,8 @@ package kyo
 
 class ChannelTest extends Test:
 
-    "use" in run {
-        Channel.use[Int](10) { c =>
+    "initWith" in run {
+        Channel.initWith[Int](10) { c =>
             for
                 b <- c.offer(1)
                 v <- c.poll

@@ -4,8 +4,8 @@ import kyo.*
 
 class BarrierTest extends Test:
 
-    "use" in run {
-        Barrier.use(0)(_.await.andThen(succeed))
+    "initWith" in run {
+        Barrier.initWith(0)(_.await.andThen(succeed))
     }
 
     "zero" in run {

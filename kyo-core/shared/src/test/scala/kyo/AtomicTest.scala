@@ -89,12 +89,12 @@ class AtomicTest extends Test:
         }
         "should use new atomic with function" in run {
             for
-                v <- AtomicInt.use(ref => ref.incrementAndGet)
+                v <- AtomicInt.initWith(ref => ref.incrementAndGet)
             yield assert(v == 1)
         }
         "should use new atomic with initial value" in run {
             for
-                v <- AtomicInt.use(5)(ref => ref.incrementAndGet)
+                v <- AtomicInt.initWith(5)(ref => ref.incrementAndGet)
             yield assert(v == 6)
         }
     }
@@ -186,12 +186,12 @@ class AtomicTest extends Test:
         }
         "should use new atomic with function" in run {
             for
-                v <- AtomicLong.use(ref => ref.incrementAndGet)
+                v <- AtomicLong.initWith(ref => ref.incrementAndGet)
             yield assert(v == 1L)
         }
         "should use new atomic with initial value" in run {
             for
-                v <- AtomicLong.use(5L)(ref => ref.incrementAndGet)
+                v <- AtomicLong.initWith(5L)(ref => ref.incrementAndGet)
             yield assert(v == 6L)
         }
     }
@@ -247,12 +247,12 @@ class AtomicTest extends Test:
         }
         "should use new atomic with function" in run {
             for
-                v <- AtomicBoolean.use(ref => ref.get)
+                v <- AtomicBoolean.initWith(ref => ref.get)
             yield assert(!v) // default value is false
         }
         "should use new atomic with initial value" in run {
             for
-                v <- AtomicBoolean.use(true)(ref => ref.get)
+                v <- AtomicBoolean.initWith(true)(ref => ref.get)
             yield assert(v)
         }
     }
@@ -313,7 +313,7 @@ class AtomicTest extends Test:
         }
         "should use new atomic with initial value" in run {
             for
-                v <- AtomicRef.use("hello")(ref => ref.get)
+                v <- AtomicRef.initWith("hello")(ref => ref.get)
             yield assert(v == "hello")
         }
     }

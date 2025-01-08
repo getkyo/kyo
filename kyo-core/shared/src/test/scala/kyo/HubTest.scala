@@ -3,7 +3,7 @@ package kyo
 class HubTest extends Test:
 
     "use" in runNotJS {
-        Hub.use[Int](2) { h =>
+        Hub.initWith[Int](2) { h =>
             for
                 l <- h.listen
                 b <- h.offer(1)

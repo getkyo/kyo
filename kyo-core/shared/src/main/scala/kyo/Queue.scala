@@ -127,7 +127,7 @@ object Queue:
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
     def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Queue[A] < IO =
-        use[A](capacity, access)(identity)
+        initWith[A](capacity, access)(identity)
 
     /** Uses a new Queue with the provided count.
       * @param capacity
@@ -139,7 +139,7 @@ object Queue:
       * @return
       *   The result of applying the function
       */
-    inline def use[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](inline f: Queue[A] => B < S)(
+    inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](inline f: Queue[A] => B < S)(
         using inline frame: Frame
     ): B < (IO & S) =
         IO.Unsafe(f(Unsafe.init(capacity, access)))
@@ -173,7 +173,7 @@ object Queue:
           *   a new Unbounded Queue instance
           */
         def init[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < IO =
-            use[A](access, chunkSize)(identity)
+            initWith[A](access, chunkSize)(identity)
 
         /** Uses a new unbounded Queue with the provided count.
           * @param count
@@ -183,7 +183,10 @@ object Queue:
           * @return
           *   The result of applying the function
           */
-        inline def use[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)[B, S](inline f: Unbounded[A] => B < S)(
+        inline def initWith[A](
+            access: Access = Access.MultiProducerMultiConsumer,
+            chunkSize: Int = 8
+        )[B, S](inline f: Unbounded[A] => B < S)(
             using inline frame: Frame
         ): B < (IO & S) =
             IO.Unsafe(f(Unsafe.init(access, chunkSize)))

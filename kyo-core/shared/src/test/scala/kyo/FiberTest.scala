@@ -6,9 +6,9 @@ import org.scalatest.compatible.Assertion
 class FiberTest extends Test:
 
     "promise" - {
-        "use" in run {
+        "initWith" in run {
             for
-                result <- Promise.use[Nothing, Int] { p =>
+                result <- Promise.initWith[Nothing, Int] { p =>
                     p.complete(Result.success(42)).andThen(p.get)
                 }
             yield assert(result == 42)

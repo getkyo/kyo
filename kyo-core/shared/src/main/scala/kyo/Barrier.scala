@@ -35,7 +35,7 @@ object Barrier:
       * @return
       *   A new Barrier instance
       */
-    def init(parties: Int)(using Frame): Barrier < IO = use(parties)(identity)
+    def init(parties: Int)(using Frame): Barrier < IO = initWith(parties)(identity)
 
     /** Uses a new Barrier with the provided number of parties.
       * @param parties
@@ -45,7 +45,7 @@ object Barrier:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](parties: Int)(inline f: Barrier => A < S)(using inline frame: Frame): A < (S & IO) =
+    inline def initWith[A, S](parties: Int)(inline f: Barrier => A < S)(using inline frame: Frame): A < (S & IO) =
         IO.Unsafe(f(Barrier(Unsafe.init(parties))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */

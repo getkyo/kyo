@@ -59,7 +59,7 @@ object LongAdder:
       * @return
       *   A new LongAdder
       */
-    def init(using frame: Frame): LongAdder < IO = use(identity)
+    def init(using frame: Frame): LongAdder < IO = initWith(identity)
 
     /** Uses a new LongAdder.
       * @param f
@@ -67,7 +67,7 @@ object LongAdder:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](inline f: LongAdder => A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def initWith[A, S](inline f: LongAdder => A < S)(using inline frame: Frame): A < (IO & S) =
         IO.Unsafe(f(LongAdder(Unsafe.init())))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
@@ -133,7 +133,7 @@ object DoubleAdder:
       * @return
       *   A new DoubleAdder
       */
-    def init(using Frame): DoubleAdder < IO = use(identity)
+    def init(using Frame): DoubleAdder < IO = initWith(identity)
 
     /** Uses a new DoubleAdder.
       * @param f
@@ -141,7 +141,7 @@ object DoubleAdder:
       * @return
       *   The result of applying the function
       */
-    inline def use[A, S](inline f: DoubleAdder => A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def initWith[A, S](inline f: DoubleAdder => A < S)(using inline frame: Frame): A < (IO & S) =
         IO.Unsafe(f(DoubleAdder(Unsafe.init())))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */

@@ -5,7 +5,7 @@ import kyo.*
 class LatchTest extends Test:
 
     "use" in run {
-        Latch.use(1) { latch =>
+        Latch.initWith(1) { latch =>
             for
                 _ <- latch.release
                 _ <- latch.await

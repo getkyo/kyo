@@ -247,7 +247,7 @@ object Channel:
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
     def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < IO =
-        use[A](capacity, access)(identity)
+        initWith[A](capacity, access)(identity)
 
     /** Uses a new Channel with the provided configuration.
       * @param f
@@ -255,7 +255,7 @@ object Channel:
       * @return
       *   The result of applying the function
       */
-    inline def use[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
+    inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
     )(using inline frame: Frame): B < (S & IO) =
         IO.Unsafe(f(Unsafe.init(capacity, access)))
