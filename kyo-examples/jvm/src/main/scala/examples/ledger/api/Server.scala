@@ -14,12 +14,12 @@ object Server extends KyoApp:
     run {
 
         defer {
-            val port = ~System.property[Int]("PORT", 9999)
+            val port = System.property[Int]("PORT", 9999).now
 
             val dbConfig =
                 DB.Config(
-                    ~System.property[String]("DB_PATH", "/tmp/"),
-                    ~System.property[Duration]("flushInternal", 1000.millis)
+                    System.property[String]("DB_PATH", "/tmp/").now,
+                    System.property[Duration]("flushInternal", 1000.millis).now
                 )
 
             val options =
@@ -37,12 +37,12 @@ object Server extends KyoApp:
                     .host("0.0.0.0")
                     .port(port)
 
-            val db      = ~Env.run(dbConfig)(DB.init)
-            val handler = ~Env.run(db)(Handler.init)
+            val db      = Env.run(dbConfig)(DB.init).now
+            val handler = Env.run(db)(Handler.init).now
 
-            ~(Console.printLine(s"Server starting on port $port..."))
-            val binding = ~(Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))))
-            ~(Console.printLine(s"Server started: ${binding.localSocket}"))
+            Console.printLine(s"Server starting on port $port...").now
+            val binding = Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))).now
+            Console.printLine(s"Server started: ${binding.localSocket}").now
         }
     }
 

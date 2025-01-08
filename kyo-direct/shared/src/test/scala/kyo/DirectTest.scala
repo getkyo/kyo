@@ -4,7 +4,7 @@ class DirectTest extends Test:
 
     "one run" in run {
         val io = defer {
-            val a = ~IO("hello")
+            val a = IO("hello").now
             a + " world"
         }
         io.map { result =>
@@ -15,8 +15,8 @@ class DirectTest extends Test:
     "two runs" in run {
         val io =
             defer {
-                val a = ~IO("hello")
-                val b = ~IO("world")
+                val a = IO("hello").now
+                val b = IO("world").now
                 a + " " + b
             }
         io.map { result =>
@@ -25,10 +25,10 @@ class DirectTest extends Test:
     }
 
     "two effects" in run {
-        val io: String < (IO & Abort[Absent]) =
+        val io: String < (Abort[Absent] & IO) =
             defer {
-                val a = ~Abort.get(Some("hello"))
-                val b = ~IO("world")
+                val a = Abort.get(Some("hello")).now
+                val b = IO("world").now
                 a + " " + b
             }
         Abort.run(io).map { result =>
@@ -40,10 +40,10 @@ class DirectTest extends Test:
         var calls = Seq.empty[Int]
         val io: Boolean < IO =
             defer {
-                if ~IO { calls :+= 1; true } then
-                    ~IO { calls :+= 2; true }
+                if IO { calls :+= 1; true }.now then
+                    IO { calls :+= 2; true }.now
                 else
-                    ~IO { calls :+= 3; true }
+                    IO { calls :+= 3; true }.now
             }
         io.map { result =>
             assert(result)
@@ -56,7 +56,7 @@ class DirectTest extends Test:
             var calls = Seq.empty[Int]
             val io: Boolean < IO =
                 defer {
-                    (~IO { calls :+= 1; true } && ~IO { calls :+= 2; true })
+                    (IO { calls :+= 1; true }.now && IO { calls :+= 2; true }.now)
                 }
             io.map { result =>
                 assert(result)
@@ -67,7 +67,7 @@ class DirectTest extends Test:
             var calls = Seq.empty[Int]
             val io: Boolean < IO =
                 defer {
-                    (~IO { calls :+= 1; true } || ~IO { calls :+= 2; true })
+                    (IO { calls :+= 1; true }.now || IO { calls :+= 2; true }.now)
                 }
             io.map { result =>
                 assert(result)
@@ -79,11 +79,11 @@ class DirectTest extends Test:
     "while" in run {
         val io =
             defer {
-                val c = ~AtomicInt.init(1)
-                while ~c.get < 100 do
-                    ~c.incrementAndGet
+                val c = AtomicInt.init(1).now
+                while c.get.now < 100 do
+                    c.incrementAndGet.now
                     ()
-                ~c.get
+                c.get.now
             }
         io.map { result =>
             assert(result == 100)
@@ -92,12 +92,12 @@ class DirectTest extends Test:
 
     "options" in {
         def test(opt: Option[Int]) =
-            assert(opt == Abort.run(defer(~Abort.get(opt))).eval.fold(_ => None)(Some(_)))
+            assert(opt == Abort.run(defer(Abort.get(opt).now)).eval.fold(_ => None)(Some(_)))
         test(Some(1))
         test(None)
     }
     "consoles" in run {
-        Console.withIn(List("hello"))(defer(~(Abort.run(Console.readLine)))).map { result =>
+        Console.withIn(List("hello"))(defer(Abort.run(Console.readLine).now)).map { result =>
             assert(result.contains("hello"))
         }
     }
@@ -128,10 +128,10 @@ class DirectTest extends Test:
 
         val v: Int < Choice =
             defer {
-                val xx = ~x
+                val xx = x.now
                 xx + (
-                    if xx > 0 then (~y).length * ~x
-                    else (~y).length
+                    if xx > 0 then y.now.length * x.now
+                    else y.now.length
                 )
             }
 
@@ -146,13 +146,13 @@ class DirectTest extends Test:
 
         val v: Int < Choice =
             defer {
-                val xx = ~x
+                val xx = x.now
                 val r =
                     xx + (
-                        if xx > 0 then (~y).length * ~x
-                        else (~y).length
+                        if xx > 0 then y.now.length * x.now
+                        else y.now.length
                     )
-                ~Choice.dropIf(r <= 0)
+                Choice.dropIf(r <= 0).now
                 r
             }
 

@@ -9,11 +9,11 @@ class WhileTest extends AnyFreeSpec with Assertions:
 
     "with atomic" in {
         runLiftTest(3) {
-            val i = ~AtomicInt.init(0)
-            while ~i.get < 3 do
-                ~i.incrementAndGet
+            val i = AtomicInt.init(0).now
+            while i.get.now < 3 do
+                i.incrementAndGet.now
                 ()
-            ~i.get
+            i.get.now
         }
     }
     "double in tuple - strange case" in {
@@ -33,8 +33,8 @@ class WhileTest extends AnyFreeSpec with Assertions:
         val out =
             defer {
                 while i < 3 do
-                    ~IO(incrementA())
-                    ~IO(incrementB())
+                    IO(incrementA()).now
+                    IO(incrementB()).now
                     ()
                 end while
                 i

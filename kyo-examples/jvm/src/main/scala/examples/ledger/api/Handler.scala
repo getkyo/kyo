@@ -21,7 +21,7 @@ end Handler
 object Handler:
 
     val init: Handler < Env[DB] = defer {
-        Live(~Env.get[DB])
+        Live(Env.get[DB].now)
     }
 
     final class Live(db: DB) extends Handler:
@@ -32,12 +32,12 @@ object Handler:
         def transaction(account: Int, request: Transaction) = defer {
             import request.*
             // validations
-            if account < 0 || account > 5 then ~notFound
+            if account < 0 || account > 5 then notFound.now
             else if description.isEmpty || description.exists(d =>
                     d.size > 10 || d.isEmpty()
                 )
-            then ~unprocessableEntity
-            else if kind != "c" && kind != "d" then ~unprocessableEntity
+            then unprocessableEntity.now
+            else if kind != "c" && kind != "d" then unprocessableEntity.now
             else ()
             end if
 
@@ -46,21 +46,21 @@ object Handler:
 
             // perform transaction
             val result =
-                ~db.transaction(account, value, desc)
+                db.transaction(account, value, desc).now
 
             result match
-                case Denied         => ~unprocessableEntity
+                case Denied         => unprocessableEntity.now
                 case res: Processed => res
             end match
         }
 
         def statement(account: Int) = defer {
             // validations
-            if account < 0 || account > 5 then ~notFound
+            if account < 0 || account > 5 then notFound.now
             else ()
 
             // get statement
-            ~db.statement(account)
+            db.statement(account).now
         }
 
     end Live

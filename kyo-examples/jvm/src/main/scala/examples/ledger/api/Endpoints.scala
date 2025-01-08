@@ -13,28 +13,28 @@ object Endpoints:
 
     val init: Unit < (Env[Handler] & Routes) = defer {
 
-        val handler = ~Env.get[Handler]
+        val handler = Env.get[Handler].now
 
-        ~Routes.add(
+        Routes.add(
             _.post
                 .in("clientes" / path[Int]("id") / "transacoes")
                 .errorOut(statusCode)
                 .in(jsonBody[Transaction])
                 .out(jsonBody[Processed])
-        )(handler.transaction)
+        )(handler.transaction).now
 
-        ~Routes.add(
+        Routes.add(
             _.get
                 .in("clientes" / path[Int]("id") / "extrato")
                 .errorOut(statusCode)
                 .out(jsonBody[Statement])
-        )(handler.statement)
+        )(handler.statement).now
 
-        ~Routes.add(
+        Routes.add(
             _.get
                 .in("health")
                 .out(stringBody)
-        )(_ => "ok")
+        )(_ => "ok").now
     }
 
 end Endpoints
