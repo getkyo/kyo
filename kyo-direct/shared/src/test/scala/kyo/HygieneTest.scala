@@ -9,7 +9,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             var willFail = 1
-            await(IO(1))
+            IO(1).now
           }
         """)
     }
@@ -18,7 +18,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             return 42
-            await(IO(1))
+            IO(1).now
           }
         """)
     }
@@ -27,7 +27,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             defer {
-              await(IO(1))
+              IO(1).now
             }
           }
         """)
@@ -37,7 +37,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             lazy val x = 10
-            await(IO(1))
+            IO(1).now
           }
         """)
     }
@@ -45,7 +45,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
     "function containing await" in {
         assertDoesNotCompile("""
           defer {
-            def foo() = await(IO(1))
+            def foo() = IO(1).now
             foo()
           }
         """)
@@ -55,9 +55,9 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             try {
-              await(IO(1))
+              IO(1).now
             } catch {
-              case _: Exception => await(IO(2))
+              case _: Exception => IO(2).now
             }
           }
         """)
@@ -67,7 +67,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             class A(val x: Int)
-            await(IO(1))
+            IO(1).now
           }
         """)
     }
@@ -76,7 +76,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             object A
-            await(IO(1))
+            IO(1).now
           }
         """)
     }
@@ -85,7 +85,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             trait A
-            await(IO(1))
+            IO(1).now
           }
         """)
     }
@@ -94,26 +94,18 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             for {
-              x <- await(IO(1))
-              y <- await(IO(2))
+              x <- IO(1).now
+              y <- IO(2).now
             } yield x + y
           }
         """)
     }
 
-    // "throw expression" in {
-    //     assertDoesNotCompile("""
-    //       defer {
-    //         throw new RuntimeException("Error!")
-    //         await(IO(1))
-    //       }
-    //     """)
-    // }
     "try without catch or finally" in {
         assertDoesNotCompile("""
           defer {
             try {
-              await(IO(1))
+              IO(1).now
             }
           }
         """)
@@ -123,7 +115,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             try {
-              await(IO(1))
+              IO(1).now
             } finally {
               println("Cleanup")
             }
@@ -131,20 +123,11 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         """)
     }
 
-    // "by-name parameters" in {
-    //     assertDoesNotCompile("""
-    //       defer {
-    //           def foo(x: => Int) = x + 1
-    //           foo(await(IO(1)))
-    //       }
-    //     """)
-    // }
-
     "new instance with by-name parameter" in {
         assertDoesNotCompile("""
           defer {
             class A(x: => Int)
-            new A(await(IO(1)))
+            new A(IO(1).now)
           }
         """)
     }
@@ -152,7 +135,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
     "match expression without cases" in {
         assertDoesNotCompile("""
           defer {
-            await(IO(1)) match {}
+            IO(1).now match {}
           }
         """)
     }
@@ -161,8 +144,8 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             for {
-              x <- await(IO(1))
-              y <- await(IO(2))
+              x <- IO(1).now
+              y <- IO(2).now
             } x + y
           }
         """)
@@ -172,7 +155,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
         assertDoesNotCompile("""
           defer {
             def outer() = {
-              def inner() = await(IO(1))
+              def inner() = IO(1).now
               inner()
             }
             outer()
@@ -183,7 +166,7 @@ class HygieneTest extends AnyFreeSpec with Assertions:
     "lambdas with await" in {
         assertDoesNotCompile("""
           defer {
-            val f = (x: Int) => await(IO(1)) + x
+            val f = (x: Int) => IO(1).now + x
             f(10)
           }
         """)
