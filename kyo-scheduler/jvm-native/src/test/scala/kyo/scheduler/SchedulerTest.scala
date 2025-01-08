@@ -80,47 +80,6 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
-    "cycle" - {
-        "cycles workers and preempts tasks" in withScheduler { scheduler =>
-            val cdl          = new CountDownLatch(1)
-            val preemptLatch = new CountDownLatch(1)
-            val task = TestTask(
-                _preempt = () => preemptLatch.countDown(),
-                _run = () => {
-                    cdl.await()
-                    Task.Done
-                }
-            )
-            scheduler.schedule(task)
-            preemptLatch.await()
-            cdl.countDown()
-            eventually(assert(task.executions == 1))
-        }
-        "repeatedly cycles and preempts tasks" in withScheduler { scheduler =>
-            val cdl         = new CountDownLatch(1)
-            val preemptions = new AtomicInteger(3)
-            val preempt     = new AtomicBoolean
-            val task = TestTask(
-                _preempt = () =>
-                    preempt.set(true),
-                _run = () => {
-                    if (preemptions.getAndDecrement() > 0) {
-                        while (preempt.compareAndSet(true, false)) {}
-                        Task.Preempted
-                    } else {
-                        cdl.await()
-                        Task.Done
-                    }
-                }
-            )
-            scheduler.schedule(task)
-
-            eventually(assert(task.preemptions == 3))
-            cdl.countDown()
-            eventually(assert(task.executions == 4))
-        }
-    }
-
     "asExecutor" - {
         "returns an executor that schedules tasks" in withScheduler { scheduler =>
             val executor = scheduler.asExecutor

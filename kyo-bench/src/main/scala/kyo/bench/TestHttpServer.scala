@@ -3,6 +3,7 @@ package kyo.bench
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.DeploymentOptions
 import io.vertx.core.Vertx
+import io.vertx.core.http.Http2Settings
 import io.vertx.core.http.HttpServer
 import io.vertx.core.http.HttpServerOptions
 import java.io.BufferedReader
@@ -10,15 +11,50 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.PrintStream
 import java.io.PrintWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 import scala.util.control.NonFatal
 
 object TestHttpServer:
-    val port = 8888
-
-    trait StopServer:
-        def apply(): Unit
+    val port         = 8888
+    val maxRetries   = 20
+    val retryDelayMs = 100
 
     def log(port: Int, msg: String) = println(s"TestHttpServer(port=$port): $msg")
+
+    def waitForServer(url: String): Boolean =
+        def tryConnect(): Try[Boolean] = Try {
+            val connection = new URL(url).openConnection().asInstanceOf[HttpURLConnection]
+            connection.setRequestMethod("GET")
+            connection.setConnectTimeout(1000)
+            connection.setReadTimeout(1000)
+            try
+                val responseCode = connection.getResponseCode()
+                responseCode == 200
+            finally
+                connection.disconnect()
+            end try
+        }
+
+        var retries = 0
+        while retries < maxRetries do
+            tryConnect() match
+                case Success(true) =>
+                    log(port, "Server is ready")
+                    return true
+                case _ =>
+                    retries += 1
+                    if retries < maxRetries then
+                        Thread.sleep(retryDelayMs)
+                    log(port, s"Waiting for server... (attempt $retries/$maxRetries)")
+        end while
+
+        log(port, "Server failed to start after maximum retries")
+        false
+    end waitForServer
 
     def start(concurrency: Int): String =
         val javaBin   = System.getProperty("java.home") + "/bin/java"
@@ -28,15 +64,19 @@ object TestHttpServer:
         try
             log(port, "forking")
             val process = builder.start()
-            val stopServer: StopServer = () =>
-                log(port, "stopping")
-                process.destroy()
             Runtime.getRuntime().addShutdownHook(new Thread:
-                override def run(): Unit = stopServer()
+                override def run(): Unit =
+                    log(port, "stopping")
+                    process.destroy()
             )
             redirect(process.getInputStream, System.out)
             redirect(process.getErrorStream, System.err)
-            s"http://localhost:$port/ping"
+
+            val serverUrl = s"http://localhost:$port/ping"
+            if !waitForServer(serverUrl) then
+                throw new RuntimeException("Server failed to start")
+
+            serverUrl
         finally
             log(port, "forked")
         end try
@@ -65,6 +105,9 @@ object TestHttpServer:
                 .setMaxChunkSize(8192)
                 .setIdleTimeout(0)
                 .setTcpKeepAlive(true)
+                .setInitialSettings(
+                    new Http2Settings().setMaxConcurrentStreams(1000)
+                )
 
             val server: HttpServer = vertx.createHttpServer(serverOptions)
             server.requestHandler { request =>

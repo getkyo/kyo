@@ -529,15 +529,15 @@ object Scheduler {
     object Config {
         val default: Config = {
             val cores             = Runtime.getRuntime().availableProcessors()
-            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores * 10))
+            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores))
             val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
             val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
             val scheduleStride    = Math.max(1, Flag("scheduleStride", cores))
-            val stealStride       = Math.max(1, Flag("stealStride", cores * 4))
+            val stealStride       = Math.max(1, Flag("stealStride", cores * 8))
             val virtualizeWorkers = Flag("virtualizeWorkers", false)
             val timeSliceMs       = Flag("timeSliceMs", 10)
             val cycleIntervalNs   = Flag("cycleIntervalNs", 100000)
-            val enableTopJMX      = Flag("enableTopJMX", true)
+            val enableTopJMX      = Flag("enableTopJMX", false)
             val enableTopConsole  = Flag("enableTopConsoleMs", 0)
             Config(
                 cores,
