@@ -696,6 +696,54 @@ object Async:
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
+    /** Creates a memoized version of a computation.
+      *
+      * Returns a function that will cache the result of the first execution and return the cached result for subsequent calls. During
+      * initialization, only one fiber will execute the computation while others wait for the result. If the first execution fails, the
+      * cache is cleared and the computation will be retried on the next invocation. Note that successful results are cached indefinitely,
+      * so use this for stable values that won't need refreshing.
+      *
+      * Unlike `Memo`, this memoization is optimized for performance and can be safely used in hot paths. If you're memoizing global
+      * initialization code or need more control over cache isolation, consider using `Memo` instead.
+      *
+      * WARNING: If the initial computation never completes (e.g., hangs indefinitely), all subsequent calls will be permanently blocked
+      * waiting for the result. Ensure the computation can complete in a reasonable time or introduce a timeout via `Async.timeout`.
+      *
+      * @param v
+      *   The computation to memoize
+      * @return
+      *   A function that returns the memoized computation result
+      */
+    def memoize[A: Flat, S](v: A < S)(using Frame): (() => A < (S & Async)) < Async =
+        IO.Unsafe {
+            val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Nothing, A]])
+            () =>
+                @tailrec def loop(): A < (S & Async) =
+                    ref.get() match
+                        case Present(v) => v.safe.get
+                        case Absent =>
+                            val promise = Promise.Unsafe.init[Nothing, A]()
+                            if ref.compareAndSet(Absent, Present(promise)) then
+                                Abort.run(v).map { r =>
+                                    IO.Unsafe {
+                                        if !r.isSuccess then
+                                            ref.set(Absent)
+                                        promise.completeDiscard(r)
+                                        Abort.get(r)
+                                    }
+                                }.pipe(IO.ensure {
+                                    IO.Unsafe {
+                                        if !promise.done() then
+                                            ref.set(Absent)
+                                    }
+                                })
+                            else
+                                loop()
+                            end if
+                loop()
+
+        }
+
     /** Converts a Future to an asynchronous computation.
       *
       * This method allows integration of existing Future-based code with Kyo's asynchronous system. It handles successful completion and
