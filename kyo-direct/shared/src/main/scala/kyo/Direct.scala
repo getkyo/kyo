@@ -114,30 +114,38 @@ private def impl[A: Type](body: Expr[A])(using Quotes): Expr[Any] =
     def flatten(l: List[TypeRepr]): List[TypeRepr] =
         @tailrec def loop(l: List[TypeRepr], acc: List[TypeRepr]): List[TypeRepr] =
             l match
-                case Nil                  => acc.distinct.sortBy(_.show)
-                case AndType(a, b) :: Nil => loop(a :: b :: Nil, acc)
-                case head :: tail         => loop(tail, head :: acc)
+                case Nil =>
+                    acc.distinct.sortBy(_.show)
+                case AndType(a, b) :: Nil =>
+                    loop(a :: b :: Nil, acc)
+                case head :: tail =>
+                    loop(tail, head :: acc)
         loop(l, Nil)
     end flatten
 
-    val pending = flatten(effects) match
-        case Nil     => TypeRepr.of[Any]
-        case effects => effects.reduce((a, b) => AndType(a, b))
+    val pending =
+        flatten(effects) match
+            case Nil =>
+                TypeRepr.of[Any]
+            case effects =>
+                effects.reduce((a, b) => AndType(a, b))
+    end pending
 
     pending.asType match
         case '[s] =>
-            val transformedBody = Trees.transform(body.asTerm) {
-                case Apply(TypeApply(Ident("now"), List(t, s2)), List(qual)) =>
-                    (t.tpe.asType, s2.tpe.asType) match
-                        case ('[t], '[s2]) => '{
-                                given KyoCpsMonad[s2] = KyoCpsMonad[s2]
-                                cps.await[[A] =>> A < s2, t, [A] =>> A < s2](${
-                                    qual.asExprOf[t < s2]
-                                })
-                            }.asTerm
-                case Apply(TypeApply(Ident("later"), List(t, s2)), List(qual)) =>
-                    qual
-            }
+            val transformedBody =
+                Trees.transform(body.asTerm) {
+                    case Apply(TypeApply(Ident("now"), List(t, s2)), List(qual)) =>
+                        (t.tpe.asType, s2.tpe.asType) match
+                            case ('[t], '[s2]) => '{
+                                    given KyoCpsMonad[s2] = KyoCpsMonad[s2]
+                                    cps.await[[A] =>> A < s2, t, [A] =>> A < s2](${
+                                        qual.asExprOf[t < s2]
+                                    })
+                                }.asTerm
+                    case Apply(TypeApply(Ident("later"), List(t, s2)), List(qual)) =>
+                        qual
+                }
 
             '{
                 given KyoCpsMonad[s] = KyoCpsMonad[s]
@@ -150,13 +158,20 @@ end impl
 
 object directInternal:
     given Frame = Frame.internal
+    class KyoCpsMonad[S]
+        extends CpsMonadContext[[A] =>> A < S]
+        with CpsMonad[[A] =>> A < S]:
 
-    class KyoCpsMonad[S] extends CpsMonadContext[[A] =>> A < S] with CpsMonad[[A] =>> A < S]:
         type Context = KyoCpsMonad[S]
-        override def monad: CpsMonad[[A] =>> A < S]                 = this
-        override def apply[A](op: Context => A < S): A < S          = op(this)
-        override def pure[A](t: A): A < S                           = t
-        override def map[A, B](fa: A < S)(f: A => B): B < S         = flatMap(fa)(f)
+
+        override def monad: CpsMonad[[A] =>> A < S] = this
+
+        override def apply[A](op: Context => A < S): A < S = op(this)
+
+        override def pure[A](t: A): A < S = t
+
+        override def map[A, B](fa: A < S)(f: A => B): B < S = flatMap(fa)(f)
+
         override def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
     end KyoCpsMonad
 end directInternal
