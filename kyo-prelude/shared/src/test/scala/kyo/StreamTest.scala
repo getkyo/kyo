@@ -164,11 +164,11 @@ class StreamTest extends Test:
                 end for
             end emit
 
-            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(_ => emit)).take(5).run
+            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(_ => emit)).take(7).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
 
             assert(
-                count == 5 && chunk == (1 to 5)
+                count == 10 && chunk == (1 to 7)
             )
         }
     }

@@ -79,12 +79,12 @@ sealed abstract class Stream[V, -S]:
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
-        Stream[V2, S & S2 & S3](ArrowEffect.handle(tagV, emit)(
+        Stream[V2, S & S2 & S3](ArrowEffect.handleState(tagV, (), emit)(
             [C] =>
-                (input, cont) =>
+                (input, _, cont) =>
                     Kyo
                         .foreachDiscard(input)(v => f(v).map(_.emit))
-                        .map(unit => cont(unit))
+                        .map(unit => ((), cont(unit)))
         ))
 
     /** Applies a function to each chunk in the stream that returns a new stream, and flattens the result.
@@ -100,13 +100,13 @@ sealed abstract class Stream[V, -S]:
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
-        Stream[V2, S & S2 & S3](ArrowEffect.handle(tagV, emit)(
+        Stream[V2, S & S2 & S3](ArrowEffect.handleState(tagV, (), emit)(
             [C] =>
-                (input, cont) =>
+                (input, _, cont) =>
                     if input.isEmpty then
-                        Emit.andMap(Chunk.empty[V2])(unit => cont(unit))
+                        Emit.andMap(Chunk.empty[V2])(unit => ((), cont(unit)))
                     else
-                        f(input).map(_.emit).map(unit => cont(unit))
+                        f(input).map(_.emit).map(unit => ((), cont(unit)))
         ))
 
     private def discard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
@@ -122,17 +122,18 @@ sealed abstract class Stream[V, -S]:
       *   A new stream containing at most n elements from the original stream
       */
     def take(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
-        if n <= 0 then discard
+        val kyoUnit = Kyo.pure[Unit, S & Emit[Chunk[V]]](())
+        if n <= 0 then Stream.empty
         else
             Stream[V, S](ArrowEffect.handleState(tag, n, emit)(
                 [C] =>
                     (input, state, cont) =>
-                        if state == 0 then (0, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
-                        else
-                            val c   = input.take(state)
-                            val nst = state - c.size
-                            Emit.andMap(c)(unit => (nst, cont(unit)))
+                        val c   = input.take(state)
+                        val nst = state - c.size
+                        Emit.andMap(c)(unit => (nst, if nst <= 0 then kyoUnit else cont(unit)))
             ))
+        end if
+    end take
 
     /** Drops the first n elements from the stream.
       *
@@ -202,12 +203,12 @@ sealed abstract class Stream[V, -S]:
       *   A new stream containing only elements that satisfy the predicate
       */
     def filter[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
-        Stream[V, S & S2](ArrowEffect.handle(tag, emit)(
+        Stream[V, S & S2](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
-                (input, cont) =>
+                (input, _, cont) =>
                     Kyo.filter(input)(f).map { c =>
-                        if c.isEmpty then ()
-                        else Emit.andMap(c)(unit => cont(unit))
+                        if c.isEmpty then ((), cont(()))
+                        else Emit.andMap(c)(unit => ((), cont(unit)))
                 }
         ))
 
