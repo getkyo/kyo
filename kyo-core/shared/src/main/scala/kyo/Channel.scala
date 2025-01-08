@@ -330,6 +330,7 @@ object Channel:
                 end poll
 
                 def drainUpTo(max: Int)(using AllowUnsafe) =
+                    @tailrec
                     def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                         if i == 0 then Result.Success(current)
                         else
@@ -372,6 +373,7 @@ object Channel:
                 end takeFiber
 
                 def drain()(using AllowUnsafe) =
+                    @tailrec
                     def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
                         val next = queue.drain()
                         next match
