@@ -1,11 +1,12 @@
 package kyo
 
-/** Represents a memoization effect.
+/** Represents a memoization effect for global value initialization.
   *
   * Memo is used to cache the results of expensive computations, allowing them to be reused without re-computation.
   *
-  * This effect is primarily intended for initializing global values or caching results of infrequent, expensive operations. It is not
-  * recommended for use in hot paths or frequently executed code due to potential performance overhead.
+  * This effect is specifically designed for initializing global values or caching results of infrequent, expensive operations. For
+  * memoization in performance-sensitive code or hot paths, consider using `Async.memoize` or `kyo-cache` instead, which have lower
+  * overhead.
   */
 opaque type Memo <: Var[Memo.Cache] = Var[Memo.Cache]
 

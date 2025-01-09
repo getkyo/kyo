@@ -44,7 +44,7 @@ object ContextEffect:
       *   A computation that will receive the requested value when executed
       */
     inline def suspend[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(using inline frame: Frame): A < E =
-        suspendAndMap(effectTag)(identity)
+        suspendWith(effectTag)(identity)
 
     /** Creates a suspended computation that requests a context value and transforms it immediately upon receipt. This combines the
       * operations of requesting and transforming a context value into a single step.
@@ -56,12 +56,12 @@ object ContextEffect:
       * @return
       *   A computation containing the transformed value
       */
-    inline def suspendAndMap[A, E <: ContextEffect[A], B, S](
+    inline def suspendWith[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E]
     )(
         inline f: Safepoint ?=> A => B < S
     )(using inline frame: Frame): B < (E & S) =
-        suspendAndMap(effectTag, bug("Unexpected pending context effect: " + effectTag.show))(f)
+        suspendWith(effectTag, bug("Unexpected pending context effect: " + effectTag.show))(f)
 
     /** Requests a value from a context effect with a specified default value. Unlike standard suspend, this version does not create a
       * mandatory effect requirement. If no handler provides a value, the computation proceeds with the default value instead. This makes
@@ -78,7 +78,7 @@ object ContextEffect:
         inline effectTag: Tag[E],
         inline default: => A
     )(using inline frame: Frame): A < Any =
-        suspendAndMap(effectTag, default)(identity)
+        suspendWith(effectTag, default)(identity)
 
     /** Requests an optional context value and transforms it, using a default if no value is available. This combines requesting an optional
       * context value with immediate transformation. The transformation function receives either the context value if available or the
@@ -94,7 +94,7 @@ object ContextEffect:
       *   A computation containing the transformed value
       */
     @nowarn("msg=anonymous")
-    inline def suspendAndMap[A, E <: ContextEffect[A], B, S](
+    inline def suspendWith[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
         inline default: => A
     )(

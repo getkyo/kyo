@@ -108,7 +108,6 @@ object Channel:
                 Loop(Chunk.empty[A]): lastChunk =>
                     val nextN = n - lastChunk.size
                     Channel.drainUpTo(self)(nextN).map: chunk =>
-                        // IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
                         val chunk1 = lastChunk.concat(chunk)
                         if chunk1.size == n then Loop.done(chunk1)
                         else
@@ -185,7 +184,7 @@ object Channel:
             else if maxChunkSize == 1 then
                 Loop(()): _ =>
                     Channel.take(self).map: v =>
-                        Emit.andMap(Chunk(v)):
+                        Emit.valueWith(Chunk(v)):
                             case Ack.Stop => Loop.done(Ack.Stop)
                             case _        => Loop.continue(())
             else
@@ -195,7 +194,7 @@ object Channel:
                 Loop[Unit, Ack, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
                         drainEffect.map: chunk =>
-                            Emit.andMap(Chunk(a).concat(chunk)):
+                            Emit.valueWith(Chunk(a).concat(chunk)):
                                 case Ack.Stop => Loop.done(Ack.Stop)
                                 case _        => Loop.continue(())
 
@@ -247,7 +246,18 @@ object Channel:
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
     def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < IO =
-        IO.Unsafe(Unsafe.init(capacity, access))
+        initWith[A](capacity, access)(identity)
+
+    /** Uses a new Channel with the provided configuration.
+      * @param f
+      *   The function to apply to the new Channel
+      * @return
+      *   The result of applying the function
+      */
+    inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
+        inline f: Channel[A] => B < S
+    )(using inline frame: Frame): B < (S & IO) =
+        IO.Unsafe(f(Unsafe.init(capacity, access)))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe[A]:
@@ -255,7 +265,7 @@ object Channel:
         def size()(using AllowUnsafe): Result[Closed, Int]
 
         def offer(value: A)(using AllowUnsafe): Result[Closed, Boolean]
-        def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Seq[A]]
+        def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]]
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
 
         def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
@@ -301,18 +311,25 @@ object Channel:
                     result
                 end offer
 
-                def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Seq[A]] =
+                def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]] =
                     @tailrec
-                    def loop(current: Seq[A]): Result[Closed, Seq[A]] =
-                        if current.isEmpty then Result.Success(Chunk.empty)
+                    def loop(current: Chunk[A], offered: Boolean = false): Result[Closed, Chunk[A]] =
+                        if current.isEmpty then
+                            if offered then flush()
+                            Result.Success(Chunk.empty)
                         else
-                            val result = queue.offer(current.head)
-                            if result.isFail then result.map(_ => current)
-                            else if result.contains(false) then
-                                Result.Success(current)
-                            else loop(current.tail)
-                            end if
-                    loop(values)
+                            queue.offer(current.head) match
+                                case Result.Success(true) =>
+                                    loop(current.tail, true)
+                                case Result.Success(false) =>
+                                    if offered then flush()
+                                    Result.success(current)
+                                case result =>
+                                    if offered then flush()
+                                    result.map(_ => current)
+                        end if
+                    end loop
+                    loop(Chunk.from(values))
                 end offerAll
 
                 def poll()(using AllowUnsafe) =
@@ -407,8 +424,10 @@ object Channel:
                                 @tailrec
                                 def loop(i: Int): Unit =
                                     if i >= chunk.length then
+                                        // All items offered, complete put
                                         promise.completeDiscard(Result.unit)
                                     else if !queue.offer(chunk(i)).contains(true) then
+                                        // Queue became full, add pending put for the rest of the batch
                                         discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
                                     else loop(i + 1)
 
@@ -432,8 +451,12 @@ object Channel:
                                 case Put.Value(value, promise) =>
                                     Maybe(takes.poll()) match
                                         case Present(takePromise) if takePromise.complete(Result.success(value)) =>
+                                            // Value transfered, complete put
                                             promise.completeDiscard(Result.unit)
-                                        case _ => discard(puts.add(put))
+
+                                        case _ =>
+                                            // Take promise was interrupted, return put to the queue
+                                            discard(puts.add(put))
 
                                 case Put.Batch(chunk, promise) =>
                                     // NB: this is only efficient if chunk is effectively indexed
@@ -441,12 +464,19 @@ object Channel:
                                     @tailrec
                                     def loop(i: Int): Unit =
                                         if i >= chunk.length then
+                                            // All items transfered, complete put
                                             promise.completeDiscard(Result.unit)
                                         else
                                             Maybe(takes.poll()) match
-                                                case Present(takePromise) if takePromise.complete(Result.success(chunk(i))) =>
-                                                    loop(i + 1)
+                                                case Present(takePromise) =>
+                                                    if takePromise.complete(Result.success(chunk(i))) then
+                                                        // Item transfered, move to the next one
+                                                        loop(i + 1)
+                                                    else
+                                                        // Take was interrupted, retry current item
+                                                        loop(i)
                                                 case _ =>
+                                                    // No more pending takes, enqueue put again for the remaining items
                                                     discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
                                         end if
                                     end loop

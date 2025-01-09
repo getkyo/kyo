@@ -164,7 +164,7 @@ lazy val `kyo-scheduler` =
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.15"         % Test
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.16"         % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(
@@ -265,7 +265,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.15" % Test
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.16" % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -551,7 +551,6 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.6",
             libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC36",
-            libraryDependencies += "com.softwaremill.ox"  %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.11.0",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",

@@ -37,19 +37,4 @@ class BroadFlatMapBench extends Bench.SyncAndFork(BigInt(610)):
         zioFib(depth)
     end zioBench
 
-    def oxFib(n: Int): BigInt =
-        if n <= 1 then n
-        else oxFib(n - 1) + oxFib(n - 2)
-
-    @Benchmark
-    def syncOx(): BigInt =
-        oxFib(depth)
-
-    @Benchmark
-    def forkOx(): BigInt =
-        import ox.*
-        scoped {
-            fork(oxFib(depth)).join()
-        }
-    end forkOx
 end BroadFlatMapBench

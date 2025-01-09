@@ -2,6 +2,16 @@ package kyo
 
 class HubTest extends Test:
 
+    "use" in runNotJS {
+        Hub.initWith[Int](2) { h =>
+            for
+                l <- h.listen
+                b <- h.offer(1)
+                v <- l.take
+            yield assert(b && v == 1)
+        }
+    }
+
     "listen/offer/take" in runNotJS {
         for
             h <- Hub.init[Int](2)

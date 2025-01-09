@@ -338,9 +338,9 @@ abortExceptionFirst(Abort.fail(ex))     // Result.Success(Result.Fail(ex))
 
 ### Direct Syntax
 
-Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages two primary constructs: `defer` and `await`.
+Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages three constructs: `defer`, `.now`, and `.later`.
 
-Essentially, `await` is a syntactic sugar for the `map` function, allowing developers to directly access values from computations without the need for repetitive `map` chaining. This makes the code more linear and intuitive.
+The `.now` operator sequences an effect immediately, making its result available for use, while `.later` (advanced API) preserves an effect without immediate sequencing for more controlled composition.
 
 ```scala
 import kyo.*
@@ -349,9 +349,9 @@ import kyo.*
 val a: String < (Abort[Exception] & IO) =
     defer {
         val b: String =
-            await(IO("hello"))
+            IO("hello").now
         val c: String =
-            await(Abort.get(Right("world")))
+            Abort.get(Right("world")).now
         b + " " + c
     }
 
@@ -364,9 +364,9 @@ val b: String < (Abort[Exception] & IO) =
     }
 ```
 
-The `defer` macro translates the `defer` and `await` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express compurations in terms of `map`. 
+The `defer` macro translates the `defer` and `.now`/`.later` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express computations in terms of `map`. 
 
-For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `<` type must be enclosed by an `await` block. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
+For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `<` type must be explicitly handled using either `.now` or `.later`. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
 
 ```scala 
 import kyo.*
@@ -375,7 +375,7 @@ import kyo.*
 val a: Int < IO =
     defer {
         // Incorrect usage of a '<' value
-        // without 'await'
+        // without '.now' or '.later'
         IO(println(42))
         42
     }
@@ -383,7 +383,34 @@ val a: Int < IO =
 
 > Note: In the absence of effectful hygiene, the side effect `IO(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
 
-The syntac sugar supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
+The `.now` operator is used when you need the effect's result immediately, while `.later` is an advanced operation that preserves the effect without sequencing it:
+
+```scala
+import kyo.*
+
+// Using .now for immediate sequencing
+val immediate = defer {
+    val x: Int = IO(1).now      // Get result here
+    val y: Int = IO(2).now      // Then get this result
+    x + y                       // Use both results
+}
+
+// Using .later for preserved effects
+val preserved = defer {
+    val effect1: Int < IO = IO(1).later   // Effect preserved
+    val effect2: Int < IO = IO(2).later   // Effect preserved
+    effect1.now + effect2.now             // Sequence effects
+}
+
+// Combining both approaches
+val combined = defer {
+    val effect1: Int < IO = IO(1).later   // Effect preserved
+    val effect2: Int = IO(2).now          // Effect sequenced
+    effect1.now + effect2                 // Combine results
+}
+```
+
+The direct syntax supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
 
 ```scala
 import kyo.*
@@ -393,32 +420,32 @@ defer {
     val a: Int = 5
 
     // Effectful value
-    val b: Int = await(IO(10))
+    val b: Int = IO(10).now
 
     // Control flow
     val c: String =
-        if await(IO(true)) then "True branch" else "False branch"
+        if IO(true).now then "True branch" else "False branch"
 
     // Logical operations
     val d: Boolean =
-        await(IO(true)) && await(IO(false))
+        IO(true).now && IO(false).now
 
     val e: Boolean =
-        await(IO(true)) || await(IO(true))
+        IO(true).now || IO(true).now
 
     // Loop (for demonstration; this loop
     // won't execute its body)
-    while await(IO(false)) do "Looping"
+    while IO(false).now do "Looping"
 
     // Pattern matching
     val matchResult: String =
-        await(IO(1)) match
+        IO(1).now match
             case 1 => "One"
             case _ => "Other"
 }
 ```
 
-The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `await`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
+The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `.now`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
@@ -1372,14 +1399,14 @@ import kyo.*
 
 // Add a value
 val a: Ack < Emit[Int] =
-    Emit(42)
+    Emit.value(42)
 
 // Add multiple values
 val b: String < Emit[Int] =
     for
-        _ <- Emit(1)
-        _ <- Emit(2)
-        _ <- Emit(3)
+        _ <- Emit.value(1)
+        _ <- Emit.value(2)
+        _ <- Emit.value(3)
     yield "r"
 
 // Handle the effect to obtain the
@@ -1397,9 +1424,9 @@ import kyo.*
 
 val a: String < (Emit[Int] & Emit[String]) =
     for
-        _ <- Emit(1)
-        _ <- Emit("log")
-        _ <- Emit(2)
+        _ <- Emit.value(1)
+        _ <- Emit.value("log")
+        _ <- Emit.value(2)
     yield "result"
 
 // Note how `run` requires an explicit type
@@ -1555,13 +1582,13 @@ import kyo.*
 
 // Create a simple check
 val a: Unit < Check =
-    Check(1 + 1 == 2, "Basic math works")
+    Check.require(1 + 1 == 2, "Basic math works")
 
 // Checks can be composed with other effects
 val b: Int < (Check & IO) =
     for
         value <- IO(42)
-        _     <- Check(value > 0, "Value is positive")
+        _     <- Check.require(value > 0, "Value is positive")
     yield value
 
 // Handle checks by converting the first failed check to Abort
