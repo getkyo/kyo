@@ -235,9 +235,9 @@ class PreludeTest extends Test:
         "basic emissions" in run {
             val effect =
                 defer {
-                    Emit(1).now
-                    Emit(2).now
-                    Emit(3).now
+                    Emit.value(1).now
+                    Emit.value(2).now
+                    Emit.value(3).now
                     "done"
                 }
 
@@ -252,11 +252,11 @@ class PreludeTest extends Test:
                 defer {
                     val a = Env.get[Int].now
                     if a > 5 then
-                        Emit(a).now
+                        Emit.value(a).now
                         ()
                     val b = a * 2
                     if b < 20 then
-                        Emit(b).now
+                        Emit.value(b).now
                         ()
                     "done"
                 }
@@ -272,15 +272,15 @@ class PreludeTest extends Test:
         "nested emit effects" in run {
             val effect =
                 defer {
-                    Emit(1).now
+                    Emit.value(1).now
                     val nested = Emit.run {
                         defer {
-                            Emit(2).now
-                            Emit(3).now
+                            Emit.value(2).now
+                            Emit.value(3).now
                             "nested"
                         }
                     }.now
-                    Emit(4).now
+                    Emit.value(4).now
                     (nested._1, nested._2)
                 }
 
