@@ -1,6 +1,6 @@
 package kyo.scheduler
 
-import Scheduler.*
+import Scheduler.Config
 import java.util.concurrent.Callable
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -14,6 +14,7 @@ import kyo.scheduler.top.Reporter
 import kyo.scheduler.top.Status
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
+import kyo.scheduler.util.Singleton
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
@@ -454,13 +455,11 @@ final class Scheduler(
     }
 }
 
-object Scheduler {
+object Scheduler extends Singleton(() => new Scheduler()) {
 
     private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
     private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
     private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
-
-    val get = new Scheduler()
 
     /** Configuration parameters controlling worker behavior and performance characteristics.
       *
