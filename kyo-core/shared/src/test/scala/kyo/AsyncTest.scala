@@ -696,9 +696,9 @@ class AsyncTest extends Test:
             Emit.run {
                 Async.timeout(1.hour, emitIsolate) {
                     for
-                        _ <- Emit(1)
+                        _ <- Emit.value(1)
                         _ <- Async.sleep(1.millis)
-                        _ <- Emit(2)
+                        _ <- Emit.value(2)
                     yield "done"
                 }
             }.map { result =>
@@ -762,14 +762,14 @@ class AsyncTest extends Test:
                     emitIsolate,
                     Seq(
                         for
-                            _ <- Emit("a1")
+                            _ <- Emit.value("a1")
                             _ <- Async.sleep(2.millis)
-                            _ <- Emit("a2")
+                            _ <- Emit.value("a2")
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2
                     )
                 )
@@ -821,14 +821,14 @@ class AsyncTest extends Test:
                     Async.gather(emitIsolate)(
                         Seq(
                             for
-                                _ <- Emit("a1")
+                                _ <- Emit.value("a1")
                                 _ <- Async.sleep(2.millis)
-                                _ <- Emit("a2")
+                                _ <- Emit.value("a2")
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("b2")
+                                _ <- Emit.value("b2")
                             yield 2
                         )
                     )
@@ -845,14 +845,14 @@ class AsyncTest extends Test:
                     Async.gather(1, emitIsolate)(
                         Seq(
                             for
-                                _ <- Emit("a1")
+                                _ <- Emit.value("a1")
                                 _ <- Async.sleep(5.millis)
-                                _ <- Emit("a2")
+                                _ <- Emit.value("a2")
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("b2")
+                                _ <- Emit.value("b2")
                             yield 2
                         )
                     )
@@ -869,14 +869,14 @@ class AsyncTest extends Test:
                 Emit.run {
                     Async.gather(emitIsolate)(
                         for
-                            _ <- Emit("a1")
+                            _ <- Emit.value("a1")
                             _ <- Async.sleep(2.millis)
-                            _ <- Emit("a2")
+                            _ <- Emit.value("a2")
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2
                     )
                 }.map { result =>
@@ -891,14 +891,14 @@ class AsyncTest extends Test:
                 Emit.run {
                     Async.gather(1, emitIsolate)(
                         for
-                            _ <- Emit("a1")
+                            _ <- Emit.value("a1")
                             _ <- Async.sleep(10.millis)
-                            _ <- Emit("a2")
+                            _ <- Emit.value("a2")
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2
                     )
                 }.map { result =>
@@ -916,14 +916,14 @@ class AsyncTest extends Test:
                     Abort.run {
                         Async.gather(emitIsolate)(
                             for
-                                _ <- Emit("a1")
+                                _ <- Emit.value("a1")
                                 _ <- Abort.fail(error)
-                                _ <- Emit("a2")
+                                _ <- Emit.value("a2")
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("b2")
+                                _ <- Emit.value("b2")
                             yield 2
                         )
                     }
@@ -942,17 +942,17 @@ class AsyncTest extends Test:
                     Abort.run {
                         Async.gather(emitIsolate)(
                             for
-                                _ <- Emit("a1")
+                                _ <- Emit.value("a1")
                                 _ <- Abort.fail(error1)
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Abort.fail(error2)
                             yield 2,
                             for
-                                _ <- Emit("c1")
+                                _ <- Emit.value("c1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("c2")
+                                _ <- Emit.value("c2")
                             yield 3
                         )
                     }
@@ -969,18 +969,18 @@ class AsyncTest extends Test:
                 Emit.run {
                     Async.gather(2, emitIsolate)(
                         for
-                            _ <- Emit("a1")
+                            _ <- Emit.value("a1")
                             _ <- Abort.fail(error)
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(2.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2,
                         for
-                            _ <- Emit("c1")
+                            _ <- Emit.value("c1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("c2")
+                            _ <- Emit.value("c2")
                         yield 3
                     )
                 }.map { case (emitted, results) =>
@@ -1173,6 +1173,44 @@ class AsyncTest extends Test:
             yield
                 assert(v2 == 1)
                 assert(count == 1)
+        }
+    }
+
+    "apply" - {
+        "suspends computation" in run {
+            var counter = 0
+            val computation = Async {
+                counter += 1
+                counter
+            }
+            for
+                v1 <- computation
+                v2 <- computation
+                v3 <- computation
+            yield
+                assert(v1 == 1)
+                assert(v2 == 2)
+                assert(v3 == 3)
+                assert(counter == 3)
+            end for
+        }
+
+        "preserves effects" in run {
+            var executed = false
+            for
+                started <- Latch.init(1)
+                done    <- Latch.init(1)
+                fiber <- Async.run {
+                    started.release.andThen {
+                        Async { executed = true }.andThen {
+                            done.release
+                        }
+                    }
+                }
+                _ <- started.await
+                _ <- done.await
+            yield assert(executed)
+            end for
         }
     }
 

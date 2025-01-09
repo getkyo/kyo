@@ -100,7 +100,7 @@ object ArrowEffect:
     end SuspendAndMapOps
 
     /** See [[SuspendAndMapOps.apply]] */
-    inline def suspendAndMap[A]: SuspendAndMapOps[A] = SuspendAndMapOps(())
+    inline def suspendWith[A]: SuspendAndMapOps[A] = SuspendAndMapOps(())
 
     object handle:
 

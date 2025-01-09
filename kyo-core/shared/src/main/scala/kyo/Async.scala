@@ -9,10 +9,18 @@ import scala.concurrent.Future
 import scala.util.NotGiven
 import scala.util.control.NonFatal
 
-/** Represents an asynchronous computation effect.
+/** Asynchronous computation effect.
   *
-  * This effect provides methods for running asynchronous computations, creating and managing fibers, handling promises, and performing
-  * parallel and race operations.
+  * While IO handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
+  * and execution control. It includes IO in its effect set, making it a unified solution for both synchronous and asynchronous operations.
+  *
+  * This separation, enabled by Kyo's algebraic effect system, is reflected in the codebase's design: the presence of Async in pending
+  * effects signals that a computation may park or involve fiber scheduling, contrasting with IO-only operations that run to completion.
+  *
+  * Most application code can work exclusively with Async, with the IO/Async distinction becoming relevant primarily in library code or
+  * performance-critical sections where precise control over execution characteristics is needed.
+  *
+  * This effect includes IO in its effect set to handle both async and sync execution in a single effect.
   *
   * @see
   *   [[Async.run]] for running asynchronous computations
@@ -30,6 +38,33 @@ opaque type Async <: (IO & Async.Join) = Async.Join & IO
 object Async:
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
+
+    /** Convenience method for suspending computations in an Async effect.
+      *
+      * While IO is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
+      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes IO in its effect set, this
+      * method allows users to work with a single unified effect that handles both concerns.
+      *
+      * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use
+      * Async.run or combinators like Async.parallel instead.
+      *
+      * This is particularly useful in application code where the distinction between pure side effects and asynchronous execution is less
+      * important than having a simple, consistent way to handle effects. The underlying effects are typically managed together at the
+      * application boundary through KyoApp.
+      *
+      * @param v
+      *   The computation to suspend
+      * @param frame
+      *   Implicit frame for the computation
+      * @tparam A
+      *   The result type of the computation
+      * @tparam S
+      *   Additional effects in the computation
+      * @return
+      *   The suspended computation wrapped in an Async effect
+      */
+    inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
+        IO(v)
 
     /** Runs an asynchronous computation and returns a Fiber.
       *
@@ -773,6 +808,6 @@ object Async:
         ArrowEffect.suspend[A](Tag[Join], v).asInstanceOf[Result[E, A] < Async]
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
-        ArrowEffect.suspendAndMap[A](Tag[Join], v)(f)
+        ArrowEffect.suspendWith[A](Tag[Join], v)(f)
 
 end Async

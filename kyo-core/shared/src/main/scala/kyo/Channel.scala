@@ -185,7 +185,7 @@ object Channel:
             else if maxChunkSize == 1 then
                 Loop(()): _ =>
                     Channel.take(self).map: v =>
-                        Emit.andMap(Chunk(v)):
+                        Emit.valueWith(Chunk(v)):
                             case Ack.Stop => Loop.done(Ack.Stop)
                             case _        => Loop.continue(())
             else
@@ -195,7 +195,7 @@ object Channel:
                 Loop[Unit, Ack, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
                         drainEffect.map: chunk =>
-                            Emit.andMap(Chunk(a).concat(chunk)):
+                            Emit.valueWith(Chunk(a).concat(chunk)):
                                 case Ack.Stop => Loop.done(Ack.Stop)
                                 case _        => Loop.continue(())
 
@@ -247,7 +247,18 @@ object Channel:
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
     def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < IO =
-        IO.Unsafe(Unsafe.init(capacity, access))
+        initWith[A](capacity, access)(identity)
+
+    /** Uses a new Channel with the provided configuration.
+      * @param f
+      *   The function to apply to the new Channel
+      * @return
+      *   The result of applying the function
+      */
+    inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
+        inline f: Channel[A] => B < S
+    )(using inline frame: Frame): B < (S & IO) =
+        IO.Unsafe(f(Unsafe.init(capacity, access)))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe[A]:

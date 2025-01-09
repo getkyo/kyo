@@ -551,7 +551,6 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.6",
             libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC36",
-            libraryDependencies += "com.softwaremill.ox"  %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.11.0",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",

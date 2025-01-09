@@ -2,6 +2,15 @@ package kyo
 
 class ChannelTest extends Test:
 
+    "initWith" in run {
+        Channel.initWith[Int](10) { c =>
+            for
+                b <- c.offer(1)
+                v <- c.poll
+            yield assert(b && v == Maybe(1))
+        }
+    }
+
     "offer and poll" in run {
         for
             c <- Channel.init[Int](2)

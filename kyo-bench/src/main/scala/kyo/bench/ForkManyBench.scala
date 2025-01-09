@@ -66,23 +66,4 @@ class ForkManyBench extends Bench.ForkOnly(0):
         end for
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import ox.*
-        import java.util.concurrent.CompletableFuture
-        import java.util.concurrent.atomic.AtomicInteger
-
-        scoped {
-            val promise = new CompletableFuture[Unit]
-            val ref     = new AtomicInteger(depth)
-            for _ <- 0 until depth do
-                fork {
-                    ref.decrementAndGet() match
-                        case 1 => promise.complete(())
-                        case _ => ()
-                }
-            end for
-            promise.get()
-        }
-    end forkOx
 end ForkManyBench

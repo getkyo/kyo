@@ -56,7 +56,7 @@ object Poll:
     ): Maybe[V] < Poll[V] =
         one(Ack.Continue())
 
-    final class ApplyOps[V](dummy: Unit) extends AnyVal:
+    final class ValuesOps[V](dummy: Unit) extends AnyVal:
 
         /** Processes polled values with a function. Values are processed until n is reached or the stream completes.
           *
@@ -91,14 +91,9 @@ object Poll:
                     case Absent     => Loop.done
                 }
             }
-    end ApplyOps
+    end ValuesOps
 
-    /** Creates an instance of ApplyOps for processing polled values.
-      *
-      * @return
-      *   An instance of ApplyOps
-      */
-    inline def apply[V]: ApplyOps[V] = ApplyOps(())
+    inline def values[V]: ValuesOps[V] = ValuesOps(())
 
     final case class AndMapOps[V](dummy: Unit) extends AnyVal:
 
@@ -130,7 +125,7 @@ object Poll:
             inline tag: Tag[Poll[V]],
             inline frame: Frame
         ): A < (Poll[V] & S) =
-            ArrowEffect.suspendAndMap[Unit](tag, ack)(f)
+            ArrowEffect.suspendWith[Unit](tag, ack)(f)
     end AndMapOps
 
     def andMap[V]: AndMapOps[V] = AndMapOps(())
