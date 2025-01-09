@@ -244,7 +244,7 @@ final private[kyo] class StreamSubscriber[V](
     end interupt
 
     private[interop] def emit(using Frame, Tag[Emit[Chunk[V]]]): Ack < (Emit[Chunk[V]] & Async) =
-        Emit.andMap(Chunk.empty) { ack =>
+        Emit.valueWith(Chunk.empty) { ack =>
             Loop(ack) {
                 case Ack.Stop => interupt.andThen(Loop.done(Ack.Stop))
                 case Ack.Continue(_) =>
@@ -252,7 +252,7 @@ final private[kyo] class StreamSubscriber[V](
                         .map {
                             case true => request.andThen(Ack.Continue())
                             case false => poll.map {
-                                    case Result.Success(nextChunk)  => Emit(nextChunk)
+                                    case Result.Success(nextChunk)  => Emit.value(nextChunk)
                                     case Result.Error(e: Throwable) => Abort.panic(e)
                                     case _                          => Ack.Stop
                                 }

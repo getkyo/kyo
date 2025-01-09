@@ -224,12 +224,12 @@ class PollTest extends Test:
 
     "run Emit" - {
         "one" in {
-            val result = Poll.run(Emit(1))(Poll.one[Int])
+            val result = Poll.run(Emit.value(1))(Poll.one[Int])
             assert(result.eval == (Ack.Continue(), Maybe(1)))
         }
 
         "two" in {
-            val result = Poll.run(Emit(1).andThen(Emit(2))) {
+            val result = Poll.run(Emit.value(1).andThen(Emit.value(2))) {
                 Poll.andMap[Int] {
                     case Absent     => Maybe.empty
                     case Present(v) => Maybe(v * 3)
@@ -241,9 +241,9 @@ class PollTest extends Test:
         "basic emit-poll cycle" in run {
             val emitter =
                 for
-                    _ <- Emit(1)
-                    _ <- Emit(2)
-                    _ <- Emit(3)
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
                 yield "emitted"
 
             val poller =
@@ -259,9 +259,9 @@ class PollTest extends Test:
         "early poller termination" in run {
             val emitter =
                 for
-                    ack1 <- Emit(1)
-                    ack2 <- Emit(2)
-                    ack3 <- Emit(3)
+                    ack1 <- Emit.value(1)
+                    ack2 <- Emit.value(2)
+                    ack3 <- Emit.value(3)
                 yield (ack1, ack2, ack3, "emitted")
 
             val poller = Poll.one[Int](Ack.Stop)
@@ -273,9 +273,9 @@ class PollTest extends Test:
         "fold with emit" in run {
             val emitter =
                 for
-                    _ <- Emit(1)
-                    _ <- Emit(2)
-                    _ <- Emit(3)
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
                 yield "done"
 
             val poller = Poll.fold[Int](0)(_ + _)
@@ -289,9 +289,9 @@ class PollTest extends Test:
 
             val emitter =
                 for
-                    _ <- Emit(1)
+                    _ <- Emit.value(1)
                     _ <- Var.update[Int](_ + 1)
-                    _ <- Emit(2)
+                    _ <- Emit.value(2)
                     _ <- Var.update[Int](_ + 1)
                 yield "emitted"
 

@@ -22,7 +22,7 @@ object Emit:
       * @return
       *   An effect that emits the given value
       */
-    inline def apply[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
+    inline def value[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
         ArrowEffect.suspend[Any](tag, value)
 
     /** Emits a single value and maps the resulting Ack.
@@ -34,12 +34,12 @@ object Emit:
       * @return
       *   The result of applying f to the Ack
       */
-    inline def andMap[V, A, S](inline value: V)(inline f: Ack => A < S)(
+    inline def valueWith[V, A, S](inline value: V)(inline f: Ack => A < S)(
         using
         inline tag: Tag[Emit[V]],
         inline frame: Frame
     ): A < (S & Emit[V]) =
-        ArrowEffect.suspendAndMap[Any](tag, value)(f(_))
+        ArrowEffect.suspendWith[Any](tag, value)(f(_))
 
     final class RunOps[V](dummy: Unit) extends AnyVal:
         /** Runs an Emit effect, collecting all emitted values into a Chunk.
@@ -169,7 +169,7 @@ object Emit:
                     Loop(state: Seq[V]) {
                         case Seq() => Loop.done
                         case head +: tail =>
-                            Emit.andMap(head) {
+                            Emit.valueWith(head) {
                                 case Ack.Stop => Loop.done
                                 case _        => Loop.continue(tail)
                             }

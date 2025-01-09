@@ -33,8 +33,8 @@ object Check:
       * @return
       *   A unit computation that fails if the condition is false
       */
-    inline def apply(inline condition: Boolean)(using inline frame: Frame): Unit < Check =
-        Check(condition, "")
+    inline def require(inline condition: Boolean)(using inline frame: Frame): Unit < Check =
+        Check.require(condition, "")
 
     /** Checks the boolean condition with a custom failure message.
       *
@@ -45,7 +45,7 @@ object Check:
       * @return
       *   A unit computation that fails with the given message if the condition is false
       */
-    inline def apply(inline condition: Boolean, inline message: => String)(using inline frame: Frame): Unit < Check =
+    inline def require(inline condition: Boolean, inline message: => String)(using inline frame: Frame): Unit < Check =
         if condition then ()
         else ArrowEffect.suspend[Unit](Tag[Check], new CheckFailed(message, frame))
 
@@ -108,7 +108,7 @@ object Check:
                     Check.runChunk(v)
 
                 def restore[A: Flat, S2](state: Chunk[CheckFailed], v: A < S2)(using Frame) =
-                    Kyo.foreach(state)(check => Check(false, check.message)(using check.frame)).andThen(v)
+                    Kyo.foreach(state)(check => Check.require(false, check.message)(using check.frame)).andThen(v)
             end new
         end merge
 
