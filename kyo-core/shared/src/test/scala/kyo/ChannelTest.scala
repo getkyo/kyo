@@ -789,7 +789,6 @@ class ChannelTest extends Test:
         }
 
         "should stream concurrently with ingest via putBatch, yielding consistent chunk sizes" in run {
-            pending
             for
                 c  <- Channel.init[Int](9)
                 bg <- Async.run(Loop(0)(i => c.putBatch(Chunk(i, i + 1, i + 2)).andThen(Loop.continue(i + 3))))
