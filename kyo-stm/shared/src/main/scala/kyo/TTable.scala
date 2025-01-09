@@ -20,7 +20,7 @@ import scala.annotation.implicitNotFound
   * @tparam Fields
   *   The record structure defined as a type-level list of field definitions (e.g. "name" ~ String & "age" ~ Int)
   */
-abstract class TTable[Fields]:
+sealed abstract class TTable[Fields]:
 
     /** The type of record IDs for this table. Represented as an opaque Int subtype to provide type safety. */
     type Id <: Int
