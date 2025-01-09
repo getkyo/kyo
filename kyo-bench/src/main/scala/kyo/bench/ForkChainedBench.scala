@@ -51,22 +51,4 @@ class ForkChainedBench extends Bench.ForkOnly(0):
         end for
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import ox.*
-        import java.util.concurrent.CompletableFuture
-
-        def iterate(p: CompletableFuture[Unit], n: Int): Any =
-            if n <= 0 then p.complete(())
-            else
-                scoped {
-                    fork(iterate(p, n - 1))
-                }
-
-        scoped {
-            val p = new CompletableFuture[Unit]()
-            discard(fork(iterate(p, depth)))
-            p.get()
-        }
-    end forkOx
 end ForkChainedBench
