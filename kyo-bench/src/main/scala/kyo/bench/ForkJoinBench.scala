@@ -34,14 +34,4 @@ class ForkJoinBench extends Bench.ForkOnly(()):
         forkAllFibers.flatMap(fibers => ZIO.foreach(fibers)(_.await).unit)
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import ox.*
-        scoped {
-            val forkAllFibers =
-                for (_ <- range) yield fork(())
-            for fiber <- forkAllFibers do
-                fiber.join()
-        }
-    end forkOx
 end ForkJoinBench
