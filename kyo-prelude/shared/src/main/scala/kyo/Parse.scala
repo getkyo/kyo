@@ -712,7 +712,7 @@ object Parse:
                                     else
                                         // Successfully parsed a value with remaining text.
                                         // Emit the parsed value and continue with unconsumed text
-                                        Emit.andMap(Chunk(value)) { ack =>
+                                        Emit.valueWith(Chunk(value)) { ack =>
                                             (state.remaining, ack)
                                         }
                                 case seq =>
@@ -726,7 +726,7 @@ object Parse:
                     case Ack.Stop => Ack.Stop
                     case _        =>
                         // Try to parse any complete results from remaining text
-                        run(text)(repeat(v)).map(Emit(_))
+                        run(text)(repeat(v)).map(Emit.value(_))
             }
         }
 

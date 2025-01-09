@@ -73,22 +73,4 @@ class ForkSpawnBench extends Bench.ForkOnly(()):
         end for
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import ox.*
-        import java.util.concurrent.*
-        scoped {
-            val cdl = new CountDownLatch(total)
-            def loop(level: Int): Unit =
-                if level == depth then
-                    cdl.countDown()
-                else
-                    for _ <- 0 until width do
-                        fork {
-                            loop(level + 1)
-                        }
-            loop(0)
-            cdl.await()
-        }
-    end forkOx
 end ForkSpawnBench

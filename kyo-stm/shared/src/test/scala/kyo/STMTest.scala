@@ -113,9 +113,9 @@ class STMTest extends Test:
                     STM.run(Emit.isolate.merge[Int]) {
                         for
                             _ <- ref.set(1)
-                            _ <- Emit(42)
+                            _ <- Emit.value(42)
                             v <- ref.get
-                            _ <- Emit(v)
+                            _ <- Emit.value(v)
                         yield v
                     }
                 }
@@ -133,9 +133,9 @@ class STMTest extends Test:
                             STM.run(Emit.isolate.merge[Int]) {
                                 for
                                     _ <- ref.set(42)
-                                    _ <- Emit(1)
+                                    _ <- Emit.value(1)
                                     _ <- Abort.fail(ex)
-                                    _ <- Emit(2)
+                                    _ <- Emit.value(2)
                                 yield "unreachable"
                             }
                         }
@@ -205,11 +205,11 @@ class STMTest extends Test:
                             STM.run(Emit.isolate.merge[Int].andThen(Var.isolate.update)) {
                                 for
                                     _ <- ref.set(1)
-                                    _ <- Emit(1)
+                                    _ <- Emit.value(1)
                                     _ <- Var.set(1)
                                     _ <- Abort.fail(ex)
                                     _ <- ref.set(2)
-                                    _ <- Emit(2)
+                                    _ <- Emit.value(2)
                                     _ <- Var.set(2)
                                 yield "unreachable"
                             }

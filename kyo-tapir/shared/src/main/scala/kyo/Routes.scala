@@ -52,7 +52,7 @@ object Routes:
     def add[A: Tag, I, E: SafeClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Async & Env[A] & Abort[E])
     )(using Frame): Unit < Routes =
-        Emit(
+        Emit.value(
             Route(
                 e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic((a: A) =>
                     (i: I) =>

@@ -184,7 +184,7 @@ object Channel:
             else if maxChunkSize == 1 then
                 Loop(()): _ =>
                     Channel.take(self).map: v =>
-                        Emit.andMap(Chunk(v)):
+                        Emit.valueWith(Chunk(v)):
                             case Ack.Stop => Loop.done(Ack.Stop)
                             case _        => Loop.continue(())
             else
@@ -194,7 +194,7 @@ object Channel:
                 Loop[Unit, Ack, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
                         drainEffect.map: chunk =>
-                            Emit.andMap(Chunk(a).concat(chunk)):
+                            Emit.valueWith(Chunk(a).concat(chunk)):
                                 case Ack.Stop => Loop.done(Ack.Stop)
                                 case _        => Loop.continue(())
 
