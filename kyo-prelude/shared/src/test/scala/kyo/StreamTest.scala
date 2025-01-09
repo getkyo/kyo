@@ -574,7 +574,7 @@ class StreamTest extends Test:
     "tapChunk" - {
         "non-empty stream" in {
             val stream = Stream
-                .apply(Emit.andMap(Chunk(1, 2, 3))(_ => Emit(Chunk(4, 5, 6))))
+                .apply(Emit.valueWith(Chunk(1, 2, 3))(_ => Emit.value(Chunk(4, 5, 6))))
                 .tapChunk(c => Var.update[Int](_ + c.sum).unit)
             assert(Var.runTuple(0)(stream.run).eval == (21, Seq(1, 2, 3, 4, 5, 6)))
         }

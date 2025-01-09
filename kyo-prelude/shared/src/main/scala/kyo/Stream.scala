@@ -134,7 +134,7 @@ sealed abstract class Stream[V, -S]:
                 [C] =>
                     (input, _, cont) =>
                         Kyo.foreachDiscard(input)(f).andThen:
-                            Emit.andMap(input)(ack => ((), cont(ack)))
+                            Emit.valueWith(input)(ack => ((), cont(ack)))
 
     /** Applies a side-effecting function to each chunk in the stream without altering them.
       *
@@ -153,7 +153,7 @@ sealed abstract class Stream[V, -S]:
                 [C] =>
                     (input, _, cont) =>
                         f(input).andThen:
-                            Emit.andMap(input)(ack => ((), cont(ack)))
+                            Emit.valueWith(input)(ack => ((), cont(ack)))
 
     private def discard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         Stream(ArrowEffect.handle(tag, emit)(
