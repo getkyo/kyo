@@ -117,6 +117,44 @@ sealed abstract class Stream[V, -S]:
                         f(input).map(_.emit).map(ack => ((), cont(ack)))
         ))
 
+    /** Applies a side-effecting function to each element in the stream without altering them.
+      *
+      * @param f
+      *   The function to apply to each value
+      * @return
+      *   A new stream runs f while emitting values
+      */
+    def tap[S1](f: V => Unit < S1)(
+        using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S & S1] =
+        Stream:
+            ArrowEffect.handleState(tag, (), emit: Ack < (Emit[Chunk[V]] & S & S1)):
+                [C] =>
+                    (input, _, cont) =>
+                        Kyo.foreachDiscard(input)(f).andThen:
+                            Emit.andMap(input)(ack => ((), cont(ack)))
+
+    /** Applies a side-effecting function to each chunk in the stream without altering them.
+      *
+      * @param f
+      *   The function to apply to each chunk
+      * @return
+      *   A new stream runs f while emitting chunks
+      */
+    def tapChunk[S1](f: Chunk[V] => Unit < S1)(
+        using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S & S1] =
+        Stream:
+            ArrowEffect.handleState(tag, (), emit: Ack < (Emit[Chunk[V]] & S & S1)):
+                [C] =>
+                    (input, _, cont) =>
+                        f(input).andThen:
+                            Emit.andMap(input)(ack => ((), cont(ack)))
+
     private def discard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         Stream(ArrowEffect.handle(tag, emit)(
             [C] => (input, cont) => cont(Stop)
