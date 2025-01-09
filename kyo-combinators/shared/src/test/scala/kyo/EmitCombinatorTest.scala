@@ -103,4 +103,9 @@ class EmitCombinatorTest extends Test:
         }
     }
 
+    "stream.tap should not conflict with effect tap combinator" in {
+        val stream = Stream.init(Seq(1, 2, 3)).tap(i => Var.update[Int](_ + i).unit)
+        assert(Var.runTuple(0)(stream.run).eval == (6, Seq(1, 2, 3)))
+    }
+
 end EmitCombinatorTest

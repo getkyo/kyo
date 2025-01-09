@@ -556,6 +556,36 @@ class StreamTest extends Test:
         }
     }
 
+    "tap" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .init(Seq(1, 2, 3))
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (6, Seq(1, 2, 3)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
+    "tapChunk" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .apply(Emit.andMap(Chunk(1, 2, 3))(_ => Emit(Chunk(4, 5, 6))))
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (21, Seq(1, 2, 3, 4, 5, 6)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
     "concat" - {
         "non-empty streams" in {
             assert(
