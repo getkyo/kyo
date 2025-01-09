@@ -1176,4 +1176,42 @@ class AsyncTest extends Test:
         }
     }
 
+    "apply" - {
+        "suspends computation" in run {
+            var counter = 0
+            val computation = Async {
+                counter += 1
+                counter
+            }
+            for
+                v1 <- computation
+                v2 <- computation
+                v3 <- computation
+            yield
+                assert(v1 == 1)
+                assert(v2 == 2)
+                assert(v3 == 3)
+                assert(counter == 3)
+            end for
+        }
+
+        "preserves effects" in run {
+            var executed = false
+            for
+                started <- Latch.init(1)
+                done    <- Latch.init(1)
+                fiber <- Async.run {
+                    started.release.andThen {
+                        Async { executed = true }.andThen {
+                            done.release
+                        }
+                    }
+                }
+                _ <- started.await
+                _ <- done.await
+            yield assert(executed)
+            end for
+        }
+    }
+
 end AsyncTest
