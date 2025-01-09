@@ -53,21 +53,21 @@ class EmitCombinatorTest extends Test:
         }
 
         "emitChunkedToStream" in run {
-            val emit   = Loop(0)(i => if i == 9 then Loop.done(()) else Emit.andMap(i)(_ => Loop.continue(i + 1))).map(_ => Ack.Continue())
+            val emit   = Loop(0)(i => if i == 9 then Loop.done(()) else Emit.andMap(i)(_ => Loop.continue(i + 1))).unit
             val stream = emit.emitChunkedToStream(2)
             stream.run.map: chunk =>
                 assert(chunk == Chunk.from(0 until 9))
         }
 
         "emitChunkedToStreamDiscarding" in run {
-            val emit   = Loop(0)(i => if i == 9 then Loop.done(()) else Emit.andMap(i)(_ => Loop.continue(i + 1)))
+            val emit   = Loop(0)(i => if i == 9 then Loop.done("done") else Emit.andMap(i)(_ => Loop.continue(i + 1)))
             val stream = emit.emitChunkedToStreamDiscarding(2)
             stream.run.map: chunk =>
                 assert(chunk == Chunk.from(0 until 9))
         }
 
         "emitChunkedToStreamAndResult" in run {
-            val emit = Loop(0)(i => if i == 9 then Loop.done(()) else Emit.andMap(i)(_ => Loop.continue(i + 1))).map(_ => "done")
+            val emit = Loop(0)(i => if i == 9 then Loop.done("done") else Emit.andMap(i)(_ => Loop.continue(i + 1)))
             for
                 (stream, handled) <- emit.emitChunkedToStreamAndResult(2)
                 streamRes         <- stream.run

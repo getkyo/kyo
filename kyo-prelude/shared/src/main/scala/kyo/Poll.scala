@@ -27,7 +27,7 @@ sealed trait Poll[V] extends ArrowEffect[Const[Unit], Const[Maybe[V]]]
 
 object Poll:
 
-    /** Attempts to poll a single value with Continue acknowledgement.
+    /** Attempts to poll a single value.
       *
       * @return
       *   A computation that produces Maybe containing the polled value if available
@@ -85,10 +85,8 @@ object Poll:
 
     final case class AndMapOps[V](dummy: Unit) extends AnyVal:
 
-        /** Applies a function to the result of polling with the given acknowledgement.
+        /** Applies a function to the result of polling.
           *
-          * @param ack
-          *   The acknowledgement controlling value emission
           * @param f
           *   Function to apply to the polled result
           * @return
@@ -190,12 +188,12 @@ object Poll:
     /** Connects an emitting source to a polling consumer with flow control.
       *
       * The emitting source produces values that are consumed by the polling computation in a demand-driven way. The polling consumer
-      * controls the flow rate by sending acknowledgments (Ack) to indicate readiness for more data. The emitter responds to these signals
-      * to implement backpressure.
+      * controls the flow rate by sending requests to indicate readiness for more data. The emitter responds to these signals to implement
+      * backpressure.
       *
       * The flow continues until either:
       *   - The emitter completes, signaling end-of-stream to the consumer via Maybe.Absent
-      *   - The consumer sends Ack.Stop to terminate consumption
+      *   - The consumer completes, terminating consumption
       *   - Both sides complete naturally
       *
       * @param emit
