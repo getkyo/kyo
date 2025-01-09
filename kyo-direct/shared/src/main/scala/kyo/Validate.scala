@@ -8,8 +8,6 @@ private[kyo] object Validate:
     def apply(expr: Expr[Any])(using Quotes): Unit =
         import quotes.reflect.*
 
-        val tree = expr.asTerm
-
         def fail(tree: Tree, msg: String): Unit =
             report.error(msg, tree.pos)
 
@@ -19,9 +17,46 @@ private[kyo] object Validate:
                 case _                                    => false
             }
 
-        Trees.traverse(tree) {
-            case Apply(TypeApply(Ident("now"), _), _)   =>
-            case Apply(TypeApply(Ident("later"), _), _) =>
+        Trees.traverse(expr.asTerm) {
+            case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
+                Trees.traverse(qual) {
+                    case tree @ Apply(TypeApply(Ident("now" | "later"), _), _) =>
+                        fail(
+                            tree,
+                            s"""${".now".cyan} and ${".later".cyan} can only be used directly inside a ${"`defer`".yellow} block.
+                            |
+                            |Common mistake: You may have forgotten to wrap an effectful computation in ${"`defer`".yellow}:
+                            |${highlight("""
+                            |// Missing defer when handling effects:
+                            |val result = Emit.run {      // NOT OK - missing defer
+                            |    Emit(1).now
+                            |    Emit(2).now
+                            |}
+                            |
+                            |// Correctly wrapped in defer:
+                            |val result = Emit.run {
+                            |    defer {                  // OK - effects wrapped in defer
+                            |        Emit(1).now
+                            |        Emit(2).now
+                            |    }
+                            |}""")}
+                            |
+                            |If you're seeing this inside a ${"`defer`".yellow} block, you may have nested ${".now".cyan}/${".later".cyan} calls:
+                            |${highlight("""
+                            |// Instead of nested .now:
+                            |defer {
+                            |    (counter.get.now + 1).now     // NOT OK - nested .now
+                            |}
+                            |
+                            |// Store intermediate results:
+                            |defer {
+                            |    val value = counter.get.now    // OK - get value first
+                            |    val incr = value + 1           // OK - pure operation
+                            |    IO(incr).now                   // OK - single .now
+                            |}""".stripMargin)}""".stripMargin
+                        )
+                }
+
             case tree: Term if tree.tpe.typeSymbol.name == "<" =>
                 fail(
                     tree,
@@ -47,30 +82,6 @@ private[kyo] object Validate:
                        |""".stripMargin
                 )
 
-            case tree @ Apply(TypeApply(Ident("defer"), _), _) =>
-                fail(
-                    tree,
-                    s"""Nested ${"`defer`".yellow} blocks are not allowed.
-                       |
-                       |Instead of nesting defer blocks:
-                       |${highlight("""
-                       |defer {
-                       |  defer {        // NOT OK - nested defer
-                       |    IO(1).now
-                       |  }
-                       |}""".stripMargin)}
-                       |
-                       |Define separate operations:
-                       |${highlight("""
-                       |def innerOperation = defer {
-                       |  IO(1).now
-                       |}
-                       |
-                       |defer {
-                       |  innerOperation.now  // OK - composing effects
-                       |}""".stripMargin)}""".stripMargin
-                )
-
             case tree @ ValDef(_, _, _) if tree.show.startsWith("var ") =>
                 fail(
                     tree,
@@ -78,66 +89,45 @@ private[kyo] object Validate:
                        |
                        |Mutable state can lead to unexpected behavior with effects. Instead, use proper state management tools:
                        |
-                       |• Var (kyo-prelude)
-                       |• Atomic* classes (kyo-core)
-                       |• TRef and derivatives (kyo-stm)""".stripMargin
-                )
-
-            case Return(_, _) =>
-                fail(
-                    tree,
-                    s"""${"`return`".yellow} statements are not allowed inside a ${"`defer`".yellow} block.
-                       |
-                       |Early returns can break effect sequencing. Instead:
-                       |${highlight("""
-                       |// Instead of return:
-                       |defer {
-                       |  if condition then
-                       |    return value    // NOT OK - early return
-                       |  IO(1).now
-                       |}
-                       |
-                       |// Use if expressions:
-                       |defer {
-                       |  if condition then value
-                       |  else IO(1).now    // OK - explicit flow
-                       |}""".stripMargin)}""".stripMargin
+                       |• Most common: Atomic* classes (kyo-core)
+                       |• With transactional behavior: TRef and derivatives (kyo-stm)
+                       |• Advanced pure state management: Var (kyo-prelude)
+                       """.stripMargin
                 )
 
             case tree @ ValDef(_, _, _) if tree.show.startsWith("lazy val ") =>
                 fail(
                     tree,
-                    s"""${"`lazy val`".yellow} declarations are not allowed inside a ${"`defer`".yellow} block.
-                       |
-                       |Lazy evaluation can interfere with effect sequencing. Instead:
-                       |${highlight("""
-                       |// Instead of lazy val:
-                       |defer {
-                       |  lazy val x = IO(1).now  // NOT OK - lazy
-                       |  x + 1
-                       |}
-                       |
-                       |// Use regular val:
-                       |defer {
-                       |  val x = IO(1).now       // OK - eager
-                       |  x + 1
-                       |}""".stripMargin)}""".stripMargin
+                    s"""${"`lazy val`".yellow} and ${"`object`".yellow} declarations are not allowed inside a ${"`defer`".yellow} block.
+                    |
+                    |These interfere with effect sequencing. Define them outside the defer block:
+                    |${highlight("""
+                    |// Instead of lazy declarations in defer:
+                    |defer {
+                    |  lazy val x = IO(1).now  // NOT OK - lazy val
+                    |  object A               // NOT OK - object
+                    |  x + 1
+                    |}
+                    |
+                    |// Define outside defer:
+                    |lazy val x = IO(1)       // OK - outside
+                    |object A                 // OK - outside
+                    |
+                    |// Use inside defer:
+                    |defer {
+                    |  val result = x.now     // OK - proper sequencing
+                    |  A.method.now
+                    |}""".stripMargin)}
+                    |
+                    |For expensive computations needing caching, consider ${"`Async.memoize`".cyan}:
+                    |${highlight("""
+                    |defer {
+                    |  val memoized = Async.memoize(expensiveComputation).now
+                    |  memoized().now  // First computes, then caches
+                    |}""".stripMargin)}""".stripMargin.stripMargin
                 )
 
-            case Lambda(_, body) if !pure(body) =>
-                fail(
-                    tree,
-                    s"""Lambda functions containing ${".now".cyan} are not supported.
-                       |
-                       |Effects in lambdas can lead to unexpected ordering:
-                       |${highlight("""
-                       |defer {
-                       |  val f = (x: Int) => IO(x).now  // NOT OK - effects in lambda
-                       |  f(10)
-                       |}""".stripMargin)}""".stripMargin
-                )
-
-            case DefDef(_, _, _, Some(body)) if !pure(body) =>
+            case tree @ DefDef(_, _, _, Some(body)) if !pure(body) =>
                 fail(
                     tree,
                     s"""Method definitions containing ${".now".cyan} are not supported inside ${"`defer`".yellow} blocks.
@@ -160,12 +150,12 @@ private[kyo] object Validate:
                        |}""".stripMargin)}""".stripMargin
                 )
 
-            case Try(_, _, _) =>
+            case tree @ Try(_, _, _) =>
                 fail(
                     tree,
-                    s"""${"`try`".yellow}/`catch`".yellow} blocks are not supported inside ${"`defer`".yellow} blocks.
+                    s"""${"`try`".yellow}/${"`catch`".yellow} blocks are not supported inside ${"`defer`".yellow} blocks.
                        |
-                       |Use error handling effects instead. Handle each effect in a separate defer block:
+                       |Use error handling effects instead. You can handle each effect in a separate defer block:
                        |${highlight("""
                        |// Instead of try/catch:
                        |defer {
@@ -181,7 +171,7 @@ private[kyo] object Validate:
                        |  IO(1).now
                        |}
                        |
-                       |// Handle the effect in a separate defer block:
+                       |// Handle the effect defer block:
                        |defer {
                        |  Abort.run(computation).now match {
                        |    case Result.Success(v) => v
@@ -194,25 +184,74 @@ private[kyo] object Validate:
                        |and clearer error handling boundaries.""".stripMargin
                 )
 
-            case ClassDef(_, _, _, _, _) =>
+            case tree @ ClassDef(_, _, _, _, _) =>
                 fail(
                     tree,
-                    s"""${"`class`".yellow} declarations are not supported inside ${"`defer`".yellow} blocks.
+                    s"""${"`class`".yellow} and ${"`trait`".yellow} declarations are not allowed inside ${"`defer`".yellow} blocks.
+                        |
+                        |Define them outside defer blocks:
+                        |${highlight("""
+                        |// Instead of declarations in defer:
+                        |defer {
+                        |  class MyClass(x: Int)    // NOT OK
+                        |  trait MyTrait            // NOT OK
+                        |  new MyClass(10)
+                        |}
+                        |
+                        |// Define outside:
+                        |class MyClass(x: Int)      // OK - outside defer
+                        |trait MyTrait              // OK - outside defer
+                        |
+                        |defer {
+                        |  new MyClass(10)          // OK - usage in defer
+                        |}""".stripMargin)}""".stripMargin
+                )
+
+            case tree @ Apply(Ident("throw"), _) =>
+                fail(
+                    tree,
+                    s"""${"`throw`".yellow} expressions are not allowed inside a ${"`defer`".yellow} block.
+                    |
+                    |Exception throwing can break effect sequencing. Use error handling effects instead:
+                    |${highlight("""
+                    |// Instead of throw:
+                    |defer {
+                    |  if condition then
+                    |    throw new Exception("error")  // NOT OK - throws exception
+                    |  IO(1).now
+                    |}
+                    |
+                    |// Use Abort effect:
+                    |defer {
+                    |  if condition then
+                    |    Abort.fail("error").now       // OK - proper error handling
+                    |  else IO(1).now
+                    |}""".stripMargin)}""".stripMargin
+                )
+
+            case tree @ Select(_, "synchronized") =>
+                fail(
+                    tree,
+                    s"""${"`synchronized`".yellow} blocks are not allowed inside a ${"`defer`".yellow} block.
                        |
-                       |Define classes outside defer blocks:
-                       |${highlight("""
-                       |// Instead of class in defer:
-                       |defer {
-                       |  class MyClass(x: Int)  // NOT OK
-                       |  new MyClass(10)
-                       |}
+                       |Synchronization can lead to deadlocks with effects. Instead, use proper concurrency primitives:
                        |
-                       |// Define outside:
-                       |class MyClass(x: Int)
-                       |
-                       |defer {
-                       |  new MyClass(10)  // OK
-                       |}""".stripMargin)}""".stripMargin
+                       |• Most common: Atomic* classes for thread-safe values (kyo-core)
+                       |• With mutual exclusion: Meter for controlled access (kyo-core)
+                       |• Advanced transactional state: TRef and STM (kyo-stm)
+                       """.stripMargin
+                )
+
+            case tree @ Select(_, _) if tree.symbol.flags.is(Flags.Mutable) =>
+                fail(
+                    tree,
+                    s"""Mutable field access is not allowed inside a ${"`defer`".yellow} block.
+                    |
+                    |Mutable state can lead to race conditions. Use proper state management instead:
+                    |
+                    |• Most common: Atomic* classes (kyo-core)
+                    |• With transactional behavior: TRef and derivatives (kyo-stm)
+                    |• Advanced pure state management: Var (kyo-prelude)""".stripMargin
                 )
         }
     end apply
