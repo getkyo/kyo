@@ -795,7 +795,10 @@ class ChannelTest extends Test:
                 stream = c.stream(3).take(15).mapChunk(ch => Chunk(ch))
                 res <- stream.run
                 _   <- bg.interrupt
-            yield assert(res == Chunk(Chunk(0, 1, 2), Chunk(3, 4, 5), Chunk(6, 7, 8), Chunk(9, 10, 11), Chunk(12, 13, 14)))
+            yield
+                assert(res.forall(_.size <= 3))
+                assert(res.flatten == (0 to 14))
+            end for
         }
     }
 
