@@ -14,7 +14,7 @@ import java.util.Random
 private[kyo] object XSRandom extends Random {
 
     // Size is core * 32 to reduce false sharing by spacing seeds across cache lines
-    private val seeds = List.fill(Runtime.getRuntime().availableProcessors() * 32)(31L).toArray
+    private val seeds = Array.fill(Runtime.getRuntime().availableProcessors() * 32)(31L)
 
     override def next(nbits: Int): Int = {
         val id  = Thread.currentThread().hashCode()
