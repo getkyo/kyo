@@ -4,15 +4,21 @@ import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.internal.Safepoint
 
-/** Represents an IO effect for handling side effects in a pure functional manner.
+/** Pure suspension of side effects.
   *
-  * IO allows you to encapsulate and manage side-effecting operations (such as file I/O, network calls, or mutable state modifications)
-  * within a purely functional context. This enables better reasoning about effects and helps maintain referential transparency.
+  * Unlike traditional monadic IO types that combine effect suspension and async execution, Kyo leverages algebraic effects to cleanly
+  * separate these concerns. IO focuses solely on suspending side effects, while async execution (fibers, scheduling) is handled by the
+  * Async effect.
   *
-  * Like Async includes IO, this effect includes Abort[Nothing] to represent potential panics (untracked, unexpected exceptions). IO is
-  * implemented as a type-level marker rather than a full ArrowEffect for performance. Since Effect.defer is only evaluated by the Pending
-  * type's "eval" method, which can only handle computations without pending effects, side effects are properly deferred. This ensures they
-  * can only be executed after an IO.run call, even though it is a purely type-level operation.
+  * This separation enables an important design principle in Kyo's codebase: methods that only declare IO in their pending effects are run
+  * to completion without parking or locking. This property, combined with Kyo's lock-free primitives, makes it easier to reason about
+  * performance characteristics and identify potential async operations in the code.
+  *
+  * IO is implemented as a type-level marker rather than a full ArrowEffect for performance. Since Effect.defer is only evaluated by the
+  * Pending type's "eval" method, which can only handle computations without pending effects, side effects are properly deferred. This
+  * ensures they can only be executed after an IO.run call, even though it is a purely type-level operation.
+  *
+  * Like Async includes IO, this effect includes Abort[Nothing] to represent potential panics (untracked, unexpected exceptions).
   */
 opaque type IO <: Abort[Nothing] = Abort[Nothing]
 
