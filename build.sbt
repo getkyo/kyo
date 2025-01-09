@@ -208,6 +208,22 @@ lazy val `kyo-scheduler-cats` =
             crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
         )
 
+lazy val `kyo-scheduler-finagle` = {
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-scheduler-finagle"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.twitter" %% "finagle-core" % "24.2.0",
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            scalaVersion       := scala213Version,
+            crossScalaVersions := List(scala213Version)
+        )
+        .jvmSettings(mimaCheck(false))
+        .dependsOn(`kyo-scheduler`)
+}
+
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
