@@ -109,13 +109,12 @@ object Channel:
                     val nextN = n - lastSize
                     Channel.drainUpTo(self)(nextN).map: chunk =>
                         val chunk1 = lastChunk.concat(chunk)
-                        val size1  = chunk1.size
-                        if chunk1.size == n then Loop.done(chunk1)
+                        if chunk1.size >= n then Loop.done(chunk1)
                         else
                             self.take.map: a =>
                                 val chunk2 = chunk1.append(a)
-                                val size2  = size1 + 1
-                                if size2 == n then Loop.done(chunk2)
+                                val size2  = chunk2.size
+                                if size2 >= n then Loop.done(chunk2)
                                 else Loop.continue(chunk2, size2)
                         end if
 

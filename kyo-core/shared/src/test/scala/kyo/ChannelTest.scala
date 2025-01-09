@@ -698,7 +698,6 @@ class ChannelTest extends Test:
         }
 
         "putBatch and takeExactly" in run {
-            val repeats = 1
             (for
                 size    <- Choice.get(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
