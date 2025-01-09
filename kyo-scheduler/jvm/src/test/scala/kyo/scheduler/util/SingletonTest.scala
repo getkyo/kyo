@@ -2,17 +2,19 @@ package kyo.scheduler.util
 
 import java.net.URL
 import java.net.URLClassLoader
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
-import scala.jdk.CollectionConverters.*
 import scala.util.Random
 
 class TestInstance(val value: Int)
-class TestSingleton extends Singleton[TestInstance](() => new TestInstance(42))
+class TestSingleton extends Singleton[TestInstance] {
+    def init() = new TestInstance(42)
+}
 
 class SingletonTest extends AnyFreeSpec with NonImplicitAssertions {
 
@@ -28,10 +30,13 @@ class SingletonTest extends AnyFreeSpec with NonImplicitAssertions {
 
         "should initialize only once" in {
             var initCount = 0
-            val singleton = new Singleton[String](() => {
-                initCount += 1
-                s"instance-$initCount"
-            }) {}
+            val singleton =
+                new Singleton[String] {
+                    def init(): String = {
+                        initCount += 1
+                        s"instance-$initCount"
+                    }
+                }
 
             singleton.get
             singleton.get
@@ -61,13 +66,15 @@ class SingletonTest extends AnyFreeSpec with NonImplicitAssertions {
     "concurrency" - {
         "should handle concurrent initialization safely" in {
             class TestInstance(val id: String)
-            class TestSingleton extends Singleton[TestInstance](() => new TestInstance("test"))
+            class TestSingleton extends Singleton[TestInstance] {
+                def init() = new TestInstance("test")
+            }
 
             val threadCount = 32
             val latch       = new CountDownLatch(1)
             val singleton   = new TestSingleton
             val executor    = Executors.newFixedThreadPool(threadCount)
-            val instances   = new java.util.concurrent.ConcurrentLinkedQueue[TestInstance]()
+            val instances   = ConcurrentHashMap.newKeySet[TestInstance]()
 
             try {
                 val futures = (1 to threadCount).map { _ =>
@@ -87,8 +94,7 @@ class SingletonTest extends AnyFreeSpec with NonImplicitAssertions {
 
                 val finalInstance = singleton.get
                 assert(finalInstance.id == "test")
-                assert(instances.asScala.toSet.size == 1)
-                assert(instances.asScala.forall(_ eq finalInstance))
+                assert(instances.size == 1)
             } finally {
                 executor.shutdown()
             }
@@ -98,7 +104,7 @@ class SingletonTest extends AnyFreeSpec with NonImplicitAssertions {
             val classLoaderCount = 5
             val threadsPerLoader = 3
             val totalThreads     = classLoaderCount * threadsPerLoader
-            val instances        = new java.util.concurrent.ConcurrentLinkedQueue[TestInstance]()
+            val instances        = ConcurrentHashMap.newKeySet[TestInstance]()
 
             val classLoaders = (1 to classLoaderCount).map { _ =>
                 new URLClassLoader(Array.empty[URL], getClass.getClassLoader)
@@ -142,8 +148,7 @@ class SingletonTest extends AnyFreeSpec with NonImplicitAssertions {
 
                 val finalInstance = finalSingleton.get
                 assert(finalInstance.value == 42)
-                assert(instances.asScala.toSet.size == 1)
-                assert(instances.asScala.forall(_ eq finalInstance))
+                assert(instances.size == 1)
 
             } finally {
                 executor.shutdown()

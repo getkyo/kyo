@@ -2,13 +2,13 @@ package kyo.scheduler
 
 import java.net.URL
 import java.net.URLClassLoader
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
-import scala.jdk.CollectionConverters.*
 
 class SchedulerSingletonTest extends AnyFreeSpec with NonImplicitAssertions {
 
@@ -39,7 +39,7 @@ class SchedulerSingletonTest extends AnyFreeSpec with NonImplicitAssertions {
         val threadCount = 32
         val cdl         = new CountDownLatch(threadCount)
         val executor    = Executors.newFixedThreadPool(threadCount)
-        val schedulers  = new ConcurrentLinkedQueue[Scheduler]()
+        val schedulers  = ConcurrentHashMap.newKeySet[Scheduler]()
 
         try {
             val futures = (1 to threadCount).map { _ =>
@@ -61,7 +61,7 @@ class SchedulerSingletonTest extends AnyFreeSpec with NonImplicitAssertions {
             futures.foreach(_.get(5, TimeUnit.SECONDS))
 
             assert(futures.size == threadCount)
-            assert(schedulers.asScala.toSet.size == 1)
+            assert(schedulers.size == 1)
         } finally {
             executor.shutdown()
         }

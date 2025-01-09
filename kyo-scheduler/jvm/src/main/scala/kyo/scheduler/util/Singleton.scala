@@ -23,9 +23,11 @@ package kyo.scheduler.util
   *   A function that creates the singleton instance when needed. This will be called at most once per JVM, regardless of the number of
   *   classloaders.
   */
-abstract class Singleton[A <: AnyRef](init: () => A) {
+abstract class Singleton[A <: AnyRef] {
 
     @volatile private var instance: A = null.asInstanceOf[A]
+
+    protected def init(): A
 
     def get: A = {
 
