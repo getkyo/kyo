@@ -12,7 +12,9 @@ import java.util.Random
   * provides better statistical properties while maintaining the performance characteristics needed for scheduling operations.
   */
 private[kyo] object XSRandom extends Random {
-    private val seeds = List.fill(32)(31L).toArray
+
+    // Size is core * 32 to reduce false sharing by spacing seeds across cache lines
+    private val seeds = List.fill(Runtime.getRuntime().availableProcessors() * 32)(31L).toArray
 
     override def next(nbits: Int): Int = {
         val id  = Thread.currentThread().hashCode()
