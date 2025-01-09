@@ -5,22 +5,22 @@ class CheckTest extends Test:
     "apply" - {
         "with message" - {
             "passes when condition is true" in run {
-                Check.runDiscard(Check(true, "This should pass").map(_ => succeed))
+                Check.runDiscard(Check.require(true, "This should pass").map(_ => succeed))
             }
 
             "fails when condition is false" in run {
-                Abort.run(Check.runAbort(Check(false, "This should fail"))).map { r =>
+                Abort.run(Check.runAbort(Check.require(false, "This should fail"))).map { r =>
                     assert(r.failure.get.asInstanceOf[CheckFailed].message == "This should fail")
                 }
             }
         }
         "no message" - {
             "passes when condition is true" in run {
-                Check.runDiscard(Check(true).map(_ => succeed))
+                Check.runDiscard(Check.require(true).map(_ => succeed))
             }
 
             "fails when condition is false" in run {
-                Abort.run(Check.runAbort(Check(false))).map { r =>
+                Abort.run(Check.runAbort(Check.require(false))).map { r =>
                     assert(r.failure.get.asInstanceOf[CheckFailed].message == "")
                 }
             }
@@ -31,8 +31,8 @@ class CheckTest extends Test:
         "returns success for passing checks" in run {
             val result = Check.runAbort {
                 for
-                    _ <- Check(true, "This should pass")
-                    _ <- Check(1 + 1 == 2, "Basic math works")
+                    _ <- Check.require(true, "This should pass")
+                    _ <- Check.require(1 + 1 == 2, "Basic math works")
                 yield "All checks passed"
             }
             Abort.run(result).map(r => assert(r == Result.success("All checks passed")))
@@ -41,9 +41,9 @@ class CheckTest extends Test:
         "returns failure for failing checks" in run {
             val result = Check.runAbort {
                 for
-                    _ <- Check(true, "This should pass")
-                    _ <- Check(false, "This should fail")
-                    _ <- Check(true, "This won't be reached")
+                    _ <- Check.require(true, "This should pass")
+                    _ <- Check.require(false, "This should fail")
+                    _ <- Check.require(true, "This won't be reached")
                 yield "Shouldn't get here"
             }
             Abort.run(result).map { r =>
@@ -56,9 +56,9 @@ class CheckTest extends Test:
         "collects all check failures" in run {
             val result = Check.runChunk {
                 for
-                    _ <- Check(false, "First failure")
-                    _ <- Check(true, "This passes")
-                    _ <- Check(false, "Second failure")
+                    _ <- Check.require(false, "First failure")
+                    _ <- Check.require(true, "This passes")
+                    _ <- Check.require(false, "Second failure")
                 yield "Done"
             }
             result.map { case (failures, value) =>
@@ -74,8 +74,8 @@ class CheckTest extends Test:
         "discards check failures and continues execution" in run {
             val result = Check.runDiscard {
                 for
-                    _ <- Check(false, "This failure is discarded")
-                    _ <- Check(true, "This passes")
+                    _ <- Check.require(false, "This failure is discarded")
+                    _ <- Check.require(true, "This passes")
                 yield "Execution completed"
             }
             result.map(r => assert(r == "Execution completed"))
@@ -85,10 +85,10 @@ class CheckTest extends Test:
     "multiple checks" in run {
         val result = Check.runChunk {
             for
-                _ <- Check(true, "This should pass")
-                _ <- Check(false, "This should fail")
-                _ <- Check(true, "This should pass too")
-                _ <- Check(false, "This should also fail")
+                _ <- Check.require(true, "This should pass")
+                _ <- Check.require(false, "This should fail")
+                _ <- Check.require(true, "This should pass too")
+                _ <- Check.require(false, "This should also fail")
             yield "Done"
         }
         result.map { case (failures, value) =>
@@ -104,9 +104,9 @@ class CheckTest extends Test:
             Check.runChunk {
                 for
                     env <- Env.get[Int]
-                    _   <- Check(env > 0, "Env should be positive")
-                    _   <- Check(env < 10, "Env should be less than 10")
-                    _   <- Check(env % 2 != 0, "Env should be odd")
+                    _   <- Check.require(env > 0, "Env should be positive")
+                    _   <- Check.require(env < 10, "Env should be less than 10")
+                    _   <- Check.require(env % 2 != 0, "Env should be odd")
                 yield env
             }
         }
@@ -120,10 +120,10 @@ class CheckTest extends Test:
         val result = Var.run(0) {
             Check.runChunk {
                 for
-                    _ <- Check(true, "Initial check")
+                    _ <- Check.require(true, "Initial check")
                     _ <- Var.update[Int](_ + 1)
                     v <- Var.get[Int]
-                    _ <- Check(v == 1, "Var should be updated")
+                    _ <- Check.require(v == 1, "Var should be updated")
                 yield v
             }
         }
@@ -138,15 +138,15 @@ class CheckTest extends Test:
             "combines failures from isolated and outer scopes" in run {
                 val result = Check.runChunk {
                     for
-                        _ <- Check(false, "Outer failure 1")
+                        _ <- Check.require(false, "Outer failure 1")
                         isolated <- Check.isolate.merge.run {
                             for
-                                _ <- Check(false, "Inner failure 1")
-                                _ <- Check(true, "Inner success")
-                                _ <- Check(false, "Inner failure 2")
+                                _ <- Check.require(false, "Inner failure 1")
+                                _ <- Check.require(true, "Inner success")
+                                _ <- Check.require(false, "Inner failure 2")
                             yield "inner"
                         }
-                        _ <- Check(false, "Outer failure 2")
+                        _ <- Check.require(false, "Outer failure 2")
                     yield (isolated)
                 }
                 result.map { case (failures, value) =>
@@ -162,16 +162,16 @@ class CheckTest extends Test:
             "proper state restoration after nested isolations" in run {
                 val result = Check.runChunk {
                     for
-                        _ <- Check(false, "Start failure")
+                        _ <- Check.require(false, "Start failure")
                         v1 <- Check.isolate.merge.run {
                             for
-                                _ <- Check(false, "Inner failure 1")
+                                _ <- Check.require(false, "Inner failure 1")
                                 v2 <- Check.isolate.merge.run {
-                                    Check(false, "Nested failure").map(_ => "nested-result")
+                                    Check.require(false, "Nested failure").map(_ => "nested-result")
                                 }
                             yield v2
                         }
-                        _ <- Check(false, "End failure")
+                        _ <- Check.require(false, "End failure")
                     yield v1
                 }
                 result.map { case (failures, value) =>
@@ -189,14 +189,14 @@ class CheckTest extends Test:
             "inner failures don't affect outer scope" in run {
                 val result = Check.runChunk {
                     for
-                        _ <- Check(false, "Outer failure 1")
+                        _ <- Check.require(false, "Outer failure 1")
                         isolated <- Check.isolate.discard.run {
                             for
-                                _ <- Check(false, "Inner failure 1")
-                                _ <- Check(false, "Inner failure 2")
+                                _ <- Check.require(false, "Inner failure 1")
+                                _ <- Check.require(false, "Inner failure 2")
                             yield "inner"
                         }
-                        _ <- Check(false, "Outer failure 2")
+                        _ <- Check.require(false, "Outer failure 2")
                     yield isolated
                 }
                 result.map { case (failures, value) =>
@@ -210,16 +210,16 @@ class CheckTest extends Test:
             "nested discards maintain isolation" in run {
                 val result = Check.runChunk {
                     for
-                        _ <- Check(false, "Outer failure")
+                        _ <- Check.require(false, "Outer failure")
                         v1 <- Check.isolate.discard.run {
                             for
-                                _ <- Check(false, "Discarded failure 1")
+                                _ <- Check.require(false, "Discarded failure 1")
                                 v2 <- Check.isolate.discard.run {
-                                    Check(false, "Discarded failure 2").map(_ => "nested-result")
+                                    Check.require(false, "Discarded failure 2").map(_ => "nested-result")
                                 }
                             yield v2
                         }
-                        _ <- Check(false, "Final failure")
+                        _ <- Check.require(false, "Final failure")
                     yield v1
                 }
                 result.map { case (failures, value) =>
@@ -242,8 +242,8 @@ class CheckTest extends Test:
                     Emit.run {
                         combined.run {
                             for
-                                _ <- Check(false, "Check failure")
-                                _ <- Emit("Emitted value")
+                                _ <- Check.require(false, "Check failure")
+                                _ <- Emit.value("Emitted value")
                             yield "done"
                         }
                     }
@@ -262,15 +262,15 @@ class CheckTest extends Test:
 
                 val result = Check.runChunk {
                     for
-                        _ <- Check(false, "Start failure")
+                        _ <- Check.require(false, "Start failure")
                         _ <- i1.run {
-                            Check(false, "Discarded failure")
+                            Check.require(false, "Discarded failure")
                         }
-                        middle <- Check(false, "Middle failure")
+                        middle <- Check.require(false, "Middle failure")
                         _ <- i2.run {
-                            Check(false, "Merged failure")
+                            Check.require(false, "Merged failure")
                         }
-                        _ <- Check(false, "End failure")
+                        _ <- Check.require(false, "End failure")
                     yield "done"
                 }
                 result.map { case (failures, value) =>
@@ -293,7 +293,7 @@ class CheckTest extends Test:
                     Var.runTuple(1) {
                         combined.run {
                             for
-                                _ <- Check(false, "Check failure")
+                                _ <- Check.require(false, "Check failure")
                                 _ <- Var.update[Int](_ + 1)
                                 v <- Var.get[Int]
                             yield v

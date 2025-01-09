@@ -1286,10 +1286,10 @@ class ParseTest extends Test:
                 def parseAndEmit: Unit < (Parse & Emit[Int]) =
                     for
                         n1 <- Parse.int
-                        _  <- Emit(n1)
+                        _  <- Emit.value(n1)
                         _  <- Parse.whitespaces
                         n2 <- Parse.int
-                        _  <- Emit(n2)
+                        _  <- Emit.value(n2)
                     yield ()
 
                 val result = Abort.run(Emit.run(Parse.run("42 123")(parseAndEmit))).eval

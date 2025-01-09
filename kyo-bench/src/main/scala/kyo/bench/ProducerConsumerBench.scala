@@ -61,23 +61,4 @@ class ProducerConsumerBench extends Bench.ForkOnly(()):
         }
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import ox.*
-        import ox.channels.*
-
-        val q = Channel.buffered[Unit](depth / 2)
-        scoped {
-            val f1 =
-                fork {
-                    for _ <- 0 until depth do q.send(())
-                }
-            val f2 =
-                fork {
-                    for _ <- 0 until depth do q.take(1).drain()
-                }
-            f1.join()
-            f2.join()
-        }
-    end forkOx
 end ProducerConsumerBench

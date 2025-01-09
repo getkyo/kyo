@@ -1399,14 +1399,14 @@ import kyo.*
 
 // Add a value
 val a: Ack < Emit[Int] =
-    Emit(42)
+    Emit.value(42)
 
 // Add multiple values
 val b: String < Emit[Int] =
     for
-        _ <- Emit(1)
-        _ <- Emit(2)
-        _ <- Emit(3)
+        _ <- Emit.value(1)
+        _ <- Emit.value(2)
+        _ <- Emit.value(3)
     yield "r"
 
 // Handle the effect to obtain the
@@ -1424,9 +1424,9 @@ import kyo.*
 
 val a: String < (Emit[Int] & Emit[String]) =
     for
-        _ <- Emit(1)
-        _ <- Emit("log")
-        _ <- Emit(2)
+        _ <- Emit.value(1)
+        _ <- Emit.value("log")
+        _ <- Emit.value(2)
     yield "result"
 
 // Note how `run` requires an explicit type
@@ -1582,13 +1582,13 @@ import kyo.*
 
 // Create a simple check
 val a: Unit < Check =
-    Check(1 + 1 == 2, "Basic math works")
+    Check.require(1 + 1 == 2, "Basic math works")
 
 // Checks can be composed with other effects
 val b: Int < (Check & IO) =
     for
         value <- IO(42)
-        _     <- Check(value > 0, "Value is positive")
+        _     <- Check.require(value > 0, "Value is positive")
     yield value
 
 // Handle checks by converting the first failed check to Abort
