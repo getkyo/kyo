@@ -30,6 +30,10 @@ jobs:
       run: |
         sbt '+kyoJVM/test'
 
+    - name: Build kyo-scheduler-finagle
+      run: |
+        sbt '+kyo-scheduler-finagle/test'
+
     - name: Build JS
       run: |
         sbt '+kyoJS/test'
