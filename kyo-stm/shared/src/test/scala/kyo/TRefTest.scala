@@ -4,14 +4,14 @@ class TRefTest extends Test:
 
     "init and get" in run {
         for
-            ref   <- TRef.initNow(42)
+            ref   <- TRef.init(42)
             value <- STM.run(ref.get)
         yield assert(value == 42)
     }
 
     "set and get" in run {
         for
-            ref   <- TRef.initNow(42)
+            ref   <- TRef.init(42)
             _     <- STM.run(ref.set(100))
             value <- STM.run(ref.get)
         yield assert(value == 100)
@@ -19,8 +19,8 @@ class TRefTest extends Test:
 
     "multiple operations in transaction" in run {
         for
-            ref1 <- TRef.initNow(10)
-            ref2 <- TRef.initNow(20)
+            ref1 <- TRef.init(10)
+            ref2 <- TRef.init(20)
             result <- STM.run {
                 for
                     v1 <- ref1.get
@@ -37,7 +37,7 @@ class TRefTest extends Test:
     "initNow behavior" - {
         "creates ref with new transaction ID outside transaction" in run {
             for
-                ref   <- TRef.initNow(1)
+                ref   <- TRef.init(1)
                 value <- STM.run(ref.get)
             yield assert(value == 1)
         }
@@ -45,8 +45,8 @@ class TRefTest extends Test:
         "uses current transaction ID within transaction" in run {
             STM.run {
                 for
-                    ref1 <- TRef.initNow(1)
-                    ref2 <- TRef.initNow(2)
+                    ref1 <- TRef.init(1)
+                    ref2 <- TRef.init(2)
                     _    <- ref1.set(3)
                     _    <- ref2.set(4)
                     val1 <- ref1.get
@@ -58,10 +58,10 @@ class TRefTest extends Test:
         "nests properly in nested transactions" in run {
             STM.run {
                 for
-                    ref1 <- TRef.initNow(1)
+                    ref1 <- TRef.init(1)
                     result <- STM.run {
                         for
-                            ref2 <- TRef.initNow(2)
+                            ref2 <- TRef.init(2)
                             _    <- ref1.set(3)
                             _    <- ref2.set(4)
                             v1   <- ref1.get

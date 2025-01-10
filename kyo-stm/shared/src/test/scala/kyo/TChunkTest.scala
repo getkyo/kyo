@@ -5,7 +5,7 @@ class TChunkTest extends Test:
     "init" - {
         "creates an empty chunk" in run {
             for
-                chunk  <- TChunk.initNow[Int]
+                chunk  <- TChunk.init[Int]
                 empty  <- STM.run(chunk.isEmpty)
                 size   <- STM.run(chunk.size)
                 result <- STM.run(chunk.snapshot)
@@ -17,7 +17,7 @@ class TChunkTest extends Test:
 
         "creates a chunk with initial values" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3)
+                chunk  <- TChunk.init(1, 2, 3)
                 empty  <- STM.run(chunk.isEmpty)
                 size   <- STM.run(chunk.size)
                 result <- STM.run(chunk.snapshot)
@@ -31,7 +31,7 @@ class TChunkTest extends Test:
     "basic operations" - {
         "append" in run {
             for
-                chunk  <- TChunk.initNow[Int]
+                chunk  <- TChunk.init[Int]
                 _      <- STM.run(chunk.append(1))
                 _      <- STM.run(chunk.append(2))
                 _      <- STM.run(chunk.append(3))
@@ -41,7 +41,7 @@ class TChunkTest extends Test:
 
         "get" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3)
+                chunk  <- TChunk.init(1, 2, 3)
                 first  <- STM.run(chunk.get(0))
                 second <- STM.run(chunk.get(1))
                 third  <- STM.run(chunk.get(2))
@@ -53,7 +53,7 @@ class TChunkTest extends Test:
 
         "head and last" in run {
             for
-                chunk <- TChunk.initNow(1, 2, 3)
+                chunk <- TChunk.init(1, 2, 3)
                 head  <- STM.run(chunk.head)
                 last  <- STM.run(chunk.last)
             yield
@@ -63,7 +63,7 @@ class TChunkTest extends Test:
 
         "compact" in run {
             for
-                chunk <- TChunk.initNow[Int]
+                chunk <- TChunk.init[Int]
                 _     <- STM.run(chunk.append(1))
                 _     <- STM.run(chunk.append(2))
                 _     <- STM.run(chunk.append(3))
@@ -76,7 +76,7 @@ class TChunkTest extends Test:
 
         "use" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3)
+                chunk  <- TChunk.init(1, 2, 3)
                 sum    <- STM.run(chunk.use(_.sum))
                 first  <- STM.run(chunk.use(_.head))
                 mapped <- STM.run(chunk.use(_.map(_ * 2)))
@@ -90,7 +90,7 @@ class TChunkTest extends Test:
     "modification operations" - {
         "take" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3, 4, 5)
+                chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.take(3))
                 result <- STM.run(chunk.snapshot)
             yield assert(result == Chunk(1, 2, 3))
@@ -98,7 +98,7 @@ class TChunkTest extends Test:
 
         "drop" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3, 4, 5)
+                chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.drop(2))
                 result <- STM.run(chunk.snapshot)
             yield assert(result == Chunk(3, 4, 5))
@@ -106,7 +106,7 @@ class TChunkTest extends Test:
 
         "dropRight" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3, 4, 5)
+                chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.dropRight(2))
                 result <- STM.run(chunk.snapshot)
             yield assert(result == Chunk(1, 2, 3))
@@ -114,7 +114,7 @@ class TChunkTest extends Test:
 
         "slice" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3, 4, 5)
+                chunk  <- TChunk.init(1, 2, 3, 4, 5)
                 _      <- STM.run(chunk.slice(1, 4))
                 result <- STM.run(chunk.snapshot)
             yield assert(result == Chunk(2, 3, 4))
@@ -122,7 +122,7 @@ class TChunkTest extends Test:
 
         "concat" in run {
             for
-                chunk  <- TChunk.initNow(1, 2, 3)
+                chunk  <- TChunk.init(1, 2, 3)
                 _      <- STM.run(chunk.concat(Chunk(4, 5, 6)))
                 result <- STM.run(chunk.snapshot)
             yield assert(result == Chunk(1, 2, 3, 4, 5, 6))
@@ -131,7 +131,7 @@ class TChunkTest extends Test:
 
     "filter" in run {
         for
-            chunk  <- TChunk.initNow(1, 2, 3, 4, 5)
+            chunk  <- TChunk.init(1, 2, 3, 4, 5)
             _      <- STM.run(chunk.filter(_ % 2 == 0))
             result <- STM.run(chunk.snapshot)
         yield assert(result == Chunk(2, 4))
@@ -140,7 +140,7 @@ class TChunkTest extends Test:
     "transaction isolation" - {
         "concurrent modifications" in run {
             for
-                chunk  <- TChunk.initNow[Int]
+                chunk  <- TChunk.init[Int]
                 _      <- Async.parallelUnbounded((1 to 100).map(i => STM.run(chunk.append(i))))
                 result <- STM.run(chunk.snapshot)
             yield
@@ -150,7 +150,7 @@ class TChunkTest extends Test:
 
         "rollback on failure" in run {
             for
-                chunk <- TChunk.initNow(1, 2, 3)
+                chunk <- TChunk.init(1, 2, 3)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -168,7 +168,7 @@ class TChunkTest extends Test:
 
         "maintains compactness after transaction" in run {
             for
-                chunk <- TChunk.initNow(1, 2, 3)
+                chunk <- TChunk.init(1, 2, 3)
                 _     <- STM.run(chunk.compact)
                 _ <- STM.run {
                     for
@@ -190,7 +190,7 @@ class TChunkTest extends Test:
         "concurrent modifications" in run {
             (for
                 size     <- Choice.get(Seq(1, 10, 100))
-                chunk    <- TChunk.initNow[Int]()
+                chunk    <- TChunk.init[Int]()
                 _        <- Async.parallelUnbounded((1 to size).map(i => STM.run(chunk.append(i))))
                 snapshot <- STM.run(chunk.snapshot)
             yield assert(
@@ -204,7 +204,7 @@ class TChunkTest extends Test:
         "concurrent filtering" in run {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
-                chunk <- TChunk.initNow[Int]()
+                chunk <- TChunk.init[Int]()
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
@@ -225,7 +225,7 @@ class TChunkTest extends Test:
         "concurrent slice operations" in run {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
-                chunk <- TChunk.initNow[Int]()
+                chunk <- TChunk.init[Int]()
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
@@ -251,7 +251,7 @@ class TChunkTest extends Test:
         "concurrent compaction" in run {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
-                chunk <- TChunk.initNow[Int]()
+                chunk <- TChunk.init[Int]()
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
