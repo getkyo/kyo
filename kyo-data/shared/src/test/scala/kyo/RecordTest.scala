@@ -85,7 +85,11 @@ class RecordTest extends Test:
 
     "field access" - {
         "type-safe access" in {
-            val record = "name" ~ "Bob" & "age" ~ 25
+            val record        = "name" ~ "Bob" & "age" ~ 25
+            val name0         = record.name
+            val name1: String = name0
+            val age0          = record.age
+            val age1: Int     = age0
             assert(record.name == "Bob")
             assert(record.age == 25)
         }
@@ -281,7 +285,6 @@ class RecordTest extends Test:
 
     "AsFields behavior" - {
         "complex intersection types" in {
-            type Complex = "a" ~ Int & "b" ~ String & "c" ~ Boolean
             val fields = Record.AsFields["a" ~ Int & "b" ~ String & "c" ~ Int]
             assert(fields.size == 3)
             assert(fields.map(_.name).toSet == Set("a", "b", "c"))

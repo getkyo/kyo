@@ -80,7 +80,7 @@ class Record[+Fields](val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dyna
       * @param name
       *   The field name to look up
       */
-    def selectDynamic[Name <: String & Singleton, Unspecified](name: Name)(using
+    def selectDynamic[Name <: String & Singleton, Value](name: Name)(using
         @implicitNotFound(""" 
         Invalid field access: ${Name}
         
@@ -90,10 +90,10 @@ class Record[+Fields](val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dyna
           1. The field does not exist in this Record
           2. The field exists but has a different type than expected
         """)
-        ev: Fields <:< Name ~ Unspecified,
-        tag: Tag[Unspecified]
-    ): Unspecified =
-        toMap(Field(name, tag)).asInstanceOf[Unspecified]
+        ev: Fields <:< Name ~ Value,
+        tag: Tag[Value]
+    ): Value =
+        toMap(Field(name, tag)).asInstanceOf[Value]
 
     /** Combines this Record with another Record.
       *
