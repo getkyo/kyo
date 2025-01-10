@@ -68,7 +68,7 @@ object IO:
       * @return
       *   The result of the main computation, with the finalizer guaranteed to run.
       */
-    def ensure[A, S](f: => Unit < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
+    private[kyo] def ensure[A, S](f: => Unit < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
         Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f))(v))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
