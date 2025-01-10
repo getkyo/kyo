@@ -180,10 +180,7 @@ object TRef:
     inline def initWith[A, B, S](inline value: A)(inline f: TRef[A] => B < S)(using inline frame: Frame): B < (IO & S) =
         TID.use { tid =>
             IO.Unsafe {
-                val tref =
-                    if tid == -1 then TRef.Unsafe.init(value)
-                    else TRef.Unsafe.init(tid, value)
-                f(tref)
+                f(TRef.Unsafe.init(tid, value))
             }
         }
 

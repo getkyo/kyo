@@ -156,7 +156,7 @@ object TMap:
                 if map.contains(key) then
                     map(key).set(value)
                 else
-                    TRef.init(value).map { ref =>
+                    TRef.initWith(value) { ref =>
                         self.update(_.updated(key, ref))
                     }
             }
