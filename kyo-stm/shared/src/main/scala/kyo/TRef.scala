@@ -155,46 +155,48 @@ end TRefImpl
 
 object TRef:
 
-    /** Creates a new transactional reference within an STM transaction.
+    /** Creates a new TRef with the given initial value.
       *
       * @param value
-      *   The initial value for the reference
+      *   The initial value to store in the reference
       * @return
-      *   A new transactional reference containing the value, within the STM effect
+      *   A new TRef containing the value, within the IO effect
       */
-    def init[A](value: A)(using Frame): TRef[A] < STM =
-        TID.useRequired { tid =>
-            Var.use[TRefLog] { log =>
-                IO.Unsafe {
-                    val ref = TRef.Unsafe.init(tid, value)
-                    Var.setAndThen(log.put(ref, ref.state))(ref)
-                }
-            }
-        }
+    def init[A](value: A)(using Frame): TRef[A] < IO =
+        initWith(value)(identity)
 
-    /** Creates a new transactional reference.
+    /** Creates a new TRef and immediately applies a function to it.
       *
-      * When called within an STM transaction, uses the current transaction ID. When called outside a transaction, creates a new transaction
-      * ID. Use `init` for most cases as it provides clearer semantics. Use `initNow` only for static initialization or when
-      * non-transactional creation is needed.
+      * This is a more efficient way to initialize a TRef and perform operations on it, as it combines initialization and the first
+      * operation in a single transaction.
       *
       * @param value
-      *   The initial value for the reference
+      *   The initial value to store in the reference
+      * @param f
+      *   The function to apply to the newly created TRef
       * @return
-      *   A new transactional reference containing the value, within the IO effect
+      *   The result of applying the function to the new TRef, within combined IO and S effects
       */
-    def initNow[A](value: A)(using Frame): TRef[A] < IO =
-        TID.use {
-            case -1  => IO.Unsafe(TRef.Unsafe.initNow(value))
-            case tid => IO.Unsafe(TRef.Unsafe.init(tid, value))
+    inline def initWith[A, B, S](inline value: A)(inline f: TRef[A] => B < S)(using inline frame: Frame): B < (IO & S) =
+        TID.use { tid =>
+            IO.Unsafe {
+                val tref =
+                    if tid == -1 then TRef.Unsafe.init(value)
+                    else TRef.Unsafe.init(tid, value)
+                f(tref)
+            }
         }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        def initNow[A](value: A)(using AllowUnsafe): TRef[A] =
+        def init[A](value: A)(using AllowUnsafe): TRef[A] =
             init(TID.next, value)
 
         private[kyo] def init[A](tid: Long, value: A)(using AllowUnsafe): TRef[A] =
-            new TRefImpl(Write(tid, value))
+            val finalTid =
+                if tid != -1 then tid
+                else TID.next
+            new TRefImpl(Write(finalTid, value))
+        end init
     end Unsafe
 end TRef

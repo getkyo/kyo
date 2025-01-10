@@ -30,7 +30,7 @@ class TMapSingleKeyBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
         import kyo.*
 
         for
-            map <- TMap.initNow[Int, Int]()
+            map <- TMap.init[Int, Int]
             _ <- Async.parallelUnbounded(
                 Seq.fill(parallelism)(
                     STM.run {

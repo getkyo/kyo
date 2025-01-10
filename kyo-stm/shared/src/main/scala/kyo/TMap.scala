@@ -21,42 +21,59 @@ object TMap:
 
     given [K, V]: Flat[TMap[K, V]] = Flat.derive[TRef[Map[K, TRef[V]]]]
 
-    /** Creates a new transactional map within an STM transaction.
+    /** Creates a new empty TMap.
+      *
+      * @return
+      *   A new empty TMap within the IO effect
+      */
+    def init[K, V](using Frame): TMap[K, V] < IO =
+        TRef.init(Map.empty)
+
+    /** Creates a new TMap containing the provided key-value pairs.
       *
       * @param entries
-      *   The initial key-value pairs to populate the map
+      *   The initial key-value pairs to store in the map
       * @return
-      *   A new transactional map containing the entries, within the STM effect
+      *   A new TMap containing the entries, within the IO effect
       */
-    def init[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < STM =
-        Kyo.foreach(entries)((k, v) => TRef.init(v).map((k, _))).map(r => TRef.init(r.toMap))
+    def init[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < IO =
+        initWith(entries*)(identity)
 
-    /** Creates a new transactional map outside of any transaction.
-      *
-      * WARNING: This operation:
-      *   - Cannot be rolled back
-      *   - Is not part of any transaction
-      *   - Will cause any containing transaction to retry if used within one, since it creates references with newer transaction IDs
-      *
-      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
-      *
-      * @param entries
-      *   The initial key-value pairs to populate the map
-      * @return
-      *   A new transactional map containing the entries, within the IO effect
-      */
-    def initNow[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < IO =
-        Kyo.foreach(entries)((k, v) => TRef.initNow(v).map((k, _))).map(r => TRef.initNow(r.toMap))
-
-    /** Initializes a new transactional map from an existing Map.
+    /** Creates a new TMap from an existing Map.
       *
       * @param map
-      *   the initial map to copy entries from
+      *   The initial map to wrap
       * @return
-      *   a new transactional map containing the provided map's entries
+      *   A new TMap containing the map entries, within the IO effect
       */
-    def init[K, V](map: Map[K, V])(using Frame): TMap[K, V] < STM =
+    def init[K, V](map: Map[K, V])(using Frame): TMap[K, V] < IO =
         init(map.toSeq*)
+
+    /** Creates a new TMap and immediately applies a function to it.
+      *
+      * This is a more efficient way to initialize a TMap and perform operations on it, as it combines initialization and the first
+      * operation in a single transaction.
+      *
+      * @param entries
+      *   The initial key-value pairs to store in the map
+      * @param f
+      *   The function to apply to the newly created TMap
+      * @return
+      *   The result of applying the function to the new TMap, within combined IO and S effects
+      */
+    inline def initWith[K, V](inline entries: (K, V)*)[A, S](inline f: TMap[K, V] => A < S)(
+        using inline frame: Frame
+    ): TMap[K, V] < (IO & S) =
+        TID.use { tid =>
+            IO.Unsafe {
+                val trefs =
+                    entries.foldLeft(Map.empty[K, TRef[V]]) {
+                        case (acc, (k, v)) =>
+                            acc.updated(k, TRef.Unsafe.init(tid, v))
+                    }
+                TRef.Unsafe.init(tid, trefs)
+            }
+        }
 
     extension [K, V](self: TMap[K, V])
 

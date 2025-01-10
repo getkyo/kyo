@@ -24,7 +24,7 @@ class TRefSingleBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
         import kyo.*
 
         for
-            ref    <- TRef.initNow(0)
+            ref    <- TRef.init(0)
             _      <- Async.parallelUnbounded(Seq.fill(parallelism)(STM.run(ref.update(_ + 1))))
             result <- STM.run(ref.get)
         yield result
