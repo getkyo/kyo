@@ -89,6 +89,7 @@ lazy val kyoJVM = project
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
         `kyo-scheduler-cats`.jvm,
+        `kyo-scheduler-agent`.jvm,
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
@@ -205,7 +206,7 @@ lazy val `kyo-scheduler-cats` =
             crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
         )
 
-lazy val `kyo-scheduler-finagle` = {
+lazy val `kyo-scheduler-finagle` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
@@ -219,7 +220,31 @@ lazy val `kyo-scheduler-finagle` = {
         )
         .jvmSettings(mimaCheck(false))
         .dependsOn(`kyo-scheduler`)
-}
+
+lazy val `kyo-scheduler-agent` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-scheduler-agent"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "net.bytebuddy" % "byte-buddy" % "1.15.11",
+            assembly / assemblyJarName            := "kyo-scheduler-agent.jar",
+            assembly / packageOptions +=
+                Package.ManifestAttributes(
+                    "Premain-Class"           -> "kyo.scheduler.Agent",
+                    "Can-Retransform-Classes" -> "true",
+                    "Boot-Class-Path"         -> "kyo-scheduler-agent.jar"
+                ),
+            Test / fork := true,
+            Test / javaOptions ++= Seq(
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                s"-javaagent:${(assembly / assemblyOutputPath).value}"
+            ),
+            Test / test := ((Test / test) dependsOn assembly).value
+        )
+        .jvmSettings(mimaCheck(false))
+        .dependsOn(`kyo-scheduler`)
 
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
