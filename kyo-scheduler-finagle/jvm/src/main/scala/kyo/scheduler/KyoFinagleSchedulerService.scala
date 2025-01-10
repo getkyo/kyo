@@ -5,6 +5,7 @@ import com.twitter.concurrent.Scheduler as FinagleScheduler
 import com.twitter.finagle.exp.FinagleSchedulerService
 import com.twitter.util.Awaitable
 import com.twitter.util.Future
+import com.twitter.util.Local
 import com.twitter.util.Promise
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
@@ -41,7 +42,7 @@ class KyoFinagleSchedulerService extends FinagleSchedulerService {
       * @return
       *   Some(Scheduler) containing the configured scheduler instance
       */
-    def create(params: List[String]): Option[FinagleScheduler] = {
+    def create(params: List[String]): Option[FinagleScheduler with ForkingScheduler] = {
         val scheduler =
             new FinagleScheduler with ForkingScheduler {
                 val original        = FinagleScheduler()
@@ -65,8 +66,18 @@ class KyoFinagleSchedulerService extends FinagleSchedulerService {
                 def fork[T](f: => Future[T]): Future[T] = {
                     val task =
                         new Promise[T] with Task {
+
+                            val saved = Local.save()
+
                             def run(startMillis: Long, clock: InternalClock): Task.Result = {
-                                super.become(f)
+                                val current = Local.save()
+                                if (current ne saved) Local.restore(saved)
+                                try {
+                                    val fut = Future(f).flatten
+                                    super.setInterruptHandler(fut.raise)
+                                    super.become(fut)
+                                } finally
+                                    Local.restore(current)
                                 Task.Done
                             }
                         }
