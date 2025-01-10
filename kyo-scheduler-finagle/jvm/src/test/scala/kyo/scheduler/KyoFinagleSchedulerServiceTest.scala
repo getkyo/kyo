@@ -16,12 +16,17 @@ import scala.util.control.NoStackTrace
 
 class KyoFinagleSchedulerServiceTest extends AnyFreeSpec with NonImplicitAssertions {
 
-    val scheduler = (new KyoFinagleSchedulerService).create(Nil).get
+    val scheduler = (new KyoFinagleSchedulerService).create(List("kyo")).get
     twitter.concurrent.Scheduler.setUnsafe(scheduler)
 
     def run[A](f: Future[A]) = Await.result(f)
 
     case class TestException() extends Exception
+
+    "create returns None if the param isn't 'kyo'" in {
+        assert((new KyoFinagleSchedulerService).create(List("blah")).isEmpty)
+        assert((new KyoFinagleSchedulerService).create(List("kyo", "blah")).isEmpty)
+    }
 
     "uses the default local scheduler for future composition" in run {
         val thread = Thread.currentThread()

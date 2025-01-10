@@ -43,68 +43,72 @@ class KyoFinagleSchedulerService extends FinagleSchedulerService {
       *   Some(Scheduler) containing the configured scheduler instance
       */
     def create(params: List[String]): Option[FinagleScheduler with ForkingScheduler] = {
-        val scheduler =
-            new FinagleScheduler with ForkingScheduler {
-                val original        = FinagleScheduler()
-                val scheduler       = Scheduler.get
-                val executorService = scheduler.asExecutorService
+        if (params != List("kyo"))
+            None
+        else {
+            val scheduler =
+                new FinagleScheduler with ForkingScheduler {
+                    val original        = FinagleScheduler()
+                    val scheduler       = Scheduler.get
+                    val executorService = scheduler.asExecutorService
 
-                def submit(r: Runnable) = original.submit(r)
+                    def submit(r: Runnable) = original.submit(r)
 
-                def flush() = {
-                    original.flush()
-                    scheduler.flush()
-                }
+                    def flush() = {
+                        original.flush()
+                        scheduler.flush()
+                    }
 
-                def numDispatches = 0
+                    def numDispatches = 0
 
-                def blocking[T](f: => T)(implicit perm: Awaitable.CanAwait): T = {
-                    flush()
-                    f
-                }
+                    def blocking[T](f: => T)(implicit perm: Awaitable.CanAwait): T = {
+                        flush()
+                        f
+                    }
 
-                def fork[T](f: => Future[T]): Future[T] = {
-                    val task =
-                        new Promise[T] with Task {
+                    def fork[T](f: => Future[T]): Future[T] = {
+                        val task =
+                            new Promise[T] with Task {
 
-                            val saved = Local.save()
+                                val saved = Local.save()
 
-                            def run(startMillis: Long, clock: InternalClock): Task.Result = {
-                                val current = Local.save()
-                                if (current ne saved) Local.restore(saved)
-                                try {
-                                    val fut = Future(f).flatten
-                                    super.setInterruptHandler(fut.raise)
-                                    super.become(fut)
-                                } finally
-                                    Local.restore(current)
-                                Task.Done
+                                def run(startMillis: Long, clock: InternalClock): Task.Result = {
+                                    val current = Local.save()
+                                    if (current ne saved) Local.restore(saved)
+                                    try {
+                                        val fut = Future(f).flatten
+                                        super.setInterruptHandler(fut.raise)
+                                        super.become(fut)
+                                    } finally
+                                        Local.restore(current)
+                                    Task.Done
+                                }
                             }
-                        }
-                    scheduler.schedule(task)
-                    task
+                        scheduler.schedule(task)
+                        task
+                    }
+
+                    def tryFork[T](f: => Future[T]): Future[Option[T]] =
+                        if (scheduler.reject())
+                            Future.None
+                        else
+                            fork(f.map(Some(_)))
+
+                    def fork[T](executor: Executor)(f: => Future[T]): Future[T] =
+                        fork(f)
+
+                    def withMaxSyncConcurrency(concurrency: Int, maxWaiters: Int): ForkingScheduler =
+                        this
+
+                    def asExecutorService(): ExecutorService =
+                        executorService
+
+                    def redirectFuturePools() = true
+
                 }
 
-                def tryFork[T](f: => Future[T]): Future[Option[T]] =
-                    if (scheduler.reject())
-                        Future.None
-                    else
-                        fork(f.map(Some(_)))
-
-                def fork[T](executor: Executor)(f: => Future[T]): Future[T] =
-                    fork(f)
-
-                def withMaxSyncConcurrency(concurrency: Int, maxWaiters: Int): ForkingScheduler =
-                    this
-
-                def asExecutorService(): ExecutorService =
-                    executorService
-
-                def redirectFuturePools() = true
-
-            }
-
-        Some(scheduler)
+            Some(scheduler)
+        }
     }
 
     /** Provides the parameter format string for service configuration.
