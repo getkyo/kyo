@@ -470,4 +470,94 @@ class RecordTest extends Test:
             ()
         }
     }
+
+    "malformed record API behavior" - {
+
+        "method call restrictions" - {
+            type MalformedRecord = Record[Int & "name" ~ String & "age" ~ Int]
+
+            "cannot call methods that take malformed types" in {
+                def takesMalformed(r: MalformedRecord): String = r.name
+                assertDoesNotCompile("""
+                    takesMalformed("name" ~ "test" & "age" ~ 42)
+                """)
+            }
+
+            "cannot return malformed types" in {
+                assertDoesNotCompile("""
+                    def returnsMalformed(): MalformedRecord =
+                        "name" ~ "test" & "age" ~ 42
+                """)
+            }
+        }
+
+        "behavior with unsafe type cast" - {
+            val record =
+                ("name" ~ "test" & "age" ~ 42)
+                    .asInstanceOf[Record[Int & "name" ~ String & "age" ~ Int]]
+
+            "selectDynamic works" in {
+                val name: String = record.name
+                val age: Int     = record.age
+                assert(name == "test")
+                assert(age == 42)
+            }
+
+            "toMap preserves fields" in {
+                given [A]: CanEqual[A, A]      = CanEqual.derived
+                val map: Map[Field[?, ?], Any] = record.toMap
+                assert(map.size == 2)
+                assert(map(Field("name", Tag[String])) == "test")
+                assert(map(Field("age", Tag[Int])) == 42)
+            }
+
+            "fields returns correct set" in {
+                val fields: Set[Field[?, ?]] = record.fields
+                assert(fields.size == 2)
+                assert(fields.map(_.name) == Set("name", "age"))
+            }
+
+            "size returns correct count" in {
+                val size: Int = record.size
+                assert(size == 2)
+            }
+
+            "& operator works with malformed base" in {
+                val extended = record & ("extra" ~ "value")
+                assert(extended.name == "test")
+                assert(extended.age == 42)
+                assert(extended.extra == "value")
+            }
+        }
+
+        "AsFields behavior" - {
+            import Record.AsFields
+
+            "summoning AsFields instance" in {
+                assertDoesNotCompile("""
+                    summon[AsFields[Int & "name" ~ String & "age" ~ Int]]
+                """)
+            }
+
+            "AsFields with multiple raw types" in {
+                assertDoesNotCompile("""
+                    AsFields[Int & Boolean & "value" ~ String & String]
+                """)
+            }
+
+            "AsFields with duplicate field names" in {
+                assertDoesNotCompile("""
+                   AsFields[Int & "value" ~ String & "value" ~ Int]
+                """)
+            }
+
+            "compact with AsFields" in {
+                val record = ("name" ~ "test" & "age" ~ 42)
+                    .asInstanceOf[Record[Int & "name" ~ String & "age" ~ Int]]
+                assertDoesNotCompile("""
+                    record.compact 
+                """)
+            }
+        }
+    }
 end RecordTest
