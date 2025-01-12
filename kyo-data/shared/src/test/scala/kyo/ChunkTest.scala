@@ -5,7 +5,7 @@ import scala.util.Try
 class ChunkTest extends Test:
 
     "Chunk.from" - {
-        "from Array" - {
+        "Array" - {
             "creates a Chunk.Indexed from a non-empty Array" in {
                 val array = Array("a", "b", "c")
                 val chunk = Chunk.from(array)
@@ -27,7 +27,7 @@ class ChunkTest extends Test:
             }
         }
 
-        "from Seq" - {
+        "Seq" - {
             "creates a Chunk.Indexed from a non-empty Seq" in {
                 val seq   = Seq("a", "b", "c")
                 val chunk = Chunk.from(seq)
@@ -55,10 +55,11 @@ class ChunkTest extends Test:
                 }
             }
 
-            "returns the same instance for Chunk.Indexed input" in {
-                val original = Chunk(1, 2, 3)
+            "returns the same instance for Chunk input" in pendingUntilFixed {
+                val original = Chunk(1, 2, 3).append(4)
                 val result   = Chunk.from(original)
                 assert(result eq original)
+                ()
             }
 
             "creates a Chunk.FromSeq for non-Chunk IndexedSeq input" in {
@@ -71,6 +72,20 @@ class ChunkTest extends Test:
                 val list  = List(1, 2, 3)
                 val chunk = Chunk.from(list)
                 assert(chunk.isInstanceOf[Chunk.internal.Compact[Int]])
+            }
+        }
+
+        "Indexed" - {
+            "returns the same instance for Chunk.Indexed input" in {
+                val original = Chunk(1, 2, 3)
+                val result   = Chunk.Indexed.from(original)
+                assert(result eq original)
+            }
+            "compacts a non-indexed Chunk" in {
+                val chunk  = Chunk(1, 2, 3).append(4)
+                val result = Chunk.Indexed.from(chunk)
+                assert(result.isInstanceOf[Chunk.internal.Compact[Int]])
+                assert(result == Chunk(1, 2, 3, 4))
             }
         }
     }
@@ -609,7 +624,7 @@ class ChunkTest extends Test:
         }
 
         "copies elements from a Chunk.Append" in {
-            val chunk = Chunk(1, 2, 3).append(4)
+            val chunk = Chunk(1).append(2).append(3).append(4)
             val array = new Array[Int](4)
             chunk.copyTo(array, 0)
             assert(array.toSeq == Seq(1, 2, 3, 4))
@@ -636,6 +651,52 @@ class ChunkTest extends Test:
             val array = new Array[Int](3)
             chunk.copyTo(array, 0, 3)
             assert(array.toSeq == Seq(1, 2, 3))
+        }
+
+        "handles appended elements correctly" in {
+            val chunk = Chunk.empty[Int].append(1).append(2).append(3).append(4)
+            val start = new Array[Int](4)
+            chunk.copyTo(start, 0, 2) // Only copy first two elements
+            assert(start.toSeq == Seq(1, 2, 0, 0))
+
+            val end = new Array[Int](4)
+            chunk.copyTo(end, 2, 2) // Only copy last two elements
+            assert(end.toSeq == Seq(0, 0, 3, 4))
+        }
+
+        "handles Append with dropLeft correctly" in {
+            val chunk = Chunk(1).append(2).append(3).append(4)
+            val array = new Array[Int](2)
+            chunk.dropLeft(1).copyTo(array, 0, 2)
+            assert(array.toSeq == Seq(2, 3))
+        }
+
+        "handles Append with dropRight correctly" in {
+            val chunk = Chunk(1).append(2).append(3).append(4)
+            val array = new Array[Int](3)
+            chunk.dropRight(1).copyTo(array, 0, 3)
+            assert(array.toSeq == Seq(1, 2, 3))
+        }
+
+        "handles Append with both dropLeft and dropRight" in {
+            val chunk = Chunk(1).append(2).append(3).append(4).append(5)
+            val array = new Array[Int](2)
+            chunk.dropLeft(1).dropRight(2).copyTo(array, 0, 2)
+            assert(array.toSeq == Seq(2, 3))
+        }
+
+        "handles zero elements" in {
+            val chunk = Chunk(1, 2, 3)
+            val array = new Array[Int](3)
+            chunk.copyTo(array, 0, 0)
+            assert(array.toSeq == Seq(0, 0, 0))
+        }
+
+        "handles negative elements count" in {
+            val chunk = Chunk(1, 2, 3)
+            val array = new Array[Int](3)
+            chunk.copyTo(array, 0, -1)
+            assert(array.toSeq == Seq(0, 0, 0))
         }
     }
 
@@ -831,14 +892,16 @@ class ChunkTest extends Test:
     "hashCode and equals" - {
         "equal chunks have the same hashCode" in {
             val chunk1 = Chunk(1, 2, 3)
-            val chunk2 = Chunk(1, 2, 3)
+            val chunk2 = Chunk(1, 2).append(3)
             assert(chunk1.hashCode() == chunk2.hashCode())
         }
 
         "equal chunks are equal" in {
-            val chunk1 = Chunk(1, 2, 3)
-            val chunk2 = Chunk(1, 2, 3)
+            val chunk1 = Chunk.from(Vector(1, 2, 3))
+            val chunk2 = Chunk.from(Array(1, 2, 3))
+            val chunk3 = Chunk.from(List(1, 2, 3))
             assert(chunk1 == chunk2)
+            assert(chunk1 == chunk3)
         }
 
         "different chunks have different hashCodes" in {
@@ -854,16 +917,46 @@ class ChunkTest extends Test:
         }
 
         "empty chunks have the same hashCode" in {
-            val chunk1 = Chunk.empty[Int]
-            val chunk2 = Chunk.empty[Int]
-            assert(chunk1.hashCode() == chunk2.hashCode())
+            val chunk    = Chunk.empty[Int]
+            val iterator = Chunk.from(Iterator.empty)
+            val array    = Chunk.from(Array.empty[Int])
+            val vector   = Chunk.from(Vector.empty[Int])
+            assert(chunk.hashCode() == iterator.hashCode())
+            assert(chunk.hashCode() == array.hashCode())
+            assert(chunk.hashCode() == vector.hashCode())
         }
 
         "empty chunks are equal" in {
-            val chunk1 = Chunk.empty[Int]
-            val chunk2 = Chunk.empty[Int]
-            assert(chunk1 == chunk2)
+            val chunk    = Chunk.empty[Int]
+            val iterator = Chunk.from(Iterator.empty)
+            val array    = Chunk.from(Array.empty[Int])
+            val vector   = Chunk.from(Vector.empty[Int])
+            assert(chunk eq iterator)
+            assert(chunk eq array)
+            assert(chunk eq vector)
         }
+
+        "handles different Chunk implementations correctly" in {
+            val compact  = Chunk(1, 2, 3)
+            val fromSeq  = Chunk.from(Vector(1, 2, 3))
+            val appended = Chunk(1, 2).append(3)
+            val dropped  = Chunk(0, 1, 2, 3).dropLeft(1)
+            val sliced   = Chunk(0, 1, 2, 3, 4).slice(1, 4)
+            val tail     = Chunk(0, 1, 2, 3).tail
+
+            assert(compact == fromSeq)
+            assert(fromSeq == appended)
+            assert(appended == dropped)
+            assert(dropped == sliced)
+            assert(sliced == compact)
+            assert(tail == compact)
+        }
+    }
+
+    "knownSize" in {
+        val chunk = Chunk.fill(10)(0)
+        assert(chunk.length == 10)
+        assert(chunk.knownSize == 10)
     }
 
     "Chunk.empty" in {

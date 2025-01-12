@@ -38,6 +38,8 @@ sealed abstract class Chunk[+A]
       */
     final override def isEmpty: Boolean = length == 0
 
+    final override def knownSize: Int = length
+
     override def length: Int
 
     /** Takes the first n elements of the Chunk.
@@ -89,7 +91,7 @@ sealed abstract class Chunk[+A]
       * @return
       *   a new Chunk with the last n elements removed
       */
-    override def dropRight(n: Int): Chunk[A] =
+    final override def dropRight(n: Int): Chunk[A] =
         dropLeftAndRight(0, Math.min(length, Math.max(0, n)))
 
     /** Returns a Chunk that is a slice of this Chunk.
@@ -101,7 +103,7 @@ sealed abstract class Chunk[+A]
       * @return
       *   a new Chunk containing the specified slice
       */
-    override def slice(from: Int, until: Int): Chunk[A] =
+    final override def slice(from: Int, until: Int): Chunk[A] =
         dropLeftAndRight(from, length - Math.min(length, until))
 
     /** Drops elements from both ends of the Chunk.
@@ -281,7 +283,7 @@ sealed abstract class Chunk[+A]
         else
             self match
                 case c: Indexed[B] @unchecked => c
-                case _                        => Compact(toArrayInternal)
+                case _                        => Compact(toArray)
 
     /** Flattens a Chunk of Chunks into a single Chunk.
       *
@@ -335,29 +337,32 @@ sealed abstract class Chunk[+A]
       */
     final def copyTo[B >: A](array: Array[B], start: Int, elements: Int): Unit =
         @tailrec def loop(c: Chunk[A], end: Int, dropLeft: Int, dropRight: Int): Unit =
-            c match
-                case c: Append[A] @unchecked =>
-                    if dropRight > 0 then
-                        loop(c.chunk, end, dropLeft, dropRight - 1)
-                    else if end > 0 then
-                        array(start + end - 1) = c.value
-                        loop(c.chunk, end - 1, dropLeft, dropRight)
-                case c: Drop[A] @unchecked =>
-                    loop(c.chunk, end, dropLeft + c.dropLeft, dropRight + c.dropRight)
-                case c: Tail[A] @unchecked =>
-                    loop(c.chunk, end, dropLeft + c.offset, dropRight)
-                case c: Compact[A] @unchecked =>
-                    val l = c.array.length
-                    if l > 0 then
-                        System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
-                case c: FromSeq[A] @unchecked =>
-                    val seq    = c.value
-                    val length = Math.min(end, c.value.length - dropLeft - dropRight)
-                    @tailrec def loop(index: Int): Unit =
-                        if index < length then
-                            array(start + index) = seq(index + dropLeft)
-                            loop(index + 1)
-                    loop(0)
+            if end > 0 then
+                c match
+                    case c: Append[A] @unchecked =>
+                        if dropRight > 0 then
+                            loop(c.chunk, end, dropLeft, dropRight - 1)
+                        else if start + end >= c.length - dropLeft then
+                            array(start + end - 1) = c.value
+                            loop(c.chunk, end - 1, dropLeft, dropRight)
+                        else
+                            loop(c.chunk, end, dropLeft, dropRight)
+                    case c: Drop[A] @unchecked =>
+                        loop(c.chunk, end, dropLeft + c.dropLeft, dropRight + c.dropRight)
+                    case c: Tail[A] @unchecked =>
+                        loop(c.chunk, end, dropLeft + c.offset, dropRight)
+                    case c: Compact[A] @unchecked =>
+                        val l = c.array.length
+                        if l > 0 then
+                            System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
+                    case c: FromSeq[A] @unchecked =>
+                        val seq    = c.value
+                        val length = Math.min(end, c.value.length - dropLeft - dropRight)
+                        @tailrec def loop(index: Int): Unit =
+                            if index < length then
+                                array(start + index) = seq(index + dropLeft)
+                                loop(index + 1)
+                        loop(0)
         if !isEmpty then
             loop(self, elements, 0, 0)
     end copyTo
@@ -447,6 +452,13 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
 
     end Indexed
     object Indexed extends StrictOptimizedSeqFactory[Indexed]:
+        /** Returns an empty Chunk.
+          *
+          * @tparam A
+          *   the type of elements in the Chunk
+          * @return
+          *   an empty Chunk of type A
+          */
         def empty[A]: Indexed[A] = cachedEmpty.asInstanceOf[Indexed[A]]
 
         def from[A](source: Array[A]): Indexed[A] =
@@ -454,13 +466,28 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
             else
                 Compact(Array.copyAs(source, source.length)(using erasedTag[A]))
 
+        /** Creates an Indexed Chunk from an `IterableOnce`.
+          *
+          * NOTE: This method will **mutate** the source `IterableOnce` if it is a mutable collection.
+          *
+          * @tparam A
+          *   the type of elements in the IterableOnce
+          * @param source
+          *   the IterableOnce to create the Chunk from
+          * @return
+          *   a new Chunk.Indexed containing the elements from the IterableOnce
+          */
         def from[A](source: IterableOnce[A]): Indexed[A] =
             if source.knownSize == 0 then empty[A]
             else
                 source match
                     case chunk: Chunk.Indexed[A] @unchecked => chunk
                     case seq: IndexedSeq[A]                 => FromSeq(seq)
-                    case _                                  => Compact(source.iterator.toArray(using erasedTag[A]))
+                    case _ =>
+                        val array = source.iterator.toArray(using erasedTag[A])
+                        if array.isEmpty then empty[A]
+                        else Compact(array)
+
         def newBuilder[A]: collection.mutable.Builder[A, Indexed[A]] = ChunkBuilder.init[A]
     end Indexed
 
