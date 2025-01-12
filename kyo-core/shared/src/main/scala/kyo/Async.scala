@@ -154,6 +154,13 @@ object Async:
             _mask(isolate.resume(state, v)).map(isolate.restore(_, _))
         }
 
+    /** Creates a computation that never completes.
+      *
+      * @return
+      *   A computation that never completes
+      */
+    def never[E, A](using Frame): A < Async = Fiber.never[Nothing, A].get
+
     /** Delays execution of a computation by a specified duration.
       *
       * @param d

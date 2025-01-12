@@ -344,9 +344,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that never completes
       */
-    def never(using Frame): Nothing < Async =
-        Fiber.never.join
-            *> IO(throw new IllegalStateException("Async.never completed"))
+    def never(using Frame): Nothing < Async = Async.never
 
     /** Provides a dependency to an effect using Env.
       *
