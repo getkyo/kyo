@@ -89,6 +89,7 @@ lazy val kyoJVM = project
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
         `kyo-scheduler-cats`.jvm,
+        `kyo-scheduler-finagle`.jvm,
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
@@ -205,21 +206,37 @@ lazy val `kyo-scheduler-cats` =
             crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
         )
 
-lazy val `kyo-scheduler-finagle` = {
+lazy val `kyo-scheduler-finagle` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-scheduler-finagle"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.twitter" %% "finagle-core" % "24.2.0",
+            libraryDependencies ++= {
+                if (scalaVersion.value == scala213Version)
+                    Seq("com.twitter" %% "finagle-core" % "24.2.0")
+                else
+                    Seq.empty
+            },
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            scalaVersion       := scala213Version,
-            crossScalaVersions := List(scala213Version)
+            crossScalaVersions := Seq(scala213Version, scala3Version),
+            publish / skip     := scalaVersion.value != scala213Version,
+            Compile / unmanagedSourceDirectories := {
+                if (scalaVersion.value == scala213Version)
+                    (Compile / unmanagedSourceDirectories).value
+                else
+                    Seq.empty
+            },
+            Test / unmanagedSourceDirectories := {
+                if (scalaVersion.value == scala213Version)
+                    (Test / unmanagedSourceDirectories).value
+                else
+                    Seq.empty
+            }
         )
         .jvmSettings(mimaCheck(false))
         .dependsOn(`kyo-scheduler`)
-}
 
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
