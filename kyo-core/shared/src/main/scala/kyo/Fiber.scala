@@ -38,7 +38,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that never completes
       */
-    def never[E]: Fiber[E, Unit] = _never.asInstanceOf[Fiber[E, Unit]]
+    def never[E, A]: Fiber[E, A] = _never.asInstanceOf[Fiber[E, A]]
 
     /** Creates a successful Fiber.
       *

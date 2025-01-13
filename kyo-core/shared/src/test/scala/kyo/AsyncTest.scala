@@ -186,6 +186,11 @@ class AsyncTest extends Test:
                 r => assert(r == Result.panic(ex1))
             }
         }
+        "never" in runNotJS {
+            Async.race(Async.never, 1).map { r =>
+                assert(r == 1)
+            }
+        }
     }
 
     "parallelUnbounded" - {
