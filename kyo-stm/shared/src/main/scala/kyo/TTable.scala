@@ -118,8 +118,8 @@ object TTable:
       */
     def init[Fields: AsFields](using Frame): TTable[Fields] < IO =
         for
-            nextId <- TRef.initNow(0)
-            store  <- TMap.initNow[Int, Record[Fields]]()
+            nextId <- TRef.init(0)
+            store  <- TMap.init[Int, Record[Fields]]
         yield new Base(nextId, store)
 
     final private class Base[Fields](
@@ -292,7 +292,7 @@ object TTable:
                 table <- TTable.init[Fields]
                 indexes <-
                     Kyo.foreach(fields.toSeq) { field =>
-                        TMap.initNow[Any, Set[Int]]().map(field -> _)
+                        TMap.init[Any, Set[Int]].map(field -> _)
                     }
             yield new Indexed(table, indexes.toMap)(using fields)
     end Indexed
