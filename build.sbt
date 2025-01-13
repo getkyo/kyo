@@ -65,6 +65,15 @@ lazy val `kyo-settings` = Seq(
 )
 
 Global / onLoad := {
+
+    val javaVersion  = System.getProperty("java.version")
+    val majorVersion = javaVersion.split("\\.")(0).toInt
+    if (majorVersion < 21) {
+        throw new IllegalStateException(
+            s"Java version $javaVersion is not supported. Please use Java 21 or higher."
+        )
+    }
+
     val project =
         System.getProperty("platform", "JVM").toUpperCase match {
             case "JVM"    => kyoJVM
