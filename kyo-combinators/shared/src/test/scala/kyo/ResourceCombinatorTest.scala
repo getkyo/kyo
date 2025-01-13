@@ -17,14 +17,13 @@ class ResourceCombinatorTest extends Test:
                     _      <- setter(50)
                     result <- IO(state)
                 yield result
-            val beforeResources               = scala.concurrent.Future(assert(state == 0))
+            assert(state == 0)
             val handledResources: Int < Async = Resource.run(effect)
             Async.run(handledResources).map(_.toFuture).map { handled =>
                 for
-                    assertion1 <- beforeResources
-                    assertion2 <- handled.map(_ == 50)
-                    assertion3 <- Future(assert(state == 0))
-                yield assertion3
+                    assertion1 <- handled.map(_ == 50)
+                    assertion2 <- Future(assert(state == 0))
+                yield assertion2
                 end for
             }
         }

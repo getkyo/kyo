@@ -125,9 +125,9 @@ class HygieneTest extends AnyFreeSpec with Assertions:
 
     "new instance with by-name parameter" in {
         assertDoesNotCompile("""
+          class A(x: => String)
           defer {
-            class A(x: => Int)
-            new A(IO(1).now)
+              new A(IO("blah").now)
           }
         """)
     }
@@ -168,6 +168,26 @@ class HygieneTest extends AnyFreeSpec with Assertions:
           defer {
             val f = (x: Int) => IO(1).now + x
             f(10)
+          }
+        """)
+    }
+
+    "throw" in {
+        assertDoesNotCompile("""
+          defer {
+              if IO("foo").now == "bar" then
+                  throw new Exception
+              else
+                  2
+          }
+        """)
+    }
+
+    "synchronized" in {
+        assertDoesNotCompile("""
+          defer {
+              val x = synchronized(1)
+              IO(x).now
           }
         """)
     }

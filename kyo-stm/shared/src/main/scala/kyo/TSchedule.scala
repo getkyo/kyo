@@ -14,30 +14,30 @@ object TSchedule:
 
     given Flat[TSchedule] = Flat.derive[TRef[Maybe[(Duration, Schedule)]]]
 
-    /** Creates a new transactional schedule within an STM transaction.
+    /** Creates a new TSchedule with the given schedule.
       *
       * @param schedule
       *   The initial schedule to wrap
       * @return
-      *   A new transactional schedule containing the schedule state, within the STM effect
+      *   A new TSchedule containing the schedule, within the IO effect
       */
-    def init(schedule: Schedule)(using Frame): TSchedule < STM = Clock.now.map(now => TRef.init(schedule.next(now)))
+    def init(schedule: Schedule)(using Frame): TSchedule < IO =
+        initWith(schedule)(identity)
 
-    /** Creates a new transactional schedule outside of a transaction.
+    /** Creates a new TSchedule and immediately applies a function to it.
       *
-      * WARNING: This operation:
-      *   - Cannot be rolled back
-      *   - Is not part of any transaction
-      *   - Will cause any containing transaction to retry if used within one
-      *
-      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
+      * This is a more efficient way to initialize a TSchedule and perform operations on it, as it combines initialization and the first
+      * operation in a single transaction.
       *
       * @param schedule
       *   The initial schedule to wrap
+      * @param f
+      *   The function to apply to the newly created TSchedule
       * @return
-      *   A new transactional schedule containing the schedule state, within IO
+      *   The result of applying the function to the new TSchedule, within combined IO and S effects
       */
-    def initNow(schedule: Schedule)(using Frame): TSchedule < IO = Clock.now.map(now => TRef.initNow(schedule.next(now)))
+    inline def initWith[A, S](schedule: Schedule)(inline f: TSchedule => A < S)(using Frame): A < (IO & S) =
+        Clock.now.map(now => TRef.initWith(schedule.next(now))(f))
 
     extension (self: TSchedule)
 

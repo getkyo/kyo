@@ -1,11 +1,15 @@
 package kyo.scheduler
 
 import Scheduler.Config
+import java.util.ArrayList
+import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.Callable
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.regulator.Admission
@@ -222,6 +226,30 @@ final class Scheduler(
       */
     def asExecutionContext: ExecutionContext =
         ExecutionContext.fromExecutor(asExecutor)
+
+    /** Provides a Java ExecutorService interface to the scheduler.
+      *
+      * Allows using the scheduler as a drop-in replacement for Java ExecutorService implementations while maintaining all scheduler
+      * capabilities like admission control and adaptive concurrency. This implementation provides a minimal ExecutorService that delegates
+      * task execution to the scheduler.
+      *
+      * Note that shutdown-related operations are no-ops in this implementation:
+      *   - shutdown() and shutdownNow() have no effect
+      *   - isShutdown() and isTerminated() always return false
+      *   - awaitTermination() always returns false
+      *
+      * @return
+      *   An ExecutorService that submits Runnables as scheduler tasks
+      */
+    def asExecutorService: ExecutorService =
+        new AbstractExecutorService {
+            def awaitTermination(timeout: Long, unit: TimeUnit): Boolean = false
+            def execute(command: Runnable): Unit                         = schedule(Task(command))
+            def isShutdown(): Boolean                                    = false
+            def isTerminated(): Boolean                                  = false
+            def shutdown(): Unit                                         = {}
+            def shutdownNow(): java.util.List[Runnable]                  = new ArrayList[Runnable]
+        }
 
     /** Schedules a task for execution, optionally specifying the submitting worker.
       *

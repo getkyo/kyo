@@ -313,6 +313,33 @@ class ChannelTest extends Test:
                 r <- c.drain
             yield assert(r == Seq(1, 2))
         }
+        "should consider pending puts" in run {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](2)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    result    <- c.drain
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            }
+        }
+        "should consider pending puts - zero capacity" in pendingUntilFixed {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](0)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    result    <- c.drain
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            }
+            ()
+        }
     }
     "drainUpTo" - {
         "zero or negative" in run {
@@ -356,7 +383,7 @@ class ChannelTest extends Test:
                 s <- c.size
             yield assert(r == Seq(1, 2) && s == 2)
         }
-        "should consider pending puts" in pendingUntilFixed {
+        "should consider pending puts" in run {
             import AllowUnsafe.embrace.danger
             IO.Unsafe.evalOrThrow {
                 for
@@ -364,11 +391,11 @@ class ChannelTest extends Test:
                     _         <- c.putFiber(1)
                     _         <- c.putFiber(2)
                     _         <- c.putFiber(3)
+                    _         <- c.putFiber(4)
                     result    <- c.drainUpTo(3)
                     finalSize <- c.size
-                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 1)
             }
-            ()
         }
         "should consider pending puts - zero capacity" in pendingUntilFixed {
             import AllowUnsafe.embrace.danger
@@ -378,6 +405,7 @@ class ChannelTest extends Test:
                     _         <- c.putFiber(1)
                     _         <- c.putFiber(2)
                     _         <- c.putFiber(3)
+                    _         <- c.putFiber(4)
                     result    <- c.drainUpTo(3)
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
@@ -795,7 +823,10 @@ class ChannelTest extends Test:
                 stream = c.stream(3).take(15).mapChunk(ch => Chunk(ch))
                 res <- stream.run
                 _   <- bg.interrupt
-            yield assert(res == Chunk(Chunk(0, 1, 2), Chunk(3, 4, 5), Chunk(6, 7, 8), Chunk(9, 10, 11), Chunk(12, 13, 14)))
+            yield
+                assert(res.forall(_.size <= 3))
+                assert(res.flatten == (0 to 14))
+            end for
         }
     }
 

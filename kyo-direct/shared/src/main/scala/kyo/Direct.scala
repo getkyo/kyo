@@ -70,7 +70,8 @@ private def nowImpl[A: Type, S: Type](self: Expr[A < S])(using Quotes): Expr[A] 
            |  val y = IO(2).now     // Then get this result  
            |  x + y                 // Use both results
            |}""".stripMargin)}
-           |""".stripMargin
+           |""".stripMargin,
+        self.asTerm.pos
     )
 end nowImpl
 
@@ -95,7 +96,8 @@ private def laterImpl[A: Type, S: Type](self: Expr[A < S])(using Quotes): Expr[A
            |  val (e1, e2) = combination.now  // Get both effects
            |  e1.now + e2.now                 // Sequence them here
            |}""".stripMargin)}
-           |""".stripMargin
+           |""".stripMargin,
+        self.asTerm.pos
     )
 end laterImpl
 

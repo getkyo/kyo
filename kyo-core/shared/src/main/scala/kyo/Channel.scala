@@ -105,16 +105,17 @@ object Channel:
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
             if n <= 0 then Chunk.empty
             else
-                Loop(Chunk.empty[A]): lastChunk =>
-                    val nextN = n - lastChunk.size
+                Loop(Chunk.empty[A], 0): (lastChunk, lastSize) =>
+                    val nextN = n - lastSize
                     Channel.drainUpTo(self)(nextN).map: chunk =>
                         val chunk1 = lastChunk.concat(chunk)
-                        if chunk1.size == n then Loop.done(chunk1)
+                        if chunk1.size >= n then Loop.done(chunk1)
                         else
                             self.take.map: a =>
                                 val chunk2 = chunk1.append(a)
-                                if chunk2.size == n then Loop.done(chunk2)
-                                else Loop.continue(chunk2)
+                                val size2  = chunk2.size
+                                if size2 >= n then Loop.done(chunk2)
+                                else Loop.continue(chunk2, size2)
                         end if
 
         /** Creates a fiber that puts an element into the channel.
@@ -339,9 +340,23 @@ object Channel:
                 end poll
 
                 def drainUpTo(max: Int)(using AllowUnsafe) =
-                    val result = queue.drainUpTo(max)
-                    if result.exists(_.nonEmpty) then flush()
-                    result
+                    @tailrec
+                    def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
+                        if i == 0 then Result.Success(current)
+                        else
+                            val next = queue.drainUpTo(i)
+                            next match
+                                case Result.Success(c) =>
+                                    if c.isEmpty then Result.Success(current)
+                                    else
+                                        flush()
+                                        loop(current.concat(c), i - c.length)
+                                case other => other
+                            end match
+                        end if
+                    end loop
+
+                    loop(Chunk.empty, max)
                 end drainUpTo
 
                 def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
@@ -368,9 +383,20 @@ object Channel:
                 end takeFiber
 
                 def drain()(using AllowUnsafe) =
-                    val result = queue.drain()
-                    if result.exists(_.nonEmpty) then flush()
-                    result
+                    @tailrec
+                    def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
+                        val next = queue.drain()
+                        next match
+                            case Result.Success(c) =>
+                                if c.isEmpty then Result.Success(current)
+                                else
+                                    flush()
+                                    loop(current.concat(c))
+                            case other => other
+                        end match
+                    end loop
+
+                    loop(Chunk.empty)
                 end drain
 
                 def close()(using frame: Frame, allow: AllowUnsafe) =
