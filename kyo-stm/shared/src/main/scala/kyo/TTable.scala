@@ -230,7 +230,7 @@ object TTable:
                 indexes(field).getOrElse(value, Set.empty)
             }.map { r =>
                 if r.isEmpty then Chunk.empty
-                else Chunk.from(r.reduce(_ intersect _).toSeq.sorted.map(unsafeId(_)))
+                else Chunk.from(r.reduce(_ intersect _).sorted.map(unsafeId(_)))
             }
 
         /** Queries the table for records matching the given filter criteria using indexed fields.
