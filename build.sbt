@@ -93,6 +93,7 @@ lazy val kyoJVM = project
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
+        `kyo-offheap`.jvm,
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
@@ -285,6 +286,15 @@ lazy val `kyo-core` =
             `js-settings`,
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
+
+lazy val `kyo-offheap` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-offheap"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
