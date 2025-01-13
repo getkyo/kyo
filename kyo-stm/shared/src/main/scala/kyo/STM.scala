@@ -102,7 +102,7 @@ object STM:
       *   The result of the computation if successful
       */
     def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(using Frame): A < (Async & Abort[E | FailedTransaction]) =
-        TID.use {
+        TID.useIO {
             case -1L =>
                 // New transaction without a parent, use regular commit flow
                 Retry[FailedTransaction](retrySchedule) {
