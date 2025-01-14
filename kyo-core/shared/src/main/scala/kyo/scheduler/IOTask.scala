@@ -40,7 +40,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         try
             curr = Boundary.restoring(trace, this) {
                 ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
-                    stop = shouldPreempt(),
+                    stop =
+                        shouldPreempt(),
                     [C] =>
                         (input, cont) =>
                             locally {

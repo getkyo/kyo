@@ -1,20 +1,19 @@
-import sbt._
+import sbt.*
 
-object Repeat {
+object Repeat:
     val usage = "Usage: repeat <command> | repeat <number-of-times> <command>"
 
-    private def executeCommand(command: String, state: State): (Boolean, State) = {
+    private def executeCommand(command: String, state: State): (Boolean, State) =
         var success = true
         val newState = Command.process(
             command,
             state,
-            error => {
+            error =>
                 println(s"Error executing command: $error")
                 success = false
-            }
         )
         (success, newState)
-    }
+    end executeCommand
 
     private case class ExecutionResult(success: Boolean, state: State, iterations: Int)
 
@@ -22,53 +21,49 @@ object Repeat {
         command: String,
         state: State,
         maxIterations: Option[Int]
-    ): ExecutionResult = {
+    ): ExecutionResult =
         var currentState = state
         var i            = 0
         var success      = true
 
-        while (maxIterations.fold(true)(max => i < max) && success) {
-            val iterationMsg = maxIterations match {
+        while maxIterations.fold(true)(max => i < max) && success do
+            val iterationMsg = maxIterations match
                 case Some(max) => s"Execution ${i + 1} of $max"
                 case None      => s"Execution ${i + 1}"
-            }
             println(iterationMsg)
             val (commandSuccess, newState) = executeCommand(command, currentState)
             success = commandSuccess
             currentState = newState
             i += 1
-        }
+        end while
 
         ExecutionResult(success, currentState, i)
-    }
+    end executeRepeatedly
 
     def command = Command.args("repeat", "<command> | <number-of-times> <command>") { (state, args) =>
-        args match {
+        args match
             case command :: Nil =>
                 val result = executeRepeatedly(command, state, None)
                 println(s"Command failed after ${result.iterations - 1} successful executions")
                 result.state
             case count :: command :: Nil =>
-                try {
+                try
                     val times = count.toInt
-                    if (times <= 0) {
+                    if times <= 0 then
                         println("Number of repetitions must be positive")
                         state
-                    } else {
+                    else
                         val result = executeRepeatedly(command, state, Some(times))
-                        if (!result.success) {
+                        if !result.success then
                             println(s"Command failed on iteration ${result.iterations} - stopping execution")
-                        }
                         result.state
-                    }
-                } catch {
+                    end if
+                catch
                     case _: NumberFormatException =>
                         println(usage)
                         state
-                }
             case _ =>
                 println(usage)
                 state
-        }
     }
-}
+end Repeat

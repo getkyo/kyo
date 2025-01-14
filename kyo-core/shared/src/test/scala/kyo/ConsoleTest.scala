@@ -38,11 +38,9 @@ class ConsoleTest extends Test:
         val output = new StringBuilder
         val error  = new StringBuilder
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
-            override def write(b: Int): Unit = output.append(b.toChar)
-        )) {
+            override def write(b: Int): Unit = output.append(b.toChar))) {
             scala.Console.withErr(new java.io.PrintStream(new java.io.OutputStream:
-                override def write(b: Int): Unit = error.append(b.toChar)
-            )) {
+                override def write(b: Int): Unit = error.append(b.toChar))) {
                 import AllowUnsafe.embrace.danger
                 val (r1, r2, r3, r4) =
                     IO.Unsafe.evalOrThrow {
