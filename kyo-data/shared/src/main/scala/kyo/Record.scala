@@ -269,12 +269,18 @@ object Record:
         def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
     end AsFields
 
-    /** Evidence that type `Fields` is intersection on `~` types. `T` is a tuple of these types.
+    /** Evidence that type `A` is intersection of `~` types. `T` is a tuple of these types.
       */
+    @implicitNotFound(
+        "Unable to prove that type `${A}` is an intersection of `~` types"
+    )
     trait FieldsLike[A]:
         type T <: Tuple
+    end FieldsLike
 
     object FieldsLike:
+        def apply[A](using f: FieldsLike[A]): FieldsLike[A] = f
+
         type Aux[A, _T] = FieldsLike[A]:
             type T = _T
 
