@@ -82,15 +82,17 @@ object TestHttpServer:
     end start
 
     def redirect(inputStream: InputStream, outputStream: PrintStream): Unit =
-        val thread = new Thread(new Runnable:
-            def run(): Unit =
-                val reader       = new BufferedReader(new InputStreamReader(inputStream))
-                val writer       = new PrintWriter(outputStream)
-                var line: String = null
-                while { line = reader.readLine(); line != null } do
-                    writer.println(s"[TestHttpServer] $line")
-                    writer.flush()
-            end run)
+        val runnable =
+            new Runnable:
+                def run(): Unit =
+                    val reader       = new BufferedReader(new InputStreamReader(inputStream))
+                    val writer       = new PrintWriter(outputStream)
+                    var line: String = null
+                    while { line = reader.readLine(); line != null } do
+                        writer.println(s"[TestHttpServer] $line")
+                        writer.flush()
+                end run
+        val thread = new Thread(runnable)
         thread.setDaemon(true)
         thread.start()
     end redirect
