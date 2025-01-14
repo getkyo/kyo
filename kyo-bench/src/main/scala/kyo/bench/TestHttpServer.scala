@@ -67,8 +67,7 @@ object TestHttpServer:
             Runtime.getRuntime().addShutdownHook(new Thread:
                 override def run(): Unit =
                     log(port, "stopping")
-                    process.destroy()
-            )
+                    process.destroy())
             redirect(process.getInputStream, System.out)
             redirect(process.getErrorStream, System.err)
 
@@ -91,8 +90,7 @@ object TestHttpServer:
                 while { line = reader.readLine(); line != null } do
                     writer.println(s"[TestHttpServer] $line")
                     writer.flush()
-            end run
-        )
+            end run)
         thread.setDaemon(true)
         thread.start()
     end redirect

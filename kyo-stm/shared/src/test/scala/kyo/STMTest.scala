@@ -688,12 +688,12 @@ class STMTest extends Test:
                             }
                             _ <- fiber.get
                         yield
-                        // The transaction will keep failing until it reaches the
-                        // retry limit because the ref is changed by the nested
-                        // fiber concurrently. The transactions in the nested
-                        // fibers executed on each try succeed, updating the ref
-                        // to 2.
-                        ()
+                            // The transaction will keep failing until it reaches the
+                            // retry limit because the ref is changed by the nested
+                            // fiber concurrently. The transactions in the nested
+                            // fibers executed on each try succeed, updating the ref
+                            // to 2.
+                            ()
                     }
                 }
                 value <- STM.run(ref.get)

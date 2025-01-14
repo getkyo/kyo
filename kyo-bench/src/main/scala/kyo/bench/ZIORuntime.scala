@@ -8,6 +8,7 @@ extension (parent: ZLayer[Any, Any, Any])
             parent ++ child
         else
             child
+end extension
 
 object ZIORuntime:
     def fromLayerWithFinalizer[R](layer: ZLayer[Any, Any, R]): (Runtime[R], () => Unit) =

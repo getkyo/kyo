@@ -270,7 +270,8 @@ object StreamCompression:
                             compressionLevel match
                                 case CompressionLevel.BestSpeed       => 0x4
                                 case CompressionLevel.BestCompression => 0x2
-                                case _                                => 0
+                                case _ =>
+                                    0
                             ,    // XFL: Extra flags
                             0xff // OS: Operating System
                         ).map(_.toByte)

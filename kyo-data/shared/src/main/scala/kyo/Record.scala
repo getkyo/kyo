@@ -153,6 +153,7 @@ object Record:
           */
         def compact(using AsFields[Fields]): Record[Fields] =
             Record(self.toMap.view.filterKeys(AsFields[Fields].contains(_)).toMap)
+    end extension
 
     extension (self: String)
         /** Creates a single-field Record with the string as the field name.
@@ -162,6 +163,7 @@ object Record:
           */
         def ~[Value](value: Value)(using tag: Tag[Value]): Record[self.type ~ Value] =
             Record(Map.empty.updated(Field(self, tag), value))
+    end extension
 
     /** Type class for converting types to Records.
       *
