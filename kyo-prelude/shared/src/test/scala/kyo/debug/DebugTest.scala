@@ -157,10 +157,10 @@ class DebugTest extends Test:
         "with Stream" in
             testOutput(
                 "DebugTest.scala:53:36",
-                "2147483647",
+                "()",
                 "DebugTest.scala:52:28",
-                "2",
-                "DebugTest.scala:52:28",
+                "()",
+                "DebugTest.scala:54:21",
                 "Seq(6)"
             ) {
                 streamComputation.eval

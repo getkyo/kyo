@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Ack.*
-
 class StreamTest extends Test:
 
     val n = 100000

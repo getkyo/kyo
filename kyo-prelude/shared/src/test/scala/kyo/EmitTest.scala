@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Ack.*
-
 class EmitTest extends Test:
 
     "int" in {
@@ -67,95 +65,6 @@ class EmitTest extends Test:
             yield "a"
         val res = Emit.run(v)
         assert(res.eval == (Chunk(Set(1), Set(2), Set(3)), "a"))
-    }
-
-    "Ack" - {
-        "apply" - {
-            "negative" in {
-                val ack = Ack(-1)
-                assert(ack == Ack.Stop)
-            }
-            "zero" in {
-                val ack = Ack(0)
-                assert(ack == Ack.Stop)
-            }
-            "positive" in {
-                Ack(1) match
-                    case Continue(n) => assert(n == 1)
-                    case Stop        => fail()
-            }
-        }
-        "maxItems" - {
-            "stop with negative" in {
-                val ack = Ack.Stop.maxValues(-1)
-                assert(ack == Ack.Stop)
-            }
-            "stop with zero" in {
-                val ack = Ack.Stop.maxValues(0)
-                assert(ack == Ack.Stop)
-            }
-            "stop with positive" in {
-                val ack = Ack.Stop.maxValues(1)
-                assert(ack == Ack.Stop)
-            }
-            "continue with negative" in {
-                val ack = Ack(2).maxValues(-1)
-                assert(ack == Ack.Stop)
-            }
-            "continue with zero" in {
-                val ack = Ack(2).maxValues(0)
-                assert(ack == Ack.Stop)
-            }
-            "continue with less" in {
-                val ack = Ack(2).maxValues(1)
-                assert(ack == Ack(1))
-            }
-            "continue with more" in {
-                val ack = Ack(2).maxValues(3)
-                assert(ack == Ack(2))
-            }
-        }
-        "Continue" - {
-            "unapply" - {
-                "stop" in {
-                    val res = Ack.Continue.unapply(Ack.Stop)
-                    assert(res.isEmpty)
-                }
-                "continue" in {
-                    val res = Ack.Continue.unapply(Ack(1))
-                    assert(res.get == 1)
-                }
-            }
-        }
-        "next" - {
-            "stop short circuits" in run {
-                var executed = false
-                Ack.Stop.next {
-                    executed = true
-                    Ack.Continue()
-                }.map { ack =>
-                    assert(ack == Ack.Stop)
-                    assert(!executed)
-                }
-            }
-
-            "continue executes function" in run {
-                var executed = false
-                Ack(2).next {
-                    executed = true
-                    Ack(1)
-                }.map { ack =>
-                    assert(ack == Ack(1))
-                    assert(executed)
-                }
-            }
-        }
-        "Flat" in {
-            summon[Flat[Ack]]
-            summon[Flat[Ack.Continue]]
-            summon[Flat[Ack.Stop.type]]
-            succeed
-        }
     }
 
     "runForeach" - {
