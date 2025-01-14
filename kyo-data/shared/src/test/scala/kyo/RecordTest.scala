@@ -265,11 +265,6 @@ class RecordTest extends Test:
         "preserves defined fields" in {
             val record: Record["name" ~ String & "age" ~ Int] =
                 "name" ~ "Frank" & "age" ~ 40
-            import Record.AsFields
-            import Record.AsFields.given
-
-            AsFields["name" ~ String & "age" ~ Int]
-
             val compacted = record.compact
 
             assert(compacted.size == 2)
