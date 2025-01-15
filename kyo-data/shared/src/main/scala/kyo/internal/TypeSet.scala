@@ -16,7 +16,7 @@ import scala.quoted.*
   *   - Apply type constructors uniformly across all components
   *   - Collect type class instances for all component types
   */
-trait TypeSet[A]:
+sealed abstract class TypeSet[A]:
 
     /** The tuple representation of the decomposed types.
       *
