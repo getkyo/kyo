@@ -112,7 +112,7 @@ object Emit:
           * @return
           *   The result of the computation
           */
-        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Unit < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+        def apply[A: Flat, S, S2](f: V => Unit < S2)(v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
             ArrowEffect.handle(tag, v)(
                 [C] => (input, cont) => f(input).map(cont)
             )
@@ -130,7 +130,7 @@ object Emit:
           * @return
           *   The result of the computation
           */
-        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Boolean < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+        def apply[A: Flat, S, S2](f: V => Boolean < S2)(v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
             ArrowEffect.handleState(tag, true, v)(
                 [C] => (input, cond, cont) => if cond then f(input).map(c => (c, cont(()))) else (cond, cont(()))
             )
