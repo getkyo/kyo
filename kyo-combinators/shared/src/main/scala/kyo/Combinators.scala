@@ -912,6 +912,7 @@ extension [A, S](effect: Unit < (Emit[Chunk[A]] & S))
       *   Stream representation of original effect
       */
     def emitToStream: Stream[A, S] = Stream(effect)
+end extension
 
 private case object FinalEmit
 

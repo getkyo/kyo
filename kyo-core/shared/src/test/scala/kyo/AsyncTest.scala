@@ -851,7 +851,7 @@ class AsyncTest extends Test:
                         Seq(
                             for
                                 _ <- Emit.value("a1")
-                                _ <- Async.sleep(5.millis)
+                                _ <- Async.sleep(50.millis)
                                 _ <- Emit.value("a2")
                             yield 1,
                             for
@@ -897,7 +897,7 @@ class AsyncTest extends Test:
                     Async.gather(1, emitIsolate)(
                         for
                             _ <- Emit.value("a1")
-                            _ <- Async.sleep(10.millis)
+                            _ <- Async.sleep(50.millis)
                             _ <- Emit.value("a2")
                         yield 1,
                         for

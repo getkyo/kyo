@@ -9,9 +9,11 @@ class KyoException private[kyo] (
     cause: Text | Throwable | Null = null
 )(using val frame: Frame) extends Exception(
         Option(message) match
-            case Some(message) => message.toString; case _ => null,
+            case Some(message) => message.toString;
+            case _             => null,
         cause match
-            case cause: Throwable => cause; case _ => null
+            case cause: Throwable => cause;
+            case _                => null
     ) with NoStackTrace:
 
     override def getCause(): Throwable =

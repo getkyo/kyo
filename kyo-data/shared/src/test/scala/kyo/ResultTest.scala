@@ -601,8 +601,7 @@ class ResultTest extends Test:
             assert(!panic.isFail)
             assert(panic match
                 case Panic(_) => true
-                case _        => false
-            )
+                case _        => false)
         }
 
         "deeply nested Success/Fail" in {
@@ -625,8 +624,7 @@ class ResultTest extends Test:
             assert(combined.isFail)
             assert(combined match
                 case Fail(_: String | _: Int) => true
-                case _                        => false
-            )
+                case _                        => false)
         }
 
         "nested flatMap with type changes" in {

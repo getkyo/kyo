@@ -36,8 +36,7 @@ object StreamPublisher:
         def discardSubscriber(subscriber: Subscriber[? >: V]): Unit =
             subscriber.onSubscribe(new Subscription:
                 override def request(n: Long): Unit = ()
-                override def cancel(): Unit         = ()
-            )
+                override def cancel(): Unit         = ())
             subscriber.onComplete()
         end discardSubscriber
 

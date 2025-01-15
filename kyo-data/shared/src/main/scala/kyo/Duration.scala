@@ -225,6 +225,7 @@ object Duration:
                     case None =>
                         s"$nanos.nanos"
                 end match
+
         /** Checks if the Duration is finite.
           *
           * @return
