@@ -96,13 +96,11 @@ object IO:
 
         inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
             Effect.deferInline {
-                import AllowUnsafe.embrace.danger
-                f
+                f(using AllowUnsafe.embrace.danger)
             }
 
         def withLocal[A, B, S](local: Local[A])(f: AllowUnsafe ?=> A => B < S)(using Frame): B < (S & IO) =
-            import AllowUnsafe.embrace.danger
-            local.use(f)
+            local.use(f(using AllowUnsafe.embrace.danger))
 
         /** Evaluates an IO effect that may throw exceptions, converting any thrown exceptions into the final result.
           *
