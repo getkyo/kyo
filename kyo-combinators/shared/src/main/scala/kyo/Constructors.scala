@@ -94,8 +94,9 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that emits a value
       */
+
     def emit[A](value: A)(using Tag[A], Frame): Unit < Emit[A] =
-        Emit(value)
+        Emit.value(value)
 
     /** Creates an effect that fails with Abort[E].
       *
@@ -344,9 +345,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that never completes
       */
-    def never(using Frame): Nothing < Async =
-        Fiber.never.join
-            *> IO(throw new IllegalStateException("Async.never completed"))
+    def never(using Frame): Nothing < Async = Async.never
 
     /** Provides a dependency to an effect using Env.
       *
@@ -470,5 +469,4 @@ extension (kyoObject: Kyo.type)
         sequence: => Seq[A < Async]
     )(using Flat[A], Frame): Unit < Async =
         foreachPar(sequence)(identity).unit
-
 end extension

@@ -4,6 +4,10 @@ import kyo.*
 
 class BarrierTest extends Test:
 
+    "initWith" in run {
+        Barrier.initWith(0)(_.await.andThen(succeed))
+    }
+
     "zero" in run {
         for
             barrier <- Barrier.init(0)

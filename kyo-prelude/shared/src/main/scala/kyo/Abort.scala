@@ -47,7 +47,7 @@ object Abort:
       *   A computation that immediately fails with the given error value
       */
     inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
-        ArrowEffect.suspendAndMap[Any](erasedTag[E], e)(_ => ???)
+        ArrowEffect.suspendWith[Any](erasedTag[E], e)(_ => ???)
 
     /** Fails the computation if the condition is true.
       *
@@ -327,6 +327,27 @@ object Abort:
         ): A < (Abort[E] & S) =
             Effect.catching(v) {
                 case ct(ex) => Abort.fail(ex)
+                case ex     => Abort.panic(ex)
+            }
+
+        /** Catches exceptions of type E, transforms and converts them to Abort failures.
+          *
+          * @param v
+          *   The computation to run and catch exceptions from
+          * @tparam A
+          *   The return type of the computation
+          * @tparam S
+          *   The effect type of the computation
+          * @return
+          *   A computation that may fail with an Abort[E1] if an exception of type E is caught
+          */
+        def apply[A, S, E1](f: E => E1)(v: => A < S)(
+            using
+            ct: SafeClassTag[E],
+            frame: Frame
+        ): A < (Abort[E1] & S) =
+            Effect.catching(v) {
+                case ct(ex) => Abort.fail(f(ex))
                 case ex     => Abort.panic(ex)
             }
     end CatchingOps

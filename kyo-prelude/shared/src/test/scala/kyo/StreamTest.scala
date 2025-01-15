@@ -137,11 +137,11 @@ class StreamTest extends Test:
             def emit: Unit < (Emit[Chunk[Int]] & Var[Int]) =
                 for
                     n    <- Var.update[Int](_ + 1)
-                    next <- Emit.andMap(Chunk(n))(_ => emit)
+                    next <- Emit.valueWith(Chunk(n))(emit)
                 yield next
             end emit
 
-            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(_ => emit)).take(5).run
+            val stream         = Stream(Emit.valueWith(Chunk.empty[Int])(emit)).take(5).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
 
             assert(
@@ -157,12 +157,12 @@ class StreamTest extends Test:
                     start = end - chunkSize + 1
                     chunk = Chunk.from(start to end)
                     _    <- debug.Debug((start, end, chunk))
-                    next <- Emit.andMap(Chunk.from(start to end))(_ => emit)
+                    next <- Emit.valueWith(Chunk.from(start to end))(emit)
                 yield next
                 end for
             end emit
 
-            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(_ => emit)).take(7).run
+            val stream         = Stream(Emit.valueWith(Chunk.empty[Int])(emit)).take(7).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
 
             assert(
@@ -551,6 +551,36 @@ class StreamTest extends Test:
         }
     }
 
+    "tap" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .init(Seq(1, 2, 3))
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (6, Seq(1, 2, 3)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
+    "tapChunk" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .apply(Emit.valueWith(Chunk(1, 2, 3))(Emit.value(Chunk(4, 5, 6))))
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (21, Seq(1, 2, 3, 4, 5, 6)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
     "concat" - {
         "non-empty streams" in {
             assert(
@@ -636,8 +666,8 @@ class StreamTest extends Test:
             def emit(n: Int): Unit < (Emit[Chunk[Int]]) =
                 n match
                     case 0 => ()
-                    case 5 => Emit.andMap(Chunk.empty)(_ => emit(n - 1))
-                    case _ => Emit.andMap(Chunk.fill(3)(n))(_ => emit(n - 1))
+                    case 5 => Emit.valueWith(Chunk.empty)(emit(n - 1))
+                    case _ => Emit.valueWith(Chunk.fill(3)(n))(emit(n - 1))
             end emit
 
             val stream = Stream(emit(10)).rechunk(10).mapChunk(Chunk(_))

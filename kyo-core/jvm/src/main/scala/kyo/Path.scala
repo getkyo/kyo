@@ -164,7 +164,7 @@ class Path private (val path: List[String]) derives CanEqual:
                     Loop(state) {
                         case Absent => Loop.done(())
                         case Present(content) =>
-                            Emit.andMap(writeOnce(content))(_ => readOnce(res).map(Loop.continue(_)))
+                            Emit.valueWith(writeOnce(content))(readOnce(res).map(Loop.continue(_)))
                     }
                 }
             }

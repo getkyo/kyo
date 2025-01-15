@@ -7,6 +7,33 @@ import java.util.concurrent.atomic.AtomicLong
 import kyo.scheduler.*
 import scala.annotation.tailrec
 
+/** Self-test utility for verifying scheduler behavior under load.
+  *
+  * This utility creates controlled load conditions to verify scheduler performance, admission control, and concurrency regulation. It
+  * incrementally increases concurrency until reaching rejection thresholds, helping validate proper scheduler operation and capacity
+  * limits.
+  *
+  * The testing process can be customized through several parameters. Task duration controls the length of individual test operations. The
+  * rejection threshold determines the maximum acceptable task rejection rate. Monitoring and step intervals control the pace of
+  * measurements and client count increases respectively.
+  *
+  * The companion object provides a main method to run the self-check with default settings. For more precise testing, create an instance
+  * with custom parameters to control the exact test conditions. The test runs until either reaching steady state or determining the
+  * system's capacity limits.
+  *
+  * @param scheduler
+  *   Scheduler instance to test
+  * @param executor
+  *   Executor for running test clients
+  * @param rejectionThreshold
+  *   Maximum acceptable rejection rate
+  * @param taskDurationMs
+  *   Duration of each test task
+  * @param monitorIntervalMs
+  *   Interval between measurements
+  * @param stepMs
+  *   Duration to maintain each client count
+  */
 final class SelfCheck(
     scheduler: Scheduler = Scheduler.get,
     executor: Executor = Executors.newCachedThreadPool(Threads("kyo-selfcheck")),

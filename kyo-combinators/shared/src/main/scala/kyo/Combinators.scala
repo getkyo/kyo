@@ -981,15 +981,15 @@ extension [A, B, S](effect: B < (Emit[A] & S))
                 (v, buffer, cont) =>
                     val b2 = buffer.append(v)
                     if b2.size >= chunkSize then
-                        Emit.andMap(b2): ack =>
-                            (Chunk.empty, cont(ack))
+                        Emit.valueWith(b2):
+                            (Chunk.empty, cont(()))
                     else
                         (b2, cont(()))
                     end if
             ,
             (buffer, v) =>
                 if buffer.isEmpty then v
-                else Emit.andMap(buffer)(_ => v)
+                else Emit.valueWith(buffer)(v)
         )
 
     /** Convert emitting effect to stream, chunking Emitted values in [[chunkSize]], and discarding result.

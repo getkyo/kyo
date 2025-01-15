@@ -48,6 +48,9 @@ class AdderTest extends Test:
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 0)
         }
+        "LongAdder.initWith" in run {
+            LongAdder.initWith(_.get).map(r => assert(r == 0))
+        }
     }
 
     "double" - {
@@ -79,6 +82,9 @@ class AdderTest extends Test:
                 v1  <- ref.sumThenReset
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 0)
+        }
+        "DoubleAdder.initWith" in run {
+            DoubleAdder.initWith(_.get).map(r => assert(r == 0))
         }
     }
 

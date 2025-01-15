@@ -17,74 +17,43 @@ object TChunk:
       * @return
       *   a new empty transactional chunk
       */
-    def init[A](using Frame): TChunk[A] < STM =
-        TRef.init(Chunk.empty[A])
+    def init[A](using Frame): TChunk[A] < IO =
+        init(Chunk.empty[A])
 
-    /** Creates a new transactional chunk within an STM transaction.
-      *
-      * @param chunk
-      *   The initial chunk to wrap
-      * @return
-      *   A new transactional chunk containing the values, within the STM effect
-      */
-    def init[A](values: A*)(using Frame): TChunk[A] < STM = TRef.init(Chunk.from(values))
-
-    /** Creates a new transactional chunk within an STM transaction.
-      *
-      * @param chunk
-      *   The initial chunk to wrap
-      * @return
-      *   A new transactional chunk containing the values, within the STM effect
-      */
-    def init[A](chunk: Chunk[A])(using Frame): TChunk[A] < STM = TRef.init(chunk)
-
-    /** Creates a new empty TChunk outside of a transaction.
-      *
-      * WARNING: This operation:
-      *   - Cannot be rolled back
-      *   - Is not part of any transaction
-      *   - Will cause any containing transaction to retry if used within one, since it creates a reference with a newer transaction ID
-      *
-      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
+    /** Creates a new TChunk containing the provided values.
       *
       * @param values
-      *   the initial values to store in the chunk
+      *   The initial values to store in the chunk
       * @return
-      *   a new transactional chunk containing the values within IO
+      *   A new TChunk containing the values, within the IO effect
       */
-    def initNow[A](using Frame): TChunk[A] < IO = TRef.initNow(Chunk.empty)
+    def init[A](values: A*)(using Frame): TChunk[A] < IO =
+        init(Chunk.from(values))
 
-    /** Creates a new TChunk outside of a transaction.
-      *
-      * WARNING: This operation:
-      *   - Cannot be rolled back
-      *   - Is not part of any transaction
-      *   - Will cause any containing transaction to retry if used within one, since it creates a reference with a newer transaction ID
-      *
-      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
-      *
-      * @param values
-      *   the initial values to store in the chunk
-      * @return
-      *   a new transactional chunk containing the values within IO
-      */
-    def initNow[A](values: A*)(using Frame): TChunk[A] < IO = TRef.initNow(Chunk.from(values))
-
-    /** Creates a new transactional chunk outside of any transaction.
-      *
-      * WARNING: This operation:
-      *   - Cannot be rolled back
-      *   - Is not part of any transaction
-      *   - Will cause any containing transaction to retry if used within one, since it creates a reference with a newer transaction ID
-      *
-      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
+    /** Creates a new TChunk from an existing Chunk.
       *
       * @param chunk
       *   The initial chunk to wrap
       * @return
-      *   A new transactional chunk containing the values, within the IO effect
+      *   A new TChunk containing the chunk, within the IO effect
       */
-    def initNow[A](chunk: Chunk[A])(using Frame): TChunk[A] < IO = TRef.initNow(chunk)
+    def init[A](chunk: Chunk[A])(using Frame): TChunk[A] < IO =
+        initWith(chunk)(identity)
+
+    /** Creates a new TChunk and immediately applies a function to it.
+      *
+      * This is a more efficient way to initialize a TChunk and perform operations on it, as it combines initialization and the first
+      * operation in a single transaction.
+      *
+      * @param chunk
+      *   The initial chunk to wrap
+      * @param f
+      *   The function to apply to the newly created TChunk
+      * @return
+      *   The result of applying the function to the new TChunk, within combined IO and S effects
+      */
+    inline def initWith[A, B, S](chunk: Chunk[A])(inline f: TChunk[A] => B < S)(using inline frame: Frame): B < (IO & S) =
+        TRef.initWith(chunk)(f)
 
     private def useRef[A, B, S](ref: TRef[A], f: A => B < S)(using Frame) = ref.use(f(_))
 

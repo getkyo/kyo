@@ -712,15 +712,13 @@ object Parse:
                                     else
                                         // Successfully parsed a value with remaining text.
                                         // Emit the parsed value and continue with unconsumed text
-                                        Emit.andMap(Chunk(value)) { ack =>
-                                            state.remaining
-                                        }
+                                        Emit.valueWith(Chunk(value))(state.remaining)
                                 case seq =>
                                     Parse.fail(seq.map(_._1), "Ambiguous parse - multiple results found")
                             }
                         end if
                 }
-            }.map { (text, _) => run(text)(repeat(v)).map(Emit(_)) }
+            }.map { (text, _) => run(text)(repeat(v)).map(Emit.value(_)) }
         }
 
     private def result[A](seq: Seq[A])(using Frame): Maybe[A] < Parse =
