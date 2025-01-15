@@ -249,7 +249,7 @@ object Record:
           * @param fields
           *   Set of all fields of tuple
           */
-        class All[T <: Tuple](val fields: Set[Field[?, ?]]) extends AnyVal
+        final class All[T <: Tuple](val fields: Set[Field[?, ?]]) extends AnyVal
         object All:
             given All[EmptyTuple] = All(Set())
             given [Name <: String, Value, T <: Tuple](using a: AsField[Name, Value], f: All[T]): All[Name ~ Value *: T] =
