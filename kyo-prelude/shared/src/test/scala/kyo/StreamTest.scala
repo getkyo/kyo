@@ -156,7 +156,6 @@ class StreamTest extends Test:
                     end <- Var.update[Int](_ + chunkSize)
                     start = end - chunkSize + 1
                     chunk = Chunk.from(start to end)
-                    _    <- debug.Debug((start, end, chunk))
                     next <- Emit.valueWith(Chunk.from(start to end))(emit)
                 yield next
                 end for
