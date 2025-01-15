@@ -43,24 +43,6 @@ object TypeSet:
         new TypeSet[Any]:
             type AsTuple = EmptyTuple
 
-    private transparent inline def summonAllLoop[T <: Tuple, F[_]]: List[F[Any]] =
-        inline erasedValue[T] match
-            case _: EmptyTuple => Nil
-            case _: (t *: ts) =>
-                summonInline[F[t]].asInstanceOf[F[Any]] :: summonAllLoop[ts, F]
-
-    /** Summons all instances of type class F for each component type in A.
-      *
-      * @tparam A
-      *   the intersection type to decompose
-      * @tparam F
-      *   the type class to summon instances for
-      * @return
-      *   a List of type class instances
-      */
-    transparent inline def summonAll[A: TypeSet as ts, F[_]]: List[F[Any]] =
-        summonAllLoop[ts.AsTuple, F]
-
     private type Join[A <: Tuple] = Tuple.Fold[A, Any, [B, C] =>> B & C]
 
     /** Returns the TypeSet instance for type A.
@@ -73,6 +55,18 @@ object TypeSet:
       *   the TypeSet instance
       */
     transparent inline def apply[A](using inline ts: TypeSet[A]): TypeSet[A] = ts
+
+    /** Summons all instances of type class F for each component type in A.
+      *
+      * @tparam A
+      *   the intersection type to decompose
+      * @tparam F
+      *   the type class to summon instances for
+      * @return
+      *   a List of type class instances
+      */
+    transparent inline def summonAll[A: TypeSet as ts, F[_]]: List[F[Any]] =
+        summonAllLoop[ts.AsTuple, F]
 
     /** Type alias for TypeSet with a specific tuple type.
       *
@@ -119,4 +113,28 @@ object TypeSet:
                 }
         end match
     end deriveImpl
+
+    private transparent inline def summonAllLoop[T <: Tuple, F[_]]: List[F[Any]] =
+        inline erasedValue[T] match
+            case _: EmptyTuple => Nil
+            case _: (h1 *: h2 *: h3 *: h4 *: h5 *: h6 *: h7 *: h8 *: h9 *: h10 *: h11 *: h12 *: h13 *: h14 *: h15 *: h16 *: tail) =>
+                summonInline[F[h1]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h2]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h3]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h4]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h5]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h6]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h7]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h8]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h9]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h10]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h11]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h12]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h13]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h14]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h15]].asInstanceOf[F[Any]] ::
+                    summonInline[F[h16]].asInstanceOf[F[Any]] ::
+                    summonAllLoop[tail, F]
+            case _: (t *: ts) =>
+                summonInline[F[t]].asInstanceOf[F[Any]] :: summonAllLoop[ts, F]
 end TypeSet

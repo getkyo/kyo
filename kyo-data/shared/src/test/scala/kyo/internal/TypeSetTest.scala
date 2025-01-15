@@ -197,6 +197,26 @@ class TypeSetTest extends AnyFreeSpec:
             val instances = TypeSet.summonAll[A & B, TC]
             assert(instances.map(_.name) == List("A", "B"))
         }
+
+        "large intersection" in {
+            enum Large:
+                case v1, v2, v3, v4, v5, v6, v7, v8, v9, v10,
+                    v11, v12, v13, v14, v15, v16, v17, v18, v19, v20,
+                    v21, v22, v23, v24, v25, v26, v27, v28, v29, v30,
+                    v31, v32, v33, v34, v35, v36, v37, v38, v39, v40
+            end Large
+            import Large.*
+
+            given [V]: TC[V] with
+                def name = "test"
+
+            type Values = v1.type & v2.type & v3.type & v4.type & v5.type & v6.type & v7.type & v8.type & v9.type & v10.type &
+                v11.type & v12.type & v13.type & v14.type & v15.type & v16.type & v17.type & v18.type & v19.type & v20.type &
+                v21.type & v22.type & v23.type & v24.type & v25.type & v26.type & v27.type & v28.type & v29.type & v30.type &
+                v31.type & v32.type & v33.type & v34.type & v35.type & v36.type & v37.type & v38.type & v39.type & v40.type
+
+            assertCompiles("TypeSet.summonAll[Values, TC]")
+        }
     }
 
     inline def assertType[A, B](using ev: A =:= B): Unit = ()
