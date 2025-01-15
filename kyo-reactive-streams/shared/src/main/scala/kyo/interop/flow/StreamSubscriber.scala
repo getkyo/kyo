@@ -243,21 +243,18 @@ final private[kyo] class StreamSubscriber[V](
         IO(handleInterupt())
     end interupt
 
-    private[interop] def emit(using Frame, Tag[Emit[Chunk[V]]]): Ack < (Emit[Chunk[V]] & Async) =
-        Emit.valueWith(Chunk.empty) { ack =>
-            Loop(ack) {
-                case Ack.Stop => interupt.andThen(Loop.done(Ack.Stop))
-                case Ack.Continue(_) =>
-                    await
-                        .map {
-                            case true => request.andThen(Ack.Continue())
-                            case false => poll.map {
-                                    case Result.Success(nextChunk)  => Emit.value(nextChunk)
-                                    case Result.Error(e: Throwable) => Abort.panic(e)
-                                    case _                          => Ack.Stop
-                                }
-                        }
-                        .map(Loop.continue(_))
+    private[interop] def emit(using Frame, Tag[Emit[Chunk[V]]]): Unit < (Emit[Chunk[V]] & Async) =
+        Emit.valueWith(Chunk.empty) {
+            Loop(()) { _ =>
+                await
+                    .map {
+                        case true => request.andThen(Loop.continue(()))
+                        case false => poll.map {
+                                case Result.Success(nextChunk)  => Emit.value(nextChunk).andThen(Loop.continue(()))
+                                case Result.Error(e: Throwable) => Abort.panic(e)
+                                case _                          => Loop.done(())
+                            }
+                    }
             }
         }
 
