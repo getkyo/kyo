@@ -973,6 +973,7 @@ class FiberTest extends Test:
                         startLatch.release.andThen(promise3.get)
                     ))
                     _ <- startLatch.await
+                    _ <- Async.sleep(10.millis)
                     _ <- fiber.interrupt
                     _ <- untilTrue(interruptCount.get.map(_ == 3))
                 yield ()
