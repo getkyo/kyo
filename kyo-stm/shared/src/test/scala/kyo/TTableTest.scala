@@ -240,6 +240,30 @@ class TTableTest extends Test:
                     assert(age32Results.isEmpty)
             }
         }
+
+        "indexing verification" - {
+            "should only create specified indexes" in run {
+                for
+                    table <- TTable.Indexed.init["name" ~ String & "age" ~ Int & "email" ~ String, "name" ~ String & "age" ~ Int]
+                    indexFields = table.indexFields
+                yield
+                    assert(indexFields.size == 2)
+                    assert(indexFields.exists(_.name == "name"))
+                    assert(indexFields.exists(_.name == "age"))
+                    assert(!indexFields.exists(_.name == "email"))
+            }
+
+            "should handle single index field" in run {
+                for
+                    table <- TTable.Indexed.init["name" ~ String & "age" ~ Int & "email" ~ String, "age" ~ Int]
+                    indexFields = table.indexFields
+                yield
+                    assert(indexFields.size == 1)
+                    assert(indexFields.exists(_.name == "age"))
+                    assert(!indexFields.exists(_.name == "name"))
+                    assert(!indexFields.exists(_.name == "email"))
+            }
+        }
     }
 
     "Complex field manipulation" - {
