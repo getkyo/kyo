@@ -81,6 +81,7 @@ object ZIOs:
             exit match
                 case Exit.Success(a)     => Result.success(a)
                 case Exit.Failure(cause) => cause.toError
+    end extension
 
     extension [E](cause: zio.Cause[E])
         /** Converts a zio.Cause to a kyo.Result.Error.

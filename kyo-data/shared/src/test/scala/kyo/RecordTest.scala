@@ -312,7 +312,7 @@ class RecordTest extends Test:
             assertCompiles("Record.AsFields[Fields22]")
         }
 
-        "intersections with more than 22 fields" in pendingUntilFixed {
+        "intersections with more than 22 fields" in {
             type Fields23 =
                 "1" ~ Int & "2" ~ Int & "3" ~ Int & "4" ~ Int & "5" ~ Int & "6" ~ Int & "7" ~ Int & "8" ~ Int & "9" ~ Int & "10" ~ Int &
                     "11" ~ Int & "12" ~ Int & "13" ~ Int & "14" ~ Int & "15" ~ Int & "16" ~ Int & "17" ~ Int & "18" ~ Int & "19" ~ Int &
@@ -555,7 +555,7 @@ class RecordTest extends Test:
                 val record = ("name" ~ "test" & "age" ~ 42)
                     .asInstanceOf[Record[Int & "name" ~ String & "age" ~ Int]]
                 assertDoesNotCompile("""
-                    record.compact 
+                    record.compact
                 """)
             }
         }

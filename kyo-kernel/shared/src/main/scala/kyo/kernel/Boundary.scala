@@ -34,6 +34,7 @@ object Boundary:
                 def frame = _frame
                 def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
                     f(safepoint.saveTrace(), context.inherit)
+    end extension
 
     inline given derive[Ctx, S]: Boundary[Ctx, S] = ${ boundaryImpl[Ctx, S] }
 

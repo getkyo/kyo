@@ -389,7 +389,10 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that retrieves the dependency from Env and applies the function to it
       */
-    def serviceWith[D](using Tag[D], Frame): [A, S] => (D => A < S) => A < (S & Env[D]) =
+    def serviceWith[D](using
+        Tag[D],
+        Frame
+    ): [A, S] => (D => A < S) => A < (S & Env[D]) =
         [A, S] => (fn: D => (A < S)) => service[D].map(d => fn(d))
 
     /** Sleeps for a given duration using Async.

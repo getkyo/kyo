@@ -161,8 +161,16 @@ case class NettyKyoServer(
         ).flatMap { _ =>
             nettyFutureToScala(ch.close()).flatMap { _ =>
                 if config.shutdownEventLoopGroupOnClose then
-                    nettyFutureToScala(eventLoopGroup.shutdownGracefully(timeout, timeout, java.util.concurrent.TimeUnit.NANOSECONDS)).unit.andThen {
-                        nettyFutureToScala(eventExecutor.shutdownGracefully(timeout, timeout, java.util.concurrent.TimeUnit.NANOSECONDS)).unit
+                    nettyFutureToScala(eventLoopGroup.shutdownGracefully(
+                        timeout,
+                        timeout,
+                        java.util.concurrent.TimeUnit.NANOSECONDS
+                    )).unit.andThen {
+                        nettyFutureToScala(eventExecutor.shutdownGracefully(
+                            timeout,
+                            timeout,
+                            java.util.concurrent.TimeUnit.NANOSECONDS
+                        )).unit
                     }
                 else ()
             }

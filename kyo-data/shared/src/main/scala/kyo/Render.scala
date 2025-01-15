@@ -97,3 +97,4 @@ extension (sc: StringContext)
             text = text + ai.next
             text = text + StringContext.processEscapes(pi.next())
         text
+end extension

@@ -483,13 +483,13 @@ final class Scheduler(
     }
 }
 
-object Scheduler extends Singleton[Scheduler] {
-
-    override protected def init() = new Scheduler()
+object Scheduler {
 
     private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
     private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
     private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
+
+    val get = new Scheduler()
 
     /** Configuration parameters controlling worker behavior and performance characteristics.
       *

@@ -280,6 +280,7 @@ object Result:
             self match
                 case self: Fail[E] => self.error
                 case self: Panic   => self.exception
+    end extension
 
     /** Provides extension methods for Result type */
     extension [E, A](self: Result[E, A])

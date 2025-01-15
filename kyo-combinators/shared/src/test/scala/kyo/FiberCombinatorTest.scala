@@ -62,8 +62,7 @@ class FiberCombinatorTest extends Test:
                     }.map { handledEffect =>
                         assert(handledEffect match
                             case Result.Fail(_: Timeout) => true
-                            case _                       => false
-                        )
+                            case _                       => false)
                     }
                 }
             }
