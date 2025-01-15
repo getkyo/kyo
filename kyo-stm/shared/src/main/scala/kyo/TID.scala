@@ -15,11 +15,14 @@ private[kyo] object TID:
             tidLocal.let(tid)(f(tid))
         }
 
-    inline def use[A, S](inline f: Long => A < S)(using inline frame: Frame): A < S =
+    inline def useIO[A, S](inline f: Long => A < S)(using inline frame: Frame): A < S =
         tidLocal.use(f(_))
 
-    inline def useRequired[A, S](inline f: Long => A < S)(using inline frame: Frame): A < S =
-        tidLocal.use {
+    inline def useIOUnsafe[A, S](inline f: AllowUnsafe ?=> Long => A < S)(using inline frame: Frame): A < (S & IO) =
+        IO.Unsafe.withLocal(tidLocal)(f(_))
+
+    inline def useIORequired[A, S](inline f: Long => A < S)(using inline frame: Frame): A < (S & IO) =
+        IO.withLocal(tidLocal) {
             case -1L => bug("STM operation attempted outside of STM.run - this should be impossible due to effect typing")
             case tid => f(tid)
         }
