@@ -2,6 +2,7 @@ package kyo
 
 import Record.Field
 import kyo.Record.AsRecord.FieldsOf
+import kyo.internal.TypeSet
 
 class RecordTest extends Test:
 
@@ -384,8 +385,6 @@ class RecordTest extends Test:
     }
 
     "equality and hashCode" - {
-        // Bypass CanEqual since it's not provided
-        given [A, B]: CanEqual[A, B] = CanEqual.derived
 
         "equal records with same fields" in {
             val record1 = "name" ~ "Alice" & "age" ~ 30
@@ -398,13 +397,6 @@ class RecordTest extends Test:
         "not equal with different values" in {
             val record1 = "name" ~ "Alice" & "age" ~ 30
             val record2 = "name" ~ "Alice" & "age" ~ 31
-
-            assert(record1 != record2)
-        }
-
-        "not equal with different field names" in {
-            val record1 = "name" ~ "Alice" & "age" ~ 30
-            val record2 = "name" ~ "Alice" & "years" ~ 30
 
             assert(record1 != record2)
         }
@@ -422,6 +414,63 @@ class RecordTest extends Test:
             val record2 = "name" ~ "Alice"
 
             assert(record1 != record2)
+        }
+
+        "compile when all fields have CanEqual" in {
+            val record1 = "name" ~ "Alice" & "age" ~ 30 & "scores" ~ List(1, 2, 3)
+            val record2 = "name" ~ "Alice" & "age" ~ 30 & "scores" ~ List(1, 2, 3)
+
+            assert(record1 == record2)
+        }
+
+        "not compile with different field names" in {
+            val record1 = "name" ~ "Alice" & "age" ~ 30
+            val record2 = "name" ~ "Alice" & "years" ~ 30
+
+            assertDoesNotCompile("""
+                assert(record1 != record2)
+            """)
+        }
+
+        "not compile when fields lack CanEqual" in {
+            case class NoEqual(x: Int)
+            val record1: Record["test" ~ NoEqual] = "test" ~ NoEqual(1)
+            val record2                           = "test" ~ NoEqual(1)
+            assertDoesNotCompile("""
+                assert(record1 == record2)
+            """)
+        }
+
+        "subtype equality" - {
+
+            "not equal when values differ" in {
+                val full: Record["name" ~ String & "age" ~ Int & "city" ~ String] =
+                    "name" ~ "Alice" & "age" ~ 30 & "city" ~ "Paris"
+                val partial: Record["name" ~ String & "age" ~ Int] =
+                    "name" ~ "Bob" & "age" ~ 30
+
+                assert(partial != full)
+                assert(full != partial)
+            }
+
+            "equal across multiple subtype levels" in {
+                val full: Record["name" ~ String & "age" ~ Int & "city" ~ String] =
+                    "name" ~ "Alice" & "age" ~ 30 & "city" ~ "Paris"
+                val medium: Record["name" ~ String & "age" ~ Int] = full
+                val minimal: Record["name" ~ String]              = full
+
+                assert(minimal == medium)
+                assert(medium == full)
+                assert(minimal == full)
+            }
+
+            "maintains symmetry" in {
+                val full: Record["name" ~ String & "age" ~ Int & "city" ~ String] =
+                    "name" ~ "Alice" & "age" ~ 30 & "city" ~ "Paris"
+                val partial: Record["name" ~ String & "age" ~ Int] = full
+
+                assert((full == partial) == (partial == full))
+            }
         }
     }
 
