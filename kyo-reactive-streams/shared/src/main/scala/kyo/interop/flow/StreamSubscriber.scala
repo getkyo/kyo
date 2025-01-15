@@ -252,7 +252,7 @@ final private[kyo] class StreamSubscriber[V](
                         case false => poll.map {
                                 case Result.Success(nextChunk)  => Emit.value(nextChunk).andThen(Loop.continue(()))
                                 case Result.Error(e: Throwable) => Abort.panic(e)
-                                case _                          => Loop.done(())
+                                case _                          => Loop.done
                             }
                     }
             }

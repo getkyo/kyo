@@ -195,7 +195,7 @@ object StreamCompression:
                     Emit.valueWith(chunk):
                         maybeEmitFn match
                             case Present(emitFn) => Loop.continue(DeflateState.DeflateInput(deflater, emitFn()))
-                            case Absent          => IO(deflater.end()).andThen(Loop.done(()))
+                            case Absent          => IO(deflater.end()).andThen(Loop.done)
         end emit
 
         Stream(emit(stream, bufferSize, compressionLevel, strategy, flushMode, noWrap))
@@ -318,7 +318,7 @@ object StreamCompression:
                         deflater.end()
                         trailer
                     }.map { trailer =>
-                        Emit.valueWith(trailer)(Loop.done(()))
+                        Emit.valueWith(trailer)(Loop.done)
                     }
         end emit
 
@@ -381,12 +381,12 @@ object StreamCompression:
                                         .map: inflater =>
                                             Loop.continue(InflateState.InflateInput(inflater, emitFn()))
                                 case Absent =>
-                                    Loop.done(())
+                                    Loop.done
                     else if inflater.needsInput then
                         Emit.valueWith(Chunk.empty[Byte]):
                             maybeEmitFn match
                                 case Present(emitFn) => Loop.continue(InflateState.InflateInput(inflater, emitFn()))
-                                case Absent          => Loop.done(())
+                                case Absent          => Loop.done
                     else
                         bufferIO.map: buffer =>
                             Abort
@@ -525,12 +525,12 @@ object StreamCompression:
                             case Absent -> _ =>
                                 if accBytes.isEmpty then
                                     // No data, we stop
-                                    Loop.done(())
+                                    Loop.done
                                 else
                                     // There are some data, invalid GZip header
                                     Abort
                                         .fail(new StreamCompressionException("Invalid GZip header"))
-                                        .andThen(Loop.done(()))
+                                        .andThen(Loop.done)
                     else
                         val header = accBytes.take(fixedHeaderLength)
                         val rest   = accBytes.drop(fixedHeaderLength)
@@ -571,7 +571,7 @@ object StreamCompression:
                             case Absent -> _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
-                                    .andThen(Loop.done(()))
+                                    .andThen(Loop.done)
                     else
                         val xLen                  = 2
                         val extraBytes            = usize16(accBytes(fixedHeaderLength), accBytes(fixedHeaderLength + 1))
@@ -589,7 +589,7 @@ object StreamCompression:
                                 case Absent -> _ =>
                                     Abort
                                         .fail(new StreamCompressionException("Invalid GZip header"))
-                                        .andThen(Loop.done(()))
+                                        .andThen(Loop.done)
                         else
                             val headerWithExtra = accBytes.take(headerWithExtraLength)
                             val rest            = accBytes.drop(headerWithExtraLength)
@@ -617,7 +617,7 @@ object StreamCompression:
                             case Absent -> _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
-                                    .andThen(Loop.done(()))
+                                    .andThen(Loop.done)
                     else
                         val upToZero = bytes.take(zeroIdx + 1)
                         val rest     = bytes.drop(zeroIdx + 1)
@@ -636,7 +636,7 @@ object StreamCompression:
                             case Absent -> _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
-                                    .andThen(Loop.done(()))
+                                    .andThen(Loop.done)
                     else
                         val crc16Bytes    = accBytes.take(2)
                         val rest          = accBytes.drop(2)
@@ -645,7 +645,7 @@ object StreamCompression:
                         if computedCrc16 != expectedCrc16 then
                             Abort
                                 .fail(new StreamCompressionException("Invalid GZip header crc16"))
-                                .andThen(Loop.done(()))
+                                .andThen(Loop.done)
                         else
                             nextState(false, 0, false)(
                                 rest,
@@ -712,7 +712,7 @@ object StreamCompression:
                                         Loop.continue(GunzipState.CheckTrailer(accBytes, inflater, contentCrc32, Absent))
                             case Absent =>
                                 Abort.fail[StreamCompressionException](StreamCompressionException("Checksum error"))
-                                    .andThen(Loop.done(()))
+                                    .andThen(Loop.done)
                     else
                         val trailerBytes  = accBytes.take(8)
                         val rest          = accBytes.drop(8)
@@ -723,11 +723,11 @@ object StreamCompression:
                         if expectedCrc32.toInt != crc32 then
                             Abort
                                 .fail(StreamCompressionException("Invalid CRC32"))
-                                .andThen(Loop.done(()))
+                                .andThen(Loop.done)
                         else if expectedIsize.toInt != isize then
                             Abort
                                 .fail(StreamCompressionException("Invalid ISIZE"))
-                                .andThen(Loop.done(()))
+                                .andThen(Loop.done)
                         else
                             maybeEmitFn match
                                 case Present(emitFn) =>
@@ -735,7 +735,7 @@ object StreamCompression:
                                         .map: headerCrc32 =>
                                             Loop.continue(GunzipState.ParseHeader(rest, headerCrc32, emitFn()))
                                 case Absent =>
-                                    Emit.valueWith(rest)(Loop.done(()))
+                                    Emit.valueWith(rest)(Loop.done)
                         end if
                     end if
         end emit

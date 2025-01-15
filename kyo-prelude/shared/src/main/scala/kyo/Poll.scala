@@ -213,12 +213,12 @@ object Poll:
                         // This creates the demand-driven cycle between emit and poll
                         ArrowEffect.handleFirst(pollTag, poll)(
                             handle = [C2] =>
-                                (unit, pollCont) =>
+                                (_, pollCont) =>
                                     // Continue the emit-poll cycle:
                                     // 1. Pass the ack back to emitter to control flow
                                     // 2. Pass the emitted value to poller for consumption
                                     // 3. Recursively continue the cycle
-                                    Loop.continue(emitCont(unit), pollCont(Maybe(emitted))),
+                                    Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
                             // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
                             done = b =>
                                 // Poller completed early (e.g., received all needed values)

@@ -159,7 +159,6 @@ sealed abstract class Stream[V, -S]:
       *   A new stream containing at most n elements from the original stream
       */
     def take(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
-        val kyoUnit = Kyo.pure[Unit, S & Emit[Chunk[V]]](())
         if n <= 0 then Stream.empty
         else
             Stream[V, S](ArrowEffect.handleState(tag, n, emit)(
@@ -167,7 +166,9 @@ sealed abstract class Stream[V, -S]:
                     (input, state, cont) =>
                         val c   = input.take(state)
                         val nst = state - c.size
-                        Emit.valueWith(c)((nst, if nst <= 0 then kyoUnit else cont(())))
+                        Emit.valueWith(c)(
+                            (nst, if nst <= 0 then Kyo.pure[Unit, S & Emit[Chunk[V]]](()) else cont(()))
+                    )
             ))
         end if
     end take
@@ -421,7 +422,7 @@ object Stream:
                 val _chunkSize      = chunkSize max 1
                 Loop(chunk) { (c) =>
                     if _chunkSize >= c.length then
-                        Emit.valueWith(c)(Loop.done(()))
+                        Emit.valueWith(c)(Loop.done)
                     else
                         Emit.valueWith(c.take(_chunkSize))(Loop.continue(c.dropLeft(_chunkSize)))
                 }
@@ -453,7 +454,7 @@ object Stream:
                         val continue =
                             if step > 0 then current < end
                             else current > end
-                        if !continue then Loop.done(())
+                        if !continue then Loop.done
                         else
                             val remaining =
                                 if step > 0 then
