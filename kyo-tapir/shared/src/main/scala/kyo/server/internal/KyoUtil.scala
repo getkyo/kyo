@@ -11,7 +11,7 @@ object KyoUtil:
                 nettyFuture.addListener((future: ChannelFuture) =>
                     discard {
                         import AllowUnsafe.embrace.danger
-                        if future.isSuccess then p.unsafe.complete(Result.success(future.channel()))
+                        if future.isSuccess then p.unsafe.complete(Result.succeed(future.channel()))
                         else p.unsafe.complete(Result.panic(future.cause()))
                     }
                 )
@@ -25,7 +25,7 @@ object KyoUtil:
                 f.addListener((future: io.netty.util.concurrent.Future[A]) =>
                     discard {
                         import AllowUnsafe.embrace.danger
-                        if future.isSuccess then p.unsafe.complete(Result.success(future.getNow))
+                        if future.isSuccess then p.unsafe.complete(Result.succeed(future.getNow))
                         else p.unsafe.complete(Result.panic(future.cause()))
                     }
                 )

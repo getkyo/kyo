@@ -12,7 +12,7 @@ class InstantTest extends Test:
 
         "invalid string" in {
             val result = Instant.parse("invalid")
-            assert(result.isFail)
+            assert(result.isFailure)
         }
 
         "parse near Min" in {

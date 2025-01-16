@@ -12,7 +12,7 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Abort[String]
     def run(v: Future[Assertion] < (Async & Abort[String] & Resource)): Future[Assertion] =
         import AllowUnsafe.embrace.danger
         Abort.run[Any](v)
-            .map(_.fold(e => throw new Exception("Test failed with " + e))(identity))
+            .map(_.foldError(e => throw new Exception("Test failed with " + e))(identity))
             .pipe(Resource.run)
             .pipe(Async.run)
             .map(_.toFuture)

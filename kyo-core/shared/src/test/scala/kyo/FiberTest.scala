@@ -9,14 +9,14 @@ class FiberTest extends Test:
         "initWith" in run {
             for
                 result <- Promise.initWith[Nothing, Int] { p =>
-                    p.complete(Result.success(42)).andThen(p.get)
+                    p.complete(Result.succeed(42)).andThen(p.get)
                 }
             yield assert(result == 42)
         }
         "complete" in run {
             for
                 p <- Promise.init[Nothing, Int]
-                a <- p.complete(Result.success(1))
+                a <- p.complete(Result.succeed(1))
                 b <- p.done
                 c <- p.get
             yield assert(a && b && c == 1)
@@ -24,8 +24,8 @@ class FiberTest extends Test:
         "complete twice" in run {
             for
                 p <- Promise.init[Nothing, Int]
-                a <- p.complete(Result.success(1))
-                b <- p.complete(Result.success(2))
+                a <- p.complete(Result.succeed(1))
+                b <- p.complete(Result.succeed(2))
                 c <- p.done
                 d <- p.get
             yield assert(a && !b && c && d == 1)
@@ -53,7 +53,7 @@ class FiberTest extends Test:
                 for
                     p1 <- Promise.init[Nothing, Int]
                     p2 <- Promise.init[Nothing, Int]
-                    a  <- p2.complete(Result.success(42))
+                    a  <- p2.complete(Result.succeed(42))
                     b  <- p1.become(p2)
                     c  <- p1.done
                     d  <- p1.get
@@ -77,8 +77,8 @@ class FiberTest extends Test:
                 for
                     p1 <- Promise.init[Nothing, Int]
                     p2 <- Promise.init[Nothing, Int]
-                    a  <- p1.complete(Result.success(42))
-                    b  <- p2.complete(Result.success(99))
+                    a  <- p1.complete(Result.succeed(42))
+                    b  <- p2.complete(Result.succeed(99))
                     c  <- p1.become(p2)
                     d  <- p1.get
                 yield assert(a && b && !c && d == 42)
@@ -97,7 +97,7 @@ class FiberTest extends Test:
         "completeDiscard" in run {
             for
                 p <- Promise.init[Nothing, Int]
-                _ <- p.completeDiscard(Result.success(1))
+                _ <- p.completeDiscard(Result.succeed(1))
                 v <- p.get
             yield assert(v == 1)
         }
@@ -106,7 +106,7 @@ class FiberTest extends Test:
             for
                 p1 <- Promise.init[Nothing, Int]
                 p2 <- Promise.init[Nothing, Int]
-                _  <- p2.complete(Result.success(42))
+                _  <- p2.complete(Result.succeed(42))
                 _  <- p1.becomeDiscard(p2)
                 v  <- p1.get
             yield assert(v == 42)
@@ -288,7 +288,7 @@ class FiberTest extends Test:
                     _       <- promise.onInterrupt(_ => latch.release)
                     result  <- Fiber.parallelUnbounded(Seq(promise.get, Abort.fail(new Exception))).map(_.getResult)
                     _       <- latch.await
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
             "promise + delayed abort" in runNotJS {
                 for
@@ -297,7 +297,7 @@ class FiberTest extends Test:
                     _       <- promise.onInterrupt(_ => latch.release)
                     result  <- Fiber.parallelUnbounded(Seq(promise.get, Async.delay(5.millis)(Abort.fail(new Exception)))).map(_.getResult)
                     _       <- latch.await
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
             "slow + fast abort" in runNotJS {
                 val ex1 = new Exception
@@ -349,7 +349,7 @@ class FiberTest extends Test:
             val ex    = new Exception("Test exception")
             val fiber = Fiber.fail[Exception, Int](ex)
             for
-                mappedFiber <- fiber.mapResult(r => r.mapFail(_.getMessage))
+                mappedFiber <- fiber.mapResult(r => r.mapFailure(_.getMessage))
                 result      <- Abort.run(mappedFiber.get)
             yield assert(result == Result.fail("Test exception"))
             end for
@@ -444,14 +444,14 @@ class FiberTest extends Test:
             val fiber = Fiber.success[Nothing, Int](42)
             for
                 result <- fiber.useResult(r => r.map(_ * 2))
-            yield assert(result == Result.success(84))
+            yield assert(result == Result.succeed(84))
         }
 
         "failure" in run {
             val ex    = new Exception("Test exception")
             val fiber = Fiber.fail[Exception, Int](ex)
             for
-                result <- fiber.useResult(r => r.mapFail(_.getMessage))
+                result <- fiber.useResult(r => r.mapFailure(_.getMessage))
             yield assert(result == Result.fail("Test exception"))
         }
 
@@ -459,7 +459,7 @@ class FiberTest extends Test:
             val fiber = Fiber.success[Nothing, Int](42)
             for
                 result <- Abort.run[Throwable](fiber.useResult(_ => throw new RuntimeException("UseResult exception")))
-            yield assert(result.isFail)
+            yield assert(result.isFailure)
         }
     }
 
@@ -479,11 +479,11 @@ class FiberTest extends Test:
                 fiber <- Promise.init[Nothing, Int]
                 _     <- fiber.onComplete(v => IO { completed = Maybe(v) })
                 notCompletedYet = completed
-                _ <- fiber.complete(Result.success(42))
+                _ <- fiber.complete(Result.succeed(42))
                 completedAfterWait = completed
             yield
                 assert(notCompletedYet.isEmpty)
-                assert(completedAfterWait == Maybe(Result.success(42)))
+                assert(completedAfterWait == Maybe(Result.succeed(42)))
             end for
         }
     }
@@ -504,7 +504,7 @@ class FiberTest extends Test:
             for
                 fiber <- Promise.init[Nothing, Int]
                 _     <- fiber.onInterrupt(_ => IO { interrupted = true })
-                _     <- fiber.complete(Result.success(42))
+                _     <- fiber.complete(Result.succeed(42))
                 _     <- fiber.get
             yield assert(!interrupted)
             end for
@@ -528,14 +528,14 @@ class FiberTest extends Test:
             val fiber = Fiber.success[Nothing, Int](42)
             for
                 result <- fiber.block(Duration.Infinity)
-            yield assert(result == Result.success(42))
+            yield assert(result == Result.succeed(42))
         }
 
         "timeout" in runNotJS {
             for
                 fiber  <- Async.run(Async.sleep(1.second).andThen(42))
                 result <- fiber.block(1.millis)
-            yield assert(result.isFail)
+            yield assert(result.isFailure)
         }
     }
 
@@ -616,14 +616,14 @@ class FiberTest extends Test:
         "variance with useResult" in run {
             val f = Fiber.success[Exception, String]("Hello")
             f.useResult(_.map(_.length)).map { result =>
-                assert(result == Result.success(5))
+                assert(result == Result.succeed(5))
             }
         }
 
         "variance with Promise" in run {
             for
                 p <- Promise.init[Exception, String]
-                _ <- p.complete(Result.success("Hello"))
+                _ <- p.complete(Result.succeed("Hello"))
                 f: Fiber[Throwable, AnyRef] = p
                 result <- f.get
             yield assert(result == "Hello")
@@ -651,7 +651,7 @@ class FiberTest extends Test:
             "map" in run {
                 val fiber       = Promise.Unsafe.init[Nothing, Int]()
                 val mappedFiber = fiber.map(_ * 2)
-                discard(fiber.complete(Result.success(21)))
+                discard(fiber.complete(Result.succeed(21)))
                 for
                     result <- mappedFiber.safe.get
                 yield assert(result == 42)
@@ -659,8 +659,8 @@ class FiberTest extends Test:
 
             "flatMap" in run {
                 val fiber           = Promise.Unsafe.init[Nothing, Int]()
-                val flatMappedFiber = fiber.flatMap(x => Fiber.Unsafe.init[Nothing, String](Result.success(x.toString)))
-                discard(fiber.complete(Result.success(42)))
+                val flatMappedFiber = fiber.flatMap(x => Fiber.Unsafe.init[Nothing, String](Result.succeed(x.toString)))
+                discard(fiber.complete(Result.succeed(42)))
                 for
                     result <- flatMappedFiber.safe.get
                 yield assert(result == "42")
@@ -669,7 +669,7 @@ class FiberTest extends Test:
             "mapResult" in run {
                 val fiber       = Promise.Unsafe.init[Nothing, Int]()
                 val mappedFiber = fiber.mapResult(_.map(_ * 2))
-                fiber.completeDiscard(Result.success(21))
+                fiber.completeDiscard(Result.succeed(21))
                 for
                     result <- mappedFiber.safe.get
                 yield assert(result == 42)
@@ -684,7 +684,7 @@ class FiberTest extends Test:
 
             "complete" in run {
                 val promise   = Promise.Unsafe.init[Nothing, Int]()
-                val completed = promise.complete(Result.success(42))
+                val completed = promise.complete(Result.succeed(42))
                 assert(completed)
                 for
                     result <- promise.safe.get
@@ -693,7 +693,7 @@ class FiberTest extends Test:
 
             "completeDiscard" in run {
                 val promise = Promise.Unsafe.init[Nothing, Int]()
-                promise.completeDiscard(Result.success(42))
+                promise.completeDiscard(Result.succeed(42))
                 for
                     result <- promise.safe.get
                 yield assert(result == 42)
@@ -702,7 +702,7 @@ class FiberTest extends Test:
             "become" in run {
                 val promise1 = Promise.Unsafe.init[Nothing, Int]()
                 val promise2 = Promise.Unsafe.init[Nothing, Int]()
-                promise2.completeDiscard(Result.success(42))
+                promise2.completeDiscard(Result.succeed(42))
                 val became = promise1.become(promise2.safe)
                 assert(became)
                 for
@@ -713,7 +713,7 @@ class FiberTest extends Test:
             "becomeDiscard" in run {
                 val promise1 = Promise.Unsafe.init[Nothing, Int]()
                 val promise2 = Promise.Unsafe.init[Nothing, Int]()
-                promise2.completeDiscard(Result.success(42))
+                promise2.completeDiscard(Result.succeed(42))
                 promise1.becomeDiscard(promise2.safe)
                 for
                     result <- promise1.safe.get
@@ -913,7 +913,7 @@ class FiberTest extends Test:
                     _      <- latch.release
                     result <- Abort.run(fiber.get)
                 yield
-                    assert(result.isFail)
+                    assert(result.isFailure)
                     assert(result.failure.exists(e => e == error1 || e == error2))
                     ()
             }.andThen(succeed)
@@ -998,9 +998,9 @@ class FiberTest extends Test:
                     ))
                     _      <- startLatch.await
                     done1  <- fiber.done
-                    _      <- promise1.complete(Result.success(1))
+                    _      <- promise1.complete(Result.succeed(1))
                     done2  <- fiber.done
-                    _      <- promise2.complete(Result.success(1))
+                    _      <- promise2.complete(Result.succeed(1))
                     result <- fiber.get
                     _      <- untilTrue(interruptCount.get.map(_ == 1))
                 yield

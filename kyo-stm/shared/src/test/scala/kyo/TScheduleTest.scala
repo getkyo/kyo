@@ -72,7 +72,7 @@ class TScheduleTest extends Test:
                 }
                 nextAfterRollback <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterRollback == Maybe(1.second))
         }
     }
@@ -131,7 +131,7 @@ class TScheduleTest extends Test:
                 }
                 nextAfterRollback <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterRollback == Maybe(1.second))
         }
     }
@@ -151,7 +151,7 @@ class TScheduleTest extends Test:
                 }
                 nextAfterFailure <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterFailure == Maybe(1.second))
         }
 
@@ -173,7 +173,7 @@ class TScheduleTest extends Test:
                 }
                 nextAfterFailure <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterFailure == Maybe(1.second))
         }
     }

@@ -208,7 +208,7 @@ object System:
             new Parser[E, A]:
                 def apply(s: String)(using Frame) = f(s)
 
-        given Parser[Nothing, String]                    = Parser(v => Result.success(v))
+        given Parser[Nothing, String]                    = Parser(v => Result.succeed(v))
         given Parser[NumberFormatException, Int]         = Parser(v => Result.catching[NumberFormatException](v.toInt))
         given Parser[NumberFormatException, Long]        = Parser(v => Result.catching[NumberFormatException](v.toLong))
         given Parser[NumberFormatException, Float]       = Parser(v => Result.catching[NumberFormatException](v.toFloat))
@@ -241,7 +241,7 @@ object System:
 
         given Parser[IllegalArgumentException, Char] =
             Parser { v =>
-                if v.length() == 1 then Result.success(v(0))
+                if v.length() == 1 then Result.succeed(v(0))
                 else Result.fail(new IllegalArgumentException("String must have exactly one character"))
             }
 

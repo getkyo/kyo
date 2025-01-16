@@ -394,7 +394,7 @@ class StreamTest extends Test:
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
             val transformed = stream.map(v => Abort.catching[NumberFormatException](v.toInt)).run
-            assert(Abort.run(transformed).eval.isFail)
+            assert(Abort.run(transformed).eval.isFailure)
         }
 
         "stack safety" in {
@@ -440,7 +440,7 @@ class StreamTest extends Test:
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
             val transformed = stream.mapChunk(c => Abort.catching[NumberFormatException](c.map(_.toInt))).run
-            assert(Abort.run(transformed).eval.isFail)
+            assert(Abort.run(transformed).eval.isFailure)
         }
 
         "stack safety" in {
@@ -784,7 +784,7 @@ class StreamTest extends Test:
             val folded = stream.runFold(0) { (acc, v) =>
                 if acc < 6 then acc + v else Abort.fail(())
             }
-            assert(Abort.run[Unit](folded).eval.fold(_ => true)(_ => false))
+            assert(Abort.run[Unit](folded).eval.foldError(_ => true)(_ => false))
         }
 
         "stack safety" in {

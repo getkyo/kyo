@@ -123,7 +123,7 @@ object Console:
                 new Proxy(console.unsafe):
                     override def readLine()(using AllowUnsafe) =
                         if !it.hasNext then Result.fail(new EOFException("Consoles.readLine failed."))
-                        else Result.success(it.next())
+                        else Result.succeed(it.next())
             let(Console(proxy))(v)
         }
 
@@ -153,10 +153,10 @@ object Console:
             val stdErr = new StringBuffer
             val proxy =
                 new Proxy(console.unsafe):
-                    override def print(s: String)(using AllowUnsafe)        = Result.success(stdOut.append(s)).unit
-                    override def printErr(s: String)(using AllowUnsafe)     = Result.success(stdErr.append(s)).unit
-                    override def printLine(s: String)(using AllowUnsafe)    = Result.success(stdOut.append(s + "\n")).unit
-                    override def printLineErr(s: String)(using AllowUnsafe) = Result.success(stdErr.append(s + "\n")).unit
+                    override def print(s: String)(using AllowUnsafe)        = Result.succeed(stdOut.append(s)).unit
+                    override def printErr(s: String)(using AllowUnsafe)     = Result.succeed(stdErr.append(s)).unit
+                    override def printLine(s: String)(using AllowUnsafe)    = Result.succeed(stdOut.append(s + "\n")).unit
+                    override def printLineErr(s: String)(using AllowUnsafe) = Result.succeed(stdErr.append(s + "\n")).unit
             let(Console(proxy))(v)
                 .map(r => IO((Out(stdOut.toString(), stdErr.toString()), r)))
         }

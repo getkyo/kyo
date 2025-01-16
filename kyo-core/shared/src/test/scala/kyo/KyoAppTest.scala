@@ -53,7 +53,7 @@ class KyoAppTest extends Test:
             yield 1
 
         import AllowUnsafe.embrace.danger
-        assert(KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) == Result.success(1))
+        assert(KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) == Result.succeed(1))
     }
     "effects in JS" taggedAs jsOnly in {
         val promise = scala.concurrent.Promise[Assertion]()
@@ -81,8 +81,8 @@ class KyoAppTest extends Test:
 
         import AllowUnsafe.embrace.danger
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) match
-            case Result.Fail(exception: RuntimeException) => assert(exception.getMessage == "Aborts!")
-            case _                                        => fail("Unexpected Success...")
+            case Result.Failure(exception: RuntimeException) => assert(exception.getMessage == "Aborts!")
+            case _                                           => fail("Unexpected Success...")
     }
 
     "effect mismatch" taggedAs jvmOnly in {

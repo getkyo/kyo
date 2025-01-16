@@ -65,7 +65,7 @@ class STMTest extends Test:
                         yield v
                     }
                 }
-            yield assert(result.isFail)
+            yield assert(result.isFailure)
         }
 
         "retry with schedule" in run {
@@ -82,7 +82,7 @@ class STMTest extends Test:
                     }
                 }
                 count <- counter.get
-            yield assert(result.isFail && count == 4)
+            yield assert(result.isFailure && count == 4)
         }
     }
 
@@ -261,7 +261,7 @@ class STMTest extends Test:
                                         yield ()
                                     }
                                 }
-                        yield assert(result.isFail)
+                        yield assert(result.isFailure)
                     }
                 finalValue <- STM.run(ref.get)
             yield assert(finalValue == 1)
@@ -375,7 +375,7 @@ class STMTest extends Test:
                         }
                         r3 <- ref.get
                         _  <- ref.set(3)
-                    yield (r1, r2.isFail, r3)
+                    yield (r1, r2.isFailure, r3)
                 }
                 finalValue <- STM.run(ref.get)
             yield assert(result == (1, true, 1) && finalValue == 3)
@@ -396,7 +396,7 @@ class STMTest extends Test:
                     }
                 }
                 value <- STM.run(ref.get)
-            yield assert(result.isFail && value == 42)
+            yield assert(result.isFailure && value == 42)
         }
 
         "multiple refs rollback on failure" in run {
@@ -414,7 +414,7 @@ class STMTest extends Test:
                 }
                 value1 <- STM.run(ref1.get)
                 value2 <- STM.run(ref2.get)
-            yield assert(result.isFail && value1 == 10 && value2 == 20)
+            yield assert(result.isFailure && value1 == 10 && value2 == 20)
         }
 
         "nested transaction rollback on inner failure" in run {
@@ -434,7 +434,7 @@ class STMTest extends Test:
                     }
                 }
                 value <- STM.run(ref.get)
-            yield assert(result.isFail && value == 1)
+            yield assert(result.isFailure && value == 1)
         }
 
         "partial updates within transaction are atomic" in run {
@@ -454,7 +454,7 @@ class STMTest extends Test:
                 value1 <- STM.run(ref1.get)
                 value2 <- STM.run(ref2.get)
             yield assert(
-                result.isFail &&
+                result.isFailure &&
                     value1 == "initial1" &&
                     value2 == "initial2"
             )
@@ -697,7 +697,7 @@ class STMTest extends Test:
                     }
                 }
                 value <- STM.run(ref.get)
-            yield assert(result.isFail && value == 2)
+            yield assert(result.isFailure && value == 2)
         }
 
         "transaction ID should not leak across async boundaries" in run {

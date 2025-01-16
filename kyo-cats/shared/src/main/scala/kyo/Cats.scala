@@ -21,7 +21,7 @@ object Cats:
             val p                = Promise.Unsafe.init[Nothing, A]()
             val (future, cancel) = io.unsafeToFutureCancelable()
             future.onComplete {
-                case Success(v)  => p.complete(Result.success(v))
+                case Success(v)  => p.complete(Result.succeed(v))
                 case Failure(ex) => p.complete(Result.panic(ex))
             }(ExecutionContext.parasitic)
             p.onInterrupt(_ => discard(cancel()))

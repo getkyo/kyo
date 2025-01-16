@@ -53,7 +53,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
             val canceller =
                 register {
                     case Left(t)  => discard(p.complete(Result.panic(t)))
-                    case Right(t) => discard(p.complete(Result.success(t)))
+                    case Right(t) => discard(p.complete(Result.succeed(t)))
                 }
             p.onInterrupt { _ =>
                 canceller.cancel()
