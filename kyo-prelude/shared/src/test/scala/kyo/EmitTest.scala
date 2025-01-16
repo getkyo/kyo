@@ -75,9 +75,9 @@ class EmitTest extends Test:
                 else Emit.valueWith(i)(emits(i + 1))
             end emits
 
-            Emit.runForeach { (v: Int) =>
+            Emit.runForeach(emits(0)) { v =>
                 seen :+= v
-            }(emits(0)).eval
+            }.eval
             assert(seen == List(0, 1, 2, 3, 4))
         }
 
@@ -89,70 +89,12 @@ class EmitTest extends Test:
 
             val result =
                 Var.runTuple(0) {
-                    Emit.runForeach { (v: Int) =>
+                    Emit.runForeach(emits(0)) { v =>
                         for
                             count <- Var.get[Int]
                             _     <- Var.set(count + 1)
                             _ = seen :+= v
                         yield ()
-                    }(emits(0))
-                }.eval
-            assert(seen == List(0, 1, 2, 3, 4))
-            assert(result == (5, ()))
-        }
-
-        "early termination" in {
-            var seen = List.empty[Int]
-            def emits(i: Int): Unit < Emit[Int] =
-                if i == 5 then ()
-                else Emit.valueWith(i)(emits(i + 1))
-            end emits
-
-            val result = Abort.run[String] {
-                Emit.runForeach { (v: Int) =>
-                    seen :+= v
-                    if v < 3 then ()
-                    else Abort.fail("Reached 3")
-                }(emits(0))
-            }.eval
-            assert(seen == List(0, 1, 2, 3))
-            assert(result == Result.fail("Reached 3"))
-        }
-    }
-
-    "runWhile" - {
-        "with pure function" in {
-            var seen = List.empty[Int]
-            def emits(i: Int): Unit < Emit[Int] =
-                if i == 5 then ()
-                else Emit.valueWith(i)(emits(i + 1))
-            end emits
-
-            Emit.runWhile { (v: Int) =>
-                seen :+= v
-                if v < 3 then true
-                else false
-            }(emits(0)).eval
-            assert(seen == List(0, 1, 2, 3))
-        }
-
-        "with effects" in {
-            var seen = List.empty[Int]
-            def emits(i: Int): Unit < Emit[Int] =
-                if i == 5 then ()
-                else Emit.valueWith(i)(emits(i + 1))
-
-            val result =
-                Env.run(3) {
-                    Var.runTuple(0) {
-                        Emit.runWhile { (v: Int) =>
-                            for
-                                threshold <- Env.get[Int]
-                                count     <- Var.get[Int]
-                                _         <- Var.set(count + 1)
-                                _ = seen :+= v
-                            yield if v <= threshold then true else false
-                        }(emits(0))
                     }
                 }.eval
             assert(seen == List(0, 1, 2, 3, 4))
@@ -167,11 +109,69 @@ class EmitTest extends Test:
             end emits
 
             val result = Abort.run[String] {
-                Emit.runWhile { (v: Int) =>
+                Emit.runForeach(emits(0)) { v =>
+                    seen :+= v
+                    if v < 3 then ()
+                    else Abort.fail("Reached 3")
+                }
+            }.eval
+            assert(seen == List(0, 1, 2, 3))
+            assert(result == Result.fail("Reached 3"))
+        }
+    }
+
+    "runWhile" - {
+        "with pure function" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+            end emits
+
+            Emit.runWhile(emits(0)) { v =>
+                seen :+= v
+                if v < 3 then true
+                else false
+            }.eval
+            assert(seen == List(0, 1, 2, 3))
+        }
+
+        "with effects" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+
+            val result =
+                Env.run(3) {
+                    Var.runTuple(0) {
+                        Emit.runWhile(emits(0)) { v =>
+                            for
+                                threshold <- Env.get[Int]
+                                count     <- Var.get[Int]
+                                _         <- Var.set(count + 1)
+                                _ = seen :+= v
+                            yield if v <= threshold then true else false
+                        }
+                    }
+                }.eval
+            assert(seen == List(0, 1, 2, 3, 4))
+            assert(result == (5, ()))
+        }
+
+        "early termination" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+            end emits
+
+            val result = Abort.run[String] {
+                Emit.runWhile(emits(0)) { v =>
                     seen :+= v
                     if v < 3 then true
                     else Abort.fail("Reached 3")
-                }(emits(0))
+                }
             }.eval
             assert(seen == List(0, 1, 2, 3))
             assert(result == Result.fail("Reached 3"))
