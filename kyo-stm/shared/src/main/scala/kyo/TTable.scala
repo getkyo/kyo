@@ -204,6 +204,8 @@ object TTable:
         def isEmpty(using Frame)  = store.isEmpty
         def snapshot(using Frame) = store.snapshot
 
+        def indexFields: Set[Field[?, ?]] = indexes.keySet
+
         private inline val indexMismatch = """
             Cannot query on fields that are not indexed.
             The filter contains fields that are not part of the table's index configuration.
@@ -287,11 +289,11 @@ object TTable:
           * @return
           *   A new Indexed table instance within the IO effect
           */
-        def init[Fields: AsFields as fields, Indexes >: Fields: AsFields as indexes](using Frame): Indexed[Fields, Indexes] < IO =
+        def init[Fields: AsFields as fields, Indexes >: Fields: AsFields as indexFields](using Frame): Indexed[Fields, Indexes] < IO =
             for
                 table <- TTable.init[Fields]
                 indexes <-
-                    Kyo.foreach(fields.toSeq) { field =>
+                    Kyo.foreach(indexFields.toSeq) { field =>
                         TMap.init[Any, Set[Int]].map(field -> _)
                     }
             yield new Indexed(table, indexes.toMap)(using fields)

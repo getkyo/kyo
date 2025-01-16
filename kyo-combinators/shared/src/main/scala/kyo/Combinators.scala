@@ -905,7 +905,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         yield (a, a1)
 end extension
 
-extension [A, S](effect: Ack < (Emit[Chunk[A]] & S))
+extension [A, S](effect: Unit < (Emit[Chunk[A]] & S))
     /** Convert streaming Emit effect to a [[Stream[A, S]]]
       *
       * @return
@@ -949,7 +949,7 @@ extension [A, B, S](effect: B < (Emit[A] & S))
         ArrowEffect.handle(tag, effect):
             [C] =>
                 (a, cont) =>
-                    fn(a).map(_ => cont(Ack.Continue()))
+                    fn(a).map(_ => cont(()))
 
     /** Handle Emit[A] by passing emitted values to [[channel]]. Fails with Abort[Closed] on channel closure
       *
@@ -982,15 +982,15 @@ extension [A, B, S](effect: B < (Emit[A] & S))
                 (v, buffer, cont) =>
                     val b2 = buffer.append(v)
                     if b2.size >= chunkSize then
-                        Emit.valueWith(b2): ack =>
-                            (Chunk.empty, cont(ack))
+                        Emit.valueWith(b2):
+                            (Chunk.empty, cont(()))
                     else
-                        (b2, cont(Ack.Continue()))
+                        (b2, cont(()))
                     end if
             ,
             (buffer, v) =>
                 if buffer.isEmpty then v
-                else Emit.valueWith(buffer)(_ => v)
+                else Emit.valueWith(buffer)(v)
         )
 
     /** Convert emitting effect to stream, chunking Emitted values in [[chunkSize]], and discarding result.
@@ -1004,7 +1004,7 @@ extension [A, B, S](effect: B < (Emit[A] & S))
         chunkSize: Int
     )(
         using
-        NotGiven[B <:< Ack],
+        NotGiven[B =:= Unit],
         Tag[A],
         Flat[B],
         Frame
@@ -1037,10 +1037,10 @@ extension [A, B, S](effect: B < (Emit[Chunk[A]] & S))
       */
     def emitToStreamDiscarding(
         using
-        NotGiven[B <:< Ack],
+        NotGiven[B =:= Unit],
         Frame
     ): Stream[A, S] =
-        Stream(effect.map(_ => Ack.Continue()))
+        Stream(effect.unit)
 
     /** Convert an effect that emits chunks of type [[A]] while computing a result of type [[B]] to an asynchronous stream of the emission
       * type [[A]] and a separate asynchronous effect that yields the result of the original effect after the stream has been handled.
@@ -1056,11 +1056,11 @@ extension [A, B, S](effect: B < (Emit[Chunk[A]] & S))
         for
             p <- Promise.init[Nothing, B]
             streamEmit = effect.map: b =>
-                p.complete(Result.success(b)).map(_ => Ack.Continue())
+                p.complete(Result.success(b)).unit
         yield (Stream(streamEmit), p.join)
 end extension
 
-extension [A, B, S](effect: Ack < (Emit[A] & S))
+extension [A, B, S](effect: Unit < (Emit[A] & S))
     /** Convert emitting effect to stream, chunking Emitted values in [[chunkSize]].
       *
       * @param chunkSize

@@ -190,4 +190,108 @@ class IOTest extends Test:
         }
     }
 
+    "withLocal" - {
+        "basic usage" in run {
+            val local      = Local.init("test")
+            var sideEffect = ""
+
+            IO.withLocal(local) { value =>
+                sideEffect = value
+                value.length
+            }.map { result =>
+                assert(sideEffect == "test")
+                assert(result == 4)
+            }
+        }
+
+        "respects local modifications" in run {
+            val local    = Local.init("initial")
+            var captured = ""
+
+            local.let("modified") {
+                IO.withLocal(local) { value =>
+                    captured = value
+                    value.toUpperCase
+                }
+            }.map { result =>
+                assert(captured == "modified")
+                assert(result == "MODIFIED")
+            }
+        }
+
+        "lazy evaluation" in run {
+            val local    = Local.init("test")
+            var executed = false
+
+            val computation =
+                IO.withLocal(local) { value =>
+                    executed = true
+                    value
+                }
+
+            assert(!executed)
+            computation.map { result =>
+                assert(executed)
+                assert(result == "test")
+            }
+        }
+    }
+
+    "Unsafe.withLocal" - {
+        import AllowUnsafe.embrace.danger
+
+        def unsafeOperation(value: Int)(using unsafe: AllowUnsafe): Int =
+            value * 2
+
+        "allows unsafe operations" in run {
+            val local      = Local.init(42)
+            var sideEffect = 0
+
+            IO.Unsafe.withLocal(local) { value =>
+                sideEffect = unsafeOperation(value)
+                sideEffect
+            }.map { result =>
+                assert(result == 84)
+                assert(sideEffect == 84)
+            }
+        }
+
+        "respects local context" in run {
+            val local    = Local.init(10)
+            var captured = 0
+
+            local.let(20) {
+                IO.Unsafe.withLocal(local) { value =>
+                    captured = unsafeOperation(value)
+                    value + 1
+                }
+            }.map { result =>
+                assert(captured == 40)
+                assert(result == 21)
+            }
+        }
+
+        "composes with other unsafe operations" in run {
+            val local            = Local.init(5)
+            var steps: List[Int] = Nil
+
+            val computation =
+                for
+                    v1 <- IO.Unsafe.withLocal(local) { value =>
+                        steps = unsafeOperation(value) :: steps
+                        value * 2
+                    }
+                    v2 <- IO.Unsafe {
+                        steps = v1 :: steps
+                        v1 + 1
+                    }
+                yield v2
+
+            computation.map { result =>
+                assert(steps == List(10, 10))
+                assert(result == 11)
+            }
+        }
+    }
+
 end IOTest

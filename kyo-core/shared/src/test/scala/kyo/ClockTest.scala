@@ -400,9 +400,8 @@ class ClockTest extends Test:
                 task     <- Clock.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
-                _        <- Async.sleep(2.millis)
-                result   <- channel.poll
-            yield assert(result.isEmpty)
+                _        <- untilTrue(channel.poll.map(_.isEmpty))
+            yield succeed
         }
 
         "with time control" in runNotJS {

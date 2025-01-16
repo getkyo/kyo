@@ -68,18 +68,16 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                 case Present(entry) =>
                     f(entry.value)
                 case Absent =>
-                    TID.useRequired { tid =>
-                        IO {
-                            val state = currentState
-                            if state.tid > tid then
-                                // Early retry if the TRef is concurrently modified
-                                STM.retry
-                            else
-                                // Append Read to the log and return value
-                                val entry = Read(state.tid, state.value)
-                                Var.setAndThen(log.put(this, entry))(f(state.value))
-                            end if
-                        }
+                    TID.useIORequired { tid =>
+                        val state = currentState
+                        if state.tid > tid then
+                            // Early retry if the TRef is concurrently modified
+                            STM.retry
+                        else
+                            // Append Read to the log and return value
+                            val entry = Read(state.tid, state.value)
+                            Var.setAndThen(log.put(this, entry))(f(state.value))
+                        end if
                     }
             end match
         }
@@ -91,18 +89,16 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                     val entry = Write(prev.tid, v)
                     Var.setDiscard(log.put(this, entry))
                 case Absent =>
-                    TID.useRequired { tid =>
-                        IO {
-                            val state = currentState
-                            if state.tid > tid then
-                                // Early retry if the TRef is concurrently modified
-                                STM.retry
-                            else
-                                // Append Write to the log
-                                val entry = Write(state.tid, v)
-                                Var.setDiscard(log.put(this, entry))
-                            end if
-                        }
+                    TID.useIORequired { tid =>
+                        val state = currentState
+                        if state.tid > tid then
+                            // Early retry if the TRef is concurrently modified
+                            STM.retry
+                        else
+                            // Append Write to the log
+                            val entry = Write(state.tid, v)
+                            Var.setDiscard(log.put(this, entry))
+                        end if
                     }
         }
 
@@ -178,10 +174,8 @@ object TRef:
       *   The result of applying the function to the new TRef, within combined IO and S effects
       */
     inline def initWith[A, B, S](inline value: A)(inline f: TRef[A] => B < S)(using inline frame: Frame): B < (IO & S) =
-        TID.use { tid =>
-            IO.Unsafe {
-                f(TRef.Unsafe.init(tid, value))
-            }
+        TID.useIOUnsafe { tid =>
+            f(TRef.Unsafe.init(tid, value))
         }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */

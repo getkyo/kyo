@@ -173,9 +173,9 @@ object Log extends LogPlatformSpecific:
     private inline def logWhen(inline level: Level)(inline doLog: Log => Unit < IO)(using
         inline frame: Frame
     ): Unit < IO =
-        use { log =>
+        IO.Unsafe.withLocal(local) { log =>
             if level.enabled(log.level) then
-                IO.Unsafe(doLog(log))
+                doLog(log)
             else
                 (
             )

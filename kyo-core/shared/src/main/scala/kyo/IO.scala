@@ -71,14 +71,36 @@ object IO:
     def ensure[A, S](f: => Unit < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
         Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f))(v))
 
+    /** Retrieves a local value and applies a function that can perform side effects.
+      *
+      * This is the preferred way to access a local value when you need to perform side effects with it. Common use cases include accessing
+      * loggers, configuration, or request-scoped values that you need to use in computations that produce side effects.
+      *
+      * While `local.get.map(v => IO(f(v)))` would also work, this method is more direct since both IO and Local use the same underlying
+      * mechanism to handle effects. Under the hood, accessing a local value and performing IO operations both use the same type of
+      * suspension, the kernel's internal `Defer` effect. This means we can safely combine them without creating unnecessary layers of
+      * suspension.
+      *
+      * @param local
+      *   The local value to access
+      * @param f
+      *   Function that can perform side effects with the local value
+      * @return
+      *   An IO effect containing the result of applying the function
+      */
+    def withLocal[A, B, S](local: Local[A])(f: A => B < S)(using Frame): B < (S & IO) =
+        local.use(f)
+
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
         inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
             Effect.deferInline {
-                import AllowUnsafe.embrace.danger
-                f
+                f(using AllowUnsafe.embrace.danger)
             }
+
+        def withLocal[A, B, S](local: Local[A])(f: AllowUnsafe ?=> A => B < S)(using Frame): B < (S & IO) =
+            local.use(f(using AllowUnsafe.embrace.danger))
 
         /** Evaluates an IO effect that may throw exceptions, converting any thrown exceptions into the final result.
           *
