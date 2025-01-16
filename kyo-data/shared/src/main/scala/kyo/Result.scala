@@ -157,8 +157,8 @@ object Result:
         try
             Success(expr)
         catch
-            case ct(ex)             => Failure(ex)
-            case ex if NonFatal(ex) => Panic(ex)
+            case ct(ex) => Failure(ex)
+            case ex     => Panic(ex)
 
     /** Represents a successful Result. */
     opaque type Success[+A] = A | SuccessError[A]
