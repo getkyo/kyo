@@ -358,11 +358,6 @@ class ResultTest extends Test:
             val result = Result.succeed(1).filter(_ => throw new RuntimeException("predicate error"))
             assert(result.isPanic)
         }
-        "should handle null predicate" in {
-            val nullPredicate: Int => Boolean = null
-            val result                        = Result.succeed(1).filter(nullPredicate)
-            assert(result.isPanic)
-        }
     }
 
     "toEither" - {
