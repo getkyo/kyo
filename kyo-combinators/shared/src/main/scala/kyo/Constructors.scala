@@ -94,7 +94,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that emits a value
       */
-    def emit[A](value: A)(using Tag[A], Frame): Ack < Emit[A] =
+
+    def emit[A](value: A)(using Tag[A], Frame): Unit < Emit[A] =
         Emit.value(value)
 
     /** Creates an effect that fails with Abort[E].
@@ -471,5 +472,4 @@ extension (kyoObject: Kyo.type)
         sequence: => Seq[A < Async]
     )(using Flat[A], Frame): Unit < Async =
         foreachPar(sequence)(identity).unit
-
 end extension

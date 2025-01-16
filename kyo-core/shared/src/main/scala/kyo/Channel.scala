@@ -180,24 +180,20 @@ object Channel:
             using
             Tag[Emit[Chunk[A]]],
             Frame
-        ): Ack < (Emit[Chunk[A]] & Abort[Closed] & Async) =
-            if maxChunkSize <= 0 then Ack.Stop
+        ): Unit < (Emit[Chunk[A]] & Abort[Closed] & Async) =
+            if maxChunkSize <= 0 then ()
             else if maxChunkSize == 1 then
                 Loop(()): _ =>
                     Channel.take(self).map: v =>
-                        Emit.valueWith(Chunk(v)):
-                            case Ack.Stop => Loop.done(Ack.Stop)
-                            case _        => Loop.continue(())
+                        Emit.valueWith(Chunk(v))(Loop.continue(()))
             else
                 val drainEffect =
                     if maxChunkSize == Int.MaxValue then Channel.drain(self)
                     else Channel.drainUpTo(self)(maxChunkSize - 1)
-                Loop[Unit, Ack, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
+                Loop[Unit, Unit, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
                         drainEffect.map: chunk =>
-                            Emit.valueWith(Chunk(a).concat(chunk)):
-                                case Ack.Stop => Loop.done(Ack.Stop)
-                                case _        => Loop.continue(())
+                            Emit.valueWith(Chunk(a).concat(chunk))(Loop.continue(()))
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
@@ -224,7 +220,7 @@ object Channel:
             Stream:
                 Abort.run[Closed](emitChunks(maxChunkSize)).map:
                     case Result.Success(v) => v
-                    case Result.Fail(_)    => Ack.Stop
+                    case Result.Fail(_)    => ()
                     case Result.Panic(e)   => Abort.panic(e)
 
         def unsafe: Unsafe[A] = self

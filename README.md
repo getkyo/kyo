@@ -1398,7 +1398,7 @@ The `Emit` effect is designed to accumulate values throughout a computation, sim
 import kyo.*
 
 // Add a value
-val a: Ack < Emit[Int] =
+val a: Unit < Emit[Int] =
     Emit.value(42)
 
 // Add multiple values

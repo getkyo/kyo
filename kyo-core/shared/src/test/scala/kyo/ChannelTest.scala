@@ -270,7 +270,7 @@ class ChannelTest extends Test:
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
                 f  <- Async.run(c.takeExactly(5))
-                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done(()) else Loop.continue(())))
+                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done else Loop.continue(())))
                 _  <- Async.sleep(10.millis)
                 fd <- f.done
                 _  <- f.interrupt
@@ -290,7 +290,7 @@ class ChannelTest extends Test:
                 _ <- Kyo.foreach(1 to 3)(c.put(_))
                 f <- Async.run(c.takeExactly(6))
                 // Wait until channel is empty
-                _  <- Loop(false)(v => if v then Loop.done(()) else c.empty.map(Loop.continue(_)))
+                _  <- Loop(false)(v => if v then Loop.done else c.empty.map(Loop.continue(_)))
                 fd <- f.done
                 _  <- Kyo.foreach(4 to 6)(c.put(_))
                 r  <- Fiber.get(f)
