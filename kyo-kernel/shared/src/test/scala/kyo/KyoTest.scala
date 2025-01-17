@@ -359,4 +359,40 @@ class KyoTest extends Test:
             assert(Kyo.findFirst(Chunk(1, 2, 3))(pred).eval == Maybe(2))
         }
     }
+
+    "flat check" - {
+
+        val error = "No given instance of type kyo.Flat"
+
+        "pending type" in {
+            typeCheckFailure("implicitly[Flat[Int < Any]]")(error)
+            typeCheckFailure("implicitly[Flat[Int < Options]]")(error)
+            typeCheckFailure("implicitly[Flat[Int < Nothing]]")(error)
+        }
+
+        "nested" in {
+            typeCheckFailure("implicitly[Flat[Int < IOs < IOs]]")(error)
+            typeCheckFailure("implicitly[Flat[Any < IOs < IOs]]")(error)
+        }
+
+        "nested w/ mismatch" in {
+            typeCheckFailure("implicitly[Flat[Int < Options < IOs]]")(error)
+            typeCheckFailure("implicitly[Flat[Int < IOs < Options]]")(error)
+        }
+
+        "generic" in {
+            typeCheckFailure("def f[A] = implicitly[Flat[A]]")(error)
+            typeCheckFailure("def f[A] = implicitly[Flat[A | Int]]")(error)
+        }
+
+        "generic pending" in {
+            typeCheckFailure("def f[A] = implicitly[Flat[A < Options]]")(error)
+            typeCheckFailure("def f[A] = implicitly[Flat[A < Any]]")(error)
+        }
+
+        "any" in {
+            typeCheckFailure("implicitly[Flat[Any]]")(error)
+            typeCheckFailure("implicitly[Flat[Any < IOs]]")(error)
+        }
+    }
 end KyoTest
