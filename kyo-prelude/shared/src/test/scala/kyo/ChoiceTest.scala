@@ -97,4 +97,51 @@ class ChoiceTest extends Test:
         end try
         ()
     }
+
+    "interaction with collection operations" - {
+        "foreach" in {
+            val result = Choice.run(
+                Kyo.foreach(List("x", "y")) { str =>
+                    Choice.get(List(true, false)).map(b =>
+                        if b then str.toUpperCase else str
+                    )
+                }
+            ).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
+        "collect" in {
+            val effects =
+                List("x", "y").map { str =>
+                    Choice.get(List(true, false)).map(b =>
+                        if b then str.toUpperCase else str
+                    )
+                }
+            val result = Choice.run(Kyo.collect(effects)).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
+        "foldLeft" in {
+            val result = Choice.run(
+                Kyo.foldLeft(List(1, 1))(0) { (acc, _) =>
+                    Choice.get(List(0, 1)).map(n => acc + n)
+                }
+            ).eval
+
+            assert(result.contains(0))
+            assert(result.contains(1))
+            assert(result.contains(2))
+            assert(result.size == 4)
+        }
+    }
 end ChoiceTest
