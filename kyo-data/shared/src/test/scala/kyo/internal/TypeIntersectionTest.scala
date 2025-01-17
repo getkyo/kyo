@@ -2,7 +2,7 @@ package kyo.internal
 
 import org.scalatest.freespec.AnyFreeSpec
 
-class TypeSetTest extends AnyFreeSpec:
+class TypeIntersectionTest extends AnyFreeSpec:
 
     sealed trait Base
     trait A                        extends Base
@@ -20,79 +20,79 @@ class TypeSetTest extends AnyFreeSpec:
 
     "basic type decomposition" - {
         "single trait" in {
-            val typeSet = TypeSet[A]
+            val typeSet = TypeIntersection[A]
             assertType[typeSet.AsTuple, A *: EmptyTuple]
         }
 
         "concrete class" in {
-            val typeSet = TypeSet[Concrete]
+            val typeSet = TypeIntersection[Concrete]
             assertType[typeSet.AsTuple, Concrete *: EmptyTuple]
         }
 
         "case class" in {
-            val typeSet = TypeSet[Data]
+            val typeSet = TypeIntersection[Data]
             assertType[typeSet.AsTuple, Data *: EmptyTuple]
         }
 
         "generic trait" in {
-            val typeSet = TypeSet[Generic[String]]
+            val typeSet = TypeIntersection[Generic[String]]
             assertType[typeSet.AsTuple, Generic[String] *: EmptyTuple]
         }
 
         "empty trait with mixed-in generic" in {
-            val typeSet = TypeSet[Empty]
+            val typeSet = TypeIntersection[Empty]
             assertType[typeSet.AsTuple, Empty *: EmptyTuple]
         }
 
         "null type" in {
-            val typeSet = TypeSet[Null]
+            val typeSet = TypeIntersection[Null]
             assertType[typeSet.AsTuple, Null *: EmptyTuple]
         }
     }
 
     "intersection types" - {
         "two types" in {
-            val typeSet = TypeSet[A & B]
+            val typeSet = TypeIntersection[A & B]
             assertType[typeSet.AsTuple, A *: B *: EmptyTuple]
         }
 
         "three types" in {
-            val typeSet = TypeSet[A & B & C]
+            val typeSet = TypeIntersection[A & B & C]
             assertType[typeSet.AsTuple, A *: B *: C *: EmptyTuple]
         }
 
         "four types" in {
-            val typeSet = TypeSet[A & B & C & D]
+            val typeSet = TypeIntersection[A & B & C & D]
             assertType[typeSet.AsTuple, A *: B *: C *: D *: EmptyTuple]
         }
 
         "nested intersections" in {
-            val typeSet = TypeSet[(A & B) & (C & D)]
+            val typeSet = TypeIntersection[(A & B) & (C & D)]
             assertType[typeSet.AsTuple, A *: B *: C *: D *: EmptyTuple]
         }
 
         "with concrete type" in {
-            val typeSet = TypeSet[Concrete & A & B]
+            val typeSet = TypeIntersection[Concrete & A & B]
             assertType[typeSet.AsTuple, Concrete *: A *: B *: EmptyTuple]
         }
 
         "with generic types" in {
-            val typeSet = TypeSet[Generic[Int] & Generic[String]]
+            val typeSet = TypeIntersection[Generic[Int] & Generic[String]]
             assertType[typeSet.AsTuple, Generic[Int] *: Generic[String] *: EmptyTuple]
         }
 
         "with type parameters" in {
-            val typeSet = TypeSet[MultiParam[Int, String] & A]
+            val typeSet = TypeIntersection[MultiParam[Int, String] & A]
             assertType[typeSet.AsTuple, MultiParam[Int, String] *: A *: EmptyTuple]
         }
 
         "with recursive bounds" in {
-            val typeSet = TypeSet[Recursive[A] & A]
+            val typeSet = TypeIntersection[Recursive[A] & A]
             assertType[typeSet.AsTuple, Recursive[A] *: A *: EmptyTuple]
         }
 
         "with Nothing type" in {
-            val typeSet = TypeSet[A & Nothing]
+            val typeSet = TypeIntersection[A & Nothing]
             assertType[typeSet.AsTuple, Nothing *: EmptyTuple]
         }
     }
@@ -100,71 +100,71 @@ class TypeSetTest extends AnyFreeSpec:
     "Map operation" - {
         "over single type" in {
             class F[T]
-            val typeSet = TypeSet[A]
+            val typeSet = TypeIntersection[A]
             assertType[typeSet.Map[F], F[A]]
         }
 
         "over intersection" in {
             class F[T]
-            val typeSet = TypeSet[A & B]
+            val typeSet = TypeIntersection[A & B]
             assertType[typeSet.Map[F], F[A] & F[B]]
         }
 
         "over nested intersection" in {
             class F[T]
-            val typeSet = TypeSet[(A & B) & (C & D)]
+            val typeSet = TypeIntersection[(A & B) & (C & D)]
             assertType[typeSet.Map[F], F[A] & F[B] & F[C] & F[D]]
         }
 
         "over generic types" in {
             class F[T]
-            val typeSet = TypeSet[Generic[Int] & Generic[String]]
+            val typeSet = TypeIntersection[Generic[Int] & Generic[String]]
             assertType[typeSet.Map[F], F[Generic[Int]] & F[Generic[String]]]
         }
 
         "with multiple type parameters" in {
             class F[T]
-            val typeSet = TypeSet[MultiParam[Int, String]]
+            val typeSet = TypeIntersection[MultiParam[Int, String]]
             assertType[typeSet.Map[F], F[MultiParam[Int, String]]]
         }
     }
 
     "type relationships" - {
         "inheritance" in {
-            val typeSet = TypeSet[Child]
+            val typeSet = TypeIntersection[Child]
             type Result = typeSet.AsTuple
             assertType[Result, Child *: EmptyTuple]
         }
 
         "multiple inheritance" in {
             trait MA extends A with B
-            val typeSet = TypeSet[MA]
+            val typeSet = TypeIntersection[MA]
             assertType[typeSet.AsTuple, MA *: EmptyTuple]
         }
 
         "deep inheritance" in {
             trait Deep   extends A with B
             class Deeper extends Deep with C
-            val typeSet = TypeSet[Deeper]
+            val typeSet = TypeIntersection[Deeper]
             assertType[typeSet.AsTuple, Deeper *: EmptyTuple]
         }
 
         "generic inheritance" in {
             trait GenericChild[T] extends Generic[T]
-            val typeSet = TypeSet[GenericChild[Int]]
+            val typeSet = TypeIntersection[GenericChild[Int]]
             assertType[typeSet.AsTuple, GenericChild[Int] *: EmptyTuple]
         }
 
         "mixed generic and concrete inheritance" in {
             trait MixedInheritance extends Generic[Int] with A
-            val typeSet = TypeSet[MixedInheritance]
+            val typeSet = TypeIntersection[MixedInheritance]
             assertType[typeSet.AsTuple, MixedInheritance *: EmptyTuple]
         }
 
         "self-recursive type" in {
             trait SelfRef extends Base:
                 self: A =>
-            val typeSet = TypeSet[SelfRef & A]
+            val typeSet = TypeIntersection[SelfRef & A]
             assertType[typeSet.AsTuple, SelfRef *: A *: EmptyTuple]
         }
     }
@@ -181,12 +181,12 @@ class TypeSetTest extends AnyFreeSpec:
             def name = "C"
 
         "collects type class instances" in {
-            val instances = TypeSet.summonAll[A & B & C, TC]
+            val instances = TypeIntersection.summonAll[A & B & C, TC]
             assert(instances.map(_.name) == List("A", "B", "C"))
         }
 
         "preserves order" in {
-            val instances = TypeSet.summonAll[C & A & B, TC]
+            val instances = TypeIntersection.summonAll[C & A & B, TC]
             assert(instances.map(_.name) == List("C", "A", "B"))
         }
 
@@ -194,7 +194,7 @@ class TypeSetTest extends AnyFreeSpec:
             given TC[A & B] with
                 def name = "AB"
 
-            val instances = TypeSet.summonAll[A & B, TC]
+            val instances = TypeIntersection.summonAll[A & B, TC]
             assert(instances.map(_.name) == List("A", "B"))
         }
 
@@ -215,9 +215,9 @@ class TypeSetTest extends AnyFreeSpec:
                 v21.type & v22.type & v23.type & v24.type & v25.type & v26.type & v27.type & v28.type & v29.type & v30.type &
                 v31.type & v32.type & v33.type & v34.type & v35.type & v36.type & v37.type & v38.type & v39.type & v40.type
 
-            assertCompiles("TypeSet.summonAll[Values, TC]")
+            assertCompiles("TypeIntersection.summonAll[Values, TC]")
         }
     }
 
     inline def assertType[A, B](using ev: A =:= B): Unit = ()
-end TypeSetTest
+end TypeIntersectionTest

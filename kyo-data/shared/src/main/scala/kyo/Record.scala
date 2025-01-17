@@ -1,7 +1,7 @@
 package kyo
 
 import Record.*
-import kyo.internal.TypeSet
+import kyo.internal.TypeIntersection
 import scala.annotation.implicitNotFound
 import scala.compiletime.constValue
 import scala.compiletime.summonInline
@@ -256,7 +256,7 @@ object Record:
                 All(f.fields + a)
         end All
 
-        given [A](using ev: TypeSet[A], a: All[ev.AsTuple]): AsFields[A] = a.fields
+        given [A](using ev: TypeIntersection[A], a: All[ev.AsTuple]): AsFields[A] = a.fields
 
         def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
     end AsFields
@@ -266,7 +266,7 @@ object Record:
             case name ~ value => CanEqual[value, value]
 
     transparent inline given [Fields]: CanEqual[Record[Fields], Record[Fields]] =
-        discard(TypeSet.summonAll[Fields, HasCanEqual])
+        discard(TypeIntersection.summonAll[Fields, HasCanEqual])
         CanEqual.derived
     end given
 

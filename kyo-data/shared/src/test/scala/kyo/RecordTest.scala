@@ -2,7 +2,7 @@ package kyo
 
 import Record.Field
 import kyo.Record.AsRecord.FieldsOf
-import kyo.internal.TypeSet
+import kyo.internal.TypeIntersection
 
 class RecordTest extends Test:
 

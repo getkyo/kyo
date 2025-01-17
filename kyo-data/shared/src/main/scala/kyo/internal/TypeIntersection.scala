@@ -1,6 +1,6 @@
 package kyo.internal
 
-import TypeSet.*
+import TypeIntersection.*
 import scala.annotation.implicitNotFound
 import scala.compiletime.erasedValue
 import scala.compiletime.summonAll
@@ -9,14 +9,14 @@ import scala.quoted.*
 
 /** A type-level utility for decomposing intersection types into their constituent parts.
   *
-  * TypeSet addresses the challenge of working with intersection types in a type-safe manner, particularly when implementing type-level
-  * operations like equality checking and type class derivation. It provides a way to:
+  * TypeIntersection addresses the challenge of working with intersection types in a type-safe manner, particularly when implementing
+  * type-level operations like equality checking and type class derivation. It provides a way to:
   *
   *   - Break down complex intersection types into simpler components
   *   - Apply type constructors uniformly across all components
   *   - Collect type class instances for all component types
   */
-sealed abstract class TypeSet[A]:
+sealed abstract class TypeIntersection[A]:
 
     /** The tuple representation of the decomposed types.
       *
@@ -34,27 +34,27 @@ sealed abstract class TypeSet[A]:
       */
     type Map[F[_]] = Join[Tuple.Map[AsTuple, F]]
 
-end TypeSet
+end TypeIntersection
 
-object TypeSet:
+object TypeIntersection:
 
     // Cached instance used for optimization.
-    private val cached: TypeSet[Any] =
-        new TypeSet[Any]:
+    private val cached: TypeIntersection[Any] =
+        new TypeIntersection[Any]:
             type AsTuple = EmptyTuple
 
     private type Join[A <: Tuple] = Tuple.Fold[A, Any, [B, C] =>> B & C]
 
-    /** Returns the TypeSet instance for type A.
+    /** Returns the TypeIntersection instance for type A.
       *
       * @tparam A
-      *   the type to get the TypeSet for
+      *   the type to get the TypeIntersection for
       * @param ts
-      *   the implicit TypeSet instance
+      *   the implicit TypeIntersection instance
       * @return
-      *   the TypeSet instance
+      *   the TypeIntersection instance
       */
-    transparent inline def apply[A](using inline ts: TypeSet[A]): TypeSet[A] = ts
+    transparent inline def apply[A](using inline ts: TypeIntersection[A]): TypeIntersection[A] = ts
 
     /** Summons all instances of type class F for each component type in A.
       *
@@ -65,10 +65,10 @@ object TypeSet:
       * @return
       *   a List of type class instances
       */
-    transparent inline def summonAll[A: TypeSet as ts, F[_]]: List[F[Any]] =
+    transparent inline def summonAll[A: TypeIntersection as ts, F[_]]: List[F[Any]] =
         summonAllLoop[ts.AsTuple, F]
 
-    /** Type alias for TypeSet with a specific tuple type.
+    /** Type alias for TypeIntersection with a specific tuple type.
       *
       * @tparam A
       *   the intersection type
@@ -76,20 +76,20 @@ object TypeSet:
       *   the tuple type representing the decomposed types
       */
     type Aux[A, T] =
-        TypeSet[A]:
+        TypeIntersection[A]:
             type AsTuple = T
 
-    /** Derives a TypeSet instance for type A.
+    /** Derives a TypeIntersection instance for type A.
       *
       * @tparam A
-      *   the type to create a TypeSet for
+      *   the type to create a TypeIntersection for
       * @return
-      *   a TypeSet instance for A
+      *   a TypeIntersection instance for A
       */
-    transparent inline given derive[A]: TypeSet[A] =
+    transparent inline given derive[A]: TypeIntersection[A] =
         ${ deriveImpl[A] }
 
-    private def deriveImpl[A: Type](using Quotes): Expr[TypeSet[A]] =
+    private def deriveImpl[A: Type](using Quotes): Expr[TypeIntersection[A]] =
         import quotes.reflect.*
 
         def decompose(tpe: TypeRepr): Vector[TypeRepr] =
@@ -109,7 +109,7 @@ object TypeSet:
             case '[
                 type x <: Tuple; x] =>
                 '{
-                    cached.asInstanceOf[TypeSet.Aux[A, x]]
+                    cached.asInstanceOf[TypeIntersection.Aux[A, x]]
                 }
         end match
     end deriveImpl
@@ -137,4 +137,4 @@ object TypeSet:
                     summonAllLoop[tail, F]
             case _: (t *: ts) =>
                 summonInline[F[t]].asInstanceOf[F[Any]] :: summonAllLoop[ts, F]
-end TypeSet
+end TypeIntersection
