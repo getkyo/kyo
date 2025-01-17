@@ -234,6 +234,9 @@ object Record:
         inline given [N <: String, V](using tag: Tag[V]): AsField[N, V] =
             Field(constValue[N], tag)
 
+        private[kyo] def toField[Name <: String, Value](as: AsField[Name, Value]): Field[?, ?] = as
+    end AsField
+
     /** Type class for working with sets of Record fields.
       *
       * AsFields provides type-safe field set operations and is used primarily for the `compact` operation on Records.
@@ -259,6 +262,9 @@ object Record:
         given [A](using ev: TypeIntersection[A], a: All[ev.AsTuple]): AsFields[A] = a.fields
 
         def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
+
+        inline given [Fields](using ev: TypeIntersection[Fields]): AsFields[Fields] =
+            AsFieldsInternal.summonAsField
     end AsFields
 
     private type HasCanEqual[Field] =
@@ -276,3 +282,12 @@ object Record:
                 "which is not currently supported by the Tag implementation."
         )
 end Record
+
+object AsFieldsInternal:
+    private type HasAsField[Field] =
+        Field match
+            case name ~ value => AsField[name, value]
+
+    inline def summonAsField[Fields](using ev: TypeIntersection[Fields]): Set[Field[?, ?]] =
+        TypeIntersection.summonAll[Fields, HasAsField].map(Record.AsField.toField).toSet
+end AsFieldsInternal
