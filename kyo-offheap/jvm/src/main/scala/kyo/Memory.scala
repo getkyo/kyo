@@ -78,6 +78,7 @@ object Memory:
           */
         inline def get(index: Int)(using inline frame: Frame): A < Arena =
             IO.Unsafe {
+                // TODO inference issue without the val
                 val x = Unsafe.get(self)(index)
                 x
             }
