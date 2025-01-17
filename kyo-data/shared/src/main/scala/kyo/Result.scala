@@ -448,7 +448,10 @@ object Result:
           *   A new Result with the mapped failure type
           */
         inline def mapFailure[E2](inline f: E => E2): Result[E2, A] =
-            foldAll(Result.panic)(e => Result.fail(f(e)))(Result.succeed)
+            foldError {
+                case error: Failure[E] => Result.fail(f(error.failure))
+                case error: Panic      => error
+            }(Result.succeed)
 
         /** Maps only the panic exception to an error value.
           *
