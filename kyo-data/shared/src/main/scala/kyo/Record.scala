@@ -247,20 +247,6 @@ object Record:
     opaque type AsFields[+A] <: Set[Field[?, ?]] = Set[Field[?, ?]]
 
     object AsFields:
-        /** Evidence that every tuple member has AsField instance
-          *
-          * @param fields
-          *   Set of all fields of tuple
-          */
-        final class All[T <: Tuple](val fields: Set[Field[?, ?]]) extends AnyVal
-        object All:
-            given All[EmptyTuple] = All(Set())
-            given [Name <: String, Value, T <: Tuple](using a: AsField[Name, Value], f: All[T]): All[Name ~ Value *: T] =
-                All(f.fields + a)
-        end All
-
-        given [A](using ev: TypeIntersection[A], a: All[ev.AsTuple]): AsFields[A] = a.fields
-
         def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
 
         inline given [Fields](using ev: TypeIntersection[Fields]): AsFields[Fields] =
