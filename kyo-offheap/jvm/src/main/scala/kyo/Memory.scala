@@ -1,7 +1,6 @@
 package kyo
 
-import java.lang.foreign.{Arena as _, *}
-import java.lang.foreign.Arena as JArena
+import java.lang.foreign.{Arena as JArena, *}
 import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
 import scala.deriving.Mirror
