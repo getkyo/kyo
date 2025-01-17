@@ -227,7 +227,7 @@ object Result:
     end Error
 
     /** Represents a failure in a Result. */
-    case class Failure[+E](failure: E) extends Error[E]:
+    final case class Failure[+E](failure: E) extends Error[E]:
         def failureOrPanic = failure
 
     object Failure:
@@ -251,7 +251,7 @@ object Result:
     end Failure
 
     /** Represents an unexpected exception in a Result. */
-    case class Panic(exception: Throwable) extends Error[Nothing]:
+    final case class Panic(exception: Throwable) extends Error[Nothing]:
         def failureOrPanic = exception
 
     object Panic:
