@@ -498,44 +498,44 @@ object Scheduler {
       *
       * @param minWorkers
       *   Minimum number of worker threads that will be maintained even under low load. A lower number conserves resources but may require
-      *   ramp-up time when load increases. (-Dkyo.scheduler.minWorkers=<value>, default: coreWorkers/2)
+      *   ramp-up time when load increases. (-Dkyo.scheduler.minWorkers=<value>)
       *
       * @param coreWorkers
       *   Initial worker thread count at scheduler startup. Represents the baseline capacity for handling normal workload.
-      *   (-Dkyo.scheduler.coreWorkers=<value>, default: cores * 10)
+      *   (-Dkyo.scheduler.coreWorkers=<value>)
       *
       * @param maxWorkers
       *   Maximum worker thread count beyond which the scheduler won't allocate new workers. Prevents unconstrained thread growth under
-      *   heavy load. Must be greater than or equal to minWorkers. (-Dkyo.scheduler.maxWorkers=<value>, default: coreWorkers * 100)
+      *   heavy load. Must be greater than or equal to minWorkers. (-Dkyo.scheduler.maxWorkers=<value>)
       *
       * @param timeSliceMs
       *   Maximum duration a task can run before being preempted. Lower values (e.g. 5ms) ensure more frequent task switching and better
       *   responsiveness. Higher values (e.g. 20ms) reduce context switching overhead but may delay other tasks.
-      *   (-Dkyo.scheduler.timeSliceMs=<value>, default: 10)
+      *   (-Dkyo.scheduler.timeSliceMs=<value>)
       *
       * @param scheduleStride
       *   Number of workers to examine when scheduling a new task. Larger values find better scheduling targets but take longer to make
-      *   decisions. (-Dkyo.scheduler.scheduleStride=<value>, default: cores)
+      *   decisions. (-Dkyo.scheduler.scheduleStride=<value>)
       *
       * @param stealStride
       *   Number of workers to examine when looking for tasks to steal. Larger values improve load balancing but increase steal overhead.
-      *   (-Dkyo.scheduler.stealStride=<value>, default: cores * 4)
+      *   (-Dkyo.scheduler.stealStride=<value>)
       *
       * @param cycleIntervalNs
       *   Interval between worker health checks in nanoseconds. Controls how quickly the scheduler detects and responds to stalled or
-      *   blocked workers. (-Dkyo.scheduler.cycleIntervalNs=<value>, default: 100000)
+      *   blocked workers. (-Dkyo.scheduler.cycleIntervalNs=<value>)
       *
       * @param virtualizeWorkers
       *   When true, uses virtual threads from Project Loom instead of platform threads. Beneficial for workloads with significant I/O or
-      *   blocking operations. Requires JDK 21+ and appropriate JVM flags. (-Dkyo.scheduler.virtualizeWorkers=<value>, default: false)
+      *   blocking operations. Requires JDK 21+ and appropriate JVM flags. (-Dkyo.scheduler.virtualizeWorkers=<value>)
       *
       * @param enableTopJMX
       *   Exposes scheduler metrics through JMX for monitoring. Useful for observing scheduler behavior in production.
-      *   (-Dkyo.scheduler.enableTopJMX=<value>, default: true)
+      *   (-Dkyo.scheduler.enableTopJMX=<value>)
       *
       * @param enableTopConsoleMs
       *   Interval in milliseconds for printing scheduler metrics to console. Zero disables console output. Useful for development and
-      *   debugging. (-Dkyo.scheduler.enableTopConsoleMs=<value>, default: 0)
+      *   debugging. (-Dkyo.scheduler.enableTopConsoleMs=<value>)
       *
       * @see
       *   Worker for worker implementation details
