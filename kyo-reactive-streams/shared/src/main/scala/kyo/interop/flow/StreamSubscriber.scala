@@ -32,7 +32,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.Uninitialized, maybePromise) =>
                     val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty, 0) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        maybePromise.foreach(_.completeDiscard(Result.success(())))
+                        maybePromise.foreach(_.completeDiscard(Result.succeed(())))
                     else
                         handleSubscribe()
                     end if
@@ -55,7 +55,7 @@ final private[kyo] class StreamSubscriber[V](
                     if (strategy == EmitStrategy.Eager) || (strategy == EmitStrategy.Buffer && remaining == 1) then
                         val nextState = UpstreamState.WaitForRequest(subscription, items.append(item), remaining - 1) -> Absent
                         if state.compareAndSet(curState, nextState) then
-                            maybePromise.foreach(_.completeDiscard(Result.success(())))
+                            maybePromise.foreach(_.completeDiscard(Result.succeed(())))
                         else
                             handleNext()
                         end if
@@ -77,7 +77,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
                     val nextState = UpstreamState.Finished(Maybe(throwable), items) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        maybePromise.foreach(_.completeDiscard(Result.success(())))
+                        maybePromise.foreach(_.completeDiscard(Result.succeed(())))
                     else
                         handleError()
                     end if
@@ -95,7 +95,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
                     val nextState = UpstreamState.Finished(Absent, items) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        maybePromise.foreach(_.completeDiscard(Result.success(())))
+                        maybePromise.foreach(_.completeDiscard(Result.succeed(())))
                     else
                         handleComplete()
                     end if
@@ -183,7 +183,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.WaitForRequest(subscription, items, remaining), Absent) =>
                     val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty, remaining) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        IO(Result.success(items))
+                        IO(Result.succeed(items))
                     else
                         handlePoll()
                     end if
@@ -200,14 +200,14 @@ final private[kyo] class StreamSubscriber[V](
                     else
                         val nextState = UpstreamState.Finished(reason, Chunk.empty) -> Absent
                         if state.compareAndSet(curState, nextState) then
-                            IO(Result.success(leftOver))
+                            IO(Result.succeed(leftOver))
                         else
                             handlePoll()
                         end if
                     end if
                 case other =>
                     if state.compareAndSet(curState, other) then
-                        IO(Result.success(Chunk.empty))
+                        IO(Result.succeed(Chunk.empty))
                     else
                         handlePoll()
             end match
@@ -222,7 +222,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.Uninitialized, maybePromise) =>
                     val nextState = UpstreamState.Finished(Absent, Chunk.empty) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        IO(maybePromise.foreach(_.completeDiscard(Result.success(()))))
+                        IO(maybePromise.foreach(_.completeDiscard(Result.succeed(()))))
                     else
                         handleInterupt()
                     end if

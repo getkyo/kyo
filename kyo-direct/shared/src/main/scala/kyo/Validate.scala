@@ -175,7 +175,7 @@ private[kyo] object Validate:
                        |defer {
                        |  Abort.run(computation).now match {
                        |    case Result.Success(v) => v
-                       |    case Result.Fail(e) => handleError(e)
+                       |    case Result.Failure(e) => handleError(e)
                        |    case Result.Panic(e) => handleUnexpected(e)
                        |  }
                        |}""".stripMargin)}

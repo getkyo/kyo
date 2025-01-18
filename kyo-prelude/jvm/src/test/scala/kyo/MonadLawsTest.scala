@@ -73,7 +73,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                             ).eval._2
                         (run(l), run(r)) match
                             case (Result.Success(l), Result.Success(r)) => summon[Equal[A]].equal(l, r)
-                            case (Result.Fail(l), Result.Fail(r))       => l == r
+                            case (Result.Failure(l), Result.Failure(r)) => l == r
                             case _                                      => false
                         end match
                     end checkEqual

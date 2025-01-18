@@ -23,9 +23,9 @@ private[internal] class SignalPlatformSpecific:
             constructorHandle  <- initSignalConstructorMethodHandle(lookup, signalClass)
             staticMethodHandle <- initHandleStaticMethodHandle(lookup, signalClass, signalHandlerClass)
         yield SunMisc(signalHandlerClass, constructorHandle, staticMethodHandle)
-    }.fold { error =>
+    }.foldError { error =>
         logger.warning(
-            s"sun.misc.Signal and sun.misc.SignalHandler are not available on this platform. Defaulting to no-op signal handling implementation. ${error.getFailure}"
+            s"sun.misc.Signal and sun.misc.SignalHandler are not available on this platform. Defaulting to no-op signal handling implementation. ${error.failureOrPanic}"
         )
         Handler.Noop
     }(identity)

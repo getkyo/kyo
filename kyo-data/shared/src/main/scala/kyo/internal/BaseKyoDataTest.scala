@@ -26,7 +26,7 @@ private[kyo] trait BaseKyoDataTest:
 
     inline def typeCheckFailure(inline code: String)(inline error: String): Assertion =
         typeCheck(code) match
-            case Result.Fail(errors) =>
+            case Result.Failure(errors) =>
                 if errors.contains(error) && !error.isEmpty() then assertionSuccess
                 else assertionFailure(s"Predicate not satisfied by $errors")
             case Result.Panic(exception) => assertionFailure(exception.getMessage)

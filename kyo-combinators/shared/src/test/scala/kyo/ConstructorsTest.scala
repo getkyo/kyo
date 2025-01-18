@@ -45,7 +45,7 @@ class ConstructorsTest extends Test:
                 val successResult = Abort.run[String](successEffect).eval
                 val failureResult = Abort.run[String](failureEffect).eval
 
-                assert(successResult == Result.success(42))
+                assert(successResult == Result.succeed(42))
                 assert(failureResult == Result.fail("Error"))
             }
         }
@@ -58,7 +58,7 @@ class ConstructorsTest extends Test:
                 val someResult = Abort.run[Absent](someEffect).eval
                 val noneResult = Abort.run[Absent](noneEffect).eval
 
-                assert(someResult == Result.success(42))
+                assert(someResult == Result.succeed(42))
                 assert(noneResult == Result.fail(Absent))
             }
         }
@@ -71,20 +71,20 @@ class ConstructorsTest extends Test:
                 val definedResult = Abort.run[Absent](definedEffect).eval
                 val emptyResult   = Abort.run[Absent](emptyEffect).eval
 
-                assert(definedResult == Result.success(42))
+                assert(definedResult == Result.succeed(42))
                 assert(emptyResult == Result.fail(Absent))
             }
         }
 
         "fromResult" - {
             "should create an effect from Result[E, A]" in {
-                val successEffect = Kyo.fromResult(Result.success(42))
+                val successEffect = Kyo.fromResult(Result.succeed(42))
                 val failureEffect = Kyo.fromResult(Result.fail("Error"))
 
                 val successResult = Abort.run[String](successEffect).eval
                 val failureResult = Abort.run[String](failureEffect).eval
 
-                assert(successResult == Result.success(42))
+                assert(successResult == Result.succeed(42))
                 assert(failureResult == Result.fail("Error"))
             }
         }
@@ -97,8 +97,8 @@ class ConstructorsTest extends Test:
                 val successResult = Abort.run[Throwable](successEffect).eval
                 val failureResult = Abort.run[Throwable](failureEffect).eval
 
-                assert(successResult == Result.success(42))
-                assert(failureResult.isInstanceOf[Result.Fail[?]])
+                assert(successResult == Result.succeed(42))
+                assert(failureResult.isInstanceOf[Result.Failure[?]])
             }
         }
 
@@ -171,8 +171,8 @@ class ConstructorsTest extends Test:
                 val successResult = IO.Unsafe.evalOrThrow(Abort.run[Throwable](successEffect))
                 val failureResult = IO.Unsafe.evalOrThrow(Abort.run[Throwable](failureEffect))
 
-                assert(successResult == Result.success(42))
-                assert(failureResult.isInstanceOf[Result.Fail[?]])
+                assert(successResult == Result.succeed(42))
+                assert(failureResult.isInstanceOf[Result.Failure[?]])
             }
         }
 

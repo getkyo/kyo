@@ -14,7 +14,7 @@ import java.util.zip.Inflater
 import java.util.zip.InflaterInputStream
 import java.util.zip.InflaterOutputStream
 import kyo.*
-import kyo.Result.Fail
+import kyo.Result.Failure
 import kyo.StreamCompression.*
 import scala.annotation.tailrec
 
@@ -217,8 +217,8 @@ class StreamCompressionTest extends Test:
                 yield ()
             ).map: result =>
                 result match
-                    case Fail(_: StreamCompressionException) => assert(true)
-                    case _                                   => assert(false)
+                    case Failure(_: StreamCompressionException) => assert(true)
+                    case _                                      => assert(false)
         }
 
         "inflate nowrap: remaining = 0 but not all was pulled" in run {

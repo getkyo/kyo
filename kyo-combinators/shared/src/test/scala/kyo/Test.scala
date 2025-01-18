@@ -18,7 +18,5 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     def assertionSuccess              = succeed
     def assertionFailure(msg: String) = fail(msg)
 
-    object WipTest extends org.scalatest.Tag("org.scalatest.Ignore")
-
     override given executionContext: ExecutionContext = Platform.executionContext
 end Test

@@ -58,7 +58,7 @@ final private[kyo] class StreamSubscription[V, Ctx](
                                 case nextLeftOver: Chunk[V]   => Loop.continue(nextLeftOver)
                                 case state: StreamFinishState => Loop.done(state)
                             }
-                case Result.Fail(_)          => IO(Loop.done(StreamFinishState.StreamCanceled))
+                case Result.Failure(_)       => IO(Loop.done(StreamFinishState.StreamCanceled))
                 case Result.Panic(exception) => Abort.panic(exception).andThen(Loop.done(StreamFinishState.StreamCanceled))
     end poll
 

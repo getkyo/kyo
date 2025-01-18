@@ -72,8 +72,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(Duration.Infinity))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(_: Timeout) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Failure(_: Timeout) => succeed
+                    case v                          => fail(v.toString())
                 }
         }
 
@@ -82,8 +82,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(_: Timeout) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Failure(_: Timeout) => succeed
+                    case v                          => fail(v.toString())
                 }
         }
 
@@ -92,8 +92,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(_: Timeout) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Failure(_: Timeout) => succeed
+                    case v                          => fail(v.toString())
                 }
         }
     }
@@ -525,8 +525,8 @@ class AsyncTest extends Test:
                 yield value
 
             Abort.run[Timeout](result).map {
-                case Result.Fail(_: Timeout) => succeed
-                case other                   => fail(s"Expected Timeout, got $other")
+                case Result.Failure(_: Timeout) => succeed
+                case other                      => fail(s"Expected Timeout, got $other")
             }
         }
 
@@ -546,7 +546,7 @@ class AsyncTest extends Test:
                 result <- Async.run(v)
                 result <- fiber.getResult
                 _      <- untilTrue(flag.get)
-            yield assert(result.isFail)
+            yield assert(result.isFailure)
         }
     }
 
@@ -934,7 +934,7 @@ class AsyncTest extends Test:
                     }
                 }.map { case (emitted, result) =>
                     assert(emitted == Seq("b1", "b2"))
-                    assert(result == Result.success(Chunk(2)))
+                    assert(result == Result.succeed(Chunk(2)))
                 }
             }
 
@@ -963,7 +963,7 @@ class AsyncTest extends Test:
                     }
                 }.map { case (emitted, result) =>
                     assert(emitted == Chunk("c1", "c2"))
-                    assert(result == Result.success(Chunk(3)))
+                    assert(result == Result.succeed(Chunk(3)))
                 }
             }
 
@@ -1013,7 +1013,7 @@ class AsyncTest extends Test:
                     }
                 }.map { case (finalState, result) =>
                     assert(finalState == 42)
-                    assert(result == Result.success(Chunk("b")))
+                    assert(result == Result.succeed(Chunk("b")))
                 }
             }
         }
