@@ -8,4 +8,6 @@ object Platform:
     val isJS: Boolean                      = true
     val isNative: Boolean                  = false
     val isDebugEnabled: Boolean            = false
+    def exit(code: Int): Unit =
+      scala.scalajs.js.Dynamic.global.process.exitCode = code
 end Platform
