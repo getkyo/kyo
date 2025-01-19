@@ -99,6 +99,7 @@ lazy val kyoJVM = project
         `kyo-scheduler-zio`.jvm,
         `kyo-scheduler-cats`.jvm,
         `kyo-scheduler-finagle`.jvm,
+        `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
@@ -200,6 +201,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
+
 lazy val `kyo-scheduler-cats` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -209,6 +211,23 @@ lazy val `kyo-scheduler-cats` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
+        )
+        .jvmSettings(mimaCheck(false))
+        .settings(
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+        )
+
+lazy val `kyo-scheduler-pekko` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-scheduler`)
+        .in(file("kyo-scheduler-pekko"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.1.3",
+            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.1.3"
         )
         .jvmSettings(mimaCheck(false))
         .settings(
