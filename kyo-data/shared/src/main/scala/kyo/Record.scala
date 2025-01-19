@@ -262,7 +262,7 @@ object Record:
         Field match
             case name ~ value => CanEqual[value, value]
 
-    inline given [Fields: TypeIntersection as ts]: CanEqual[Record[Fields], Record[Fields]] =
+    inline given [Fields: TypeIntersection]: CanEqual[Record[Fields], Record[Fields]] =
         discard(TypeIntersection.summonAll[Fields, HasCanEqual])
         CanEqual.derived
     end given
@@ -285,8 +285,12 @@ object Record:
     inline given [Fields: TypeIntersection]: Render[Record[Fields]] =
         val insts = TypeIntersection.inlineAll[Fields, (String, Render[?])](RenderInliner).toMap
         Render.from: (value: Record[Fields]) =>
-            value.toMap.map((field, value) => (field, value, insts.get(field.name))).collect {
-                case (field, value, Some(r: Render[x])) => field.name + " ~ " + r.asText(value.asInstanceOf[x])
+            value.toMap.foldLeft(Vector[String]()) { case (acc, (field, value)) =>
+                insts.get(field.name) match
+                    case Some(r: Render[x]) =>
+                        acc :+ (field.name + " ~ " + r.asText(value.asInstanceOf[x]))
+                    case None => acc
+                end match
             }.mkString(" & ")
     end given
 end Record
