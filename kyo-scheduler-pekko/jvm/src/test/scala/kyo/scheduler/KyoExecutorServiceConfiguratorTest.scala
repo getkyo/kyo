@@ -56,10 +56,11 @@ class KyoExecutorServiceConfiguratorTest
 
         val probe = TestProbe()
         val actor = system.actorOf(Props(new Actor {
-            def receive = { _ =>
-                executorThread = Thread.currentThread()
-                latch.countDown()
-                probe.ref ! "done"
+            def receive = {
+                case _ =>
+                    executorThread = Thread.currentThread()
+                    latch.countDown()
+                    probe.ref ! "done"
             }
         }))
 
