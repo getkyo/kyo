@@ -34,7 +34,8 @@ import org.apache.pekko.dispatch.ExecutorServiceFactory
   *   Core Pekko prerequisites for dispatcher creation
   *
   * @see
-  *   [[kyo.scheduler.Scheduler]] for details on the underlying scheduling capabilities and `reject` methods
+  *   [[kyo.scheduler.Scheduler]] for details on the underlying scheduling capabilities, admisison `reject` methods, and available
+  *   configurations.
   * @see
   *   [[kyo.scheduler.regulator.Admission]] for details on admission control behavior
   * @see

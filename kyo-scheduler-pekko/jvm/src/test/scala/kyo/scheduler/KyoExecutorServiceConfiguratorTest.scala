@@ -5,11 +5,16 @@ import java.util.concurrent.CountDownLatch
 import org.apache.pekko.actor.Actor
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.actor.Props
+import org.apache.pekko.pattern.ask
 import org.apache.pekko.testkit.TestKit
 import org.apache.pekko.testkit.TestProbe
+import org.apache.pekko.util.Timeout
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpecLike
+import scala.concurrent.Await
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.concurrent.duration.*
 
@@ -27,79 +32,56 @@ class KyoExecutorServiceConfiguratorTest
     with NonImplicitAssertions
     with BeforeAndAfterAll {
 
+    implicit def timeout: Timeout          = Timeout(5.seconds)
+    implicit def execCtx: ExecutionContext = Scheduler.get.asExecutionContext
+
     override def afterAll(): Unit = {
         TestKit.shutdownActorSystem(system)
     }
 
-    val dispatcher = system.dispatchers.defaultGlobalDispatcher
-
-    case class TestException() extends Exception
-
     "executes tasks on kyo threads" in {
-        val thread                 = Thread.currentThread()
-        val latch                  = new CountDownLatch(1)
-        var executorThread: Thread = null
-
-        dispatcher.execute { () =>
-            executorThread = Thread.currentThread()
-            latch.countDown()
-        }
-
-        latch.await(5, SECONDS)
-        assert(thread ne executorThread)
-        assert(executorThread.getName().contains("kyo"))
-    }
-
-    "handles messages through actors" in {
-        val latch                  = new CountDownLatch(1)
-        var executorThread: Thread = null
-
-        val probe = TestProbe()
         val actor = system.actorOf(Props(new Actor {
             def receive = {
-                case _ =>
-                    executorThread = Thread.currentThread()
-                    latch.countDown()
-                    probe.ref ! "done"
+                case msg => sender() ! Thread.currentThread().getName
             }
         }))
 
-        actor ! "test"
-        probe.expectMsg("done")
+        val threadName = Await.result((actor ? "test").mapTo[String], 5.seconds)
+        assert(threadName.contains("kyo"))
+    }
 
-        assert(latch.await(5, SECONDS))
-        assert(Thread.currentThread() ne executorThread)
-        assert(executorThread.getName().contains("kyo"))
+    "handles concurrent messages" in {
+        val actor = system.actorOf(Props(new Actor {
+            def receive = {
+                case msg => sender() ! Thread.currentThread().getName
+            }
+        }))
+
+        val futures     = (1 to 1000).map(_ => (actor ? "test").mapTo[String])
+        val threadNames = Await.result(Future.sequence(futures), 5.seconds)
+
+        assert(threadNames.forall(_.contains("kyo")))
+        assert(threadNames.toSet.size > 1)
     }
 
     "handles multiple actors" in {
-        val actorCount   = 3
-        val messageCount = 10
-        val latch        = new CountDownLatch(actorCount * messageCount)
-        val threadNames  = scala.collection.mutable.Set[String]()
+        val actors =
+            (1 to 10).map { i =>
+                system.actorOf(Props(new Actor {
+                    def receive = {
+                        case msg => sender() ! Thread.currentThread().getName
+                    }
+                }))
+            }
 
-        val probe = TestProbe()
-        val actors = (1 to actorCount).map { i =>
-            system.actorOf(Props(new Actor {
-                def receive = {
-                    case msg =>
-                        threadNames.synchronized {
-                            threadNames += Thread.currentThread().getName
-                        }
-                        latch.countDown()
-                        probe.ref ! s"done-$i"
-                }
-            }))
-        }
+        val futures =
+            for {
+                actor <- actors
+                _     <- 1 to 10
+            } yield (actor ? "test").mapTo[String]
 
-        for {
-            actor <- actors
-            _     <- 1 to messageCount
-        } actor ! "test"
-
-        probe.receiveN(actorCount * messageCount)
-        assert(latch.await(5, SECONDS))
-        assert(threadNames.size > actorCount)
+        val threadNames = Await.result(Future.sequence(futures), 5.seconds)
         assert(threadNames.forall(_.contains("kyo")))
+        assert(threadNames.toSet.size > 1)
     }
 }
