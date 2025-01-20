@@ -18,6 +18,7 @@ class KyoAppTest extends Test:
         app.main(Array("arg1", "arg2"))
         succeed
     }
+
     "multiple runs" taggedAs jvmOnly in run {
         for
             ref <- AtomicInt.init(0)
@@ -30,6 +31,7 @@ class KyoAppTest extends Test:
             runs <- ref.get
         yield assert(runs == 3)
     }
+
     "ordered runs" in {
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Assertion]()
@@ -41,6 +43,7 @@ class KyoAppTest extends Test:
         app.main(Array.empty)
         promise.future
     }
+
     "effects in JVM" taggedAs jvmOnly in {
         def run: Int < (Async & Resource & Abort[Throwable]) =
             for
@@ -53,8 +56,9 @@ class KyoAppTest extends Test:
             yield 1
 
         import AllowUnsafe.embrace.danger
-        assert(KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) == Result.success(1))
+        assert(KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) == Result.succeed(1))
     }
+
     "effects in JS" taggedAs jsOnly in {
         val promise = scala.concurrent.Promise[Assertion]()
         val app = new KyoApp:
@@ -71,6 +75,20 @@ class KyoAppTest extends Test:
         app.main(Array.empty)
         promise.future
     }
+
+    "exit on error" taggedAs jvmOnly in {
+        var exitCode = -1
+        def app(fail: Boolean): KyoApp = new KyoApp:
+            override def exit(code: Int): Unit = exitCode = code
+            run(Abort.when(fail)(new IllegalArgumentException("Aborts!")))
+        val result = Result.catching[IllegalArgumentException](app(fail = true).main(Array.empty))
+        assert(result.isFailure)
+        assert(exitCode == -1) // exit is only called on non-throwable errors
+        exitCode = -1
+        app(fail = false).main(Array.empty)
+        assert(exitCode == -1)
+    }
+
     "failing effects" taggedAs jvmOnly in {
         def run: Unit < (Async & Resource & Abort[Throwable]) =
             for
@@ -81,8 +99,8 @@ class KyoAppTest extends Test:
 
         import AllowUnsafe.embrace.danger
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) match
-            case Result.Fail(exception: RuntimeException) => assert(exception.getMessage == "Aborts!")
-            case _                                        => fail("Unexpected Success...")
+            case Result.Failure(exception: RuntimeException) => assert(exception.getMessage == "Aborts!")
+            case _                                           => fail("Unexpected Success...")
     }
 
     "effect mismatch" taggedAs jvmOnly in {

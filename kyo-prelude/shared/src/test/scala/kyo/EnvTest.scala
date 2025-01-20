@@ -161,7 +161,7 @@ class EnvTest extends Test:
                     Env.get[Service1].map(_(1))
                 assert(
                     Abort.run(Env.run(service1)(a)).eval ==
-                        Result.success(2)
+                        Result.succeed(2)
                 )
             }
             "short circuit" in {
@@ -184,21 +184,21 @@ class EnvTest extends Test:
                     val b = Env.run(service2)(v)
                     val c = Env.run(service1)(b)
                     assert(
-                        Abort.run(c).eval == Result.success(3)
+                        Abort.run(c).eval == Result.succeed(3)
                     )
                 }
                 "reverse handling order" in {
                     val b = Env.run(service1)(v)
                     val c = Env.run(service2)(b)
                     assert(
-                        Abort.run(c).eval == Result.success(3)
+                        Abort.run(c).eval == Result.succeed(3)
                     )
                 }
                 "dependent services" in {
                     val v2: Int < (Env[Service2] & Abort[Absent]) = Env.run(service1)(v)
                     assert(
                         Abort.run(Env.run(service2)(v2)).eval ==
-                            Result.success(3)
+                            Result.succeed(3)
                     )
                 }
             }
@@ -304,7 +304,7 @@ class EnvTest extends Test:
         "should have access to the environment within Abort" in {
             val env    = "test"
             val result = Env.run(env)(Abort.run[String](Env.get[String]))
-            assert(result.eval == Result.success(env))
+            assert(result.eval == Result.succeed(env))
         }
     }
 

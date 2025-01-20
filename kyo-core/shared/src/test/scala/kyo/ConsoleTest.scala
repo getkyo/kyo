@@ -63,7 +63,7 @@ class ConsoleTest extends Test:
 
         "should read line correctly" in {
             val testUnsafe = new TestUnsafeConsole("test input")
-            assert(testUnsafe.readLine() == Result.success("test input"))
+            assert(testUnsafe.readLine() == Result.succeed("test input"))
         }
 
         "should print correctly" in {
@@ -105,7 +105,7 @@ class ConsoleTest extends Test:
         var printlnErrs = List.empty[String]
 
         def readLine()(using AllowUnsafe) =
-            Result.success(readlnInput)
+            Result.succeed(readlnInput)
         def print(s: String)(using AllowUnsafe) =
             prints = s :: prints
             Result.unit

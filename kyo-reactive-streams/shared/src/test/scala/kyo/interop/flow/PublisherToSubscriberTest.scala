@@ -45,37 +45,14 @@ abstract private class PublisherToSubscriberTest extends Test:
         end for
     }
 
-    "should cancel upstream if downstream completes" in runJVM {
-        def emit(ack: Ack, cur: Int, stopPromise: Fiber.Promise[Nothing, Unit]): Ack < (Emit[Chunk[Int]] & IO) =
-            ack match
-                case Ack.Stop        => stopPromise.completeDiscard(Result.success(())).andThen(Ack.Stop)
-                case Ack.Continue(_) => Emit.valueWith(Chunk(cur))(emit(_, cur + 1, stopPromise))
-        end emit
-
-        for
-            stopPromise <- Fiber.Promise.init[Nothing, Unit]
-            stream = Stream(Emit.valueWith(Chunk.empty[Int])(emit(_, 0, stopPromise)))
-            publisher  <- stream.toPublisher
-            subscriber <- streamSubscriber
-            _ = publisher.subscribe(subscriber)
-            _ <- subscriber.stream.take(10).runDiscard
-            _ <- stopPromise.get
-        yield assert(true)
-        end for
-    }
-
     "single publisher & multiple subscribers" - {
         "contention" in runJVM {
-            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & IO) =
-                ack match
-                    case Ack.Stop => IO(Ack.Stop)
-                    case Ack.Continue(_) =>
-                        counter.getAndIncrement.map: value =>
-                            if value >= MaxStreamLength then
-                                IO(Ack.Stop)
-                            else
-                                Emit.valueWith(Chunk(value))(emit(_, counter))
-                            end if
+            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & IO) =
+                counter.getAndIncrement.map: value =>
+                    if value >= MaxStreamLength then ()
+                    else
+                        Emit.valueWith(Chunk(value))(emit(counter))
+                    end if
             end emit
 
             def checkStrictIncrease(chunk: Chunk[Int]): Boolean =
@@ -85,7 +62,7 @@ abstract private class PublisherToSubscriberTest extends Test:
 
             for
                 counter <- AtomicInt.init(0)
-                inputStream = Stream(Emit.valueWith(Chunk.empty)(emit(_, counter)))
+                inputStream = Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                 publisher   <- inputStream.toPublisher
                 subscriber1 <- streamSubscriber
                 subscriber2 <- streamSubscriber
@@ -115,16 +92,13 @@ abstract private class PublisherToSubscriberTest extends Test:
         }
 
         "one subscriber's failure does not affect others." in runJVM {
-            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & IO) =
-                ack match
-                    case Ack.Stop => IO(Ack.Stop)
-                    case Ack.Continue(_) =>
-                        counter.getAndIncrement.map: value =>
-                            if value >= MaxStreamLength then
-                                IO(Ack.Stop)
-                            else
-                                Emit.valueWith(Chunk(value))(emit(_, counter))
-                            end if
+            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & IO) =
+                counter.getAndIncrement.map: value =>
+                    if value >= MaxStreamLength then
+                        IO(())
+                    else
+                        Emit.valueWith(Chunk(value))(emit(counter))
+                    end if
             end emit
 
             def checkStrictIncrease(chunk: Chunk[Int]): Boolean =
@@ -140,7 +114,7 @@ abstract private class PublisherToSubscriberTest extends Test:
 
             for
                 counter <- AtomicInt.init(0)
-                inputStream = Stream(Emit.valueWith(Chunk.empty)(emit(_, counter)))
+                inputStream = Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                 publisher   <- inputStream.toPublisher
                 subscriber1 <- streamSubscriber
                 subscriber2 <- streamSubscriber
@@ -171,21 +145,18 @@ abstract private class PublisherToSubscriberTest extends Test:
         }
 
         "publisher's interuption should end all subscribed parties" in runJVM {
-            def emit(ack: Ack, counter: AtomicInt): Ack < (Emit[Chunk[Int]] & IO) =
-                ack match
-                    case Ack.Stop => IO(Ack.Stop)
-                    case Ack.Continue(_) =>
-                        counter.getAndIncrement.map: value =>
-                            if value >= MaxStreamLength then
-                                IO(Ack.Stop)
-                            else
-                                Emit.valueWith(Chunk(value))(emit(_, counter))
-                            end if
+            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & IO) =
+                counter.getAndIncrement.map: value =>
+                    if value >= MaxStreamLength then
+                        IO(())
+                    else
+                        Emit.valueWith(Chunk(value))(emit(counter))
+                    end if
             end emit
 
             for
                 counter     <- AtomicInt.init(0)
-                publisher   <- Stream(Emit.valueWith(Chunk.empty)(emit(_, counter))).toPublisher
+                publisher   <- Stream(Emit.valueWith(Chunk.empty)(emit(counter))).toPublisher
                 subscriber1 <- streamSubscriber
                 subscriber2 <- streamSubscriber
                 subscriber3 <- streamSubscriber
@@ -196,7 +167,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                 fiber3      <- Async.run(latch.release.andThen(subscriber3.stream.run.unit))
                 fiber4      <- Async.run(latch.release.andThen(subscriber4.stream.run.unit))
                 publisherFiber <- Async.run(Resource.run(
-                    Stream(Emit.valueWith(Chunk.empty)(emit(_, counter)))
+                    Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                         .toPublisher
                         .map { publisher =>
                             publisher.subscribe(subscriber1)

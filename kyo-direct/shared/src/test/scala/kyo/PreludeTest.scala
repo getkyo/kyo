@@ -296,14 +296,11 @@ class PreludeTest extends Test:
         "basic polling" in run {
             val effect =
                 defer {
-                    val result = Poll.one[Int].now
-                    val ack    = if result.exists(_ > 5) then Ack.Stop else Ack.Continue()
-                    (result, ack)
+                    Poll.one[Int].now
                 }
 
-            Poll.run(Chunk(1, 2, 3))(effect).map { case (result, ack) =>
+            Poll.run(Chunk(1, 2, 3))(effect).map { result =>
                 assert(result == Maybe(1))
-                assert(ack == Ack.Continue())
             }
         }
 

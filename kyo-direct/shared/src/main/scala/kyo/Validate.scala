@@ -29,15 +29,15 @@ private[kyo] object Validate:
                             |${highlight("""
                             |// Missing defer when handling effects:
                             |val result = Emit.run {      // NOT OK - missing defer
-                            |    Emit(1).now
-                            |    Emit(2).now
+                            |    Emit.value(1).now
+                            |    Emit.value(2).now
                             |}
                             |
                             |// Correctly wrapped in defer:
                             |val result = Emit.run {
                             |    defer {                  // OK - effects wrapped in defer
-                            |        Emit(1).now
-                            |        Emit(2).now
+                            |        Emit.value(1).now
+                            |        Emit.value(2).now
                             |    }
                             |}""")}
                             |
@@ -175,7 +175,7 @@ private[kyo] object Validate:
                        |defer {
                        |  Abort.run(computation).now match {
                        |    case Result.Success(v) => v
-                       |    case Result.Fail(e) => handleError(e)
+                       |    case Result.Failure(e) => handleError(e)
                        |    case Result.Panic(e) => handleUnexpected(e)
                        |  }
                        |}""".stripMargin)}

@@ -34,7 +34,7 @@ class IOTest extends Test:
             assert(!called)
             assert(
                 Abort.run(Env.run(1)(v2)).eval ==
-                    Result.success(1)
+                    Result.succeed(1)
             )
             assert(called)
         }

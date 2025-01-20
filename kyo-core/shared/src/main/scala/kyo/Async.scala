@@ -208,7 +208,7 @@ object Async:
                     IO.Unsafe {
                         val sleepFiber = clock.unsafe.sleep(after)
                         val task       = IOTask[Ctx, E | Timeout, A](v, trace, context)
-                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Fail(Timeout()))))
+                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Failure(Timeout()))))
                         task.onComplete(_ => discard(sleepFiber.interrupt()))
                         Async.get(task)
                     }
@@ -807,7 +807,7 @@ object Async:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): B < (S & reduce.SReduced & Async) =
-        val x = useResult(v)(_.fold(Abort.error)(f))
+        val x = useResult(v)(_.foldAll(Abort.panic)(Abort.fail)(f))
         reduce(x)
     end use
 

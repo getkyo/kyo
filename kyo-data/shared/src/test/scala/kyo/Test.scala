@@ -22,7 +22,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions:
 
     inline def typeCheckFailure(inline code: String)(inline predicate: String => Boolean): Assertion =
         typeCheck(code) match
-            case Result.Fail(errors)     => if predicate(errors) then succeed else fail(s"Predicate not satisfied by $errors")
+            case Result.Failure(errors)  => if predicate(errors) then succeed else fail(s"Predicate not satisfied by $errors")
             case Result.Panic(exception) => fail(exception.getMessage)
             case Result.Success(_)       => fail("Code type-checked successfully, expected a failure")
 end Test

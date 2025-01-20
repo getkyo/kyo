@@ -61,7 +61,7 @@ object Channel:
           */
         def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
             IO.Unsafe {
-                self.offer(value).fold(Abort.error) {
+                self.offer(value).foldError(Abort.error) {
                     case true  => ()
                     case false => self.putFiber(value).safe.get
                 }
@@ -90,7 +90,7 @@ object Channel:
           */
         def take(using Frame): A < (Abort[Closed] & Async) =
             IO.Unsafe {
-                self.poll().fold(Abort.error) {
+                self.poll().foldError(Abort.error) {
                     case Present(value) => value
                     case Absent         => self.takeFiber().safe.get
                 }
@@ -180,24 +180,20 @@ object Channel:
             using
             Tag[Emit[Chunk[A]]],
             Frame
-        ): Ack < (Emit[Chunk[A]] & Abort[Closed] & Async) =
-            if maxChunkSize <= 0 then Ack.Stop
+        ): Unit < (Emit[Chunk[A]] & Abort[Closed] & Async) =
+            if maxChunkSize <= 0 then ()
             else if maxChunkSize == 1 then
                 Loop(()): _ =>
                     Channel.take(self).map: v =>
-                        Emit.valueWith(Chunk(v)):
-                            case Ack.Stop => Loop.done(Ack.Stop)
-                            case _        => Loop.continue(())
+                        Emit.valueWith(Chunk(v))(Loop.continue(()))
             else
                 val drainEffect =
                     if maxChunkSize == Int.MaxValue then Channel.drain(self)
                     else Channel.drainUpTo(self)(maxChunkSize - 1)
-                Loop[Unit, Ack, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
+                Loop[Unit, Unit, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
                         drainEffect.map: chunk =>
-                            Emit.valueWith(Chunk(a).concat(chunk)):
-                                case Ack.Stop => Loop.done(Ack.Stop)
-                                case _        => Loop.continue(())
+                            Emit.valueWith(Chunk(a).concat(chunk))(Loop.continue(()))
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
@@ -224,7 +220,7 @@ object Channel:
             Stream:
                 Abort.run[Closed](emitChunks(maxChunkSize)).map:
                     case Result.Success(v) => v
-                    case Result.Fail(_)    => Ack.Stop
+                    case Result.Failure(_) => ()
                     case Result.Panic(e)   => Abort.panic(e)
 
         def unsafe: Unsafe[A] = self
@@ -324,7 +320,7 @@ object Channel:
                                     loop(current.tail, true)
                                 case Result.Success(false) =>
                                     if offered then flush()
-                                    Result.success(current)
+                                    Result.succeed(current)
                                 case result =>
                                     if offered then flush()
                                     result.map(_ => current)
@@ -429,7 +425,7 @@ object Channel:
                         Maybe(takes.poll()).foreach { promise =>
                             queue.poll() match
                                 case Result.Success(Present(value)) =>
-                                    if !promise.complete(Result.success(value)) && !queue.offer(value).contains(true) then
+                                    if !promise.complete(Result.succeed(value)) && !queue.offer(value).contains(true) then
                                         // If completing the take fails and the queue
                                         // cannot accept the value back, enqueue a
                                         // placeholder put operation
@@ -476,7 +472,7 @@ object Channel:
                             put match
                                 case Put.Value(value, promise) =>
                                     Maybe(takes.poll()) match
-                                        case Present(takePromise) if takePromise.complete(Result.success(value)) =>
+                                        case Present(takePromise) if takePromise.complete(Result.succeed(value)) =>
                                             // Value transfered, complete put
                                             promise.completeDiscard(Result.unit)
 
@@ -495,7 +491,7 @@ object Channel:
                                         else
                                             Maybe(takes.poll()) match
                                                 case Present(takePromise) =>
-                                                    if takePromise.complete(Result.success(chunk(i))) then
+                                                    if takePromise.complete(Result.succeed(chunk(i))) then
                                                         // Item transfered, move to the next one
                                                         loop(i + 1)
                                                     else

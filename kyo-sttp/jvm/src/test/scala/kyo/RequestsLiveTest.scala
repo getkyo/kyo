@@ -17,7 +17,7 @@ class RequestsLiveTest extends Test:
                 for
                     port <- startTestServer("/ping", Failure(new Exception))
                     r    <- Abort.run(Requests(_.get(uri"http://localhost:$port/ping")))
-                yield assert(r.isFail)
+                yield assert(r.isFailure)
             }
             "race" in run {
                 val n = 1000

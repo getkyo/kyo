@@ -115,8 +115,8 @@ class ChannelTest extends Test:
                         _ <- c.putBatch(Chunk(1, 2))
                     yield ()
                 Abort.run[Closed](effect).map:
-                    case Result.Fail(closed: Closed) => assert(true)
-                    case other                       => fail(s"$other was not Result.Fail[Closed]")
+                    case Result.Failure(closed: Closed) => assert(true)
+                    case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
             "should notify waiting takers immediately" in runNotJS {
                 for
@@ -154,8 +154,8 @@ class ChannelTest extends Test:
                     _      <- c.close
                     result <- Abort.run(c.putBatch(Seq(1, 2)))
                 yield result match
-                    case Result.Fail(_: Closed) => assert(true)
-                    case other                  => fail(s"Expected Fail(Closed) but got $other")
+                    case Result.Failure(_: Closed) => assert(true)
+                    case other                     => fail(s"Expected Fail(Closed) but got $other")
             }
             "should preserve elements put before closure during partial batch put" in runNotJS {
                 for
@@ -165,7 +165,7 @@ class ChannelTest extends Test:
                     v2    <- c.take
                     _     <- c.close
                     res   <- fiber.getResult
-                yield assert(res.isFail && v1 == 1 && v2 == 2)
+                yield assert(res.isFailure && v1 == 1 && v2 == 2)
             }
         }
         "nested upper bound" - {
@@ -200,8 +200,8 @@ class ChannelTest extends Test:
                         _ <- c.putBatch(Chunk(Chunk(1), Chunk(2)))
                     yield ()
                 Abort.run[Closed](effect).map:
-                    case Result.Fail(closed: Closed) => assert(true)
-                    case other                       => fail(s"$other was not Result.Fail[Closed]")
+                    case Result.Failure(closed: Closed) => assert(true)
+                    case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
         }
         "nested lower bound" - {
@@ -242,8 +242,8 @@ class ChannelTest extends Test:
                         _ <- c.putBatch(Chunk(Chunk(1).toIndexed, Chunk(2).toIndexed))
                     yield ()
                 Abort.run[Closed](effect).map:
-                    case Result.Fail(closed: Closed) => assert(true)
-                    case other                       => fail(s"$other was not Result.Fail[Closed]")
+                    case Result.Failure(closed: Closed) => assert(true)
+                    case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
         }
     }
@@ -270,7 +270,7 @@ class ChannelTest extends Test:
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
                 f  <- Async.run(c.takeExactly(5))
-                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done(()) else Loop.continue(())))
+                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done else Loop.continue(())))
                 _  <- Async.sleep(10.millis)
                 fd <- f.done
                 _  <- f.interrupt
@@ -290,7 +290,7 @@ class ChannelTest extends Test:
                 _ <- Kyo.foreach(1 to 3)(c.put(_))
                 f <- Async.run(c.takeExactly(6))
                 // Wait until channel is empty
-                _  <- Loop(false)(v => if v then Loop.done(()) else c.empty.map(Loop.continue(_)))
+                _  <- Loop(false)(v => if v then Loop.done else c.empty.map(Loop.continue(_)))
                 fd <- f.done
                 _  <- Kyo.foreach(4 to 6)(c.put(_))
                 r  <- Fiber.get(f)
@@ -419,7 +419,7 @@ class ChannelTest extends Test:
                 c <- Channel.init[Int](2)
                 r <- c.close
                 t <- Abort.run(c.offer(1))
-            yield assert(r == Maybe(Seq()) && t.isFail)
+            yield assert(r == Maybe(Seq()) && t.isFailure)
         }
         "non-empty" in runNotJS {
             for
@@ -428,7 +428,7 @@ class ChannelTest extends Test:
                 _ <- c.put(2)
                 r <- c.close
                 t <- Abort.run(c.empty)
-            yield assert(r == Maybe(Seq(1, 2)) && t.isFail)
+            yield assert(r == Maybe(Seq(1, 2)) && t.isFailure)
         }
         "pending take" in runNotJS {
             for
@@ -437,7 +437,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.full)
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+            yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
         "pending put" in runNotJS {
             for
@@ -448,7 +448,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 e <- Abort.run(c.offer(1))
-            yield assert(r == Maybe(Seq(1, 2)) && d.isFail && e.isFail)
+            yield assert(r == Maybe(Seq(1, 2)) && d.isFailure && e.isFailure)
         }
         "no buffer w/ pending put" in runNotJS {
             for
@@ -457,7 +457,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.poll)
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+            yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
         "no buffer w/ pending take" in runNotJS {
             for
@@ -466,7 +466,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run[Throwable](c.put(1))
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+            yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
     }
     "no buffer" in runNotJS {
@@ -552,7 +552,7 @@ class ChannelTest extends Test:
                 assert(backlog.isDefined)
                 assert(offered.count(_.contains(true)) == backlog.get.size)
                 assert(closedChannel.isEmpty)
-                assert(drained.isFail)
+                assert(drained.isFailure)
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
@@ -811,9 +811,9 @@ class ChannelTest extends Test:
                 stream = c.stream().mapChunk(ch => Chunk(ch))
                 v <- Abort.run(stream.run)
             yield v match
-                case Result.Success(v)      => fail(s"Stream succeeded unexpectedly: ${v}")
-                case Result.Fail(_: Closed) => assert(true)
-                case Result.Panic(ex)       => fail(s"Stream panicked unexpectedly: ${ex}")
+                case Result.Success(v)         => fail(s"Stream succeeded unexpectedly: ${v}")
+                case Result.Failure(_: Closed) => assert(true)
+                case Result.Panic(ex)          => fail(s"Stream panicked unexpectedly: ${ex}")
         }
 
         "should stream concurrently with ingest via putBatch, yielding consistent chunk sizes" in run {

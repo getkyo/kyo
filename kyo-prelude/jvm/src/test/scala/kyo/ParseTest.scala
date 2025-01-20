@@ -19,7 +19,7 @@ class ParseTest extends Test:
                     Parse.literal("world")
                 )
                 Abort.run(Parse.run("test")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -66,7 +66,7 @@ class ParseTest extends Test:
                     assert(r1.is("()"))
                     assert(r2.is("()"))
                     assert(r3.is("()"))
-                    assert(fail.isFail)
+                    assert(fail.isFailure)
                 end for
             }
 
@@ -104,7 +104,7 @@ class ParseTest extends Test:
                     assert(r3 == 3)
                     assert(r4 == 6)
                     assert(r5 == 6)
-                    assert(fail.isFail)
+                    assert(fail.isFailure)
                 end for
             }
 
@@ -297,7 +297,7 @@ class ParseTest extends Test:
 
             "empty input" in run {
                 Abort.run(Parse.run("")(Parse.skipUntil(Parse.literal("end")))).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -310,7 +310,7 @@ class ParseTest extends Test:
 
             "pattern never matches" in run {
                 Abort.run(Parse.run("abcdef")(Parse.skipUntil(Parse.literal("xyz")))).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -375,7 +375,7 @@ class ParseTest extends Test:
             "fails if not enough repetitions" in run {
                 val parser = Parse.repeat(3)(Parse.literal("a"))
                 Abort.run(Parse.run("aa")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -412,7 +412,7 @@ class ParseTest extends Test:
                         Parse.literal("world")
                     )
                 Abort.run(Parse.run("world")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -459,14 +459,14 @@ class ParseTest extends Test:
             "missing separator fails" in run {
                 val parser = Parse.separatedBy(Parse.int.andThen(Parse.char(' ')), Parse.char(','))
                 Abort.run(Parse.run("1 2 ,3 ")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
             "multiple missing separators fails" in run {
                 val parser = Parse.separatedBy(Parse.int.andThen(Parse.char(' ')), Parse.char(','))
                 Abort.run(Parse.run("1 2 3")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -489,7 +489,7 @@ class ParseTest extends Test:
                         allowTrailing = false
                     )
                     Abort.run(Parse.run("1,2,3,")(parser)).map { result =>
-                        assert(result.isFail)
+                        assert(result.isFailure)
                     }
                 }
 
@@ -522,7 +522,7 @@ class ParseTest extends Test:
                         allowTrailing = true
                     )
                     Abort.run(Parse.run("1,2,3,,")(parser)).map { result =>
-                        assert(result.isFail)
+                        assert(result.isFailure)
                     }
                 }
             }
@@ -573,7 +573,7 @@ class ParseTest extends Test:
                     Parse.char(')')
                 )
                 Abort.run(Parse.run("(42")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -584,7 +584,7 @@ class ParseTest extends Test:
                     Parse.char(')')
                 )
                 Abort.run(Parse.run("42)")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -647,7 +647,7 @@ class ParseTest extends Test:
                     Parse.literal("!").andThen(3)
                 )
                 Abort.run(Parse.run("hello test")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -862,7 +862,7 @@ class ParseTest extends Test:
             "preserves failure" in run {
                 val parser = Parse.spaced(Parse.literal("test"))
                 Abort.run(Parse.run("  fail  ")(parser)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -1007,7 +1007,7 @@ class ParseTest extends Test:
 
             "invalid" in run {
                 Abort.run(Parse.run("abc")(Parse.int)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -1039,7 +1039,7 @@ class ParseTest extends Test:
 
             "invalid" in run {
                 Abort.run(Parse.run("xyz")(Parse.boolean)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -1055,13 +1055,13 @@ class ParseTest extends Test:
 
             "partial match" in run {
                 Abort.run(Parse.run("hell")(Parse.literal("hello"))).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
             "case sensitive" in run {
                 Abort.run(Parse.run("HELLO")(Parse.literal("hello"))).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -1087,7 +1087,7 @@ class ParseTest extends Test:
 
             "invalid" in run {
                 Abort.run(Parse.run("abc")(Parse.decimal)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -1105,19 +1105,19 @@ class ParseTest extends Test:
 
             "multiple dots" in run {
                 Abort.run(Parse.run("1.2.3")(Parse.decimal)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
             "multiple leading dots" in run {
                 Abort.run(Parse.run("..123")(Parse.decimal)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
             "malformed negative" in run {
                 Abort.run(Parse.run(".-123")(Parse.decimal)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -1137,13 +1137,13 @@ class ParseTest extends Test:
 
             "starting with number" in run {
                 Abort.run(Parse.run("123abc")(Parse.identifier)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
             "special characters" in run {
                 Abort.run(Parse.run("hello@world")(Parse.identifier)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -1162,7 +1162,7 @@ class ParseTest extends Test:
 
             "empty string" in run {
                 Abort.run(Parse.run("")(Parse.identifier)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -1176,7 +1176,7 @@ class ParseTest extends Test:
 
             "no match" in run {
                 Abort.run(Parse.run("123abc")(Parse.regex("[a-z]+[0-9]+"))).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
 
@@ -1196,7 +1196,7 @@ class ParseTest extends Test:
 
             "no match" in run {
                 Abort.run(Parse.run("d")(Parse.charIn("abc"))).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -1210,7 +1210,7 @@ class ParseTest extends Test:
 
             "invalid char" in run {
                 Abort.run(Parse.run("a")(Parse.charNotIn("abc"))).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -1222,7 +1222,7 @@ class ParseTest extends Test:
 
             "non-empty string" in run {
                 Abort.run(Parse.run("abc")(Parse.end)).map { result =>
-                    assert(result.isFail)
+                    assert(result.isFailure)
                 }
             }
         }
@@ -1367,7 +1367,7 @@ class ParseTest extends Test:
             val input  = Stream.init(Seq[Text]("1", "abc", "3"))
 
             Abort.run(Parse.run(input)(parser).run).map { result =>
-                assert(result.isFail)
+                assert(result.isFailure)
             }
         }
 
@@ -1379,7 +1379,7 @@ class ParseTest extends Test:
             val input = Stream.init(Seq("abc").map(Text(_)))
 
             Abort.run(Parse.run(input)(parser).run).map { result =>
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(result.failure.get.getMessage().contains("Ambiguous"))
             }
         }
@@ -1389,7 +1389,7 @@ class ParseTest extends Test:
             val input  = Stream.init(Seq("ab").map(Text(_)))
 
             Abort.run(Parse.run(input)(parser).run).map { result =>
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(result.failure.get.getMessage().contains("Incomplete"))
             }
         }

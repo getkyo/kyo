@@ -27,8 +27,8 @@ final class JavaSubscription(subscriber: Subscriber[? >: Int], batchSize: Int, c
     override def cancel(): Unit = isCanceled.set(true)
 end JavaSubscription
 
-final class SreamSubscriberTest extends Test:
-    import SreamSubscriberTest.*
+final class StreamSubscriberTest extends Test:
+    import StreamSubscriberTest.*
 
     def getPublisher(
         batchSize: Int
@@ -76,10 +76,10 @@ final class SreamSubscriberTest extends Test:
             assert(results(0) + results(1) == (StreamLength >> 1) * (StreamLength + 1))
         end for
     }
-end SreamSubscriberTest
+end StreamSubscriberTest
 
-object SreamSubscriberTest:
+object StreamSubscriberTest:
     private val BatchSize    = 4
     private val BufferSize   = 1 << 5
     private val StreamLength = 1 << 15
-end SreamSubscriberTest
+end StreamSubscriberTest

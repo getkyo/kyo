@@ -6,7 +6,7 @@ abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abo
         import AllowUnsafe.embrace.danger
         initCode = initCode.appended(() =>
             val result = IO.Unsafe.evalOrThrow(Abort.run(Async.runAndBlock(timeout)(handle(v))))
-            printResult(result)
+            onResult(result)
         )
     end run
 

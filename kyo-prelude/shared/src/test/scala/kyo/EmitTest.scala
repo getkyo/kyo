@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Ack.*
-
 class EmitTest extends Test:
 
     "int" in {
@@ -69,162 +67,114 @@ class EmitTest extends Test:
         assert(res.eval == (Chunk(Set(1), Set(2), Set(3)), "a"))
     }
 
-    "Ack" - {
-        "apply" - {
-            "negative" in {
-                val ack = Ack(-1)
-                assert(ack == Ack.Stop)
-            }
-            "zero" in {
-                val ack = Ack(0)
-                assert(ack == Ack.Stop)
-            }
-            "positive" in {
-                Ack(1) match
-                    case Continue(n) => assert(n == 1)
-                    case Stop        => fail()
-            }
-        }
-        "maxItems" - {
-            "stop with negative" in {
-                val ack = Ack.Stop.maxValues(-1)
-                assert(ack == Ack.Stop)
-            }
-            "stop with zero" in {
-                val ack = Ack.Stop.maxValues(0)
-                assert(ack == Ack.Stop)
-            }
-            "stop with positive" in {
-                val ack = Ack.Stop.maxValues(1)
-                assert(ack == Ack.Stop)
-            }
-            "continue with negative" in {
-                val ack = Ack(2).maxValues(-1)
-                assert(ack == Ack.Stop)
-            }
-            "continue with zero" in {
-                val ack = Ack(2).maxValues(0)
-                assert(ack == Ack.Stop)
-            }
-            "continue with less" in {
-                val ack = Ack(2).maxValues(1)
-                assert(ack == Ack(1))
-            }
-            "continue with more" in {
-                val ack = Ack(2).maxValues(3)
-                assert(ack == Ack(2))
-            }
-        }
-        "Continue" - {
-            "unapply" - {
-                "stop" in {
-                    val res = Ack.Continue.unapply(Ack.Stop)
-                    assert(res.isEmpty)
-                }
-                "continue" in {
-                    val res = Ack.Continue.unapply(Ack(1))
-                    assert(res.get == 1)
-                }
-            }
-        }
-        "next" - {
-            "stop short circuits" in run {
-                var executed = false
-                Ack.Stop.next {
-                    executed = true
-                    Ack.Continue()
-                }.map { ack =>
-                    assert(ack == Ack.Stop)
-                    assert(!executed)
-                }
-            }
+    "runForeach" - {
+        "with pure function" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+            end emits
 
-            "continue executes function" in run {
-                var executed = false
-                Ack(2).next {
-                    executed = true
-                    Ack(1)
-                }.map { ack =>
-                    assert(ack == Ack(1))
-                    assert(executed)
-                }
-            }
+            Emit.runForeach(emits(0)) { v =>
+                seen :+= v
+            }.eval
+            assert(seen == List(0, 1, 2, 3, 4))
         }
-        "Flat" in {
-            summon[Flat[Ack]]
-            summon[Flat[Ack.Continue]]
-            summon[Flat[Ack.Stop.type]]
-            succeed
+
+        "with effects" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+
+            val result =
+                Var.runTuple(0) {
+                    Emit.runForeach(emits(0)) { v =>
+                        for
+                            count <- Var.get[Int]
+                            _     <- Var.set(count + 1)
+                            _ = seen :+= v
+                        yield ()
+                    }
+                }.eval
+            assert(seen == List(0, 1, 2, 3, 4))
+            assert(result == (5, ()))
+        }
+
+        "early termination" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+            end emits
+
+            val result = Abort.run[String] {
+                Emit.runForeach(emits(0)) { v =>
+                    seen :+= v
+                    if v < 3 then ()
+                    else Abort.fail("Reached 3")
+                }
+            }.eval
+            assert(seen == List(0, 1, 2, 3))
+            assert(result == Result.fail("Reached 3"))
         }
     }
 
-    "runAck" - {
-        "runAck" - {
-            "with pure function" in {
-                var seen = List.empty[Int]
-                def emits(i: Int): Unit < Emit[Int] =
-                    if i == 5 then ()
-                    else
-                        Emit.valueWith(i) {
-                            case Stop        => ()
-                            case Continue(_) => emits(i + 1)
+    "runWhile" - {
+        "with pure function" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+            end emits
+
+            Emit.runWhile(emits(0)) { v =>
+                seen :+= v
+                if v < 3 then true
+                else false
+            }.eval
+            assert(seen == List(0, 1, 2, 3))
+        }
+
+        "with effects" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+
+            val result =
+                Env.run(3) {
+                    Var.runTuple(0) {
+                        Emit.runWhile(emits(0)) { v =>
+                            for
+                                threshold <- Env.get[Int]
+                                count     <- Var.get[Int]
+                                _         <- Var.set(count + 1)
+                                _ = seen :+= v
+                            yield if v <= threshold then true else false
                         }
-
-                Emit.runAck(emits(0)) { v =>
-                    seen :+= v
-                    if v < 3 then Ack.Continue()
-                    else Ack.Stop
-                }.eval
-                assert(seen == List(0, 1, 2, 3))
-            }
-
-            "with effects" in {
-                var seen = List.empty[Int]
-                def emits(i: Int): Unit < Emit[Int] =
-                    if i == 5 then ()
-                    else
-                        Emit.valueWith(i) {
-                            case Stop        => ()
-                            case Continue(_) => emits(i + 1)
-                        }
-
-                val result =
-                    Env.run(3) {
-                        Var.runTuple(0) {
-                            Emit.runAck(emits(0)) { v =>
-                                for
-                                    threshold <- Env.get[Int]
-                                    count     <- Var.get[Int]
-                                    _         <- Var.set(count + 1)
-                                    _ = seen :+= v
-                                yield if v <= threshold then Ack.Continue() else Ack.Stop
-                            }
-                        }
-                    }.eval
-                assert(seen == List(0, 1, 2, 3, 4))
-                assert(result == (5, ()))
-            }
-
-            "early termination" in {
-                var seen = List.empty[Int]
-                def emits(i: Int): Unit < Emit[Int] =
-                    if i == 5 then ()
-                    else
-                        Emit.valueWith(i) {
-                            case Stop        => ()
-                            case Continue(_) => emits(i + 1)
-                        }
-
-                val result = Abort.run[String] {
-                    Emit.runAck(emits(0)) { v =>
-                        seen :+= v
-                        if v < 3 then Ack.Continue()
-                        else Abort.fail("Reached 3")
                     }
                 }.eval
-                assert(seen == List(0, 1, 2, 3))
-                assert(result == Result.fail("Reached 3"))
-            }
+            assert(seen == List(0, 1, 2, 3, 4))
+            assert(result == (5, ()))
+        }
+
+        "early termination" in {
+            var seen = List.empty[Int]
+            def emits(i: Int): Unit < Emit[Int] =
+                if i == 5 then ()
+                else Emit.valueWith(i)(emits(i + 1))
+            end emits
+
+            val result = Abort.run[String] {
+                Emit.runWhile(emits(0)) { v =>
+                    seen :+= v
+                    if v < 3 then true
+                    else Abort.fail("Reached 3")
+                }
+            }.eval
+            assert(seen == List(0, 1, 2, 3))
+            assert(result == Result.fail("Reached 3"))
         }
     }
 
@@ -237,24 +187,8 @@ class EmitTest extends Test:
                     _ <- Emit.value(3)
                 yield "a"
 
-            val result = Emit.runFold(0)((acc, v: Int) => (acc + v, Ack.Continue()))(v).eval
+            val result = Emit.runFold(0)((acc, v: Int) => acc + v)(v).eval
             assert(result == (6, "a"))
-        }
-
-        "early termination" in {
-            val v =
-                for
-                    _ <- Emit.value(1)
-                    _ <- Emit.value(2)
-                    _ <- Emit.value(3)
-                    _ <- Emit.value(4)
-                yield "a"
-
-            val result = Emit.runFold(0)((acc, v: Int) =>
-                if v < 3 then (acc + v, Ack.Continue())
-                else (acc, Ack.Stop)
-            )(v).eval
-            assert(result == (3, "a"))
         }
 
         "with effects" in {
@@ -270,7 +204,7 @@ class EmitTest extends Test:
                     for
                         threshold <- Env.get[Int]
                         newAcc = if v < threshold then acc + v else acc
-                    yield (newAcc, Ack.Continue())
+                    yield newAcc
                 )(v)
             }.eval
             assert(result == (6, "a"))
@@ -316,10 +250,10 @@ class EmitTest extends Test:
 
             for
                 (v1, cont1)    <- Emit.runFirst(v)
-                (v2, cont2)    <- Emit.runFirst(cont1(Ack.Continue()))
-                (v3, cont3)    <- Emit.runFirst(cont2(Ack.Continue()))
-                (v4, cont4)    <- Emit.runFirst(cont3(Ack.Continue()))
-                (rest, result) <- Emit.run(cont4(Ack.Continue()))
+                (v2, cont2)    <- Emit.runFirst(cont1())
+                (v3, cont3)    <- Emit.runFirst(cont2())
+                (v4, cont4)    <- Emit.runFirst(cont3())
+                (rest, result) <- Emit.run(cont4())
             yield
                 assert(v1.contains(1) && v2.contains(2) && v3.contains(3))
                 assert(v4.isEmpty)
@@ -333,7 +267,7 @@ class EmitTest extends Test:
 
             for
                 (v1, cont1)    <- Emit.runFirst(v)
-                (rest, result) <- Emit.run(cont1(Ack.Continue()))
+                (rest, result) <- Emit.run(cont1())
             yield
                 assert(v1.isEmpty)
                 assert(rest.isEmpty)
@@ -354,9 +288,9 @@ class EmitTest extends Test:
                 result <- Var.runTuple(0) {
                     for
                         (v1, cont1)    <- Emit.runFirst(v)
-                        (v2, cont2)    <- Emit.runFirst(cont1(Ack.Continue()))
-                        (v3, cont3)    <- Emit.runFirst(cont2(Ack.Continue()))
-                        (rest, result) <- Emit.run(cont3(Ack.Continue()))
+                        (v2, cont2)    <- Emit.runFirst(cont1())
+                        (v3, cont3)    <- Emit.runFirst(cont2())
+                        (rest, result) <- Emit.run(cont3())
                     yield (v1, v2, v3, rest, result)
                 }
             yield

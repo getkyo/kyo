@@ -133,14 +133,14 @@ object StreamCompression:
     ) =
 
         enum DeflateState derives CanEqual:
-            case Initialize                                                              extends DeflateState
-            case DeflateInput(delfater: Deflater, emit: Ack < (Emit[Chunk[Byte]] & Ctx)) extends DeflateState
+            case Initialize                                                               extends DeflateState
+            case DeflateInput(delfater: Deflater, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) extends DeflateState
             case PullDeflater(
                 delfater: Deflater,
-                maybeEmitFn: Maybe[Ack => Ack < (Emit[Chunk[Byte]] & Ctx)],
+                maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)],
                 chunk: Chunk[Byte]
             ) extends DeflateState
-            case EmitDeflated(delfater: Deflater, maybeEmitFn: Maybe[Ack => Ack < (Emit[Chunk[Byte]] & Ctx)], chunk: Chunk[Byte])
+            case EmitDeflated(delfater: Deflater, maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)], chunk: Chunk[Byte])
                 extends DeflateState
         end DeflateState
 
@@ -155,7 +155,7 @@ object StreamCompression:
             using
             Tag[Emit[Chunk[Byte]]],
             Frame
-        ): Ack < (Resource & IO & Emit[Chunk[Byte]] & Ctx) =
+        ): Unit < (Resource & IO & Emit[Chunk[Byte]] & Ctx) =
             Loop(DeflateState.Initialize):
                 case DeflateState.Initialize =>
                     Resource.acquireRelease(IO {
@@ -192,10 +192,10 @@ object StreamCompression:
                                     IO(chunk.concat(fromUnboxByteArray(buffer, size)))
                                         .map(nextChunk => Loop.continue(DeflateState.PullDeflater(deflater, maybeEmitFn, nextChunk)))
                 case DeflateState.EmitDeflated(deflater, maybeEmitFn, chunk) =>
-                    Emit.valueWith(chunk): ack =>
+                    Emit.valueWith(chunk):
                         maybeEmitFn match
-                            case Present(emitFn) => Loop.continue(DeflateState.DeflateInput(deflater, emitFn(ack)))
-                            case Absent          => IO(deflater.end()).andThen(Loop.done(Ack.Stop))
+                            case Present(emitFn) => Loop.continue(DeflateState.DeflateInput(deflater, emitFn()))
+                            case Absent          => IO(deflater.end()).andThen(Loop.done)
         end emit
 
         Stream(emit(stream, bufferSize, compressionLevel, strategy, flushMode, noWrap))
@@ -213,19 +213,19 @@ object StreamCompression:
         _frame: Frame
     ): Stream[Byte, Resource & IO & Ctx] =
         enum GZipState derives CanEqual:
-            case Initialize                                                                            extends GZipState
-            case SendHeader(delfater: Deflater, crc32: CRC32)                                          extends GZipState
-            case DeflateInput(delfater: Deflater, crc32: CRC32, emit: Ack < (Emit[Chunk[Byte]] & Ctx)) extends GZipState
+            case Initialize                                                                             extends GZipState
+            case SendHeader(delfater: Deflater, crc32: CRC32)                                           extends GZipState
+            case DeflateInput(delfater: Deflater, crc32: CRC32, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) extends GZipState
             case PullDeflater(
                 delfater: Deflater,
                 crc32: CRC32,
-                maybeEmitFn: Maybe[Ack => Ack < (Emit[Chunk[Byte]] & Ctx)],
+                maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)],
                 chunk: Chunk[Byte]
             ) extends GZipState
             case EmitDeflated(
                 delfater: Deflater,
                 crc32: CRC32,
-                maybeEmitFn: Maybe[Ack => Ack < (Emit[Chunk[Byte]] & Ctx)],
+                maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)],
                 chunk: Chunk[Byte]
             )                                                  extends GZipState
             case SendTrailer(delfater: Deflater, crc32: CRC32) extends GZipState
@@ -237,7 +237,7 @@ object StreamCompression:
             compressionLevel: CompressionLevel,
             strategy: CompressionStrategy,
             flushMode: FlushMode
-        ): Ack < (Resource & IO & Emit[Chunk[Byte]] & Ctx) =
+        ): Unit < (Resource & IO & Emit[Chunk[Byte]] & Ctx) =
             val bufferIO = IO(new Array[Byte](bufferSize))
 
             Loop(GZipState.Initialize):
@@ -276,7 +276,7 @@ object StreamCompression:
                             0xff // OS: Operating System
                         ).map(_.toByte)
                     }.map { header =>
-                        Emit.valueWith(header)(_ => Loop.continue(GZipState.DeflateInput(deflater, crc32, stream.emit)))
+                        Emit.valueWith(header)(Loop.continue(GZipState.DeflateInput(deflater, crc32, stream.emit)))
                     }
                 case GZipState.DeflateInput(deflater, crc32, emit) =>
                     Emit.runFirst(emit).map {
@@ -296,9 +296,9 @@ object StreamCompression:
                                 case size => IO(chunk.concat(fromUnboxByteArray(buffer, size)))
                                         .map(nextChunk => Loop.continue(GZipState.PullDeflater(deflater, crc32, maybeEmitFn, nextChunk)))
                 case GZipState.EmitDeflated(deflater, crc32, maybeEmitFn, chunk) =>
-                    Emit.valueWith(chunk): ack =>
+                    Emit.valueWith(chunk):
                         maybeEmitFn match
-                            case Present(emitFn) => Loop.continue(GZipState.DeflateInput(deflater, crc32, emitFn(ack)))
+                            case Present(emitFn) => Loop.continue(GZipState.DeflateInput(deflater, crc32, emitFn()))
                             case Absent          => Loop.continue(GZipState.SendTrailer(deflater, crc32))
                 case GZipState.SendTrailer(deflater, crc32) =>
                     IO {
@@ -318,7 +318,7 @@ object StreamCompression:
                         deflater.end()
                         trailer
                     }.map { trailer =>
-                        Emit.valueWith(trailer)(_ => Loop.done(Ack.Stop))
+                        Emit.valueWith(trailer)(Loop.done)
                     }
         end emit
 
@@ -338,9 +338,9 @@ object StreamCompression:
         val bufferIO = IO(new Array[Byte](bufferSize))
 
         enum InflateState derives CanEqual:
-            case Initialize                                                              extends InflateState
-            case InflateInput(inflater: Inflater, emit: Ack < (Emit[Chunk[Byte]] & Ctx)) extends InflateState
-            case PullInflater(inflater: Inflater, maybeEmitFn: Maybe[Ack => Ack < (Emit[Chunk[Byte]] & Ctx)], bytes: Chunk[Byte])
+            case Initialize                                                               extends InflateState
+            case InflateInput(inflater: Inflater, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) extends InflateState
+            case PullInflater(inflater: Inflater, maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)], bytes: Chunk[Byte])
                 extends InflateState
         end InflateState
 
@@ -352,7 +352,7 @@ object StreamCompression:
             using
             Tag[Emit[Chunk[Byte]]],
             Frame
-        ): Ack < (Resource & IO & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
+        ): Unit < (Resource & IO & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
             Loop(InflateState.Initialize):
                 case InflateState.Initialize =>
                     Resource
@@ -373,27 +373,27 @@ object StreamCompression:
                         val leftOver = inflater.getRemaining match
                             case remaining if remaining > 0 => bytes.takeRight(remaining)
                             case _                          => Chunk.empty[Byte]
-                        Emit.valueWith(leftOver): ack =>
+                        Emit.valueWith(leftOver):
                             maybeEmitFn match
                                 case Present(emitFn) =>
                                     Resource
                                         .acquireRelease(IO(new Inflater(noWrap)))(inflater => IO(inflater.end()))
                                         .map: inflater =>
-                                            Loop.continue(InflateState.InflateInput(inflater, emitFn(ack)))
+                                            Loop.continue(InflateState.InflateInput(inflater, emitFn()))
                                 case Absent =>
-                                    Loop.done(Ack.Stop)
+                                    Loop.done
                     else if inflater.needsInput then
-                        Emit.valueWith(Chunk.empty[Byte]): ack =>
+                        Emit.valueWith(Chunk.empty[Byte]):
                             maybeEmitFn match
-                                case Present(emitFn) => Loop.continue(InflateState.InflateInput(inflater, emitFn(ack)))
-                                case Absent          => Loop.done(Ack.Stop)
+                                case Present(emitFn) => Loop.continue(InflateState.InflateInput(inflater, emitFn()))
+                                case Absent          => Loop.done
                     else
                         bufferIO.map: buffer =>
                             Abort
                                 .catching[DataFormatException](dfe => StreamCompressionException(dfe))(inflater.inflate(buffer))
                                 .map(read => fromUnboxByteArray(buffer, read))
                                 .map(inflated =>
-                                    Emit.valueWith(inflated)(_ => Loop.continue(InflateState.PullInflater(inflater, maybeEmitFn, bytes)))
+                                    Emit.valueWith(inflated)(Loop.continue(InflateState.PullInflater(inflater, maybeEmitFn, bytes)))
                                 )
                     end if
         end emit
@@ -411,40 +411,40 @@ object StreamCompression:
     ) =
 
         enum GunzipState derives CanEqual:
-            case Initialize                                                                                 extends GunzipState
-            case ParseHeader(bytes: Chunk[Byte], headerCrc32: CRC32, emit: Ack < (Emit[Chunk[Byte]] & Ctx)) extends GunzipState
+            case Initialize                                                                                  extends GunzipState
+            case ParseHeader(bytes: Chunk[Byte], headerCrc32: CRC32, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) extends GunzipState
             case ParseHeaderExtra(
                 bytes: Chunk[Byte],
                 headerCrc32: CRC32,
                 checkCrc16: Boolean,
                 commentsToSkip: Int,
-                emit: Ack < (Emit[Chunk[Byte]] & Ctx)
+                emit: Unit < (Emit[Chunk[Byte]] & Ctx)
             ) extends GunzipState
             case SkipComments(
                 bytes: Chunk[Byte],
                 headerCrc32: CRC32,
                 checkCrc16: Boolean,
                 commentsToSkip: Int,
-                emit: Ack < (Emit[Chunk[Byte]] & Ctx)
+                emit: Unit < (Emit[Chunk[Byte]] & Ctx)
             ) extends GunzipState
             case CheckCrc16(
                 bytes: Chunk[Byte],
                 headerCrc32: CRC32,
-                emit: Ack < (Emit[Chunk[Byte]] & Ctx)
+                emit: Unit < (Emit[Chunk[Byte]] & Ctx)
             ) extends GunzipState
-            case InflateInput(leftOver: Chunk[Byte], inflater: Inflater, contentCrc32: CRC32, emit: Ack < (Emit[Chunk[Byte]] & Ctx))
+            case InflateInput(leftOver: Chunk[Byte], inflater: Inflater, contentCrc32: CRC32, emit: Unit < (Emit[Chunk[Byte]] & Ctx))
                 extends GunzipState
             case PullInflater(
                 inflater: Inflater,
                 contentCrc32: CRC32,
-                maybeEmitFn: Maybe[Ack => Ack < (Emit[Chunk[Byte]] & Ctx)],
+                maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)],
                 bytes: Chunk[Byte]
             ) extends GunzipState
             case CheckTrailer(
                 leftOver: Chunk[Byte],
                 inflater: Inflater,
                 contentCrc32: CRC32,
-                maybeEmitFn: Maybe[Ack => Ack < (Emit[Chunk[Byte]] & Ctx)]
+                maybeEmitFn: Maybe[() => Unit < (Emit[Chunk[Byte]] & Ctx)]
             ) extends GunzipState
         end GunzipState
 
@@ -464,8 +464,8 @@ object StreamCompression:
             checkCrc16: Boolean
         )(
             using Frame
-        ): (Chunk[Byte], CRC32, Ack < (Emit[Chunk[Byte]] & Ctx)) => Loop.Outcome[GunzipState, Ack] < (Resource & IO) =
-            (bytes: Chunk[Byte], headerCrc32: CRC32, emit: Ack < (Emit[Chunk[Byte]] & Ctx)) =>
+        ): (Chunk[Byte], CRC32, Unit < (Emit[Chunk[Byte]] & Ctx)) => Loop.Outcome[GunzipState, Unit] < (Resource & IO) =
+            (bytes: Chunk[Byte], headerCrc32: CRC32, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) =>
                 if hasExtra then
                     IO(Loop.continue(GunzipState.ParseHeaderExtra(
                         bytes,
@@ -511,7 +511,7 @@ object StreamCompression:
             using
             Tag[Chunk[Byte]],
             Frame
-        ): Ack < (Resource & IO & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
+        ): Unit < (Resource & IO & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
             Loop(GunzipState.Initialize):
                 case GunzipState.Initialize =>
                     Resource.acquireRelease(IO(new CRC32()))(headerCrc32 => IO(headerCrc32.reset()))
@@ -521,28 +521,28 @@ object StreamCompression:
                     if accBytes.length < fixedHeaderLength then
                         Emit.runFirst(emit).map:
                             case Present(bytes) -> emitFn =>
-                                Loop.continue(GunzipState.ParseHeader(accBytes.concat(bytes), headerCrc32, emitFn(Ack.Continue())))
+                                Loop.continue(GunzipState.ParseHeader(accBytes.concat(bytes), headerCrc32, emitFn()))
                             case Absent -> _ =>
                                 if accBytes.isEmpty then
                                     // No data, we stop
-                                    Loop.done(Ack.Stop)
+                                    Loop.done
                                 else
                                     // There are some data, invalid GZip header
                                     Abort
                                         .fail(new StreamCompressionException("Invalid GZip header"))
-                                        .andThen(Loop.done(Ack.Stop))
+                                        .andThen(Loop.done)
                     else
                         val header = accBytes.take(fixedHeaderLength)
                         val rest   = accBytes.drop(fixedHeaderLength)
                         headerCrc32.update(toUnboxByteArray(header))
                         if (usize8(header(0)) != 0x1f) || (usize8(header(1)) != 0x8b) then
                             Abort.fail(new StreamCompressionException("Invalid GZip header"))
-                                .andThen(Loop.done[GunzipState, Ack](Ack.Stop))
+                                .andThen(Loop.done[GunzipState, Unit](()))
                         else if usize8(header(2)) != 0x8 then
                             Abort.fail(new StreamCompressionException(
                                 s"Only deflate (8) compression method is supported, present: ${header(2)}"
                             ))
-                                .andThen(Loop.done[GunzipState, Ack](Ack.Stop))
+                                .andThen(Loop.done[GunzipState, Unit](()))
                         else
                             val flags           = usize8(header(3))
                             val checkCrc16      = (flags & 2) > 0
@@ -566,12 +566,12 @@ object StreamCompression:
                                     headerCrc32,
                                     checkCrc16,
                                     commentsToSkip,
-                                    emitFn(Ack.Continue())
+                                    emitFn()
                                 ))
                             case Absent -> _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
-                                    .andThen(Loop.done(Ack.Stop))
+                                    .andThen(Loop.done)
                     else
                         val xLen                  = 2
                         val extraBytes            = usize16(accBytes(fixedHeaderLength), accBytes(fixedHeaderLength + 1))
@@ -584,12 +584,12 @@ object StreamCompression:
                                         headerCrc32,
                                         checkCrc16,
                                         commentsToSkip,
-                                        emitFn(Ack.Continue())
+                                        emitFn()
                                     ))
                                 case Absent -> _ =>
                                     Abort
                                         .fail(new StreamCompressionException("Invalid GZip header"))
-                                        .andThen(Loop.done(Ack.Stop))
+                                        .andThen(Loop.done)
                         else
                             val headerWithExtra = accBytes.take(headerWithExtraLength)
                             val rest            = accBytes.drop(headerWithExtraLength)
@@ -612,12 +612,12 @@ object StreamCompression:
                                     headerCrc32,
                                     checkCrc16,
                                     commentsToSkip,
-                                    emitFn(Ack.Continue())
+                                    emitFn()
                                 ))
                             case Absent -> _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
-                                    .andThen(Loop.done(Ack.Stop))
+                                    .andThen(Loop.done)
                     else
                         val upToZero = bytes.take(zeroIdx + 1)
                         val rest     = bytes.drop(zeroIdx + 1)
@@ -632,11 +632,11 @@ object StreamCompression:
                     if accBytes.length < 2 then
                         Emit.runFirst(emit).map:
                             case Present(bytes) -> emitFn =>
-                                Loop.continue(GunzipState.CheckCrc16(accBytes.concat(bytes), headerCrc32, emitFn(Ack.Continue())))
+                                Loop.continue(GunzipState.CheckCrc16(accBytes.concat(bytes), headerCrc32, emitFn()))
                             case Absent -> _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
-                                    .andThen(Loop.done(Ack.Stop))
+                                    .andThen(Loop.done)
                     else
                         val crc16Bytes    = accBytes.take(2)
                         val rest          = accBytes.drop(2)
@@ -645,7 +645,7 @@ object StreamCompression:
                         if computedCrc16 != expectedCrc16 then
                             Abort
                                 .fail(new StreamCompressionException("Invalid GZip header crc16"))
-                                .andThen(Loop.done(Ack.Stop))
+                                .andThen(Loop.done)
                         else
                             nextState(false, 0, false)(
                                 rest,
@@ -667,7 +667,7 @@ object StreamCompression:
                     else
                         IO(inflater.setInput(toUnboxByteArray(leftOver)))
                             .andThen(
-                                Loop.continue(GunzipState.PullInflater(inflater, contentCrc32, Present(_ => emit), leftOver))
+                                Loop.continue(GunzipState.PullInflater(inflater, contentCrc32, Present(() => emit), leftOver))
                             )
                     end if
                 case GunzipState.PullInflater(inflater, contentCrc32, maybeEmitFn, bytes) =>
@@ -677,10 +677,10 @@ object StreamCompression:
                             case _                          => Chunk.empty[Byte]
                         Loop.continue(GunzipState.CheckTrailer(leftOver, inflater, contentCrc32, maybeEmitFn))
                     else if inflater.needsInput then
-                        Emit.valueWith(Chunk.empty): ack =>
+                        Emit.valueWith(Chunk.empty):
                             maybeEmitFn match
                                 case Present(emitFn) =>
-                                    Loop.continue(GunzipState.InflateInput(Chunk.empty, inflater, contentCrc32, emitFn(ack)))
+                                    Loop.continue(GunzipState.InflateInput(Chunk.empty, inflater, contentCrc32, emitFn()))
                                 case Absent =>
                                     Loop.continue(GunzipState.CheckTrailer(Chunk.empty, inflater, contentCrc32, Absent))
                     else
@@ -690,7 +690,7 @@ object StreamCompression:
                                 .map(read => fromUnboxByteArray(buffer, read))
                                 .map(inflated =>
                                     IO(contentCrc32.update(toUnboxByteArray(inflated))).andThen(
-                                        Emit.valueWith(inflated)(_ =>
+                                        Emit.valueWith(inflated)(
                                             Loop.continue(GunzipState.PullInflater(inflater, contentCrc32, maybeEmitFn, bytes))
                                         )
                                     )
@@ -700,7 +700,7 @@ object StreamCompression:
                     if accBytes.length < 8 then
                         maybeEmitFn match
                             case Present(emitFn) =>
-                                Emit.runFirst(emitFn(Ack.Continue())).map:
+                                Emit.runFirst(emitFn()).map:
                                     case Present(bytes) -> nextEmitFn =>
                                         Loop.continue(GunzipState.CheckTrailer(
                                             accBytes.concat(bytes),
@@ -712,7 +712,7 @@ object StreamCompression:
                                         Loop.continue(GunzipState.CheckTrailer(accBytes, inflater, contentCrc32, Absent))
                             case Absent =>
                                 Abort.fail[StreamCompressionException](StreamCompressionException("Checksum error"))
-                                    .andThen(Loop.done(Ack.Stop))
+                                    .andThen(Loop.done)
                     else
                         val trailerBytes  = accBytes.take(8)
                         val rest          = accBytes.drop(8)
@@ -723,19 +723,19 @@ object StreamCompression:
                         if expectedCrc32.toInt != crc32 then
                             Abort
                                 .fail(StreamCompressionException("Invalid CRC32"))
-                                .andThen(Loop.done(Ack.Stop))
+                                .andThen(Loop.done)
                         else if expectedIsize.toInt != isize then
                             Abort
                                 .fail(StreamCompressionException("Invalid ISIZE"))
-                                .andThen(Loop.done(Ack.Stop))
+                                .andThen(Loop.done)
                         else
                             maybeEmitFn match
                                 case Present(emitFn) =>
                                     Resource.acquireRelease(IO(new CRC32()))(headerCrc32 => IO(headerCrc32.reset()))
                                         .map: headerCrc32 =>
-                                            Loop.continue(GunzipState.ParseHeader(rest, headerCrc32, emitFn(Ack.Continue())))
+                                            Loop.continue(GunzipState.ParseHeader(rest, headerCrc32, emitFn()))
                                 case Absent =>
-                                    Emit.valueWith(rest)(_ => Loop.done(Ack.Stop))
+                                    Emit.valueWith(rest)(Loop.done)
                         end if
                     end if
         end emit

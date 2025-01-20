@@ -7,11 +7,7 @@ import scala.annotation.targetName
 import scala.concurrent.Future
 import scala.util.Try
 
-trait BaseKyoTest[S]:
-
-    type Assertion
-
-    def success: Assertion
+private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
 
     def run(v: Future[Assertion] < S): Future[Assertion]
 
@@ -34,29 +30,25 @@ trait BaseKyoTest[S]:
         if Platform.isJVM then
             run(v)
         else
-            Future.successful(success)
+            Future.successful(assertionSuccess)
 
     def runJS(v: => Future[Assertion] < S): Future[Assertion] =
         if Platform.isJS then
             run(v)
         else
-            Future.successful(success)
+            Future.successful(assertionSuccess)
 
     def runNotJS(v: => Future[Assertion] < S): Future[Assertion] =
         if !Platform.isJS then
             run(v)
         else
-            Future.successful(success)
+            Future.successful(assertionSuccess)
 
     def runNative(v: => Future[Assertion] < S): Future[Assertion] =
         if Platform.isNative then
             run(v)
         else
-            Future.successful(success)
-
-    given tryCanEqual[A]: CanEqual[Try[A], Try[A]]                   = CanEqual.derived
-    given eitherCanEqual[A, B]: CanEqual[Either[A, B], Either[A, B]] = CanEqual.derived
-    given throwableCanEqual: CanEqual[Throwable, Throwable]          = CanEqual.derived
+            Future.successful(assertionSuccess)
 
     def untilTrue[S](f: => Boolean < S): Boolean < S =
         def now: Duration = System.currentTimeMillis().millis
@@ -77,5 +69,4 @@ trait BaseKyoTest[S]:
             Duration.Infinity
         else
             5.seconds
-
-end BaseKyoTest
+end BaseKyoKernelTest
