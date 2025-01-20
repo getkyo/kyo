@@ -227,7 +227,7 @@ lazy val `kyo-scheduler-pekko` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.1.3",
-            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.1.3"
+            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.1.3" % Test
         )
         .jvmSettings(mimaCheck(false))
         .settings(
