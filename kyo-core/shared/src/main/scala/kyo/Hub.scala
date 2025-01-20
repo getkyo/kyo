@@ -115,7 +115,7 @@ class Hub[A] private[kyo] (
         closed.map {
             case true => fail
             case false =>
-                Channel.init[A](bufferSize).map { child =>
+                Channel.initWith[A](bufferSize) { child =>
                     IO {
                         discard(listeners.add(child))
                         closed.map {
@@ -165,7 +165,7 @@ object Hub:
       *   The result of applying the function
       */
     def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & IO) =
-        Channel.init[A](capacity).map { ch =>
+        Channel.initWith[A](capacity) { ch =>
             IO {
                 val listeners = new CopyOnWriteArraySet[Channel[A]]
                 Async.run {
