@@ -2,6 +2,6 @@ package kyo
 
 import scala.util.control.NoStackTrace
 
-case class Closed(resource: String, createdAt: Frame, failedAt: Frame)
-    extends Exception(s"$resource created at ${createdAt.parse.position} is closed. Failure at ${failedAt.parse.position}")
+class Closed(resource: Text, createdAt: Frame, details: Text = "")(using Frame)
+    extends KyoException(t"$resource created at ${createdAt.position.show} is closed.", details)
     with NoStackTrace

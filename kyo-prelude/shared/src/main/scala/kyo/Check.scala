@@ -14,15 +14,7 @@ import kyo.kernel.*
   *   The [[Frame]] where the check failure occurred
   */
 final class CheckFailed(val message: String, val frame: Frame) extends AssertionError(message):
-    override def getMessage() =
-        Seq(
-            "",
-            "──────────────────────────────".dim,
-            "Check failed! ".red.bold + message,
-            "──────────────────────────────".dim,
-            frame.parse.show,
-            "──────────────────────────────".dim
-        ).mkString("\n")
+    override def getMessage() = frame.render("Check failed! ".red.bold + message)
 end CheckFailed
 
 /** Represents a check effect for validating conditions.
@@ -41,8 +33,8 @@ object Check:
       * @return
       *   A unit computation that fails if the condition is false
       */
-    inline def apply(inline condition: Boolean)(using inline frame: Frame): Unit < Check =
-        Check(condition, "")
+    inline def require(inline condition: Boolean)(using inline frame: Frame): Unit < Check =
+        Check.require(condition, "")
 
     /** Checks the boolean condition with a custom failure message.
       *
@@ -53,7 +45,7 @@ object Check:
       * @return
       *   A unit computation that fails with the given message if the condition is false
       */
-    inline def apply(inline condition: Boolean, inline message: => String)(using inline frame: Frame): Unit < Check =
+    inline def require(inline condition: Boolean, inline message: => String)(using inline frame: Frame): Unit < Check =
         if condition then ()
         else ArrowEffect.suspend[Unit](Tag[Check], new CheckFailed(message, frame))
 
@@ -77,7 +69,7 @@ object Check:
       *   A tuple of collected failures and the computation result
       */
     def runChunk[A: Flat, S](v: A < (Check & S))(using Frame): (Chunk[CheckFailed], A) < S =
-        ArrowEffect.handle.state(Tag[Check], Chunk.empty[CheckFailed], v)(
+        ArrowEffect.handleState(Tag[Check], Chunk.empty[CheckFailed], v)(
             handle = [C] =>
                 (input, state, cont) =>
                     (state.append(input), cont(())),
@@ -95,5 +87,52 @@ object Check:
         ArrowEffect.handle(Tag[Check], v)(
             [C] => (_, cont) => cont(())
         )
+
+    object isolate:
+
+        /** Creates an isolate that combines check failures.
+          *
+          * When the isolation ends, accumulates any check failures that occurred during the isolated computation with failures from the
+          * outer context. This allows building up a complete set of failed checks.
+          *
+          * @return
+          *   An isolate that accumulates check failures
+          */
+        val merge: Isolate[Check] =
+            new Isolate[Check]:
+                type State = Chunk[CheckFailed]
+
+                def use[A, S2](f: State => A < S2)(using Frame) = f(Chunk.empty)
+
+                def resume[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
+                    Check.runChunk(v)
+
+                def restore[A: Flat, S2](state: Chunk[CheckFailed], v: A < S2)(using Frame) =
+                    Kyo.foreach(state)(check => Check.require(false, check.message)(using check.frame)).andThen(v)
+            end new
+        end merge
+
+        /** Creates an isolate that contains check failures.
+          *
+          * Allows checks to fail within the isolated computation without propagating those failures to the outer context. The failures are
+          * discarded when isolation ends.
+          *
+          * @return
+          *   An isolate that contains check failures
+          */
+        val discard: Isolate[Check] =
+            new Isolate[Check]:
+                type State = Chunk[CheckFailed]
+
+                def use[A, S2](f: State => A < S2)(using Frame) = f(Chunk.empty)
+
+                def resume[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
+                    Check.runChunk(v)
+
+                def restore[A: Flat, S2](state: Chunk[CheckFailed], v: A < S2)(using Frame) =
+                    v
+            end new
+        end discard
+    end isolate
 
 end Check

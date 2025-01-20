@@ -26,7 +26,7 @@ class EnvCombinatorTest extends Test:
 
             "should provide incrementally" in {
                 val effect: Int < Env[String & Int & Boolean & Char] =
-                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
+                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].andThen(23)
                 val handled =
                     effect
                         .provideValue('c')
@@ -44,7 +44,7 @@ class EnvCombinatorTest extends Test:
 
             "should provide layer incrementally" in {
                 val effect: Int < Env[String & Int & Boolean & Char] =
-                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
+                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].andThen(23)
                 val layerChar   = Layer('c')
                 val layerString = Layer("value")
                 val layerInt    = Layer(1)
@@ -58,9 +58,9 @@ class EnvCombinatorTest extends Test:
                 assert(Memo.run(handled).eval == 23)
             }
 
-            "should provide all layers and infer types correctly" in {
+            "should provide all layers and infer types correctly" in run {
                 val effect: Int < Env[String & Int & Boolean & Char] =
-                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
+                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].andThen(23)
                 val layerChar   = Layer(Kyo.suspend('c'))
                 val layerString = Layer("value")
                 val layerInt    = Layer(1)
@@ -73,8 +73,10 @@ class EnvCombinatorTest extends Test:
                             layerInt,
                             layerBool
                         )
-                val handledTyped: Int < (IO & Memo) = handled
-                assert(IO.run(Memo.run(handled)).eval == 23)
+                val _: Int < (IO & Memo) = handled
+                Memo.run(handled).map { result =>
+                    assert(result == 23)
+                }
             }
         }
     }

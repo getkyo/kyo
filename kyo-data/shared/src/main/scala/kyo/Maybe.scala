@@ -3,17 +3,29 @@ package kyo
 import Maybe.*
 import Maybe.internal.*
 
-/** Represents an optional value that can be either defined or empty.
+/** Represents an optional value that can be either Present or Absent.
   *
   * @tparam A
   *   the type of the optional value
   */
-opaque type Maybe[+A] >: (Empty | Defined[A]) = Empty | Defined[A]
+opaque type Maybe[+A] >: (Absent | Present[A]) = Absent | Present[A]
+
+export Maybe.Absent
+export Maybe.Present
 
 /** Companion object for Maybe type */
 object Maybe:
     inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
+    inline given [A: Flat]: Flat[Maybe[A]]                                             = Flat.unsafe.bypass
     given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
+
+    given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with
+        given CanEqual[Absent, MaybeA] = CanEqual.derived
+        def asText(value: MaybeA): String = (value: Maybe[A]) match
+            case Present(a) => s"Present(${ra.asText(a)})"
+            case Absent     => "Absent"
+            case _          => throw IllegalStateException()
+    end given
 
     /** Creates a Maybe instance from a value.
       *
@@ -22,11 +34,11 @@ object Maybe:
       * @tparam A
       *   the type of the value
       * @return
-      *   a Maybe instance containing the value, or Empty if the value is null
+      *   a Maybe instance containing the value, or Absent if the value is null
       */
     def apply[A](v: A): Maybe[A] =
-        if isNull(v) then Empty
-        else Defined(v)
+        if isNull(v) then Absent
+        else Present(v)
 
     /** Converts an Option to a Maybe.
       *
@@ -39,17 +51,17 @@ object Maybe:
       */
     def fromOption[A](opt: Option[A]): Maybe[A] =
         opt match
-            case Some(v) => Defined(v)
-            case None    => Empty
+            case Some(v) => Present(v)
+            case None    => Absent
 
-    /** Creates an empty Maybe instance.
+    /** Creates an absent Maybe instance.
       *
       * @tparam A
       *   the type parameter of the Maybe
       * @return
-      *   an Empty instance
+      *   an Absent instance
       */
-    def empty[A]: Maybe[A] = Empty
+    def empty[A]: Maybe[A] = Absent
 
     /** Creates a Maybe instance based on a condition.
       *
@@ -60,30 +72,28 @@ object Maybe:
       * @tparam A
       *   the type of the value
       * @return
-      *   a Maybe instance containing the value if the condition is true, or Empty otherwise
+      *   a Maybe instance containing the value if the condition is true, or Absent otherwise
       */
     inline def when[A](cond: Boolean)(inline v: => A): Maybe[A] =
-        if cond then v else Empty
+        if cond then v else Absent
 
     /** Represents a defined value in a Maybe. */
-    opaque type Defined[+A] = A | DefinedEmpty
-
-    object Defined:
-
-        /** Creates a Defined instance.
+    opaque type Present[+A] = A | PresentAbsent
+    object Present:
+        /** Creates a Present instance.
           *
           * @param v
           *   the value to wrap
           * @tparam A
           *   the type of the value
           * @return
-          *   a Defined instance containing the value
+          *   a Present instance containing the value
           */
-        def apply[A](v: A): Defined[A] =
+        def apply[A](v: A): Present[A] =
             v match
-                case v: DefinedEmpty => v.nest
-                case v: Empty        => DefinedEmpty.one
-                case v               => v
+                case v: PresentAbsent => v.nest
+                case v: Absent        => PresentAbsent.one
+                case v                => v
 
         /** Extracts the value from a Maybe instance.
           *
@@ -96,7 +106,7 @@ object Maybe:
           */
         def unapply[A](opt: Maybe[A]): Maybe.Ops[A] = opt
 
-    end Defined
+    end Present
 
     /** Provides operations on Maybe instances. */
     implicit final class Ops[A](maybe: Maybe[A]) extends AnyVal:
@@ -118,8 +128,8 @@ object Maybe:
     end Ops
 
     /** Represents an empty Maybe instance. */
-    sealed abstract class Empty
-    case object Empty extends Empty
+    sealed abstract class Absent
+    case object Absent extends Absent
 
     extension [A](self: Maybe[A])
 
@@ -138,7 +148,7 @@ object Maybe:
           *   true if the instance is empty, false otherwise
           */
         def isEmpty: Boolean =
-            self.isInstanceOf[Empty]
+            self.isInstanceOf[Absent]
 
         /** Checks if the Maybe instance is defined.
           *
@@ -163,9 +173,9 @@ object Maybe:
           */
         def get: A =
             (self: @unchecked) match
-                case _: Empty =>
+                case _: Absent =>
                     throw new NoSuchElementException("Maybe.get")
-                case self: DefinedEmpty =>
+                case self: PresentAbsent =>
                     self.unnest.asInstanceOf[A]
                 case v: A =>
                     v
@@ -203,10 +213,10 @@ object Maybe:
           * @tparam B
           *   the return type of the function
           * @return
-          *   a new Maybe containing the result of the function if defined, or Empty if empty
+          *   a new Maybe containing the result of the function if defined, or Absent if empty
           */
         inline def map[B](inline f: A => B): Maybe[B] =
-            if isEmpty then Empty else f(get)
+            if isEmpty then Absent else f(get)
 
         /** Applies a function that returns a Maybe to the contained value if defined.
           *
@@ -215,7 +225,7 @@ object Maybe:
           * @tparam B
           *   the type parameter of the resulting Maybe
           * @return
-          *   the result of applying the function if defined, or Empty if empty
+          *   the result of applying the function if defined, or Absent if empty
           */
         inline def flatMap[B](inline f: A => Maybe[B]): Maybe[B] =
             if isEmpty then Maybe.empty else f(get)
@@ -230,14 +240,14 @@ object Maybe:
           *   the flattened Maybe
           */
         inline def flatten[B](using inline ev: A <:< Maybe[B]): Maybe[B] =
-            if isEmpty then Empty else ev(get)
+            if isEmpty then Absent else ev(get)
 
         /** Filters the Maybe based on a predicate.
           *
           * @param f
           *   the predicate function
           * @return
-          *   the Maybe if it's defined and satisfies the predicate, or Empty otherwise
+          *   the Maybe if it's defined and satisfies the predicate, or Absent otherwise
           */
         inline def withFilter(inline f: A => Boolean): Maybe[A] =
             filter(f)
@@ -247,20 +257,20 @@ object Maybe:
           * @param f
           *   the predicate function
           * @return
-          *   the Maybe if it's defined and satisfies the predicate, or Empty otherwise
+          *   the Maybe if it's defined and satisfies the predicate, or Absent otherwise
           */
         inline def filter(inline f: A => Boolean): Maybe[A] =
-            if isEmpty || f(get) then self else Empty
+            if isEmpty || f(get) then self else Absent
 
         /** Filters the Maybe based on a negated predicate.
           *
           * @param f
           *   the predicate function to negate
           * @return
-          *   the Maybe if it's defined and doesn't satisfy the predicate, or Empty otherwise
+          *   the Maybe if it's defined and doesn't satisfy the predicate, or Absent otherwise
           */
         inline def filterNot(inline f: A => Boolean): Maybe[A] =
-            if isEmpty || !f(get) then self else Empty
+            if isEmpty || !f(get) then self else Absent
 
         /** Checks if the Maybe contains a specific value.
           *
@@ -311,7 +321,7 @@ object Maybe:
           * @tparam B
           *   the return type of the partial function
           * @return
-          *   a new Maybe containing the result of the partial function if defined and applicable, or Empty otherwise
+          *   a new Maybe containing the result of the partial function if defined and applicable, or Absent otherwise
           */
         inline def collect[B](pf: PartialFunction[A, B]): Maybe[B] =
             if !isEmpty then
@@ -319,9 +329,9 @@ object Maybe:
                 if pf.isDefinedAt(value) then
                     pf(value)
                 else
-                    Empty
+                    Absent
                 end if
-            else Empty
+            else Absent
 
         /** Returns this Maybe if defined, or an alternative Maybe if empty.
           *
@@ -342,10 +352,10 @@ object Maybe:
           * @tparam B
           *   the type parameter of the other Maybe
           * @return
-          *   a new Maybe containing a tuple of both values if both are defined, or Empty if either is empty
+          *   a new Maybe containing a tuple of both values if both are defined, or Absent if either is empty
           */
         def zip[B](that: Maybe[B]): Maybe[(A, B)] =
-            if isEmpty || that.isEmpty then Empty else (get, that.get)
+            if isEmpty || that.isEmpty then Absent else (get, that.get)
 
         /** Creates an iterator over the contained value.
           *
@@ -387,35 +397,53 @@ object Maybe:
         inline def toLeft[X](inline right: => X): Either[A, X] =
             if isEmpty then Right(right) else Left(get)
 
-        def show: String =
-            if isEmpty then "Empty"
-            else s"Defined(${get})"
+        /** Converts the Maybe to a Result with Absent as the error type.
+          *
+          * @return
+          *   a Result containing the value if defined, or a Result.absent if empty
+          */
+        inline def toResult[E]: Result[Absent, A] =
+            toResult(Result.absent)
+
+        /** Converts the Maybe to a Result with a custom error value.
+          *
+          * @param ifEmpty
+          *   the Result to return if this Maybe is empty
+          * @tparam E
+          *   the error type of the Result
+          * @return
+          *   a Result containing the value if defined, or the provided error Result if empty
+          */
+        inline def toResult[E](inline ifEmpty: => Result[E, A]): Result[E, A] =
+            if isEmpty then ifEmpty else Result.success(get)
+
+        def show(using r: Render[Maybe[A]]): String = r.asString(self)
 
     end extension
 
     private[kyo] object internal:
 
-        case class DefinedEmpty(val depth: Int):
+        case class PresentAbsent(val depth: Int):
             def unnest =
                 if depth > 1 then
-                    DefinedEmpty(depth - 1)
+                    PresentAbsent(depth - 1)
                 else
-                    Empty
+                    Absent
             def nest =
-                DefinedEmpty(depth + 1)
+                PresentAbsent(depth + 1)
 
             override def toString: String =
-                "Defined(" * depth + "Empty" + ")" * depth
-        end DefinedEmpty
+                "Present(" * depth + "Absent" + ")" * depth
+        end PresentAbsent
 
-        object DefinedEmpty:
-            val cache = (0 until 100).map(new DefinedEmpty(_)).toArray
-            val one   = DefinedEmpty(1)
-            def apply(depth: Int): DefinedEmpty =
+        object PresentAbsent:
+            val cache = (0 until 100).map(new PresentAbsent(_)).toArray
+            val one   = PresentAbsent(1)
+            def apply(depth: Int): PresentAbsent =
                 if depth < cache.length then
                     cache(depth)
                 else
-                    new DefinedEmpty(depth)
-        end DefinedEmpty
+                    new PresentAbsent(depth)
+        end PresentAbsent
     end internal
 end Maybe

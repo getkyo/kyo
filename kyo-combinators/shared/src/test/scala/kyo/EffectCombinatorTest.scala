@@ -3,227 +3,233 @@ package kyo
 class EffectCombinatorTest extends Test:
 
     "all effects" - {
-        "as" - {
-            "with string value" in {
-                val effect         = IO(23)
-                val effectAsString = effect.as("hello")
-                val handled        = IO.run(effectAsString)
-                assert(handled.eval == "hello")
-            }
-            "with integer value" in {
-                val effect      = IO("test")
-                val effectAsInt = effect.as(42)
-                val handled     = IO.run(effectAsInt)
-                assert(handled.eval == 42)
-            }
-        }
 
         "debug" - {
-            "with string value" in {
-                val effect  = IO("Hello World").debugValue
-                val handled = IO.run(effect)
-                assert(handled.eval == "Hello World")
+            "with string value" in run {
+                val effect = IO("Hello World")
+                effect.map { handled =>
+                    assert(handled == "Hello World")
+                }
             }
-            "with integer value" in {
-                val effect  = IO(42).debugValue
-                val handled = IO.run(effect)
-                assert(handled.eval == 42)
+            "with integer value" in run {
+                val effect = IO(42)
+                effect.map { handled =>
+                    assert(handled == 42)
+                }
             }
         }
 
         "debug(prefix)" - {
-            "with boolean value" in {
-                val effect  = IO(true).debugTrace
-                val handled = IO.run(effect)
-                assert(handled.eval == true)
+            "with boolean value" in run {
+                val effect = IO(true)
+                effect.map { handled =>
+                    assert(handled == true)
+                }
             }
-            "with string value" in {
-                val effect  = IO("test").debugTrace
-                val handled = IO.run(effect)
-                assert(handled.eval == "test")
+            "with string value" in run {
+                val effect = IO("test")
+                effect.map { handled =>
+                    assert(handled == "test")
+                }
             }
         }
 
         "discard" - {
-            "with integer value" in {
+            "with integer value" in run {
                 val effect          = IO(23)
                 val effectDiscarded = effect.unit
-                val handled         = IO.run(effectDiscarded)
-                assert(handled.eval == ())
+                effectDiscarded.map { handled =>
+                    assert(handled == ())
+                }
             }
-            "with string value" in {
+            "with string value" in run {
                 val effect          = IO("hello")
                 val effectDiscarded = effect.unit
-                val handled         = IO.run(effectDiscarded)
-                assert(handled.eval == ())
+                effectDiscarded.map { handled =>
+                    assert(handled == ())
+                }
             }
         }
 
         "*>" - {
-            "with string values" in {
-                val eff1    = IO("hello")
-                val eff2    = IO("world")
-                val zipped  = eff1 *> eff2
-                val handled = IO.run(zipped)
-                assert(handled.eval == "world")
+            "with string values" in run {
+                val eff1   = IO("hello")
+                val eff2   = IO("world")
+                val zipped = eff1 *> eff2
+                zipped.map { handled =>
+                    assert(handled == "world")
+                }
             }
-            "with mixed types" in {
-                val eff1    = IO(42)
-                val eff2    = IO("answer")
-                val zipped  = eff1 *> eff2
-                val handled = IO.run(zipped)
-                assert(handled.eval == "answer")
+            "with mixed types" in run {
+                val eff1   = IO(42)
+                val eff2   = IO("answer")
+                val zipped = eff1 *> eff2
+                zipped.map { handled =>
+                    assert(handled == "answer")
+                }
             }
         }
 
         "<*" - {
-            "with string values" in {
-                val eff1    = IO("hello")
-                val eff2    = IO("world")
-                val zipped  = eff1 <* eff2
-                val handled = IO.run(zipped)
-                assert(handled.eval == "hello")
+            "with string values" in run {
+                val eff1   = IO("hello")
+                val eff2   = IO("world")
+                val zipped = eff1 <* eff2
+                zipped.map { handled =>
+                    assert(handled == "hello")
+                }
             }
-            "with mixed types" in {
-                val eff1    = IO("answer")
-                val eff2    = IO(42)
-                val zipped  = eff1 <* eff2
-                val handled = IO.run(zipped)
-                assert(handled.eval == "answer")
+            "with mixed types" in run {
+                val eff1   = IO("answer")
+                val eff2   = IO(42)
+                val zipped = eff1 <* eff2
+                zipped.map { handled =>
+                    assert(handled == "answer")
+                }
             }
         }
 
         "<*>" - {
-            "with string values" in {
-                val eff1    = IO("hello")
-                val eff2    = IO("world")
-                val zipped  = eff1 <*> eff2
-                val handled = IO.run(zipped)
-                assert(handled.eval == ("hello", "world"))
+            "with string values" in run {
+                val eff1   = IO("hello")
+                val eff2   = IO("world")
+                val zipped = eff1 <*> eff2
+                zipped.map { handled =>
+                    assert(handled == ("hello", "world"))
+                }
             }
-            "with mixed types" in {
-                val eff1    = IO(42)
-                val eff2    = IO("answer")
-                val zipped  = eff1 <*> eff2
-                val handled = IO.run(zipped)
-                assert(handled.eval == (42, "answer"))
+            "with mixed types" in run {
+                val eff1   = IO(42)
+                val eff2   = IO("answer")
+                val zipped = eff1 <*> eff2
+                zipped.map { handled =>
+                    assert(handled == (42, "answer"))
+                }
             }
         }
 
         "when" - {
-            "condition is false" in {
+            "condition is false" in run {
                 var state: Boolean = false
                 val toggleState = IO {
                     state = !state
                 }
-                val getState          = IO(state)
-                val effectWhen        = (toggleState *> getState).when(getState)
-                val handledEffectWhen = IO.run(Abort.run(effectWhen))
-                assert(handledEffectWhen.eval == Result.fail(Maybe.Empty))
+                val getState   = IO(state)
+                val effectWhen = (toggleState *> getState).when(getState)
+                effectWhen.map { handledEffectWhen =>
+                    assert(handledEffectWhen == Absent)
+                }
             }
-            "condition is true" in {
+            "condition is true" in run {
                 var state: Boolean = true
                 val toggleState = IO {
                     state = !state
                 }
-                val getState          = IO(state)
-                val effectWhen        = (toggleState *> getState).when(getState)
-                val handledEffectWhen = IO.run(Abort.run(effectWhen))
-                assert(handledEffectWhen.eval == Result.success(false))
+                val getState   = IO(state)
+                val effectWhen = (toggleState *> getState).when(getState)
+                effectWhen.map { handledEffectWhen =>
+                    assert(handledEffectWhen == Present(false))
+                }
             }
         }
 
         "unless" - {
-            "condition is true" in {
+            "condition is true" in run {
                 val effect = IO("value").unless(Env.get[Boolean])
-                val result = IO.run {
-                    Env.run(true) {
-                        Abort.run {
-                            effect
-                        }
+                Env.run(true) {
+                    Abort.run {
+                        effect
                     }
-                }.eval
-                assert(result == Result.fail(Maybe.Empty))
+                }.map { result =>
+                    assert(result == Result.fail(Absent))
+                }
             }
-            "condition is false" in {
+            "condition is false" in run {
                 val effect = IO("value").unless(Env.get[Boolean])
-                val result = IO.run {
-                    Env.run(false) {
-                        Abort.run {
-                            effect
-                        }
+                Env.run(false) {
+                    Abort.run {
+                        effect
                     }
-                }.eval
-                assert(result == Result.success("value"))
+                }.map { result =>
+                    assert(result == Result.success("value"))
+                }
             }
         }
 
         "tap" - {
-            "with integer value" in {
+            "with integer value" in run {
                 val effect: Int < IO = IO(42).tap(v => assert(42 == v))
-                val handled          = IO.run(effect)
-                assert(handled.eval == 42)
+                effect.map { handled =>
+                    assert(handled == 42)
+                }
             }
-            "with string value" in {
+            "with string value" in run {
                 val effect: String < IO = IO("test").tap(v => assert("test" == v))
-                val handled             = IO.run(effect)
-                assert(handled.eval == "test")
+                effect.map { handled =>
+                    assert(handled == "test")
+                }
             }
         }
 
         "delayed" - {
-            "with short delay" in {
-                val effect  = IO(42).delayed(IO(1.millis))
-                val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                handled.map(v => assert(v == 42))
+            "with short delay" in run {
+                val effect = IO(42).delayed(1.millis)
+                Async.run(effect).map(_.toFuture).map { handled =>
+                    handled.map(v => assert(v == 42))
+                }
             }
-            "with zero delay" in {
-                val effect  = IO("test").delayed(IO(0.millis))
-                val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                handled.map(v => assert(v == "test"))
+            "with zero delay" in run {
+                val effect = IO("test").delayed(0.millis)
+                Async.run(effect).map(_.toFuture).map { handled =>
+                    handled.map(v => assert(v == "test"))
+                }
             }
         }
 
         "repeat" - {
             "repeat with fixed number" - {
-                "repeat 3 times" in {
-                    var count   = 0
-                    val effect  = IO { count += 1; count }.repeat(3)
-                    val handled = IO.run(effect)
-                    assert(handled.eval == 4)
-                    assert(count == 4)
+                "repeat 3 times" in run {
+                    var count  = 0
+                    val effect = IO { count += 1; count }.repeat(3)
+                    effect.map { handled =>
+                        assert(handled == 4)
+                        assert(count == 4)
+                    }
                 }
-                "repeat 0 times" in {
-                    var count   = 0
-                    val effect  = IO { count += 1; count }.repeat(0)
-                    val handled = IO.run(effect)
-                    assert(handled.eval == 1)
-                    assert(count == 1)
+                "repeat 0 times" in run {
+                    var count  = 0
+                    val effect = IO { count += 1; count }.repeat(0)
+                    effect.map { handled =>
+                        assert(handled == 1)
+                        assert(count == 1)
+                    }
                 }
             }
 
             "repeat with policy" - {
-                "repeat with custom policy" in {
-                    var count   = 0
-                    val policy  = Retry.Policy(_ => Duration.Zero, 3)
-                    val effect  = IO { count += 1; count }.repeat(policy)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map { v =>
-                        assert(v == 4)
-                        assert(count == 4)
+                "repeat with custom policy" in run {
+                    var count    = 0
+                    val schedule = Schedule.repeat(3)
+                    val effect   = IO { count += 1; count }.repeat(schedule)
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map { v =>
+                            assert(v == 4)
+                            assert(count == 4)
+                        }
                     }
                 }
             }
 
             "repeat with backoff and limit" - {
-                "repeat with exponential backoff" in {
+                "repeat with exponential backoff" in run {
                     var count   = 0
                     val backoff = (i: Int) => Math.pow(2, i).toLong.millis
-                    val effect  = IO { count += 1; count }.repeat(backoff, IO(3))
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map { v =>
-                        assert(v == 4)
-                        assert(count == 4)
+                    val effect  = IO { count += 1; count }.repeat(backoff, 3)
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map { v =>
+                            assert(v == 4)
+                            assert(count == 4)
+                        }
                     }
                 }
             }
@@ -231,119 +237,128 @@ class EffectCombinatorTest extends Test:
 
         "repeatWhile" - {
             "repeatWhile with simple condition" - {
-                "condition becomes false" in {
-                    var count   = 0
-                    val effect  = IO { count += 1; count }.repeatWhile(_ < 3)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 3))
+                "condition becomes false" in run {
+                    var count  = 0
+                    val effect = IO { count += 1; count }.repeatWhile(_ < 3)
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 3))
+                    }
                 }
-                "condition is initially false" in {
-                    var count   = 5
-                    val effect  = IO { count += 1; count }.repeatWhile(_ < 3)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 6))
+                "condition is initially false" in run {
+                    var count  = 5
+                    val effect = IO { count += 1; count }.repeatWhile(_ < 3)
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 6))
+                    }
                 }
             }
 
             "repeatWhile with condition and duration" - {
-                "condition becomes false with delay" in {
-                    var count   = 0
-                    val effect  = IO { count += 1; count }.repeatWhile((v, i) => (v < 3, 10.millis))
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 3))
+                "condition becomes false with delay" in run {
+                    var count  = 0
+                    val effect = IO { count += 1; count }.repeatWhile((v, i) => (v < 3, 10.millis))
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 3))
+                    }
                 }
             }
         }
 
         "repeatUntil" - {
             "repeatUntil with simple condition" - {
-                "condition becomes true" in {
-                    var count   = 0
-                    val effect  = IO { count += 1; count }.repeatUntil(_ == 3)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 3))
+                "condition becomes true" in run {
+                    var count  = 0
+                    val effect = IO { count += 1; count }.repeatUntil(_ == 3)
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 3))
+                    }
                 }
-                "condition is initially true" in {
-                    var count   = 0
-                    val effect  = IO { count += 1; count }.repeatUntil(_ => true)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 1))
+                "condition is initially true" in run {
+                    var count  = 0
+                    val effect = IO { count += 1; count }.repeatUntil(_ => true)
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 1))
+                    }
                 }
             }
 
             "repeatUntil with condition and duration" - {
-                "condition becomes true with delay" in {
-                    var count   = 0
-                    val effect  = IO { count += 1; count }.repeatUntil((v, i) => (v == 3, 10.millis))
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 3))
+                "condition becomes true with delay" in run {
+                    var count  = 0
+                    val effect = IO { count += 1; count }.repeatUntil((v, i) => (v == 3, 10.millis))
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 3))
+                    }
                 }
             }
         }
 
         "retry" - {
             "retry with fixed number" - {
-                "successful after retries" in {
+                "successful after retries" in run {
                     var count = 0
                     val effect = IO {
                         count += 1
                         if count < 3 then throw new Exception("Retry")
                         else count
                     }.retry(3)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 3))
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 3))
+                    }
                 }
-                "fails after max retries" in {
+                "fails after max retries" in run {
                     var count = 0
                     val effect = IO {
                         count += 1
                         (throw new Exception("Always fails")): Int
                     }.retry(2)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.failed.map(e => assert(e.getMessage == "Always fails"))
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.failed.map(e => assert(e.getMessage == "Always fails"))
+                    }
                 }
             }
 
             "retry with policy" - {
-                "successful after retries with custom policy" in {
+                "successful after retries with custom policy" in run {
                     var count  = 0
-                    val policy = Retry.Policy(_ => 10.millis, 3)
+                    val policy = Schedule.fixed(10.millis).take(3)
                     val effect = IO {
                         count += 1
                         if count < 3 then throw new Exception("Retry")
                         else count
                     }.retry(policy)
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 3))
+                    Async.run(effect).map(_.toFuture).map { handled =>
+                        handled.map(v => assert(v == 3))
+                    }
                 }
             }
 
-            "retry with backoff and limit" - {
-                "successful after retries with exponential backoff" in {
-                    var count   = 0
-                    val backoff = (i: Int) => Math.pow(2, i).toLong.millis
-                    val effect = IO {
-                        count += 1
-                        if count < 3 then throw new Exception("Retry")
-                        else count
-                    }.retry(backoff, IO(3))
-                    val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
-                    handled.map(v => assert(v == 3))
-                }
+        }
+
+        "unpanic" - {
+            "with throwable" in run {
+                val effect: Nothing < (Abort[Throwable] & IO)     = IO { Abort.fail(Exception("failure")) }
+                val panicked: Nothing < IO                        = effect.orPanic
+                val unpanicked: Nothing < (Abort[Throwable] & IO) = panicked.unpanic
+                Abort.run[Throwable](unpanicked).map: handled =>
+                    val msg = handled.failure.collect:
+                        case thr: Throwable => thr.getMessage()
+                    assert(msg.contains("failure"))
+            }
+
+            "with non-throwable failure" in run {
+                val effect: Nothing < (Abort[String] & IO)        = IO { Abort.fail("failure") }
+                val panicked: Nothing < IO                        = effect.orPanic
+                val unpanicked: Nothing < (Abort[Throwable] & IO) = panicked.unpanic
+                Abort.run[Throwable](unpanicked).map: handled =>
+                    assert(handled == Result.Fail(PanicException("failure")))
             }
         }
 
-        "explicitThrowable" - {
-            "with exception" in {
-                val effect  = IO { throw new Exception("Test") }.explicitThrowable
-                val handled = IO.run(Abort.run[Throwable](effect))
-                assert(handled.eval.isFail)
-            }
-            "without exception" in {
-                val effect  = IO("Success").explicitThrowable
-                val handled = IO.run(Abort.run[Throwable](effect))
-                assert(handled.eval.isSuccess)
-            }
+        "ensuring" in run {
+            var finalizerCalled = false
+            Resource.run(IO(()).ensuring(IO { finalizerCalled = true }))
+                .andThen(assert(finalizerCalled))
         }
     }
 end EffectCombinatorTest

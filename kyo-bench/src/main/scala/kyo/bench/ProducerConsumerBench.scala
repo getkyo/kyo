@@ -30,7 +30,7 @@ class ProducerConsumerBench extends Bench.ForkOnly(()):
 
         import kyo.Access
 
-        def repeat[A](n: Int)(io: A < Async): A < Async =
+        def repeat[A](n: Int)(io: A < (Async & Abort[Closed])): A < (Async & Abort[Closed]) =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
@@ -61,23 +61,4 @@ class ProducerConsumerBench extends Bench.ForkOnly(()):
         }
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import ox.*
-        import ox.channels.*
-
-        val q = Channel.buffered[Unit](depth / 2)
-        scoped {
-            val f1 =
-                fork {
-                    for _ <- 0 until depth do q.send(())
-                }
-            val f2 =
-                fork {
-                    for _ <- 0 until depth do q.take(1).drain()
-                }
-            f1.join()
-            f2.join()
-        }
-    end forkOx
 end ProducerConsumerBench

@@ -20,10 +20,10 @@ object Log:
     case class Entry(balance: Int, account: Int, amount: Int, desc: String)
 
     val init: Log < (Env[DB.Config] & IO) = defer {
-        val cfg = await(Env.get[DB.Config])
-        val q   = await(Queue.initUnbounded[Entry](Access.MultiProducerSingleConsumer))
-        val log = await(IO(Live(cfg.workingDir + "/log.dat", q)))
-        val _   = await(Async.run(log.flushLoop(cfg.flushInterval)))
+        val cfg = Env.get[DB.Config].now
+        val q   = Queue.Unbounded.init[Entry](Access.MultiProducerSingleConsumer).now
+        val log = IO(Live(cfg.workingDir + "/log.dat", q)).now
+        val _   = Async.run(log.flushLoop(cfg.flushInterval)).now
         log
     }
 
@@ -40,10 +40,10 @@ object Log:
             q.add(Entry(balance, account, amount, desc))
 
         private[Log] def flushLoop(interval: Duration): Unit < Async = defer {
-            await(Async.sleep(interval))
-            val entries = await(q.drain)
-            await(append(entries))
-            await(flushLoop(interval))
+            Async.sleep(interval).now
+            val entries = q.drain.now
+            append(entries).now
+            flushLoop(interval).now
         }
 
         private def append(entries: Seq[Entry]) =

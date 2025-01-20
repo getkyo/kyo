@@ -25,12 +25,12 @@ object DB:
     )
 
     val init: DB < (Env[Config] & IO) = defer {
-        val index = await(Index.init)
-        val log   = await(db.Log.init)
+        val index = Index.init.now
+        val log   = db.Log.init.now
         Live(index, log)
     }
 
-    class Live(index: Index, log: Log) extends DB:
+    class Live(index: Index, log: db.Log) extends DB:
 
         def transaction(account: Int, amount: Int, desc: String): Result < IO =
             index.transaction(account, amount, desc).map {

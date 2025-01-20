@@ -41,6 +41,14 @@ object Task {
     val Preempted: Result = true
     val Done: Result      = false
 
+    def apply(runnable: Runnable): Task =
+        new Task {
+            def run(startMillis: Long, clock: InternalClock) = {
+                runnable.run()
+                Task.Done
+            }
+        }
+
     def apply(r: => Unit): Task =
         apply(r, 0)
 

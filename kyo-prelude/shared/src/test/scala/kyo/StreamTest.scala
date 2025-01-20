@@ -1,12 +1,13 @@
 package kyo
 
-import kyo.Emit.Ack
-import kyo.Emit.Ack.*
-import kyo.kernel.Reducible
+import kyo.Ack.*
 
 class StreamTest extends Test:
 
-    val n = 10000
+    val n = 100000
+
+    def chunkSizes[V: Tag, S](stream: Stream[V, S]): Chunk[Int] < S =
+        stream.mapChunk(chunk => Chunk(chunk.size)).run
 
     "empty" in {
         assert(
@@ -26,6 +27,25 @@ class StreamTest extends Test:
                 Stream.init(Seq(1, 2, 3)).run.eval == Seq(1, 2, 3)
             )
         }
+
+        "lazy" in {
+            var i = 0
+            val _ = Stream.init {
+                i += 1
+                Seq.empty[Int]
+            }
+
+            assert(i == 0)
+        }
+
+        "chunk size" in {
+            def size(n: Int, c: Int): Chunk[Int] =
+                chunkSizes(Stream.init(Seq.fill(n)(""), chunkSize = c)).eval
+
+            assert(size(10240, 4096) == Chunk(4096, 4096, 2048))
+            assert(size(301, 100) == Chunk(100, 100, 100, 1))
+            assert(size(5, 0) == Chunk(1, 1, 1, 1, 1))
+        }
     }
 
     "initChunk" - {
@@ -39,6 +59,47 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Chunk(1, 2, 3)).run.eval == Seq(1, 2, 3)
             )
+        }
+    }
+
+    "range" - {
+        "empty" in {
+            assert(Stream.range(0, 0).run.eval == Seq.empty)
+        }
+
+        "negative" in {
+            assert(Stream.range(0, -10).run.eval == (0 until -10))
+            assert(Stream.range(0, -10, step = -1).run.eval == (0 until -10 by -1))
+        }
+
+        "positive" in {
+            assert(Stream.range(0, 1024).run.eval == (0 until 1024))
+        }
+
+        "step" - {
+            "zero" in {
+                assert(Stream.range(0, 1024, 0).run.eval == Seq.empty)
+            }
+
+            "positive" in {
+                assert(Stream.range(0, 1024, 2).run.eval == (0 until 1024 by 2))
+            }
+
+            "negative" in {
+                assert(Stream.range(0, -10, -2).run.eval == (0 until -10 by -2))
+            }
+        }
+
+        "chunk size" in {
+            def size(n: Int, c: Int): Chunk[Int] =
+                chunkSizes(Stream.range(0, n, chunkSize = c)).eval
+
+            assert(size(10240, 4096) == Chunk(4096, 4096, 2048))
+            assert(size(301, 100) == Chunk(100, 100, 100, 1))
+        }
+
+        "stack safety" in {
+            assert(Stream.range(0, n).take(5).run.eval == (0 until 5))
         }
     }
 
@@ -81,11 +142,11 @@ class StreamTest extends Test:
                     case Continue(maxItems) =>
                         for
                             n    <- Var.update[Int](_ + 1)
-                            next <- Emit.andMap(Chunk(n))(emit)
+                            next <- Emit.valueWith(Chunk(n))(emit)
                         yield next
             end emit
 
-            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val stream         = Stream(Emit.valueWith(Chunk.empty[Int])(emit(_))).take(5).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
 
             assert(
@@ -101,12 +162,12 @@ class StreamTest extends Test:
                         for
                             end <- Var.update[Int](_ + maxItems)
                             start = end - maxItems + 1
-                            next <- Emit.andMap(Chunk.from(start to end): Chunk[Int])(emit)
+                            next <- Emit.valueWith(Chunk.from(start to end): Chunk[Int])(emit)
                         yield next
                         end for
             end emit
 
-            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val stream         = Stream(Emit.valueWith(Chunk.empty[Int])(emit(_))).take(5).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
 
             assert(
@@ -144,6 +205,19 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Seq.fill(n)(1)).drop(5).run.eval.size == n - 5
             )
+        }
+
+        "chunk smaller than n" in {
+            val small = Stream.init(0 until 5)
+
+            val result =
+                small
+                    .concat(small)
+                    .drop(6)
+                    .run
+                    .eval
+
+            assert(result == Seq(1, 2, 3, 4))
         }
     }
 
@@ -482,6 +556,36 @@ class StreamTest extends Test:
         }
     }
 
+    "tap" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .init(Seq(1, 2, 3))
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (6, Seq(1, 2, 3)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
+    "tapChunk" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .apply(Emit.valueWith(Chunk(1, 2, 3))(_ => Emit.value(Chunk(4, 5, 6))))
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (21, Seq(1, 2, 3, 4, 5, 6)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
     "concat" - {
         "non-empty streams" in {
             assert(
@@ -519,8 +623,65 @@ class StreamTest extends Test:
             assert(
                 Stream.init(1 to n)
                     .concat(Stream.init(n + 1 to 2 * n))
-                    .run.eval == (1 to (2 * n)).toSeq
+                    .run.eval == (1 to (2 * n))
             )
+        }
+    }
+
+    "rechunk" - {
+        "negative" in {
+            val sizes = chunkSizes(Stream.init(1 until 5).rechunk(-10)).eval
+            assert(sizes == Chunk(1, 1, 1, 1))
+        }
+
+        "smaller" in {
+            val sizes = chunkSizes(Stream.range(1, 5000, step = 2).rechunk(1024)).eval
+            assert(sizes == Chunk(1024, 1024, 452))
+        }
+
+        "same" in {
+            val sizes = chunkSizes(Stream.range(0, 250, chunkSize = 100).rechunk(100)).eval
+            assert(sizes == Chunk(100, 100, 50))
+        }
+
+        "larger" in {
+            val sizes = chunkSizes(Stream.range(0, 5001).rechunk(5000)).eval
+            assert(sizes == Chunk(5000, 1))
+        }
+
+        "larger than stream" in {
+            val sizes = chunkSizes(Stream.range(0, 100_000).rechunk(500_000)).eval
+            assert(sizes == Chunk(100_000))
+        }
+
+        "with effects" in {
+            val stream = Stream.range(0, 100).map(i => Env.use[Int](_ + i)).rechunk(48)
+            val result = Env.run(10)(stream.run).eval
+            val chunks = Env.run(10)(chunkSizes(stream)).eval
+            assert(result == (10 until 110))
+            assert(chunks == Chunk(48, 48, 4))
+        }
+
+        "order" in {
+            val stream = Stream.range(0, 100).rechunk(8)
+            assert(stream.run.eval == (0 until 100))
+        }
+
+        "empty chunks" in {
+            def emit(n: Int): Ack < (Emit[Chunk[Int]]) =
+                n match
+                    case 0 => Stop
+                    case 5 => Emit.valueWith(Chunk.empty)(_ => emit(n - 1))
+                    case _ => Emit.valueWith(Chunk.fill(3)(n))(_ => emit(n - 1))
+            end emit
+
+            val stream = Stream(emit(10)).rechunk(10).mapChunk(Chunk(_))
+            assert(stream.run.eval == Chunk(
+                Chunk(10, 10, 10, 9, 9, 9, 8, 8, 8, 7),
+                Chunk(7, 7, 6, 6, 6), // empty chunk causes buffer flush
+                Chunk(4, 4, 4, 3, 3, 3, 2, 2, 2, 1),
+                Chunk(1, 1)
+            ))
         }
     }
 

@@ -36,7 +36,7 @@ object Var:
             inline tag: Tag[Var[V]],
             inline frame: Frame
         ): A < (Var[V] & S) =
-            ArrowEffect.suspendMap[V](tag, Get: Op[V])(f)
+            ArrowEffect.suspendWith[V](tag, Get: Op[V])(f)
     end UseOps
 
     /** Creates a new UseOps instance for the given type V.
@@ -60,6 +60,21 @@ object Var:
     inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         ArrowEffect.suspend[Unit](tag, value: Op[V])
 
+    /** Sets a new value and then executes another computation.
+      *
+      * @param value
+      *   The new value to set in the Var
+      * @param f
+      *   The computation to execute after setting the value
+      * @return
+      *   The result of the computation after setting the new value
+      */
+    private[kyo] inline def setAndThen[V, A, S](inline value: V)(inline f: => A < S)(using
+        inline tag: Tag[Var[V]],
+        inline frame: Frame
+    ): A < (Var[V] & S) =
+        ArrowEffect.suspendWith[Unit](tag, value: Op[V])(_ => f)
+
     /** Sets a new value and returns `Unit`.
       *
       * @param value
@@ -70,7 +85,7 @@ object Var:
       *   Unit
       */
     inline def setDiscard[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        ArrowEffect.suspendMap[Unit](tag, value: Op[V])(_ => ())
+        ArrowEffect.suspendWith[Unit](tag, value: Op[V])(_ => ())
 
     /** Applies the update function and returns the new value.
       *
@@ -96,12 +111,12 @@ object Var:
       */
     @nowarn("msg=anonymous")
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        ArrowEffect.suspendMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
+        ArrowEffect.suspendWith[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
-    private inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
+    private[kyo] inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
     )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
-        ArrowEffect.handle.state(tag, state, v)(
+        ArrowEffect.handleState(tag, state, v)(
             [C] =>
                 (input, state, cont) =>
                     input match
@@ -150,6 +165,62 @@ object Var:
       */
     def runTuple[V, A: Flat, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
         runWith(state)(v)((state, result) => (state, result))
+
+    object isolate:
+        abstract private[kyo] class Base[V](using Tag[Var[V]]) extends Isolate[Var[V]]:
+            type State = V
+            def use[A, S2](f: V => A < S2)(using Frame) = Var.use(f)
+            def resume[A: Flat, S2](state: State, v: A < (Var[V] & S2))(using Frame) =
+                Var.runTuple(state)(v)
+        end Base
+
+        /** Creates an isolate that sets the Var to its final isolated value.
+          *
+          * When the isolation ends, unconditionally updates the Var with the last value it had in the isolated computation.
+          *
+          * @tparam V
+          *   The type of value in the Var
+          * @return
+          *   An isolate that updates the Var with its isolated value
+          */
+        def update[V](using Tag[Var[V]]): Isolate[Var[V]] =
+            new Base[V]:
+                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
+                    Var.setAndThen(state)(v)
+
+        /** Creates an isolate that merges Var values using a combination function.
+          *
+          * When the isolation ends, combines the Var's current value with the value from the isolated computation using the provided merge
+          * function. Useful when you want to reconcile isolated Var modifications with any concurrent changes to the same Var.
+          *
+          * @param f
+          *   Function that combines outer and isolated Var values
+          * @tparam V
+          *   The type of value in the Var
+          * @return
+          *   An isolate that merges Var values
+          */
+        def merge[V](f: (V, V) => V)(using Tag[Var[V]]): Isolate[Var[V]] =
+            new Base[V]:
+                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
+                    Var.use[V](prev => Var.setAndThen(f(prev, state))(v))
+
+        /** Creates an isolate that keeps Var modifications local.
+          *
+          * Allows the isolated computation to read and modify the Var freely, but discards all modifications when the isolation ends. The
+          * Var retains its original value as if the isolated modifications never happened.
+          *
+          * @tparam V
+          *   The type of value in the Var
+          * @return
+          *   An isolate that discards Var modifications
+          */
+        def discard[V](using Tag[Var[V]]): Isolate[Var[V]] =
+            new Base[V]:
+                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
+                    v
+
+    end isolate
 
     object internal:
         type Op[V] = Get.type | V | Update[V]

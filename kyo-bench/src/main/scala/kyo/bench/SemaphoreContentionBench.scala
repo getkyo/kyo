@@ -40,7 +40,7 @@ class SemaphoreContentionBench extends Bench.ForkOnly(()):
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
-        def loop(sem: Meter, cdl: Latch, i: Int = 0): Unit < Async =
+        def loop(sem: Meter, cdl: Latch, i: Int = 0): Unit < (Async & Abort[Closed]) =
             if i >= depth then
                 cdl.release
             else
@@ -79,22 +79,4 @@ class SemaphoreContentionBench extends Bench.ForkOnly(()):
         end for
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import java.util.concurrent.*
-        import ox.*
-        scoped {
-            val sem = new Semaphore(permits, true)
-            val cdl = new CountDownLatch(parallism)
-            for _ <- 0 until parallism do
-                fork {
-                    for _ <- 0 to depth do
-                        sem.acquire()
-                        sem.release()
-                    cdl.countDown()
-                }
-            end for
-            cdl.await()
-        }
-    end forkOx
 end SemaphoreContentionBench

@@ -40,6 +40,7 @@ class ResourceTest extends Test:
     }
 
     "acquire + effectful tranform + close" taggedAs jvmOnly in {
+        import AllowUnsafe.embrace.danger
         val r1 = TestResource(1)
         val r2 = TestResource(2)
         val r =
@@ -47,7 +48,7 @@ class ResourceTest extends Test:
                 assert(r1.closes == 0)
                 Env.get[Int]
             }.pipe(Resource.run)
-                .pipe(IO.runLazy)
+                .pipe(IO.Unsafe.run)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -55,8 +56,7 @@ class ResourceTest extends Test:
         Async.runAndBlock(timeout)(r)
             .pipe(Env.run(1))
             .pipe(Abort.run(_))
-            .pipe(IO.run)
-            .eval
+            .pipe(IO.Unsafe.evalOrThrow)
         assert(r1.closes == 1)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -97,6 +97,7 @@ class ResourceTest extends Test:
     }
 
     "two acquires + effectful for-comp + close" taggedAs jvmOnly in {
+        import AllowUnsafe.embrace.danger
         val r1 = TestResource(1)
         val r2 = TestResource(2)
         val io =
@@ -108,7 +109,7 @@ class ResourceTest extends Test:
             yield i1 + i2
         val r =
             io.pipe(Resource.run)
-                .pipe(IO.runLazy)
+                .pipe(IO.Unsafe.run)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -116,8 +117,7 @@ class ResourceTest extends Test:
         r.pipe(Env.run(3))
             .pipe(Async.runAndBlock(timeout))
             .pipe(Abort.run(_))
-            .pipe(IO.run)
-            .eval
+            .pipe(IO.Unsafe.evalOrThrow)
         assert(r1.closes == 1)
         assert(r2.closes == 1)
         assert(r1.acquires == 1)
@@ -144,29 +144,28 @@ class ResourceTest extends Test:
             yield
                 assert(closeCount == 0)
                 r
-        val finalizedResource =
-            io.pipe(Resource.run)
-                .pipe(Async.runAndBlock(timeout))
-                .pipe(Abort.run(_))
-                .pipe(IO.run)
-                .eval
-        finalizedResource.fold(_ => ???)(_.closes.get.map(i => assert(i == 1)))
+        io.pipe(Resource.run)
+            .pipe(Async.runAndBlock(timeout))
+            .pipe(Abort.run(_))
+            .map { finalizedResource =>
+                finalizedResource.fold(_ => ???)(_.closes.get.map(i => assert(i == 1)))
+            }
     }
 
     "integration with other effects" - {
 
-        "ensure" taggedAs jvmOnly in {
+        "ensure" taggedAs jvmOnly in run {
             var closes = 0
             Resource.ensure(Async.run(closes += 1).map(_.get).unit)
                 .pipe(Resource.run)
                 .pipe(Async.runAndBlock(timeout))
                 .pipe(Abort.run(_))
-                .pipe(IO.run)
-                .eval
-            assert(closes == 1)
+                .map { _ =>
+                    assert(closes == 1)
+                }
         }
 
-        "acquireRelease" taggedAs jvmOnly in {
+        "acquireRelease" taggedAs jvmOnly in run {
             var closes = 0
             // any effects in acquire
             val acquire = Abort.get(Some(42))
@@ -180,40 +179,39 @@ class ResourceTest extends Test:
                 .pipe(Resource.run)
                 .pipe(Async.runAndBlock(timeout))
                 .pipe(Abort.run[Timeout](_))
-                .pipe(Abort.run[Maybe.Empty](_))
-                .pipe(IO.run)
-                .eval
-            assert(closes == 1)
+                .pipe(Abort.run[Absent](_))
+                .map { _ =>
+                    assert(closes == 1)
+                }
         }
 
-        "acquire" taggedAs jvmOnly in {
+        "acquire" taggedAs jvmOnly in run {
             val r = TestResource(1)
             Resource.acquire(Async.run(r).map(_.get))
                 .pipe(Resource.run)
                 .pipe(Async.runAndBlock(timeout))
                 .pipe(Abort.run(_))
-                .pipe(IO.run)
-                .eval
-            assert(r.closes == 1)
+                .map { _ =>
+                    assert(r.closes == 1)
+                }
         }
     }
 
     "failures" - {
         case object TestException extends NoStackTrace
 
-        "acquire fails" taggedAs jvmOnly in {
+        "acquire fails" taggedAs jvmOnly in run {
             val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => IO.unit)
             Resource.run(io)
                 .pipe(Async.runAndBlock(timeout))
                 .pipe(Abort.run(_))
-                .pipe(IO.run)
-                .eval match
-                case Result.Panic(t) => assert(t eq TestException)
-                case _               => fail("Expected panic")
-            end match
+                .map {
+                    case Result.Panic(t) => assert(t eq TestException)
+                    case _               => fail("Expected panic")
+                }
         }
 
-        "release fails" taggedAs jvmOnly in {
+        "release fails" taggedAs jvmOnly in run {
             var acquired = false
             var released = false
             val io = Resource.acquireRelease(IO { acquired = true; "resource" }) { _ =>
@@ -225,9 +223,9 @@ class ResourceTest extends Test:
             Resource.run(io)
                 .pipe(Async.runAndBlock(timeout))
                 .pipe(Abort.run(_))
-                .pipe(IO.run)
-                .eval
-            assert(acquired && released)
+                .map { _ =>
+                    assert(acquired && released)
+                }
         }
 
         "ensure fails" in run {
@@ -251,6 +249,48 @@ class ResourceTest extends Test:
                 result <- f.getResult
             yield assert(result.panic.exists(_.isInstanceOf[Closed]))
             end for
+        }
+    }
+
+    "parallel close" - {
+
+        "cleans up resources in parallel" taggedAs jvmOnly in run {
+            Latch.init(3).map { latch =>
+                def makeResource(id: Int) =
+                    Resource.acquireRelease(IO(id))(_ => latch.release)
+
+                val resources = Kyo.collect((1 to 3).map(makeResource))
+
+                for
+                    close <- Async.run(resources.pipe(Resource.run(3)))
+                    _     <- latch.await
+                    ids   <- close.get
+                yield assert(ids == (1 to 3))
+                end for
+            }
+        }
+
+        "respects parallelism limit" taggedAs jvmOnly in run {
+            AtomicInt.init.map { counter =>
+                def makeResource(id: Int) =
+                    Resource.acquireRelease(IO(id)) { _ =>
+                        for
+                            current <- counter.getAndIncrement
+                            _       <- Async.sleep(1.millis)
+                            _       <- counter.decrementAndGet
+                        yield
+                            assert(current < 3)
+                            ()
+                    }
+
+                val resources = Kyo.collect((1 to 10).map(makeResource))
+
+                for
+                    close <- Async.run(resources.pipe(Resource.run(3)))
+                    ids   <- close.get
+                yield assert(ids == (1 to 10))
+                end for
+            }
         }
     }
 end ResourceTest

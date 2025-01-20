@@ -5,10 +5,12 @@ import kyo.stats.*
 
 class TraceReceiverTest extends Test:
 
-    "TraceReceiver.noop" in {
+    "TraceReceiver.noop" in run {
         val noopReceiver = TraceReceiver.noop
         val span         = noopReceiver.startSpan(Nil, "noopSpan", Maybe.empty, Attributes.empty)
-        assert(IO.run(span).eval.unsafe eq Span.noop.unsafe)
+        span.map { span =>
+            assert(span.unsafe eq Span.noop.unsafe)
+        }
     }
 
     "TraceReceiver.all" in {

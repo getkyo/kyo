@@ -34,7 +34,7 @@ object Choice:
     inline def eval[A, B, S](seq: Seq[A])(inline f: A => B < S)(using inline frame: Frame): B < (Choice & S) =
         seq match
             case Seq(head) => f(head)
-            case seq       => ArrowEffect.suspendMap[A](Tag[Choice], seq)(f)
+            case seq       => ArrowEffect.suspendWith[A](Tag[Choice], seq)(f)
 
     /** Conditionally introduces a failure branch in the computation.
       *

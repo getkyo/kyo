@@ -1,14 +1,10 @@
 package kyo
 
 import kernel.ArrowEffect
-import kernel.Const
-import kernel.Frame
 import kyo.Result.*
 import kyo.Tag
 import kyo.kernel.Effect
-import kyo.kernel.Reducible
 import scala.annotation.targetName
-import scala.reflect.ClassTag
 
 /** The Abort effect allows for short-circuiting computations with failure values. This effect is used for handling errors and early
   * termination scenarios in a functional manner and handle thrown exceptions.
@@ -43,8 +39,15 @@ object Abort:
       */
     inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = error(Panic(ex))
 
+    /** Fails the computation with the given error value (failure or panic).
+      *
+      * @param e
+      *   The error value to fail with
+      * @return
+      *   A computation that immediately fails with the given error value
+      */
     inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
-        ArrowEffect.suspendMap[Any](erasedTag[E], e)(_ => ???)
+        ArrowEffect.suspendWith[Any](erasedTag[E], e)(_ => ???)
 
     /** Fails the computation if the condition is true.
       *
@@ -91,16 +94,16 @@ object Abort:
                 case Right(value) => value
                 case Left(value)  => fail(value)
 
-        /** Lifts an Option into the Abort effect with Maybe.Empty as the failure value.
+        /** Lifts an Option into the Abort effect with Absent as the failure value.
           *
           * @param opt
           *   The Option to lift
           * @return
-          *   A computation that succeeds with the Some value or fails with Maybe.Empty
+          *   A computation that succeeds with the Some value or fails with Absent
           */
-        inline def apply[A](opt: Option[A])(using inline frame: Frame): A < Abort[Maybe.Empty] =
+        inline def apply[A](opt: Option[A])(using inline frame: Frame): A < Abort[Absent] =
             opt match
-                case None    => fail(Maybe.Empty)
+                case None    => fail(Absent)
                 case Some(v) => v
 
         /** Lifts a scala.util.Try into the Abort effect.
@@ -133,11 +136,11 @@ object Abort:
           * @param m
           *   The Maybe to lift
           * @return
-          *   A computation that succeeds with the Defined value or fails with Maybe.Empty
+          *   A computation that succeeds with the Present value or fails with Absent
           */
         @targetName("maybe")
-        inline def apply[A](m: Maybe[A])(using inline frame: Frame): A < Abort[Maybe.Empty] =
-            m.fold(fail(Maybe.Empty))(identity)
+        inline def apply[A](m: Maybe[A])(using inline frame: Frame): A < Abort[Absent] =
+            m.fold(fail(Absent))(identity)
     end GetOps
 
     /** Operations for lifting various types into the Abort effect.
@@ -168,7 +171,7 @@ object Abort:
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
             reduce {
-                ArrowEffect.handle.catching[
+                ArrowEffect.handleCatching[
                     Const[Error[E]],
                     Const[Unit],
                     Abort[E],
@@ -200,6 +203,111 @@ object Abort:
       */
     inline def run[E]: RunOps[E] = RunOps(())
 
+    final class RecoverOps[E](dummy: Unit) extends AnyVal:
+
+        /** Recovers from an Abort failure by applying the provided function.
+          *
+          * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
+          * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
+          *
+          * @param onFail
+          *   A function that takes the failure value of type E and returns a new computation
+          * @param v
+          *   The original computation that may fail
+          * @return
+          *   A computation that either succeeds with the original value or the recovered value
+          */
+        def apply[A: Flat, B: Flat, S, ER](onFail: E => B < S)(v: => A < (Abort[E | ER] & S))(
+            using
+            frame: Frame,
+            ct: SafeClassTag[E],
+            reduce: Reducible[Abort[ER]]
+        ): (A | B) < (S & Abort[ER]) =
+            ArrowEffect.handleCatching[
+                Const[Error[E]],
+                Const[Unit],
+                Abort[E],
+                A | B,
+                A | B,
+                Abort[ER] & S,
+                Abort[ER] & S,
+                Any
+            ](
+                erasedTag[E],
+                v
+            )(
+                accept = [C] =>
+                    input =>
+                        input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
+                handle = [C] =>
+                    (input, _) =>
+                        (input: @unchecked) match
+                            case Fail(e)      => onFail(e)
+                            case panic: Panic => Abort.error(panic),
+                recover =
+                    case ct(fail) if ct <:< SafeClassTag[Throwable] =>
+                        onFail(fail)
+                    case ex =>
+                        Abort.panic(ex)
+            )
+
+        /** Recovers from an Abort failure or panic by applying the provided functions.
+          *
+          * This method allows you to handle both failures and panics in an Abort effect. It provides separate handlers for failures of type
+          * E and for panics (Throwables).
+          *
+          * @param onFail
+          *   A function that takes the failure value of type E and returns a new computation
+          * @param onPanic
+          *   A function that takes a Throwable and returns a new computation
+          * @param v
+          *   The original computation that may fail or panic
+          * @return
+          *   A computation that either succeeds with the original value or the recovered value
+          */
+        def apply[A: Flat, B: Flat, S, ER](onFail: E => B < S, onPanic: Throwable => B < S)(v: => A < (Abort[E | ER] & S))(
+            using
+            frame: Frame,
+            ct: SafeClassTag[E],
+            reduce: Reducible[Abort[ER]]
+        ): (A | B) < (S & reduce.SReduced) =
+            reduce {
+                ArrowEffect.handleCatching[
+                    Const[Error[E]],
+                    Const[Unit],
+                    Abort[E],
+                    A | B,
+                    A | B,
+                    Abort[ER] & S,
+                    Abort[ER] & S,
+                    Any
+                ](
+                    erasedTag[E],
+                    v
+                )(
+                    accept = [C] =>
+                        input =>
+                            input.isPanic ||
+                                input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
+                    handle = [C] =>
+                        (input, _) =>
+                            (input: @unchecked) match
+                                case Fail(e)   => onFail(e)
+                                case Panic(ex) => onPanic(ex),
+                    recover =
+                        case ct(fail) if ct <:< SafeClassTag[Throwable] =>
+                            onFail(fail)
+                        case ex =>
+                            onPanic(ex)
+                )
+            }
+        end apply
+    end RecoverOps
+
+    /** Provides recovery operations for Abort effects.
+      */
+    inline def recover[E]: RecoverOps[E] = RecoverOps(())
+
     final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
         /** Catches exceptions of type E and converts them to Abort failures.
           *
@@ -219,6 +327,27 @@ object Abort:
         ): A < (Abort[E] & S) =
             Effect.catching(v) {
                 case ct(ex) => Abort.fail(ex)
+                case ex     => Abort.panic(ex)
+            }
+
+        /** Catches exceptions of type E, transforms and converts them to Abort failures.
+          *
+          * @param v
+          *   The computation to run and catch exceptions from
+          * @tparam A
+          *   The return type of the computation
+          * @tparam S
+          *   The effect type of the computation
+          * @return
+          *   A computation that may fail with an Abort[E1] if an exception of type E is caught
+          */
+        def apply[A, S, E1](f: E => E1)(v: => A < S)(
+            using
+            ct: SafeClassTag[E],
+            frame: Frame
+        ): A < (Abort[E1] & S) =
+            Effect.catching(v) {
+                case ct(ex) => Abort.fail(f(ex))
                 case ex     => Abort.panic(ex)
             }
     end CatchingOps

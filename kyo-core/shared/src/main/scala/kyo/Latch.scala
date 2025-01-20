@@ -1,35 +1,35 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
 /** A synchronization primitive that allows one or more tasks to wait until a set of operations being performed in other tasks completes.
   *
   * A `Latch` is initialized with a count and can be awaited. It is released by calling `release` the specified number of times.
   */
-abstract class Latch:
+final case class Latch private (unsafe: Latch.Unsafe):
 
     /** Waits until the latch has counted down to zero.
       *
       * @return
       *   Unit wrapped in an Async effect
       */
-    def await(using Frame): Unit < Async
+    def await(using Frame): Unit < Async = IO.Unsafe(unsafe.await().safe.get)
 
     /** Decrements the count of the latch, releasing it if the count reaches zero.
       *
       * @return
       *   Unit wrapped in an IO effect
       */
-    def release(using Frame): Unit < IO
+    def release(using Frame): Unit < IO = IO.Unsafe(unsafe.release())
 
     /** Returns the current count of the latch.
       *
       * @return
       *   The current count wrapped in an IO effect
       */
-    def pending(using Frame): Int < IO
+    def pending(using Frame): Int < IO = IO.Unsafe(unsafe.pending())
+
 end Latch
 
 /** Companion object for creating Latch instances. */
@@ -37,39 +37,59 @@ object Latch:
 
     /** Creates a new Latch initialized with the given count.
       *
-      * @param n
+      * @param count
       *   The initial count for the latch
       * @return
       *   A new Latch instance wrapped in an IO effect
       */
-    def init(n: Int)(using Frame): Latch < IO =
-        if n <= 0 then
-            new Latch:
-                def await(using Frame)   = ()
-                def release(using Frame) = ()
-                def pending(using Frame) = 0
+    def init(count: Int)(using Frame): Latch < IO =
+        initWith(count)(identity)
 
-                override def toString = "Latch(0)"
-        else
-            IO {
-                new Latch:
-                    val promise = IOPromise[Nothing, Unit]()
-                    val count   = new AtomicInteger(n)
+    /** Uses a new Latch with the provided count.
+      * @param count
+      *   The initial count for the latch
+      * @param f
+      *   The function to apply to the new Latch
+      * @return
+      *   The result of applying the function
+      */
+    inline def initWith[A, S](count: Int)(inline f: Latch => A < S)(using inline frame: Frame): A < (S & IO) =
+        IO.Unsafe(f(Latch(Unsafe.init(count))))
 
-                    def await(using Frame) = Async.get(promise)
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    sealed abstract class Unsafe:
+        def await()(using AllowUnsafe): Fiber.Unsafe[Nothing, Unit]
+        def release()(using AllowUnsafe): Unit
+        def pending()(using AllowUnsafe): Int
+        def safe: Latch = Latch(this)
+    end Unsafe
 
-                    def release(using Frame) =
-                        IO {
-                            @tailrec def loop(c: Int): Unit =
-                                if c > 0 && !count.compareAndSet(c, c - 1) then
-                                    loop(count.get)
-                                else if c == 1 then
-                                    promise.completeUnit(Result.unit)
-                            loop(count.get())
-                        }
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    object Unsafe:
 
-                    def pending(using Frame) = IO(count.get())
+        val noop = new Unsafe:
+            def await()(using AllowUnsafe)   = Fiber.unit.unsafe
+            def release()(using AllowUnsafe) = ()
+            def pending()(using AllowUnsafe) = 0
 
-                    override def toString = s"Latch($count)"
-            }
+        def init(n: Int)(using AllowUnsafe): Unsafe =
+            if n <= 0 then noop
+            else
+                new Unsafe:
+                    val promise = Promise.Unsafe.init[Nothing, Unit]()
+                    val count   = AtomicInt.Unsafe.init(n)
+
+                    def await()(using AllowUnsafe) = promise
+
+                    def release()(using AllowUnsafe) =
+                        @tailrec def loop(c: Int): Unit =
+                            if c > 0 && !count.compareAndSet(c, c - 1) then
+                                loop(count.get())
+                            else if c == 1 then
+                                promise.completeDiscard(Result.unit)
+                        loop(count.get())
+                    end release
+
+                    def pending()(using AllowUnsafe) = count.get()
+    end Unsafe
 end Latch

@@ -94,7 +94,7 @@ object Env:
             inline tag: Tag[R],
             inline frame: Frame
         ): A < (Env[R] & S) =
-            ContextEffect.suspendMap(erasedTag[R]) { map =>
+            ContextEffect.suspendWith(erasedTag[R]) { map =>
                 f(map.asInstanceOf[TypeMap[R]].get(using tag))
             }
     end UseOps

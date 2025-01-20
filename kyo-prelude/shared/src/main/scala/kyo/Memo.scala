@@ -1,14 +1,12 @@
 package kyo
 
-import kyo.Tag
-import kyo.kernel.*
-
-/** Represents a memoization effect.
+/** Represents a memoization effect for global value initialization.
   *
   * Memo is used to cache the results of expensive computations, allowing them to be reused without re-computation.
   *
-  * This effect is primarily intended for initializing global values or caching results of infrequent, expensive operations. It is not
-  * recommended for use in hot paths or frequently executed code due to potential performance overhead.
+  * This effect is specifically designed for initializing global values or caching results of infrequent, expensive operations. For
+  * memoization in performance-sensitive code or hot paths, consider using `Async.memoize` or `kyo-cache` instead, which have lower
+  * overhead.
   */
 opaque type Memo <: Var[Memo.Cache] = Var[Memo.Cache]
 
@@ -18,7 +16,7 @@ object Memo:
     // has a different key space
     private[kyo] class MemoIdentity
 
-    private[kyo] class Cache(map: Map[(Any, Any), Any]):
+    private[kyo] case class Cache(map: Map[(Any, Any), Any]):
         def get[A](input: A, id: MemoIdentity): Maybe[Any] =
             val key = (input, id)
             if map.contains(key) then
@@ -47,9 +45,9 @@ object Memo:
         input =>
             Var.use[Cache] { cache =>
                 cache.get(input, id) match
-                    case Maybe.Defined(cached) =>
+                    case Present(cached) =>
                         cached.asInstanceOf[B]
-                    case Maybe.Empty =>
+                    case Absent =>
                         f(input).map { result =>
                             Var.update[Cache](_.updated(input, id, result))
                                 .map(_ => result)
@@ -60,4 +58,39 @@ object Memo:
     def run[A: Flat, S](v: A < (Memo & S))(using Frame): A < S =
         Var.run(empty)(v)
 
+    object isolate:
+
+        /** Creates an isolate that combines memoization caches.
+          *
+          * When the isolation ends, merges any cached results from the isolated computation with the outer cache using the later result on
+          * conflicts. This allows memoized results computed in isolation to be reused later.
+          *
+          * @return
+          *   An isolate that preserves memoized results
+          */
+        val merge: Isolate[Memo] =
+            Var.isolate.merge[Memo.Cache]((m1, m2) => Cache(m1.map ++ m2.map))
+
+        /** Creates an isolate that overwrites the memoization cache.
+          *
+          * When the isolation ends, replaces the outer cache with the cache from the isolated computation. Earlier cached results are
+          * discarded in favor of any new results computed in isolation.
+          *
+          * @return
+          *   An isolate that updates the cache with isolated results
+          */
+        val update: Isolate[Memo] =
+            Var.isolate.update[Memo.Cache]
+
+        /** Creates an isolate that provides a temporary cache.
+          *
+          * Allows the isolated computation to build and use its own memoization cache, but discards that cache when isolation ends. Results
+          * are only cached within the isolation boundary.
+          *
+          * @return
+          *   An isolate that discards the isolated cache
+          */
+        val discard: Isolate[Memo] =
+            Var.isolate.discard[Memo.Cache]
+    end isolate
 end Memo

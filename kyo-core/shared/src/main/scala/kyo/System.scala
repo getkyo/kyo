@@ -5,13 +5,13 @@ import java.lang.System as JSystem
 import java.net.MalformedURLException
 import java.net.URISyntaxException
 import java.time.format.DateTimeParseException
-import kyo.kernel.Reducible
 
 /** Represents a system environment with various operations.
   *
   * This abstract class provides methods to interact with system properties, environment variables, and other system-related information.
   */
 abstract class System:
+    def unsafe: System.Unsafe
     def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
     def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
     def lineSeparator(using Frame): String < IO
@@ -26,31 +26,48 @@ object System:
     enum OS derives CanEqual:
         case Linux, MacOS, Windows, BSD, Solaris, IBMI, AIX, Unknown
 
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    abstract class Unsafe:
+        def env(name: String)(using AllowUnsafe): Maybe[String]
+        def property(name: String)(using AllowUnsafe): Maybe[String]
+        def lineSeparator()(using AllowUnsafe): String
+        def userName()(using AllowUnsafe): String
+        def operatingSystem()(using AllowUnsafe): OS
+        def safe: System = System(this)
+    end Unsafe
+
+    def apply(u: Unsafe): System =
+        new System:
+            def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
+                IO.Unsafe {
+                    u.env(name) match
+                        case Absent     => Absent
+                        case Present(v) => Abort.get(p(v).map(Maybe(_)))
+                }
+            def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
+                IO.Unsafe {
+                    u.property(name) match
+                        case Absent     => Absent
+                        case Present(v) => Abort.get(p(v).map(Maybe(_)))
+                }
+            def lineSeparator(using Frame): String < IO = IO.Unsafe(u.lineSeparator())
+            def userName(using Frame): String < IO      = IO.Unsafe(u.userName())
+            def operatingSystem(using Frame): OS < IO   = IO.Unsafe(u.operatingSystem())
+            def unsafe: Unsafe                          = u
+
     private val local = Local.init(live)
 
     /** The default live System implementation. */
     val live: System =
-        new System:
-            def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                IO {
-                    val value = JSystem.getenv(name)
-                    if value == null then Maybe.empty
-                    else Abort.get(p(value).map(Maybe(_)))
-                }
-
-            def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                IO {
-                    val value = JSystem.getProperty(name)
-                    if value == null then Maybe.empty
-                    else Abort.get(p(value).map(Maybe(_)))
-                }
-
-            def lineSeparator(using Frame): String < IO = IO(JSystem.lineSeparator())
-
-            def userName(using Frame): String < IO = IO(JSystem.getProperty("user.name"))
-
-            def operatingSystem(using Frame): OS < IO =
-                IO {
+        System(
+            new Unsafe:
+                def env(name: String)(using AllowUnsafe): Maybe[String] =
+                    Maybe(JSystem.getenv(name))
+                def property(name: String)(using AllowUnsafe): Maybe[String] =
+                    Maybe(JSystem.getProperty(name))
+                def lineSeparator()(using AllowUnsafe): String = JSystem.lineSeparator()
+                def userName()(using AllowUnsafe): String      = JSystem.getProperty("user.name")
+                def operatingSystem()(using AllowUnsafe): OS =
                     Maybe(JSystem.getProperty("os.name")).map { prop =>
                         val osName = prop.toLowerCase
                         if osName.contains("linux") then OS.Linux
@@ -63,7 +80,7 @@ object System:
                         else OS.Unknown
                         end if
                     }.getOrElse(OS.Unknown)
-                }
+        )
 
     /** Executes a computation with a custom System implementation.
       *
@@ -159,6 +176,7 @@ object System:
             reduce: Reducible[Abort[E]]
         ): A < (reduce.SReduced & IO) =
             reduce(local.use(_.property[E, A](name).map(_.getOrElse(default))))
+
     end PropertyOps
 
     def property[A]: PropertyOps[A] = PropertyOps(())
@@ -181,46 +199,51 @@ object System:
           * @return
           *   A Result containing either the parsed value or an error.
           */
-        def apply(s: String): Result[E, A]
+        def apply(s: String)(using Frame): Result[E, A]
     end Parser
 
     /** Companion object for Parser, containing default implementations. */
     object Parser:
-        given Parser[Nothing, String]                    = v => Result.success(v)
-        given Parser[NumberFormatException, Int]         = v => Result.catching[NumberFormatException](v.toInt)
-        given Parser[NumberFormatException, Long]        = v => Result.catching[NumberFormatException](v.toLong)
-        given Parser[NumberFormatException, Float]       = v => Result.catching[NumberFormatException](v.toFloat)
-        given Parser[NumberFormatException, Double]      = v => Result.catching[NumberFormatException](v.toDouble)
-        given Parser[IllegalArgumentException, Boolean]  = v => Result.catching[IllegalArgumentException](v.toBoolean)
-        given Parser[NumberFormatException, Byte]        = v => Result.catching[NumberFormatException](v.toByte)
-        given Parser[NumberFormatException, Short]       = v => Result.catching[NumberFormatException](v.toShort)
-        given Parser[Duration.InvalidDuration, Duration] = v => Duration.parse(v)
+        def apply[E, A](f: Frame ?=> String => Result[E, A]) =
+            new Parser[E, A]:
+                def apply(s: String)(using Frame) = f(s)
+
+        given Parser[Nothing, String]                    = Parser(v => Result.success(v))
+        given Parser[NumberFormatException, Int]         = Parser(v => Result.catching[NumberFormatException](v.toInt))
+        given Parser[NumberFormatException, Long]        = Parser(v => Result.catching[NumberFormatException](v.toLong))
+        given Parser[NumberFormatException, Float]       = Parser(v => Result.catching[NumberFormatException](v.toFloat))
+        given Parser[NumberFormatException, Double]      = Parser(v => Result.catching[NumberFormatException](v.toDouble))
+        given Parser[IllegalArgumentException, Boolean]  = Parser(v => Result.catching[IllegalArgumentException](v.toBoolean))
+        given Parser[NumberFormatException, Byte]        = Parser(v => Result.catching[NumberFormatException](v.toByte))
+        given Parser[NumberFormatException, Short]       = Parser(v => Result.catching[NumberFormatException](v.toShort))
+        given Parser[Duration.InvalidDuration, Duration] = Parser(v => Duration.parse(v))
 
         given Parser[IllegalArgumentException, java.util.UUID] =
-            v => Result.catching[IllegalArgumentException](java.util.UUID.fromString(v))
+            Parser(v => Result.catching[IllegalArgumentException](java.util.UUID.fromString(v)))
 
         given Parser[DateTimeParseException, java.time.LocalDate] =
-            v => Result.catching[DateTimeParseException](java.time.LocalDate.parse(v))
+            Parser(v => Result.catching[DateTimeParseException](java.time.LocalDate.parse(v)))
 
         given Parser[DateTimeParseException, java.time.LocalTime] =
-            v => Result.catching[DateTimeParseException](java.time.LocalTime.parse(v))
+            Parser(v => Result.catching[DateTimeParseException](java.time.LocalTime.parse(v)))
 
         given Parser[DateTimeParseException, java.time.LocalDateTime] =
-            v => Result.catching[DateTimeParseException](java.time.LocalDateTime.parse(v))
+            Parser(v => Result.catching[DateTimeParseException](java.time.LocalDateTime.parse(v)))
 
         given Parser[URISyntaxException, java.net.URI] =
-            v => Result.catching[URISyntaxException](new java.net.URI(v))
+            Parser(v => Result.catching[URISyntaxException](new java.net.URI(v)))
 
         given Parser[MalformedURLException, java.net.URL] =
-            v => Result.catching[MalformedURLException](new java.net.URL(v))
+            Parser(v => Result.catching[MalformedURLException](new java.net.URL(v)))
 
         given [E, A](using p: Parser[E, A], frame: Frame): Parser[E, Seq[A]] =
-            v => Result.collect(Chunk.from(v.split(",")).map(v => p(v.trim())))
+            Parser(v => Result.collect(Chunk.from(v.split(",")).map(v => p(v.trim()))))
 
         given Parser[IllegalArgumentException, Char] =
-            v =>
+            Parser { v =>
                 if v.length() == 1 then Result.success(v(0))
                 else Result.fail(new IllegalArgumentException("String must have exactly one character"))
+            }
 
     end Parser
 

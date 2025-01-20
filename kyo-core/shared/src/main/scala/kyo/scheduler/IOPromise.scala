@@ -1,34 +1,35 @@
 package kyo.scheduler
 
 import IOPromise.*
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.*
-import kyo.Result.Panic
-import kyo.kernel.Safepoint
+import kyo.Result.Error
+import kyo.kernel.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
-import scala.util.control.NoStackTrace
 
-private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Interceptor:
+private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interceptor:
 
-    @volatile private var state: State[E, A] = init
+    @volatile private var state = init
 
     def this() = this(Pending())
     def this(interrupts: IOPromise[?, ?]) = this(Pending().interrupts(interrupts))
 
-    def addEnsure(f: () => Unit): Unit           = {}
-    def removeEnsure(f: () => Unit): Unit        = {}
+    def addFinalizer(f: () => Unit): Unit        = {}
+    def removeFinalizer(f: () => Unit): Unit     = {}
     def enter(frame: Frame, value: Any): Boolean = true
 
-    private def cas[E2 <: E, A2 <: A](curr: State[E2, A2], next: State[E2, A2]): Boolean =
-        if stateHandle eq null then
-            ((isNull(state) && isNull(curr)) || state.equals(curr)) && {
-                state = next.asInstanceOf[State[E, A]]
-                true
-            }
-        else
-            stateHandle.compareAndSet(this, curr, next)
+    private def compareAndSet[E2 >: E, A2 >: A](curr: State[E2, A2], next: State[E2, A2]): Boolean =
+        IOPromisePlatformSpecific.stateHandle match
+            case Absent =>
+                ((isNull(state) && isNull(curr)) || state.equals(curr)) && {
+                    state = next.asInstanceOf[State[E, A]]
+                    true
+                }
+            case Present(handle) =>
+                handle.compareAndSet(this, curr, next)
 
     final def done(): Boolean =
         @tailrec def doneLoop(promise: IOPromise[E, A]): Boolean =
@@ -49,19 +50,26 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         @tailrec def interruptsLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
-                    if !promise.cas(p, p.interrupts(other)) then
+                    if !promise.compareAndSet(p, p.interrupts(other)) then
                         interruptsLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     interruptsLoop(l.p)
                 case _ =>
-                    try discard(other.interrupt(Result.Panic(Interrupt(frame))))
-                    catch
-                        case ex if NonFatal(ex) =>
-                            Log.unsafe.error("uncaught exception", ex)
+                    discard(other.interrupt(Result.Panic(Interrupt())))
         interruptsLoop(this)
     end interrupts
 
-    final def interrupt(error: Panic): Boolean =
+    final def mask(): IOPromise[E, A] =
+        val p = new IOPromise[E, A]:
+            override def interrupt[E2 >: E](error: Error[E2]): Boolean = false
+        onComplete(p.completeDiscard)
+        p
+    end mask
+
+    def interruptDiscard[E2 >: E](error: Error[E2]): Unit =
+        discard(interrupt(error))
+
+    def interrupt[E2 >: E](error: Error[E2]): Boolean =
         @tailrec def interruptLoop(promise: IOPromise[E, A]): Boolean =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -83,11 +91,11 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         compressLoop(this)
     end compress
 
-    final private def merge(p: Pending[E, A]): Unit =
+    final private def merge[E2 >: E, A2 >: A](p: Pending[E2, A2]): Unit =
         @tailrec def mergeLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p2: Pending[E, A] @unchecked =>
-                    if !promise.cas(p2, p2.merge(p)) then
+                    if !promise.compareAndSet(p2, p2.merge(p)) then
                         mergeLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     mergeLoop(l.p)
@@ -96,14 +104,14 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         mergeLoop(this)
     end merge
 
-    final def becomeUnit[E2 <: E, A2 <: A](other: IOPromise[E2, A2]): Unit =
+    final def becomeDiscard[E2 >: E, A2 >: A](other: IOPromise[E2, A2]): Unit =
         discard(become(other))
 
-    final def become[E2 <: E, A2 <: A](other: IOPromise[E2, A2]): Boolean =
+    final def become[E2 >: E, A2 >: A](other: IOPromise[E2, A2]): Boolean =
         @tailrec def becomeLoop(other: IOPromise[E2, A2]): Boolean =
             state match
                 case p: Pending[E2, A2] @unchecked =>
-                    if cas(p, Linked(other)) then
+                    if compareAndSet(p, Linked(other)) then
                         other.merge(p)
                         true
                     else
@@ -113,43 +121,51 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         becomeLoop(other.compress())
     end become
 
-    inline def onResult(inline f: Result[E, A] => Unit): Unit =
+    inline def onComplete(inline f: Result[E, A] => Unit): Unit =
         @tailrec def onCompleteLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
-                    if !promise.cas(p, p.add(f)) then
+                    if !promise.compareAndSet(p, p.onComplete(f)) then
                         onCompleteLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     onCompleteLoop(l.p)
                 case v =>
-                    try f(v.asInstanceOf[Result[E, A]])
-                    catch
-                        case ex if NonFatal(ex) =>
-                            given Frame = Frame.internal
-                            Log.unsafe.error("uncaught exception", ex)
+                    IOPromise.eval(f(v.asInstanceOf[Result[E, A]]))
         onCompleteLoop(this)
-    end onResult
+    end onComplete
+
+    inline def onInterrupt(inline f: Error[E] => Unit): Unit =
+        @tailrec def onInterruptLoop(promise: IOPromise[E, A]): Unit =
+            promise.state match
+                case p: Pending[E, A] @unchecked =>
+                    if !promise.compareAndSet(p, p.onInterrupt(f)) then
+                        onInterruptLoop(promise)
+                case l: Linked[E, A] @unchecked =>
+                    onInterruptLoop(l.p)
+                case _ =>
+        onInterruptLoop(this)
+    end onInterrupt
 
     protected def onComplete(): Unit = {}
 
-    final private def interrupt(p: Pending[E, A], v: Panic): Boolean =
-        cas(p, v) && {
+    final private def interrupt[E2 >: E, A2 >: A](p: Pending[E2, A2], v: Error[E2]): Boolean =
+        compareAndSet(p, v) && {
             onComplete()
             p.flushInterrupt(v)
             true
         }
 
-    final private def complete(p: Pending[E, A], v: Result[E, A]): Boolean =
-        cas(p, v) && {
+    final private def complete[E2 >: E, A2 >: A](p: Pending[E2, A2], v: Result[E2, A2]): Boolean =
+        compareAndSet(p, v) && {
             onComplete()
             p.flush(v)
             true
         }
 
-    final def completeUnit[E2 <: E, A2 <: A](v: Result[E2, A2]): Unit =
+    final def completeDiscard[E2 >: E, A2 >: A](v: Result[E2, A2]): Unit =
         discard(complete(v))
 
-    final def complete[E2 <: E, A2 <: A](v: Result[E2, A2]): Boolean =
+    final def complete[E2 >: E, A2 >: A](v: Result[E2, A2]): Boolean =
         @tailrec def completeLoop(): Boolean =
             state match
                 case p: Pending[E, A] @unchecked =>
@@ -159,7 +175,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         completeLoop()
     end complete
 
-    final def block(deadline: Long)(using frame: Frame): Result[E | Timeout, A] =
+    final def block(deadline: Clock.Deadline.Unsafe)(using frame: Frame): Result[E | Timeout, A] =
         def blockLoop(promise: IOPromise[E, A]): Result[E | Timeout, A] =
             promise.state match
                 case _: Pending[E, A] @unchecked =>
@@ -172,21 +188,23 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                             result = v
                             LockSupport.unpark(waiter)
                         @tailrec def apply(): Result[E | Timeout, A] =
+                            import kyo.AllowUnsafe.embrace.danger
                             if isNull(result) then
-                                val remainingNanos = deadline - java.lang.System.currentTimeMillis()
-                                if remainingNanos <= 0 then
-                                    return Result.fail(Timeout(frame))
-                                else if remainingNanos == Long.MaxValue then
+                                if deadline.isOverdue() then
+                                    return Result.fail(Timeout())
+                                val timeLeft = deadline.timeLeft()
+                                if !timeLeft.isFinite then
                                     LockSupport.park(this)
                                 else
-                                    LockSupport.parkNanos(this, remainingNanos)
+                                    LockSupport.parkNanos(this, timeLeft.toNanos)
                                 end if
                                 apply()
                             else
                                 result
+                            end if
                         end apply
                     end state
-                    onResult(state)
+                    onComplete(state)
                     state()
                 case l: Linked[E, A] @unchecked =>
                     blockLoop(l.p)
@@ -195,94 +213,97 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         blockLoop(this)
     end block
 
+    protected def stateString(): String =
+        state match
+            case p: Pending[?, ?] => s"Pending(waiters = ${p.waiters})"
+            case l: Linked[?, ?]  => s"Linked(promise = ${l.p})"
+            case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
+
     override def toString =
-        val stateString =
-            state match
-                case p: Pending[?, ?] => s"Pending(waiters = ${p.waiters})"
-                case l: Linked[?, ?]  => s"Linked(promise = ${l.p})"
-                case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
-        s"IOPromise(state = ${stateString})"
-    end toString
+        s"IOPromise(state = ${stateString()})"
+
 end IOPromise
 
-private[kyo] object IOPromise extends IOPromisePlatformSpecific:
+private[kyo] object IOPromise:
 
-    case class Interrupt(origin: Frame) extends Exception with NoStackTrace
+    abstract class StateHandle:
+        def compareAndSet[E, A](promise: IOPromise[E, A], curr: State[E, A], next: State[E, A]): Boolean
 
-    type State[E, A] = Result[E, A] | Pending[E, A] | Linked[E, A]
+    type State[+E, +A] = Result[E, A] | Pending[E, A] | Linked[E, A]
 
-    case class Linked[E, A](p: IOPromise[E, A])
+    case class Linked[+E, +A](p: IOPromise[E, A])
 
-    abstract class Pending[E, A]:
+    abstract class Pending[+E, +A]:
         self =>
 
         def waiters: Int
-        def interrupt(v: Panic): Pending[E, A]
-        def run(v: Result[E, A]): Pending[E, A]
+        def interrupt[E2 >: E](v: Error[E2]): Pending[E, A]
+        def run[E2 >: E, A2 >: A](v: Result[E2, A2]): Pending[E2, A2]
 
         @nowarn("msg=anonymous")
-        inline def add(inline f: Result[E, A] => Unit): Pending[E, A] =
+        inline def onComplete(inline f: Result[E, A] => Unit): Pending[E, A] =
             new Pending[E, A]:
                 def waiters: Int = self.waiters + 1
-                def interrupt(v: Panic) =
-                    f(v)
+                def interrupt[E2 >: E](error: Error[E2]) =
+                    eval(f(error.asInstanceOf[Error[E]]))
                     self
-                def run(v: Result[E, A]) =
-                    try f(v)
-                    catch
-                        case ex if NonFatal(ex) =>
-                            given Frame = Frame.internal
-                            Log.unsafe.error("uncaught exception", ex)
-                    end try
+                def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
+                    eval(f(v.asInstanceOf[Result[E, A]]))
                     self
                 end run
 
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
             new Pending[E, A]:
-                def interrupt(panic: Panic): Pending[E, A] =
-                    discard(p.interrupt(panic))
+                def interrupt[E2 >: E](error: Error[E2]) =
+                    discard(p.interrupt(error.asInstanceOf[Error[E]]))
                     self
                 def waiters: Int = self.waiters + 1
-                def run(v: Result[E, A]) =
+                def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
                     self
 
-        final def merge(tail: Pending[E, A]): Pending[E, A] =
-
-            @tailrec def runLoop(p: Pending[E, A], v: Result[E, A]): Pending[E, A] =
-                p match
-                    case _ if (p eq Pending.Empty) =>
-                        tail
-                    case p: Pending[E, A] =>
-                        runLoop(p.run(v), v)
-
-            @tailrec def interruptLoop(p: Pending[E, A], panic: Panic): Pending[E, A] =
-                p match
-                    case _ if (p eq Pending.Empty) =>
-                        self
-                    case p: Pending[E, A] =>
-                        interruptLoop(p.interrupt(panic), panic)
-
+        @nowarn("msg=anonymous")
+        inline def onInterrupt(inline f: Error[E] => Unit): Pending[E, A] =
             new Pending[E, A]:
-                def waiters: Int            = self.waiters + 1
-                def interrupt(panic: Panic) = interruptLoop(self, panic)
-                def run(v: Result[E, A])    = runLoop(self, v)
+                def interrupt[E2 >: E](error: Error[E2]) =
+                    eval(f(error.asInstanceOf[Error[E]]))
+                    self
+                def waiters: Int = self.waiters + 1
+                def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
+                    self
+
+        final def merge[E2 >: E, A2 >: A](tail: Pending[E2, A2]): Pending[E2, A2] =
+
+            @tailrec def runLoop[E3 >: E2, A3 >: A2](p: Pending[? <: E3, ? <: A3], v: Result[E3, A3]): Pending[E3, A3] =
+                p match
+                    case _ if (p eq Pending.Empty) => tail
+                    case p: Pending[?, ?]          => runLoop(p.run(v), v)
+
+            @tailrec def interruptLoop(p: Pending[E, A], error: Error[E2]): Pending[E2, A2] =
+                p match
+                    case _ if (p eq Pending.Empty) => tail
+                    case p: Pending[E, A]          => interruptLoop(p.interrupt(error), error)
+
+            new Pending[E2, A2]:
+                def waiters: Int                               = self.waiters + tail.waiters
+                def interrupt[E2 >: E](error: Error[E2])       = interruptLoop(self, error.asInstanceOf[Error[E]])
+                def run[E3 >: E2, A3 >: A2](v: Result[E3, A3]) = runLoop(self, v)
             end new
         end merge
 
-        final def flushInterrupt(v: Panic): Unit =
+        final def flushInterrupt[E2 >: E, A2 >: A](error: Error[E2]): Unit =
             @tailrec def flushInterruptLoop(p: Pending[E, A]): Unit =
                 p match
                     case _ if (p eq Pending.Empty) => ()
                     case p: Pending[E, A] =>
-                        flushInterruptLoop(p.interrupt(v))
+                        flushInterruptLoop(p.interrupt(error))
             flushInterruptLoop(this)
         end flushInterrupt
 
-        final def flush(v: Result[E, A]): Unit =
-            @tailrec def flushLoop(p: Pending[E, A]): Unit =
+        final def flush[E2 >: E, A2 >: A](v: Result[E2, A2]): Unit =
+            @tailrec def flushLoop[E3 >: E2, A3 >: A2](p: Pending[? <: E3, ? <: A3]): Unit =
                 p match
                     case _ if (p eq Pending.Empty) => ()
-                    case p: Pending[E, A] =>
+                    case p: Pending[?, ?] =>
                         flushLoop(p.run(v))
             flushLoop(this)
         end flush
@@ -292,9 +313,19 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
         case object Empty extends Pending[Nothing, Nothing]:
-            def waiters: Int                     = 0
-            def interrupt(v: Panic)              = this
-            def run(v: Result[Nothing, Nothing]) = this
+            def waiters: Int                           = 0
+            def interrupt[E2 >: Nothing](v: Error[E2]) = this
+            def run[E2, A2](v: Result[E2, A2])         = this
         end Empty
     end Pending
+
+    private inline def eval[A](inline f: => Unit): Unit =
+        try f
+        catch
+            case ex if NonFatal(ex) =>
+                given Frame = Frame.internal
+                import AllowUnsafe.embrace.danger
+                Log.live.unsafe.error("uncaught exception", ex)
+        end try
+    end eval
 end IOPromise

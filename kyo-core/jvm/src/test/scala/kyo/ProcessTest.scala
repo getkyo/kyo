@@ -7,59 +7,64 @@ import kyo.*
 
 class ProcessTest extends Test:
 
-    "execute command" in {
-        assert {
-            IO.run(Process.Command("echo", "-n", "some string").text).eval == "some string"
+    "execute command" in run {
+        Process.Command("echo", "-n", "some string").text.map { result =>
+            assert(result == "some string")
         }
     }
-    "stream as stdin" in {
+    "stream as stdin" in run {
         val stream = new ByteArrayInputStream("some string".getBytes(StandardCharsets.UTF_8))
-        val c      = Process.Command("cat").stdin(Process.Input.Stream(stream))
-
-        assert {
-            IO.run(c.text).eval == "some string"
+        Process.Command("cat").stdin(Process.Input.Stream(stream)).text.map { result =>
+            assert(result == "some string")
         }
     }
-    "piped commands" in {
-        val c = Process.Command("echo", "-n", "some string").andThen(Process.Command("cat"))
-        assert(IO.run(c.text).eval == "some string")
+    "piped commands" in run {
+        Process.Command("echo", "-n", "some string").andThen(Process.Command("cat")).text.map { result =>
+            assert(result == "some string")
+        }
     }
-    "piped commands with stream stdin" in {
+    "piped commands with stream stdin" in run {
         val stream = new ByteArrayInputStream("2\n1".getBytes(StandardCharsets.UTF_8))
-        val c0     = Process.Command("cat").andThen(Process.Command("sort"))
-        val c      = c0.stdin(Process.Input.Stream(stream))
-        assert(IO.run(c.text).eval == "1\n2\n")
+        Process.Command("cat").andThen(Process.Command("sort"))
+            .stdin(Process.Input.Stream(stream))
+            .text
+            .map { result =>
+                assert(result == "1\n2\n")
+            }
     }
 
-    "read stdout to stream" in {
-        val res = IO.run {
-            Process.Command("echo", "-n", "some string").stream.map { s =>
-                val arr = new Array[Byte](11)
-                s.read(arr)
-                arr
+    "read stdout to stream" in run {
+        Process.Command("echo", "-n", "some string").stream.map { s =>
+            val arr = new Array[Byte](11)
+            s.read(arr)
+            arr
+        }.map { result =>
+            assert {
+                new String(result, StandardCharsets.UTF_8) == "some string"
             }
-        }.eval
-        assert {
-            new String(res, StandardCharsets.UTF_8) == "some string"
         }
     }
-    "bad exit code" in {
-        assert(IO.run(Process.Command("ls", "--wrong-flag").waitFor).eval != 0)
+    "bad exit code" in run {
+        Process.Command("ls", "--wrong-flag").waitFor.map { result =>
+            assert(result != 0)
+        }
     }
-    "good exit code" in {
-        assert(IO.run(Process.Command("echo", "some string").waitFor).eval == 0)
+    "good exit code" in run {
+        Process.Command("echo", "some string").waitFor.map { result =>
+            assert(result == 0)
+        }
     }
 
     "jvm" - {
-        "execute new jvm and throw error" in {
-            assert {
-                IO.run(Process.jvm.command(classOf[TestMainClass.type], "some-arg" :: Nil).map(_.waitFor)).eval == 1
+        "execute new jvm and throw error" in run {
+            Process.jvm.command(classOf[TestMainClass.type], "some-arg" :: Nil).map(_.waitFor).map { result =>
+                assert(result == 1)
             }
         }
 
-        "execute new jvm and end without error" in {
-            assert {
-                IO.run(Process.jvm.command(classOf[TestMainClass.type]).map(_.waitFor)).eval == 0
+        "execute new jvm and end without error" in run {
+            Process.jvm.command(classOf[TestMainClass.type]).map(_.waitFor).map { result =>
+                assert(result == 0)
             }
         }
     }

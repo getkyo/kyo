@@ -1,26 +1,19 @@
 package kyo
 
+import org.jctools.queues.MpmcUnboundedXaddArrayQueue
+import scala.annotation.tailrec
+
 /** A Meter is an abstract class that represents a mechanism for controlling concurrency and rate limiting.
+  *
+  * Meters can be configured to be reentrant or non-reentrant. Reentrant meters allow nested calls from the same fiber, while non-reentrant
+  * meters will block or fail on nested calls.
   */
 abstract class Meter:
     self =>
 
-    /** Returns the number of available permits.
-      *
-      * @return
-      *   The number of available permits as an Int effect.
-      */
-    def available(using Frame): Int < IO
-
-    /** Checks if there are any available permits.
-      *
-      * @return
-      *   A Boolean effect indicating whether permits are available.
-      */
-    def isAvailable(using Frame): Boolean < IO =
-        available.map(_ > 0)
-
     /** Runs an effect after acquiring a permit.
+      *
+      * If the meter is reentrant, nested calls from the same fiber will be allowed. If non-reentrant, nested calls will block or fail.
       *
       * @param v
       *   The effect to run.
@@ -31,7 +24,7 @@ abstract class Meter:
       * @return
       *   The result of running the effect.
       */
-    def run[A, S](v: => A < S)(using Frame): A < (S & Async)
+    def run[A, S](v: => A < S)(using Frame): A < (S & Async & Abort[Closed])
 
     /** Attempts to run an effect if a permit is available.
       *
@@ -42,9 +35,23 @@ abstract class Meter:
       * @tparam S
       *   The effect type.
       * @return
-      *   A Maybe containing the result of running the effect, or Empty if no permit was available.
+      *   A Maybe containing the result of running the effect, or Absent if no permit was available.
       */
-    def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (IO & S)
+    def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (S & Async & Abort[Closed])
+
+    /** Returns the number of available permits.
+      *
+      * @return
+      *   The number of available permits.
+      */
+    def availablePermits(using Frame): Int < (Async & Abort[Closed])
+
+    /** Returns the number of fibers waiting for a permit.
+      *
+      * @return
+      *   The number of fibers waiting for a permit.
+      */
+    def pendingWaiters(using Frame): Int < (Async & Abort[Closed])
 
     /** Closes the Meter.
       *
@@ -52,58 +59,62 @@ abstract class Meter:
       *   A Boolean effect indicating whether the Meter was successfully closed.
       */
     def close(using Frame): Boolean < IO
+
+    /** Checks if the Meter is closed.
+      *
+      * @return
+      *   A Boolean effect indicating whether the Meter is closed.
+      */
+    def closed(using Frame): Boolean < IO
+
 end Meter
 
 object Meter:
 
-    /** A no-op Meter that always allows operations. */
+    /** A no-op Meter that always allows operations and can't be closed. */
     case object Noop extends Meter:
-        def available(using Frame)                 = Int.MaxValue
+        def availablePermits(using Frame)          = Int.MaxValue
+        def pendingWaiters(using Frame)            = 0
         def run[A, S](v: => A < S)(using Frame)    = v
         def tryRun[A, S](v: => A < S)(using Frame) = v.map(Maybe(_))
         def close(using Frame)                     = false
+        def closed(using Frame): Boolean < IO      = false
     end Noop
 
-    /** Creates a Meter that acts as a mutex (binary semaphore).
+    /** Creates a **reentrant** Meter that acts as a mutex (binary semaphore).
       *
       * @return
       *   A Meter effect that represents a mutex.
       */
     def initMutex(using Frame): Meter < IO =
-        initSemaphore(1)
+        initMutex(true)
+
+    /** Creates a Meter that acts as a mutex (binary semaphore).
+      *
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a mutex.
+      */
+    def initMutex(reentrant: Boolean)(using Frame): Meter < IO =
+        initSemaphore(1, reentrant)
 
     /** Creates a Meter that acts as a semaphore with the specified concurrency.
       *
       * @param concurrency
       *   The number of concurrent operations allowed.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
       * @return
       *   A Meter effect that represents a semaphore.
       */
-    def initSemaphore(concurrency: Int)(using Frame): Meter < IO =
-        Channel.init[Unit](concurrency).map { chan =>
-            offer(concurrency, chan, ()).map { _ =>
-                new Meter:
-                    def available(using Frame) = chan.size
-                    def release(using Frame)   = chan.offerUnit(())
-
-                    def run[A, S](v: => A < S)(using Frame) =
-                        IO.ensure(release) {
-                            chan.take.andThen(v)
-                        }
-
-                    def tryRun[A, S](v: => A < S)(using Frame) =
-                        IO {
-                            chan.unsafePoll match
-                                case Maybe.Empty => Maybe.empty
-                                case _ =>
-                                    IO.ensure(release) {
-                                        v.map(Maybe(_))
-                                    }
-                        }
-
-                    def close(using Frame) =
-                        chan.close.map(_.isDefined)
-            }
+    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < IO =
+        IO.Unsafe {
+            new Base(concurrency, reentrant):
+                def dispatch[A, S](v: => A < S) =
+                    // Release the permit right after the computation
+                    IO.ensure(discard(release()))(v)
+                def onClose(): Unit = ()
         }
 
     /** Creates a Meter that acts as a rate limiter.
@@ -112,28 +123,27 @@ object Meter:
       *   The number of operations allowed per period.
       * @param period
       *   The duration of each period.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
       * @return
       *   A Meter effect that represents a rate limiter.
       */
-    def initRateLimiter(rate: Int, period: Duration)(using Frame): Meter < IO =
-        Channel.init[Unit](rate).map { chan =>
-            Timer.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
-                new Meter:
+    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < IO =
+        IO.Unsafe {
+            new Base(rate, reentrant):
+                val timerTask =
+                    // Schedule periodic task to replenish permits
+                    IO.Unsafe.evalOrThrow(Clock.repeatAtInterval(period, period)(replenish()))
 
-                    def available(using Frame)              = chan.size
-                    def run[A, S](v: => A < S)(using Frame) = chan.take.map(_ => v)
+                def dispatch[A, S](v: => A < S) =
+                    // Don't release a permit since it's managed by the timer task
+                    v
 
-                    def tryRun[A, S](v: => A < S)(using Frame) =
-                        chan.poll.map {
-                            case Maybe.Empty =>
-                                Maybe.empty
-                            case _ =>
-                                v.map(Maybe(_))
-                        }
+                @tailrec def replenish(i: Int = 0): Unit =
+                    if i < rate && release() then
+                        replenish(i + 1)
 
-                    def close(using Frame) =
-                        chan.close.map(_.isDefined)
-            }
+                def onClose() = discard(timerTask.unsafe.interrupt())
         }
 
     /** Combines two Meters into a pipeline.
@@ -198,43 +208,184 @@ object Meter:
         Kyo.collect(meters).map { seq =>
             val meters = seq.toIndexedSeq
             new Meter:
-
-                def available(using Frame) =
+                def availablePermits(using Frame) =
                     Loop.indexed(0) { (idx, acc) =>
                         if idx == meters.length then Loop.done(acc)
-                        else meters(idx).available.map(v => Loop.continue(acc + v))
+                        else meters(idx).availablePermits.map(v => Loop.continue(acc + v))
+                    }
+
+                def pendingWaiters(using Frame) =
+                    Loop.indexed(0) { (idx, acc) =>
+                        if idx == meters.length then Loop.done(acc)
+                        else meters(idx).pendingWaiters.map(v => Loop.continue(acc + v))
                     }
 
                 def run[A, S](v: => A < S)(using Frame) =
-                    def loop(idx: Int = 0): A < (S & Async) =
+                    def loop(idx: Int = 0): A < (S & Async & Abort[Closed]) =
                         if idx == meters.length then v
                         else meters(idx).run(loop(idx + 1))
                     loop()
                 end run
 
                 def tryRun[A, S](v: => A < S)(using Frame) =
-                    def loop(idx: Int = 0): Maybe[A] < (S & IO) =
+                    def loop(idx: Int = 0): Maybe[A] < (S & Async & Abort[Closed]) =
                         if idx == meters.length then v.map(Maybe(_))
                         else
                             meters(idx).tryRun(loop(idx + 1)).map {
-                                case Maybe.Empty => Maybe.empty
-                                case r           => r.flatten
+                                case Absent => Maybe.empty
+                                case r      => r.flatten
                             }
                     loop()
                 end tryRun
 
                 def close(using Frame): Boolean < IO =
                     Kyo.foreach(meters)(_.close).map(_.exists(identity))
+
+                def closed(using Frame): Boolean < IO =
+                    Kyo.foreach(meters)(_.closed).map(_.exists(identity))
             end new
         }
 
-    private def offer[A](n: Int, chan: Channel[A], v: A)(using Frame): Unit < IO =
-        Loop.indexed { idx =>
-            if idx == n then Loop.done
-            else
-                chan.offer(v).map {
-                    case true  => Loop.continue
-                    case false => Loop.done
+    private val acquiredMeters = Local.initIsolated(Set.empty[Meter])
+
+    abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
+
+        // MinValue => closed
+        // >= 0     => # of permits
+        // < 0      => # of waiters
+        val state   = AtomicInt.Unsafe.init(permits)
+        val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, Unit]](8)
+        val closed  = Promise.Unsafe.init[Closed, Nothing]()
+
+        protected def dispatch[A, S](v: => A < S): A < (S & IO)
+        protected def onClose(): Unit
+
+        private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (IO & S) =
+            if reentrant then
+                IO.withLocal(acquiredMeters) { meters =>
+                    if meters.contains(this) then reenter
+                    else acquire
                 }
-        }
+            else
+                acquire
+
+        private inline def withAcquiredMeter[A, S](inline v: => A < S) =
+            if reentrant then
+                acquiredMeters.update(_ + this)(v)
+            else
+                v
+
+        final def run[A, S](v: => A < S)(using Frame) =
+            withReentry(v) {
+                @tailrec def loop(): A < (S & Async & Abort[Closed]) =
+                    val st = state.get()
+                    if st == Int.MinValue then
+                        // Meter is closed
+                        closed.safe.get
+                    else if state.compareAndSet(st, st - 1) then
+                        if st > 0 then
+                            // Permit available, dispatch immediately
+                            dispatch(withAcquiredMeter(v))
+                        else
+                            // No permit available, add to waiters queue
+                            val p = Promise.Unsafe.init[Closed, Unit]()
+                            waiters.add(p)
+                            dispatch(p.safe.use(_ => withAcquiredMeter(v)))
+                    else
+                        // CAS failed, retry
+                        loop()
+                    end if
+                end loop
+                loop()
+            }
+        end run
+
+        final def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (S & Async & Abort[Closed]) =
+            withReentry(v.map(Maybe(_))) {
+                @tailrec def loop(): Maybe[A] < (S & Async & Abort[Closed]) =
+                    val st = state.get()
+                    if st == Int.MinValue then
+                        // Meter is closed
+                        closed.safe.get
+                    else if st <= 0 then
+                        // No permit available, return empty
+                        Maybe.empty
+                    else if state.compareAndSet(st, st - 1) then
+                        // Permit available, dispatch
+                        dispatch(withAcquiredMeter(v.map(Maybe(_))))
+                    else
+                        // CAS failed, retry
+                        loop()
+                    end if
+                end loop
+                loop()
+            }
+        end tryRun
+
+        final def availablePermits(using Frame) =
+            IO.Unsafe {
+                state.get() match
+                    case Int.MinValue => closed.safe.get
+                    case st           => Math.max(0, st)
+            }
+
+        final def pendingWaiters(using Frame) =
+            IO.Unsafe {
+                state.get() match
+                    case Int.MinValue => closed.safe.get
+                    case st           => Math.min(0, st).abs
+            }
+
+        final def close(using frame: Frame): Boolean < IO =
+            IO.Unsafe {
+                val st = state.getAndSet(Int.MinValue)
+                val ok = st != Int.MinValue // The meter wasn't already closed
+                if ok then
+                    val fail = Result.fail(Closed("Meter", initFrame))
+                    // Complete the closed promise to fail new operations
+                    closed.completeDiscard(fail)
+                    // Drain the pending waiters
+                    @tailrec def drain(st: Int): Unit =
+                        if st < 0 then
+                            // Use pollWaiter to ensure all pending waiters
+                            // as indicated by the state are drained
+                            pollWaiter().completeDiscard(fail)
+                            drain(st + 1)
+                    drain(st)
+                    onClose()
+                end if
+                ok
+            }
+        end close
+
+        final def closed(using Frame) = IO(state.get() == Int.MinValue)
+
+        @tailrec final protected def release(): Boolean =
+            val st = state.get()
+            if st >= permits || st == Int.MinValue then
+                // No more permits to release or meter is closed
+                false
+            else if !state.compareAndSet(st, st + 1) then
+                // CAS failed, retry
+                release()
+            else if st < 0 && !pollWaiter().complete(Result.unit) then
+                // Waiter is already complete due to interruption, retry
+                release()
+            else
+                // Permit released
+                true
+            end if
+        end release
+
+        @tailrec final private def pollWaiter(): Promise.Unsafe[Closed, Unit] =
+            val waiter = waiters.poll()
+            if !isNull(waiter) then waiter
+            else
+                // If no waiter is found, retry the poll operation
+                // This handles the race condition between state change and waiter queuing
+                pollWaiter()
+            end if
+        end pollWaiter
+    end Base
+
 end Meter

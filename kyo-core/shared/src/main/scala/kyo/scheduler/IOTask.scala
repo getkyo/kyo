@@ -4,13 +4,14 @@ import kyo.*
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.ArrowEffect
+import kyo.kernel.internal.*
 import kyo.scheduler.IOTask.*
 import scala.util.control.NonFatal
 
 sealed private[kyo] class IOTask[Ctx, E, A] private (
     private var curr: A < (Ctx & Async & Abort[E]),
     private var trace: Trace,
-    private var ensures: Ensures
+    private var finalizers: Finalizers
 ) extends IOPromise[E, A] with Task:
 
     inline given Flat[A] = Flat.unsafe.bypass
@@ -25,24 +26,26 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def onComplete() =
         doPreempt()
 
-    final override def addEnsure(f: () => Unit) =
-        ensures = ensures.add(f)
+    final override def addFinalizer(f: () => Unit) =
+        finalizers = finalizers.add(f)
 
-    final override def removeEnsure(f: () => Unit) =
-        ensures = ensures.remove(f)
+    final override def removeFinalizer(f: () => Unit) =
+        finalizers = finalizers.remove(f)
 
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
+
+    private inline def locally[A](inline f: A): A = f
 
     final private def eval(startMillis: Long, clock: InternalClock)(using Safepoint) =
         try
             curr = Boundary.restoring(trace, this) {
-                ArrowEffect.handle.partial(Tag[IO], erasedAbortTag, Tag[Async.Join], curr, context)(
-                    stop = shouldPreempt(),
-                    [C] => (input, cont) => cont(()),
+                ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
+                    stop =
+                        shouldPreempt(),
                     [C] =>
                         (input, cont) =>
                             locally {
-                                completeUnit(input.asInstanceOf[Result[E, A]])
+                                completeDiscard(input.asInstanceOf[Result[E, A]])
                                 nullResult
                         },
                     [C] =>
@@ -50,23 +53,23 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                             locally {
                                 val runtime = (clock.currentMillis() - startMillis + this.runtime()).toInt
                                 this.interrupts(input)
-                                val ensures = this.ensures
-                                this.ensures = Ensures.empty
+                                val finalizers = this.finalizers
+                                this.finalizers = Finalizers.empty
                                 val trace = this.trace
                                 this.trace = null.asInstanceOf[Trace]
-                                input.onResult { r =>
-                                    val task = IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, ensures, runtime)
-                                    this.becomeUnit(task)
+                                input.onComplete { r =>
+                                    val task = IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, finalizers, runtime)
+                                    this.becomeDiscard(task)
                                 }
                                 nullResult
                         }
                 )
             }
             if !isNull(curr) then
-                curr.evalNow.foreach(a => completeUnit(Result.success(a)))
+                curr.evalNow.foreach(a => completeDiscard(Result.success(a)))
         catch
             case ex =>
-                completeUnit(Result.panic(ex))
+                completeDiscard(Result.panic(ex))
         end try
     end eval
 
@@ -74,8 +77,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         val safepoint = Safepoint.get
         eval(startMillis, clock)(using safepoint)
         if isNull(curr) || !isPending() then
-            ensures.run()
-            ensures = Ensures.empty
+            finalizers.run()
+            finalizers = Finalizers.empty
             if !isNull(trace) then
                 safepoint.releaseTrace(trace)
                 trace = null.asInstanceOf[Trace]
@@ -88,6 +91,9 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 
+    override def toString =
+        s"IOTask(state = ${stateString()}, preempt = ${{ shouldPreempt() }}, finalizers = ${finalizers.size()}, curr = ${curr})"
+
 end IOTask
 
 object IOTask:
@@ -99,15 +105,15 @@ object IOTask:
         curr: A < (Ctx & Async & Abort[E]),
         trace: Trace,
         context: Context,
-        ensures: Ensures = Ensures.empty,
+        finalizers: Finalizers = Finalizers.empty,
         runtime: Int = 0
     )(using Frame, Flat[A]): IOTask[Ctx, E, A] =
         val ctx = context
         val task =
             if ctx.isEmpty then
-                new IOTask(curr, trace, ensures)
+                new IOTask(curr, trace, finalizers)
             else
-                new IOTask(curr, trace, ensures):
+                new IOTask(curr, trace, finalizers):
                     override def context = ctx
         task.addRuntime(runtime)
         Scheduler.get.schedule(task)

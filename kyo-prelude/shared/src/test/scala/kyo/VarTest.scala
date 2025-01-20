@@ -47,8 +47,15 @@ class VarTest extends Test:
     }
 
     "runTuple" in {
-        val r = Var.runTuple(1)(Var.update[Int](_ + 1).unit.andThen(Var.get[Int]).map(_ + 1)).eval
+        val r = Var.runTuple(1)(Var.update[Int](_ + 1).andThen(Var.get[Int]).map(_ + 1)).eval
         assert(r == (2, 3))
+    }
+
+    "setAndThen" in {
+        val result = Var.run(1) {
+            Var.setAndThen(2)(Var.use[Int](_ * 2))
+        }.eval
+        assert(result == 4)
     }
 
     "scope" - {
@@ -73,7 +80,7 @@ class VarTest extends Test:
                 Var.get[Int].map { innerValue =>
                     assert(innerValue == 2)
                 }
-            }.unit.andThen(Var.get[Int])
+            }.andThen(Var.get[Int])
                 .map { outerValue =>
                     assert(outerValue == 1)
                 }
@@ -107,5 +114,202 @@ class VarTest extends Test:
         val d: String < Var[String]              = Var.run(1)(c)
         val e: String < Any                      = Var.run("t")(d)
         assert(e.eval == "1")
+    }
+
+    "isolate" - {
+        "merge" - {
+            "combines values from isolated and outer scopes" in run {
+                val result = Var.runTuple(42) {
+                    Var.isolate.merge[Int](_ + _).run {
+                        for
+                            outer <- Var.get[Int]
+                            _     <- Var.set(10)
+                            inner <- Var.get[Int]
+                        yield (outer, inner)
+                    }
+                }
+                assert(result.eval == (52, (42, 10)))
+            }
+
+            "proper state restoration after nested isolations" in run {
+                val result = Var.runTuple(1) {
+                    for
+                        start <- Var.get[Int]
+                        v1 <- Var.isolate.merge[Int](_ + _).run {
+                            Var.update[Int](_ + 1).andThen(Var.get[Int])
+                        }
+                        middle <- Var.get[Int]
+                        v2 <- Var.isolate.merge[Int](_ + _).run {
+                            Var.update[Int](_ + 2).andThen(Var.get[Int])
+                        }
+                        end <- Var.get[Int]
+                    yield (start, v1, middle, v2, end)
+                }
+                assert(result.eval == (8, (1, 2, 3, 5, 8)))
+            }
+
+        }
+
+        "update" - {
+            "replaces outer value with inner value" in run {
+                val result = Var.runTuple(42) {
+                    for
+                        before <- Var.get[Int]
+                        _ <- Var.isolate.update[Int].run {
+                            Var.set(10)
+                        }
+                        after <- Var.get[Int]
+                    yield (before, after)
+                }
+                assert(result.eval == (10, (42, 10)))
+            }
+
+            "nested updates apply in order" in run {
+                val result = Var.runTuple(1) {
+                    for
+                        start <- Var.get[Int]
+                        _ <- Var.isolate.update[Int].run {
+                            Var.update[Int](_ + 1).andThen {
+                                Var.isolate.update[Int].run {
+                                    Var.update[Int](_ * 2)
+                                }
+                            }
+                        }
+                        end <- Var.get[Int]
+                    yield (start, end)
+                }
+                assert(result.eval == (4, (1, 4)))
+            }
+
+            "value changes preserved after effects" in run {
+                val result = Var.runTuple(5) {
+                    Env.run(2) {
+                        for
+                            start <- Var.get[Int]
+                            _ <- Var.isolate.update[Int].run {
+                                Env.use[Int] { multiplier =>
+                                    Var.update[Int](_ * multiplier)
+                                }
+                            }
+                            end <- Var.get[Int]
+                        yield (start, end)
+                    }
+                }
+                assert(result.eval == (10, (5, 10)))
+            }
+        }
+
+        "discard" - {
+            "inner modifications don't affect outer scope" in run {
+                val result = Var.runTuple(42) {
+                    for
+                        before <- Var.get[Int]
+                        _ <- Var.isolate.discard[Int].run {
+                            Var.set(10)
+                        }
+                        after <- Var.get[Int]
+                    yield (before, after)
+                }
+                assert(result.eval == (42, (42, 42)))
+            }
+
+            "nested discards maintain isolation" in run {
+                val result = Var.runTuple(1) {
+                    for
+                        start <- Var.get[Int]
+                        _ <- Var.isolate.discard[Int].run {
+                            Var.update[Int](_ + 1).andThen {
+                                Var.isolate.discard[Int].run {
+                                    Var.update[Int](_ * 2)
+                                }
+                            }
+                        }
+                        end <- Var.get[Int]
+                    yield (start, end)
+                }
+                assert(result.eval == (1, (1, 1)))
+            }
+
+            "effects execute but state changes discarded" in run {
+                var sideEffect = 0
+                val result = Var.runTuple(5) {
+                    for
+                        start <- Var.get[Int]
+                        _ <- Var.isolate.discard[Int].run {
+                            Var.update[Int] { x =>
+                                sideEffect += 1
+                                x * 2
+                            }
+                        }
+                        end <- Var.get[Int]
+                    yield (start, end, sideEffect)
+                }
+                assert(result.eval == (5, (5, 5, 1)))
+            }
+
+        }
+
+        "composition" - {
+            "can combine multiple isolates" in run {
+                val i1 = Var.isolate.merge[Int](_ + _)
+                val i2 = Var.isolate.update[Int]
+
+                val combined = i1.andThen(i2)
+
+                val result = Var.runTuple(1) {
+                    for
+                        start <- Var.get[Int]
+                        _ <- combined.run {
+                            Var.update[Int](_ + 1)
+                        }
+                        end <- Var.get[Int]
+                    yield (start, end)
+                }
+                assert(result.eval == (2, (1, 2)))
+            }
+
+            "preserves individual isolation behaviors when composed" in run {
+                val i1 = Var.isolate.discard[Int]
+                val i2 = Var.isolate.update[Int]
+
+                val result = Var.runTuple(1) {
+                    for
+                        start <- Var.get[Int]
+                        _ <- i1.run {
+                            Var.set(10)
+                        }
+                        middle <- Var.get[Int]
+                        _ <- i2.run {
+                            Var.set(20)
+                        }
+                        end <- Var.get[Int]
+                    yield (start, middle, end)
+                }
+                assert(result.eval == (20, (1, 1, 20)))
+            }
+
+            "with Emit isolate" in run {
+                val varIsolate  = Var.isolate.discard[Int]
+                val emitIsolate = Emit.isolate.merge[Int]
+
+                val combined = varIsolate.andThen(emitIsolate)
+
+                val result = Var.runTuple(1) {
+                    Emit.run {
+                        combined.run {
+                            for
+                                _  <- Var.update[Int](_ + 1)
+                                v  <- Var.get[Int]
+                                _  <- Emit.value(v)
+                                _  <- Var.update[Int](_ * 2)
+                                v2 <- Var.get[Int]
+                                _  <- Emit.value(v2)
+                            yield ()
+                        }
+                    }
+                }
+                assert(result.eval == (1, (Chunk(2, 4), ())))
+            }
+        }
     }
 end VarTest

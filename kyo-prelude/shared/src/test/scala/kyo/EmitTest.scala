@@ -1,15 +1,15 @@
 package kyo
 
-import kyo.Emit.Ack.*
+import kyo.Ack.*
 
 class EmitTest extends Test:
 
     "int" in {
         val v: String < Emit[Int] =
             for
-                _ <- Emit(1)
-                _ <- Emit(1)
-                _ <- Emit(1)
+                _ <- Emit.value(1)
+                _ <- Emit.value(1)
+                _ <- Emit.value(1)
             yield "a"
 
         assert(Emit.run(v).eval == (Chunk(1, 1, 1), "a"))
@@ -17,9 +17,9 @@ class EmitTest extends Test:
     "string" in {
         val v: String < Emit[String] =
             for
-                _ <- Emit("1")
-                _ <- Emit("2")
-                _ <- Emit("3")
+                _ <- Emit.value("1")
+                _ <- Emit.value("2")
+                _ <- Emit.value("3")
             yield "a"
         val res = Emit.run(v)
         assert(res.eval == (Chunk("1", "2", "3"), "a"))
@@ -27,12 +27,12 @@ class EmitTest extends Test:
     "int and string" in {
         val v: String < (Emit[Int] & Emit[String]) =
             for
-                _ <- Emit(3)
-                _ <- Emit("1")
-                _ <- Emit(2)
-                _ <- Emit("2")
-                _ <- Emit(1)
-                _ <- Emit("3")
+                _ <- Emit.value(3)
+                _ <- Emit.value("1")
+                _ <- Emit.value(2)
+                _ <- Emit.value("2")
+                _ <- Emit.value(1)
+                _ <- Emit.value("3")
             yield "a"
         val res: (Chunk[String], (Chunk[Int], String)) =
             Emit.run(Emit.run[Int](v)).eval
@@ -50,9 +50,9 @@ class EmitTest extends Test:
     "List" in {
         val v =
             for
-                _ <- Emit(List(1))
-                _ <- Emit(List(2))
-                _ <- Emit(List(3))
+                _ <- Emit.value(List(1))
+                _ <- Emit.value(List(2))
+                _ <- Emit.value(List(3))
             yield "a"
         val res = Emit.run(v)
         assert(res.eval == (Chunk(List(1), List(2), List(3)), "a"))
@@ -61,9 +61,9 @@ class EmitTest extends Test:
     "Set" in {
         val v =
             for
-                _ <- Emit(Set(1))
-                _ <- Emit(Set(2))
-                _ <- Emit(Set(3))
+                _ <- Emit.value(Set(1))
+                _ <- Emit.value(Set(2))
+                _ <- Emit.value(Set(3))
             yield "a"
         val res = Emit.run(v)
         assert(res.eval == (Chunk(Set(1), Set(2), Set(3)), "a"))
@@ -72,60 +72,89 @@ class EmitTest extends Test:
     "Ack" - {
         "apply" - {
             "negative" in {
-                val ack = Emit.Ack(-1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(-1)
+                assert(ack == Ack.Stop)
             }
             "zero" in {
-                val ack = Emit.Ack(0)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(0)
+                assert(ack == Ack.Stop)
             }
             "positive" in {
-                Emit.Ack(1) match
+                Ack(1) match
                     case Continue(n) => assert(n == 1)
                     case Stop        => fail()
             }
         }
         "maxItems" - {
             "stop with negative" in {
-                val ack = Emit.Ack.Stop.maxValues(-1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack.Stop.maxValues(-1)
+                assert(ack == Ack.Stop)
             }
             "stop with zero" in {
-                val ack = Emit.Ack.Stop.maxValues(0)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack.Stop.maxValues(0)
+                assert(ack == Ack.Stop)
             }
             "stop with positive" in {
-                val ack = Emit.Ack.Stop.maxValues(1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack.Stop.maxValues(1)
+                assert(ack == Ack.Stop)
             }
             "continue with negative" in {
-                val ack = Emit.Ack(2).maxValues(-1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(2).maxValues(-1)
+                assert(ack == Ack.Stop)
             }
             "continue with zero" in {
-                val ack = Emit.Ack(2).maxValues(0)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(2).maxValues(0)
+                assert(ack == Ack.Stop)
             }
             "continue with less" in {
-                val ack = Emit.Ack(2).maxValues(1)
-                assert(ack == Emit.Ack(1))
+                val ack = Ack(2).maxValues(1)
+                assert(ack == Ack(1))
             }
             "continue with more" in {
-                val ack = Emit.Ack(2).maxValues(3)
-                assert(ack == Emit.Ack(2))
+                val ack = Ack(2).maxValues(3)
+                assert(ack == Ack(2))
             }
         }
         "Continue" - {
             "unapply" - {
                 "stop" in {
-                    val res = Emit.Ack.Continue.unapply(Emit.Ack.Stop)
+                    val res = Ack.Continue.unapply(Ack.Stop)
                     assert(res.isEmpty)
                 }
                 "continue" in {
-                    val res = Emit.Ack.Continue.unapply(Emit.Ack(1))
+                    val res = Ack.Continue.unapply(Ack(1))
                     assert(res.get == 1)
                 }
             }
+        }
+        "next" - {
+            "stop short circuits" in run {
+                var executed = false
+                Ack.Stop.next {
+                    executed = true
+                    Ack.Continue()
+                }.map { ack =>
+                    assert(ack == Ack.Stop)
+                    assert(!executed)
+                }
+            }
+
+            "continue executes function" in run {
+                var executed = false
+                Ack(2).next {
+                    executed = true
+                    Ack(1)
+                }.map { ack =>
+                    assert(ack == Ack(1))
+                    assert(executed)
+                }
+            }
+        }
+        "Flat" in {
+            summon[Flat[Ack]]
+            summon[Flat[Ack.Continue]]
+            summon[Flat[Ack.Stop.type]]
+            succeed
         }
     }
 
@@ -136,15 +165,15 @@ class EmitTest extends Test:
                 def emits(i: Int): Unit < Emit[Int] =
                     if i == 5 then ()
                     else
-                        Emit.andMap(i) {
+                        Emit.valueWith(i) {
                             case Stop        => ()
                             case Continue(_) => emits(i + 1)
                         }
 
                 Emit.runAck(emits(0)) { v =>
                     seen :+= v
-                    if v < 3 then Emit.Ack.Continue()
-                    else Emit.Ack.Stop
+                    if v < 3 then Ack.Continue()
+                    else Ack.Stop
                 }.eval
                 assert(seen == List(0, 1, 2, 3))
             }
@@ -154,7 +183,7 @@ class EmitTest extends Test:
                 def emits(i: Int): Unit < Emit[Int] =
                     if i == 5 then ()
                     else
-                        Emit.andMap(i) {
+                        Emit.valueWith(i) {
                             case Stop        => ()
                             case Continue(_) => emits(i + 1)
                         }
@@ -168,7 +197,7 @@ class EmitTest extends Test:
                                     count     <- Var.get[Int]
                                     _         <- Var.set(count + 1)
                                     _ = seen :+= v
-                                yield if v <= threshold then Emit.Ack.Continue() else Emit.Ack.Stop
+                                yield if v <= threshold then Ack.Continue() else Ack.Stop
                             }
                         }
                     }.eval
@@ -181,7 +210,7 @@ class EmitTest extends Test:
                 def emits(i: Int): Unit < Emit[Int] =
                     if i == 5 then ()
                     else
-                        Emit.andMap(i) {
+                        Emit.valueWith(i) {
                             case Stop        => ()
                             case Continue(_) => emits(i + 1)
                         }
@@ -189,7 +218,7 @@ class EmitTest extends Test:
                 val result = Abort.run[String] {
                     Emit.runAck(emits(0)) { v =>
                         seen :+= v
-                        if v < 3 then Emit.Ack.Continue()
+                        if v < 3 then Ack.Continue()
                         else Abort.fail("Reached 3")
                     }
                 }.eval
@@ -199,10 +228,153 @@ class EmitTest extends Test:
         }
     }
 
+    "runFold" - {
+        "basic folding" in {
+            val v =
+                for
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
+                yield "a"
+
+            val result = Emit.runFold(0)((acc, v: Int) => (acc + v, Ack.Continue()))(v).eval
+            assert(result == (6, "a"))
+        }
+
+        "early termination" in {
+            val v =
+                for
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
+                    _ <- Emit.value(4)
+                yield "a"
+
+            val result = Emit.runFold(0)((acc, v: Int) =>
+                if v < 3 then (acc + v, Ack.Continue())
+                else (acc, Ack.Stop)
+            )(v).eval
+            assert(result == (3, "a"))
+        }
+
+        "with effects" in {
+            val v =
+                for
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
+                yield "a"
+
+            val result = Env.run(10) {
+                Emit.runFold(0)((acc, v: Int) =>
+                    for
+                        threshold <- Env.get[Int]
+                        newAcc = if v < threshold then acc + v else acc
+                    yield (newAcc, Ack.Continue())
+                )(v)
+            }.eval
+            assert(result == (6, "a"))
+        }
+    }
+
+    "runDiscard" - {
+        "discards all values" in {
+            val v =
+                for
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
+                yield "a"
+
+            val result = Emit.runDiscard(v).eval
+            assert(result == "a")
+        }
+
+        "with effects" in {
+            var count = 0
+            val v =
+                for
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
+                yield count
+
+            val result = Emit.runDiscard(v).eval
+            assert(result == 0)
+            assert(count == 0) // Ensures values were truly discarded
+        }
+    }
+
+    "runFirst" - {
+        "basic operation" in run {
+            val v =
+                for
+                    _ <- Emit.value(1)
+                    _ <- Emit.value(2)
+                    _ <- Emit.value(3)
+                yield "done"
+
+            for
+                (v1, cont1)    <- Emit.runFirst(v)
+                (v2, cont2)    <- Emit.runFirst(cont1(Ack.Continue()))
+                (v3, cont3)    <- Emit.runFirst(cont2(Ack.Continue()))
+                (v4, cont4)    <- Emit.runFirst(cont3(Ack.Continue()))
+                (rest, result) <- Emit.run(cont4(Ack.Continue()))
+            yield
+                assert(v1.contains(1) && v2.contains(2) && v3.contains(3))
+                assert(v4.isEmpty)
+                assert(rest.isEmpty)
+                assert(result == "done")
+            end for
+        }
+
+        "empty emission" in run {
+            val v: String < Emit[Int] = "done"
+
+            for
+                (v1, cont1)    <- Emit.runFirst(v)
+                (rest, result) <- Emit.run(cont1(Ack.Continue()))
+            yield
+                assert(v1.isEmpty)
+                assert(rest.isEmpty)
+                assert(result == "done")
+            end for
+        }
+
+        "with effects" in run {
+            val v =
+                for
+                    _ <- Emit.value(1)
+                    _ <- Var.update[Int](_ + 1)
+                    _ <- Emit.value(2)
+                    _ <- Var.update[Int](_ + 1)
+                yield "done"
+
+            for
+                result <- Var.runTuple(0) {
+                    for
+                        (v1, cont1)    <- Emit.runFirst(v)
+                        (v2, cont2)    <- Emit.runFirst(cont1(Ack.Continue()))
+                        (v3, cont3)    <- Emit.runFirst(cont2(Ack.Continue()))
+                        (rest, result) <- Emit.run(cont3(Ack.Continue()))
+                    yield (v1, v2, v3, rest, result)
+                }
+            yield
+                val (counter, (v1, v2, v3, rest, finalResult)) = result
+                assert(v1.contains(1))
+                assert(v2.contains(2))
+                assert(v3.isEmpty)
+                assert(rest.isEmpty)
+                assert(finalResult == "done")
+                assert(counter == 2)
+            end for
+        }
+    }
+
     "generic type parameters" - {
         "single generic emit" in {
             def emitGeneric[T: Tag](value: T): Unit < Emit[T] =
-                Emit(value).unit
+                Emit.value(value).unit
 
             val result = Emit.run(emitGeneric(42)).eval
             assert(result == (Chunk(42), ()))
@@ -211,8 +383,8 @@ class EmitTest extends Test:
         "multiple generic emits" in {
             def emitMultipleGeneric[T: Tag, U: Tag](t: T, u: U): Unit < (Emit[T] & Emit[U]) =
                 for
-                    _ <- Emit(t)
-                    _ <- Emit(u)
+                    _ <- Emit.value(t)
+                    _ <- Emit.value(u)
                 yield ()
 
             val result = Emit.run[Int](Emit.run[String](emitMultipleGeneric(42, "hello"))).eval
@@ -222,9 +394,9 @@ class EmitTest extends Test:
         "nested generic emits" in {
             def nestedEmit[T: Tag, U: Tag](t: T, u: U): Unit < (Emit[T] & Emit[U] & Emit[(T, U)]) =
                 for
-                    _ <- Emit(t)
-                    _ <- Emit(u)
-                    _ <- Emit((t, u))
+                    _ <- Emit.value(t)
+                    _ <- Emit.value(u)
+                    _ <- Emit.value((t, u))
                 yield ()
 
             val result = Emit.run[Int](Emit.run[String](Emit.run[(Int, String)](nestedEmit(42, "world")))).eval
@@ -234,9 +406,9 @@ class EmitTest extends Test:
         "multiple generic emits with different types" in {
             def multiEmit[T: Tag, U: Tag, V: Tag](t: T, u: U, v: V): Unit < (Emit[T] & Emit[U] & Emit[V]) =
                 for
-                    _ <- Emit(t)
-                    _ <- Emit(u)
-                    _ <- Emit(v)
+                    _ <- Emit.value(t)
+                    _ <- Emit.value(u)
+                    _ <- Emit.value(v)
                 yield ()
 
             val result = Emit.run[Int](Emit.run[String](Emit.run[Boolean](multiEmit(42, "test", true)))).eval
@@ -252,8 +424,8 @@ class EmitTest extends Test:
         "two emitters with same object" in {
             def emitC: Unit < (Emit[A] & Emit[B]) =
                 for
-                    _ <- Emit[A](C)
-                    _ <- Emit[B](C)
+                    _ <- Emit.value[A](C)
+                    _ <- Emit.value[B](C)
                 yield ()
 
             val result = Emit.run[A] {
@@ -275,8 +447,8 @@ class EmitTest extends Test:
             def emitMultiple(values: List[D]): Unit < (Emit[X] & Emit[Y]) =
                 Kyo.foreachDiscard(values) { d =>
                     for
-                        _ <- Emit[X](d)
-                        _ <- Emit[Y](d)
+                        _ <- Emit.value[X](d)
+                        _ <- Emit.value[Y](d)
                     yield ()
                 }
 
@@ -302,9 +474,9 @@ class EmitTest extends Test:
             def complexEmit(values: List[E]): Unit < (Emit[P] & Emit[Q] & Emit[R]) =
                 Kyo.foreachDiscard(values) { e =>
                     for
-                        _ <- Emit[P](e)
-                        _ <- Emit[Q](e)
-                        _ <- Emit[R](e)
+                        _ <- Emit.value[P](e)
+                        _ <- Emit.value[Q](e)
+                        _ <- Emit.value[R](e)
                     yield ()
                 }
 
@@ -322,6 +494,151 @@ class EmitTest extends Test:
             assert(result._2._1 == Chunk(E("one"), E("two"), E("three")))
             assert(result._2._2._1 == Chunk(E("one"), E("two"), E("three")))
             assert(result._2._2._2 == ())
+        }
+    }
+
+    "isolate" - {
+        "merge" - {
+            "combines emitted values from isolated and outer scopes" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit.value(1)
+                        isolated <- Emit.isolate.merge[Int].run {
+                            for
+                                _ <- Emit.value(2)
+                                _ <- Emit.value(3)
+                            yield "inner"
+                        }
+                        _ <- Emit.value(4)
+                    yield (isolated)
+                }
+                assert(result.eval == (Chunk(1, 2, 3, 4), "inner"))
+            }
+
+            "proper state restoration after nested isolations" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit.value("start")
+                        v1 <- Emit.isolate.merge[String].run {
+                            for
+                                _ <- Emit.value("inner1")
+                                v2 <- Emit.isolate.merge[String].run {
+                                    Emit.value("nested").map(_ => "nested-result")
+                                }
+                            yield v2
+                        }
+                        _ <- Emit.value("end")
+                    yield v1
+                }
+                assert(result.eval == (Chunk("start", "inner1", "nested", "end"), "nested-result"))
+            }
+        }
+
+        "discard" - {
+            "inner emissions don't affect outer scope" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit.value(1)
+                        isolated <- Emit.isolate.discard[Int].run {
+                            for
+                                _ <- Emit.value(2)
+                                _ <- Emit.value(3)
+                            yield "inner"
+                        }
+                        _ <- Emit.value(4)
+                    yield isolated
+                }
+                assert(result.eval == (Chunk(1, 4), "inner"))
+            }
+
+            "nested discards maintain isolation" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit.value("outer")
+                        v1 <- Emit.isolate.discard[String].run {
+                            for
+                                _ <- Emit.value("discarded1")
+                                v2 <- Emit.isolate.discard[String].run {
+                                    Emit.value("discarded2").map(_ => "nested-result")
+                                }
+                            yield v2
+                        }
+                        _ <- Emit.value("final")
+                    yield v1
+                }
+                assert(result.eval == (Chunk("outer", "final"), "nested-result"))
+            }
+        }
+
+        "composition" - {
+            "can combine with Var isolate" in run {
+                val emitIsolate = Emit.isolate.merge[Int]
+                val varIsolate  = Var.isolate.discard[Int]
+
+                val combined = emitIsolate.andThen(varIsolate)
+
+                val result = Emit.run {
+                    Var.runTuple(0) {
+                        combined.run {
+                            for
+                                _ <- Emit.value(1)
+                                _ <- Var.update[Int](_ + 1)
+                                v <- Var.get[Int]
+                                _ <- Emit.value(v)
+                            yield "done"
+                        }
+                    }
+                }
+                assert(result.eval == (Chunk(1, 1), (0, "done")))
+            }
+
+            "can combine with Memo isolate" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val emitIsolate = Emit.isolate.merge[Int]
+                val memoIsolate = Memo.isolate.merge
+
+                val combined = emitIsolate.andThen(memoIsolate)
+
+                val result = Emit.run {
+                    Memo.run {
+                        combined.run {
+                            for
+                                a <- f(1)
+                                _ <- Emit.value(a)
+                                b <- f(1)
+                                _ <- Emit.value(b)
+                            yield (a, b)
+                        }
+                    }
+                }
+                assert(result.eval == (Chunk(2, 2), (2, 2)))
+                assert(count == 1)
+            }
+
+            "preserves individual isolation behaviors when composed" in run {
+                val emitDiscard = Emit.isolate.discard[Int]
+                val emitMerge   = Emit.isolate.merge[Int]
+
+                val result = Emit.run {
+                    for
+                        _ <- Emit.value(1)
+                        _ <- emitDiscard.run {
+                            Emit.value(2)
+                        }
+                        _ <- Emit.value(3)
+                        _ <- emitMerge.run {
+                            Emit.value(4)
+                        }
+                        _ <- Emit.value(5)
+                    yield "done"
+                }
+                assert(result.eval == (Chunk(1, 3, 4, 5), "done"))
+            }
         }
     }
 end EmitTest

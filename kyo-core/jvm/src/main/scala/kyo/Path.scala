@@ -162,11 +162,11 @@ class Path private (val path: List[String]) derives CanEqual:
             Resource.acquireRelease(acquire)(release).map { res =>
                 readOnce(res).map { state =>
                     Loop(state) {
-                        case Maybe.Empty => Loop.done(Emit.Ack.Stop)
-                        case Maybe.Defined(content) =>
-                            Emit.andMap(writeOnce(content)) {
-                                case Emit.Ack.Stop => Loop.done(Emit.Ack.Stop)
-                                case _             => readOnce(res).map(Loop.continue(_))
+                        case Absent => Loop.done(Ack.Stop)
+                        case Present(content) =>
+                            Emit.valueWith(writeOnce(content)) {
+                                case Ack.Stop => Loop.done(Ack.Stop)
+                                case _        => readOnce(res).map(Loop.continue(_))
                             }
                     }
                 }

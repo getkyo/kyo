@@ -1,4 +1,6 @@
 name: bench
+permissions:
+  contents: write
 on:
   # push:
   #   branches:
@@ -16,11 +18,11 @@ on:
       warmupIterations:
         description: 'Warmup iterations'     
         required: false
-        default: '13'
+        default: '10'
       measurementIterations:
         description: 'Measurement iterations'     
         required: false
-        default: '5'
+        default: '4'
       iterationTime:
         description: 'Iteration time'     
         required: false
@@ -41,7 +43,7 @@ jobs:
   bench:
     name: bench
     runs-on: bench
-    timeout-minutes: 120
+    timeout-minutes: 240
     env: 
       IX: ${{ github.event.inputs.index || 'default' }}
       SE: ${{ github.event.inputs.selector || 'Kyo' }}
@@ -55,6 +57,7 @@ jobs:
       - uses: actions/checkout@v3.0.2
         with:
           fetch-depth: 0
+      - uses: coursier/cache-action@v6
       - uses: olafurpg/setup-scala@v13
         with:
           java-version: openjdk@21.0.2=tgz+https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz
@@ -103,158 +106,45 @@ jobs:
         id: publish-results
         uses: actions/github-script@v5
         with:
-          github-token: ${{ secrets.GIST_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs').promises;
             const path = require('path');
-
-            async function getFiles(dir) {
-              const dirents = await fs.readdir(dir, { withFileTypes: true });
-              const files = await Promise.all(dirents.map((dirent) => {
-                const res = path.resolve(dir, dirent.name);
-                return dirent.isDirectory() ? getFiles(res) : res;
-              }));
-              return Array.prototype.concat(...files);
-            }
-
-            let gistFiles = {};
-
-            const files = await getFiles('output/');
-            for (const file of files) {
-              const content = await fs.readFile(file, 'utf-8');
-              const relativePath = path.relative('output/', file);
-              let gistFileName = relativePath.split(path.sep).join('-');
-              gistFiles[gistFileName] = { content: content };
-            }
-
-            const gist = await github.rest.gists.create({
-              files: gistFiles,
-              public: true
+            
+            const short_sha = context.sha.substring(0, 7);
+            const tag = `bench-${short_sha}`;
+            const date = new Date().toISOString().split('T')[0];
+            
+            const release = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Benchmark Results ${short_sha} ${date}`,
+              body: `Benchmark results for commit ${context.sha} on ${date}`,
+              prerelease: true
             });
-
-            gistUrl = gist.data.html_url;
-
-            fs.appendFile(process.env.GITHUB_ENV, `GIST_URL=${gistUrl}\n`, 'utf8');
-
-      - name: Check Build Cache for Index URL
-        id: check-cache
-        uses: actions/cache@v2
-        with:
-          path: jmh-github-action-${{ env.IX }}.txt
-          key: index-url-${{ env.IX }}
-
-      - name: Get commit message
-        id: get-commit-message
-        run: |
-          COMMIT_MESSAGE="$(git log --format=%B -n 1 ${{ github.sha }})"
-          echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> $GITHUB_ENV
-
-      - name: Update Index
-        id: update-index
-        uses: actions/github-script@v5
-        with:
-          github-token: ${{ secrets.GIST_PAT }}
-          script: |
-            const indexFileName = `jmh-github-action-${{ env.IX }}.csv`;
-            const runUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            const commitUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/commit/${context.sha}`;
-            const commitMessage = process.env.COMMIT_MESSAGE.replace(/,/g, '\\,');
-            const selector = process.env.SE;
-            const currentDateTime = new Date();
-            const gistUrl = process.env.GIST_URL;
-            const timestamp = currentDateTime.toLocaleString('en-US', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            }).replace(',', '');
-
-            let indexGist;
-            let indexUrl = core.getState('index_url');
-
-            async function getGists(page = 1, perPage = 100) {
-              const { data: gistList } = await github.rest.gists.list({ page, per_page: perPage });
-              return gistList;
-            }
-
-            async function findIndexGist() {
-              let page = 1;
-              let gists;
-
-              do {
-                gists = await getGists(page);
-                indexGist = gists.find(gist => gist.files[indexFileName]);
-                page++;
-              } while (!indexGist && gists.length > 0);
-
-              return indexGist;
-            }
-
-            const https = require('https');
-
-            async function updateIndexGist() {
-              if (indexGist) {
-                const indexFile = indexGist.files[indexFileName];
-
-                let fileContent = '';
-                if (indexFile && indexFile.raw_url) {
-                  fileContent = await new Promise((resolve, reject) => {
-                    https.get(indexFile.raw_url, (res) => {
-                      let data = '';
-
-                      res.on('data', (chunk) => {
-                        data += chunk;
-                      });
-
-                      res.on('end', () => {
-                        resolve(data);
-                      });
-
-                    }).on('error', (err) => {
-                      console.log("Error: " + err.message);
-                      reject(err);
-                    });
-                  });
+            
+            async function* getFiles(dir) {
+              const entries = await fs.readdir(dir, { withFileTypes: true });
+              for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  yield* getFiles(fullPath);
+                } else {
+                  yield fullPath;
                 }
-
-                const newIndexContent = (fileContent ? fileContent + "\n" : "") + `${commitUrl},${commitMessage},${selector},${runUrl},${gistUrl}`;
-
-                await github.rest.gists.update({
-                  gist_id: indexGist.id,
-                  files: {
-                    [indexFileName]: {
-                      content: newIndexContent
-                    }
-                  }
-                });
-              } else {
-                const header = "commit_url,commit_message,selector,run,gist";
-                const newIndexContent = `${header}\n${commitUrl},${commitMessage},${selector},${runUrl},${gistUrl}`;
-
-                const newGist = await github.rest.gists.create({
-                  files: {
-                    [indexFileName]: {
-                      content: newIndexContent
-                    }
-                  },
-                  public: true
-                });
-
-                indexUrl = newGist.data.html_url;
-                core.saveState('index_url', indexUrl);
               }
             }
-
-            if (indexUrl) {
-              const indexGistId = indexUrl.split('/').pop();
-              indexGist = await github.rest.gists.get({ gist_id: indexGistId });
-            }
-
-            if (indexGist) {
-              await updateIndexGist();
-            } else {
-              indexGist = await findIndexGist();
-              await updateIndexGist();
+            
+            for await (const filePath of getFiles('output')) {
+              const content = await fs.readFile(filePath);
+              const fileName = path.basename(filePath);
+              
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.data.id,
+                name: fileName,
+                data: content
+              });
             }

@@ -11,54 +11,9 @@ import kyo.kernel.*
   * @tparam V
   *   The type of values that can be emitted
   */
-sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Emit.Ack]]
+sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Ack]]
 
 object Emit:
-
-    /** An acknowledgement type used to control emission of values.
-      *
-      * It is either a [[Continue]] with a positive maximum number of values to emit, or [[Stop]] to indicate that no more values should be
-      * emitted.
-      */
-    opaque type Ack = Int
-    object Ack:
-        given CanEqual[Ack, Ack] = CanEqual.derived
-        inline given Flat[Ack]   = Flat.unsafe.bypass
-
-        /** Creates an [[Ack]] from a maximum number of values to emit.
-          *
-          * @param maxValues
-          *   The mamximum number of values to emit
-          * @return
-          *   [[Continue]] if the maximum number of values is positive, [[Stop]] otherwise
-          */
-        def apply(maxValues: Int): Ack = Math.max(0, maxValues)
-
-        extension (ack: Ack)
-            /** Limits the acknowledgement to a maximum number of values.
-              *
-              * If this acknowledgement is [[Stop]] or `n` is non-positive then the returned acknowledgement is [[Stop]]. Otherwise, if this
-              * acknowledgement is [[Continue]] then the returned acknowledgement is [[Continue]] with the minimum of the current maximum
-              * number of values and `n`.
-              *
-              * @param n
-              *   The maximum number of values to emit
-              * @return
-              *   [[Continue]] if the minimum of the current maximum number of values and `n` is positive, [[Stop]] otherwise
-              */
-            def maxValues(n: Int): Ack = Ack(Math.min(ack, n))
-
-        /** Indicates to continue emitting values */
-        opaque type Continue <: Ack = Int
-        object Continue:
-            def apply(): Continue = Int.MaxValue
-
-            def unapply(ack: Ack): Maybe.Ops[Int] = Maybe.when(ack > 0)(ack)
-        end Continue
-
-        /** Indicates to stop emitting values */
-        val Stop: Ack = 0
-    end Ack
 
     /** Emits a single value.
       *
@@ -67,7 +22,7 @@ object Emit:
       * @return
       *   An effect that emits the given value
       */
-    inline def apply[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
+    inline def value[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
         ArrowEffect.suspend[Any](tag, value)
 
     /** Emits a single value and maps the resulting Ack.
@@ -79,12 +34,12 @@ object Emit:
       * @return
       *   The result of applying f to the Ack
       */
-    inline def andMap[V, A, S](inline value: V)(inline f: Ack => A < S)(
+    inline def valueWith[V, A, S](inline value: V)(inline f: Ack => A < S)(
         using
         inline tag: Tag[Emit[V]],
         inline frame: Frame
     ): A < (S & Emit[V]) =
-        ArrowEffect.suspendMap[Any](tag, value)(f(_))
+        ArrowEffect.suspendWith[Any](tag, value)(f(_))
 
     final class RunOps[V](dummy: Unit) extends AnyVal:
         /** Runs an Emit effect, collecting all emitted values into a Chunk.
@@ -95,7 +50,7 @@ object Emit:
           *   A tuple of the collected values and the result of the computation
           */
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
-            ArrowEffect.handle.state(tag, Chunk.empty[V], v)(
+            ArrowEffect.handleState(tag, Chunk.empty[V], v)(
                 handle = [C] => (input, state, cont) => (state.append(input), cont(Ack.Continue())),
                 done = (state, res) => (state, res)
             )
@@ -109,21 +64,22 @@ object Emit:
           * @param acc
           *   The initial accumulator value
           * @param f
-          *   The folding function
+          *   The folding function that takes the current accumulator and emitted value, and returns a tuple of the new accumulator and an
+          *   Ack to control further emissions
           * @param v
           *   The computation with Emit effect
           * @return
           *   A tuple of the final accumulator value and the result of the computation
           */
-        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(
+        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => (A, Ack) < S)(v: B < (Emit[V] & S2))(
             using
             tag: Tag[Emit[V]],
             frame: Frame
         ): (A, B) < (S & S2) =
-            ArrowEffect.handle.state(tag, acc, v)(
+            ArrowEffect.handleState(tag, acc, v)(
                 handle = [C] =>
                     (input, state, cont) =>
-                        f(state, input).map((_, cont(Ack.Continue()))),
+                        f(state, input).map((a, ack) => (a, cont(ack))),
                 done = (state, res) => (state, res)
             )
     end RunFoldOps
@@ -163,5 +119,81 @@ object Emit:
     end RunAckOps
 
     inline def runAck[V >: Nothing]: RunAckOps[V] = RunAckOps(())
+
+    final class RunFirstOps[V](dummy: Unit) extends AnyVal:
+
+        /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
+          *
+          * @param v
+          *   The computation with Emit effect
+          * @return
+          *   A tuple containing:
+          *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
+          *   - A continuation function that takes an Ack and returns the remaining computation
+          */
+        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Maybe[V], Ack => A < (Emit[V] & S)) < S =
+            ArrowEffect.handleFirst(tag, v)(
+                handle = [C] =>
+                    (input, cont) =>
+                        // Effect found, return the input an continuation
+                        (Maybe(input), cont),
+                done = r =>
+                    // Effect not found, return empty input and a placeholder continuation
+                    // that returns the result of the computation
+                    (Maybe.empty[V], (_: Ack) => r: A < (Emit[V] & S))
+            )
+        end apply
+    end RunFirstOps
+
+    inline def runFirst[V >: Nothing]: RunFirstOps[V] = RunFirstOps(())
+
+    object isolate:
+
+        /** Creates an isolate that includes emitted values from isolated computations.
+          *
+          * When the isolation ends, appends all values emitted during the isolated computation to the outer context. The values are emitted
+          * in their original order.
+          *
+          * @tparam V
+          *   The type of values being emitted
+          * @return
+          *   An isolate that preserves emitted values
+          */
+        def merge[V: Tag]: Isolate[Emit[V]] =
+            new Isolate[Emit[V]]:
+                type State = Chunk[V]
+                def use[A, S2](f: Chunk[V] => A < S2)(using Frame) = f(Chunk.empty)
+                def resume[A: Flat, S2](state: Chunk[V], v: A < (Emit[V] & S2))(using Frame) =
+                    Emit.run(v)
+                def restore[A: Flat, S2](state: Chunk[V], v: A < S2)(using Frame) =
+                    Loop(state: Seq[V]) {
+                        case Seq() => Loop.done
+                        case head +: tail =>
+                            Emit.valueWith(head) {
+                                case Ack.Stop => Loop.done
+                                case _        => Loop.continue(tail)
+                            }
+                    }.andThen(v)
+                end restore
+
+        /** Creates an isolate that ignores emitted values.
+          *
+          * Allows the isolated computation to emit values freely, but discards all emissions when the isolation ends. Useful when you want
+          * to prevent emissions from propagating to the outer context.
+          *
+          * @tparam V
+          *   The type of values being emitted
+          * @return
+          *   An isolate that discards emitted values
+          */
+        def discard[V: Tag]: Isolate[Emit[V]] =
+            new Isolate[Emit[V]]:
+                type State = Chunk[V]
+                def use[A, S2](f: Chunk[V] => A < S2)(using Frame) = f(Chunk.empty)
+                def resume[A: Flat, S2](state: Chunk[V], v: A < (Emit[V] & S2))(using Frame) =
+                    Emit.run(v)
+                def restore[A: Flat, S2](state: Chunk[V], v: A < S2)(using Frame) =
+                    v
+    end isolate
 
 end Emit

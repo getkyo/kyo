@@ -68,7 +68,7 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
         def produce(waiting: AtomicRef[Any], n: Int = 0): Unit < Async =
             if n <= depth then
                 Promise.init[Nothing, Unit].flatMap { p =>
-                    waiting.cas(null, (p, n)).flatMap {
+                    waiting.compareAndSet(null, (p, n)).flatMap {
                         case false =>
                             waiting.getAndSet(null).flatMap {
                                 _.asInstanceOf[Promise[Nothing, Int]].complete(Result.success(n))
@@ -85,7 +85,7 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
         def consume(waiting: AtomicRef[Any], n: Int = 0, acc: Int = 0): Int < Async =
             if n <= depth then
                 Promise.init[Nothing, Int].flatMap { p =>
-                    waiting.cas(null, p).flatMap {
+                    waiting.compareAndSet(null, p).flatMap {
                         case false =>
                             waiting.getAndSet(null).flatMap {
                                 case (p2: Promise[Nothing, Unit] @unchecked, i: Int) =>
@@ -162,50 +162,4 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
         end for
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import ox.*
-        import java.util.concurrent.atomic.AtomicReference
-        import java.util.concurrent.CompletableFuture
-
-        def produce(waiting: AtomicReference[Any]): Unit =
-            for n <- 0 to depth do
-                val p = new CompletableFuture[Unit]()
-                if !waiting.compareAndSet(null, (p, n)) then
-                    waiting.getAndSet(null)
-                        .asInstanceOf[CompletableFuture[Int]]
-                        .complete(n)
-                else
-                    p.join()
-                end if
-
-        def consume(waiting: AtomicReference[Any]): Int =
-            var acc = 0
-            for n <- 0 to depth do
-                val p = new CompletableFuture[Int]()
-                if !waiting.compareAndSet(null, p) then
-                    val (p, n) =
-                        waiting.getAndSet(null)
-                            .asInstanceOf[(CompletableFuture[Unit], Int)]
-                    p.complete(())
-                    acc += n
-                else
-                    acc += p.join()
-                end if
-            end for
-            acc
-        end consume
-
-        scoped {
-            val waiting = new AtomicReference[Any]()
-            val f1 = fork {
-                produce(waiting)
-            }
-            val f2 = fork {
-                consume(waiting)
-            }
-            f1.join()
-            f2.join()
-        }
-    end forkOx
 end RendezvousBench

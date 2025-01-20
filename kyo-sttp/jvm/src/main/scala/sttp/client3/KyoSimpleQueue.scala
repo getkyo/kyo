@@ -8,9 +8,12 @@ import sttp.ws.WebSocketBufferFull
 class KyoSimpleQueue[A](ch: Channel[A]) extends SimpleQueue[KyoSttpMonad.M, A]:
 
     def offer(t: A): Unit =
-        if !IO.run(ch.offer(t)).eval then
+        import kyo.AllowUnsafe.embrace.danger
+        if ch.unsafe.offer(t).contains(false) then
             throw WebSocketBufferFull(Int.MaxValue)
+    end offer
 
     def poll =
-        ch.take
+        import kyo.AllowUnsafe.embrace.danger
+        ch.unsafe.takeFiber().mapResult(_.fold(e => throw e.exception)(Result.success)).safe.get
 end KyoSimpleQueue

@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Maybe
 import kyo.internal.SafeClassTagMacro
-import scala.annotation.tailrec
 import scala.quoted.*
 
 /** An alternative to ClassTag that supports union and intersection types.
@@ -22,10 +21,14 @@ import scala.quoted.*
 opaque type SafeClassTag[A] >: SafeClassTag.Element = Class[?] | SafeClassTag.Element
 
 object SafeClassTag:
+    inline given [A, B]: CanEqual[SafeClassTag[A], SafeClassTag[B]] = CanEqual.derived
+    inline given [A]: Flat[SafeClassTag[A]]                         = Flat.unsafe.bypass
+
     sealed trait Element
 
-    case class Union(elements: List[SafeClassTag[Any]])        extends Element
-    case class Intersection(elements: List[SafeClassTag[Any]]) extends Element
+    case class Union(elements: Set[SafeClassTag[Any]])        extends Element
+    case class Intersection(elements: Set[SafeClassTag[Any]]) extends Element
+    case class LiteralTag(value: Any)                         extends Element
 
     sealed trait Primitive extends Element
     case object IntTag     extends Primitive
@@ -39,6 +42,7 @@ object SafeClassTag:
     case object UnitTag    extends Element
     case object AnyValTag  extends Element
     case object NothingTag extends Element
+
     inline given apply[A]: SafeClassTag[A] = ${ SafeClassTagMacro.derive[A] }
 
     extension [A](self: SafeClassTag[A])
@@ -56,6 +60,7 @@ object SafeClassTag:
                 self match
                     case Union(elements)        => elements.exists(_.accepts(value))
                     case Intersection(elements) => elements.forall(_.accepts(value))
+                    case LiteralTag(literal)    => value == literal
                     case NothingTag             => false
                     case UnitTag                => value.isInstanceOf[Unit]
                     case AnyValTag =>
@@ -102,10 +107,10 @@ object SafeClassTag:
             self match
                 case Intersection(e1) => that match
                         case Intersection(e2) => Intersection(e1 ++ e2)
-                        case _                => Intersection(that :: e1)
+                        case _                => Intersection(e1 + that)
                 case _ => that match
-                        case Intersection(e2) => Intersection(self :: e2)
-                        case _                => Intersection(List(self, that))
+                        case Intersection(e2) => Intersection(e2 + self)
+                        case _                => Intersection(Set(self, that))
 
         /** Combines this SafeClassTag with another to form a union type
           *
@@ -118,10 +123,10 @@ object SafeClassTag:
             self match
                 case Union(e1) => that match
                         case Union(e2) => Union(e1 ++ e2)
-                        case _         => Union(that :: e1)
+                        case _         => Union(e1 + that)
                 case _ => that match
-                        case Union(e2) => Union(self :: e2)
-                        case _         => Union(List(self, that))
+                        case Union(e2) => Union(e2 + self)
+                        case _         => Union(Set(self, that))
 
         /** Checks if this SafeClassTag is a subtype of another SafeClassTag
           *
@@ -136,11 +141,13 @@ object SafeClassTag:
                 case NothingTag             => true
                 case Union(elements)        => elements.forall(_ <:< that)
                 case Intersection(elements) => elements.exists(_ <:< that)
+                case LiteralTag(value)      => that.accepts(value)
                 case _ =>
                     that match
                         case NothingTag             => false
                         case Union(elements)        => elements.exists(self <:< _)
                         case Intersection(elements) => elements.forall(self <:< _)
+                        case LiteralTag(value)      => false
                         case AnyValTag =>
                             self match
                                 case AnyValTag | IntTag | LongTag | DoubleTag | FloatTag | ByteTag | ShortTag | CharTag | BooleanTag | UnitTag =>
@@ -166,6 +173,7 @@ object SafeClassTag:
                 tag match
                     case Union(elements)        => s"(${elements.map(showInner).mkString(" | ")})"
                     case Intersection(elements) => s"(${elements.map(showInner).mkString(" & ")})"
+                    case LiteralTag(value)      => s"$value"
                     case NothingTag             => "Nothing"
                     case UnitTag                => "Unit"
                     case AnyValTag              => "AnyVal"

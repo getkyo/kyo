@@ -79,14 +79,11 @@ case class NettyKyoServer(
         forkExecution: Boolean,
         block: () => KyoSttpMonad.M[ServerResponse[NettyResponse]]
     ): (Future[ServerResponse[NettyResponse]], () => Future[Unit]) =
-        val fiber =
-            if forkExecution then
-                IO.run(Async.run(block())).eval
-            else
-                IO.run(Async.run(block())).eval
-        val future = IO.run(fiber.toFuture).eval
+        import AllowUnsafe.embrace.danger
+        val fiber  = IO.Unsafe.evalOrThrow(Async.run(block()))
+        val future = IO.Unsafe.evalOrThrow(fiber.toFuture)
         val cancel = () =>
-            val _ = IO.run(fiber.interrupt).eval
+            val _ = IO.Unsafe.evalOrThrow(fiber.interrupt)
             Future.unit
         (future, cancel)
     end unsafeRunAsync
@@ -156,6 +153,7 @@ case class NettyKyoServer(
         gracefulShutdownTimeout: Option[FiniteDuration]
     ): KyoSttpMonad.M[Unit] =
         isShuttingDown.set(true)
+        val timeout = gracefulShutdownTimeout.fold(Long.MaxValue)(_.toNanos)
         waitForClosedChannels(
             channelGroup,
             startNanos = JSystem.nanoTime(),
@@ -163,8 +161,16 @@ case class NettyKyoServer(
         ).flatMap { _ =>
             nettyFutureToScala(ch.close()).flatMap { _ =>
                 if config.shutdownEventLoopGroupOnClose then
-                    nettyFutureToScala(eventLoopGroup.shutdownGracefully()).unit.andThen {
-                        nettyFutureToScala(eventExecutor.shutdownGracefully()).unit
+                    nettyFutureToScala(eventLoopGroup.shutdownGracefully(
+                        timeout,
+                        timeout,
+                        java.util.concurrent.TimeUnit.NANOSECONDS
+                    )).unit.andThen {
+                        nettyFutureToScala(eventExecutor.shutdownGracefully(
+                            timeout,
+                            timeout,
+                            java.util.concurrent.TimeUnit.NANOSECONDS
+                        )).unit
                     }
                 else ()
             }

@@ -3,7 +3,7 @@ package kyo.stats
 import kyo.stats.Attributes.AsAttribute
 import scala.annotation.implicitNotFound
 
-case class Attributes(get: List[Attributes.Attribute]) extends AnyVal:
+case class Attributes(get: List[Attributes.Attribute]):
     def add(a: Attributes): Attributes =
         Attributes(get ++ a.get)
     def add[A](name: String, value: A)(implicit a: AsAttribute[A]): Attributes =

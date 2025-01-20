@@ -4,7 +4,7 @@ import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientBench extends Bench.ForkOnly("pong"):
 
-    override val zioRuntimeLayer = super.zioRuntimeLayer.merge(zio.http.Client.default)
+    override lazy val zioRuntimeLayer = super.zioRuntimeLayer.merge(zio.http.Client.default)
 
     val url = TestHttpServer.start(1)
 
@@ -24,10 +24,6 @@ class HttpClientBench extends Bench.ForkOnly("pong"):
         catsClient.expect[String](catsUrl)
     end catsBench
 
-    lazy val kyoClient =
-        import kyo.*
-        PlatformBackend.default
-
     val kyoUrl =
         import sttp.client3.*
         uri"$url"
@@ -35,7 +31,7 @@ class HttpClientBench extends Bench.ForkOnly("pong"):
     override def kyoBenchFiber() =
         import kyo.*
 
-        Abort.run(Requests(_.get(kyoUrl))).map(_.getOrThrow)
+        Requests(_.get(kyoUrl))
     end kyoBenchFiber
 
     val zioUrl =

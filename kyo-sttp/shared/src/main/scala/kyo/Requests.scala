@@ -9,12 +9,7 @@ import sttp.client3.*
   * @param cause
   *   A string or throwable describing the reason for the failure
   */
-case class FailedRequest(cause: String | Throwable) extends Exception:
-    override def getCause(): Throwable =
-        cause match
-            case ex: Throwable => ex
-            case _             => null
-end FailedRequest
+class FailedRequest(cause: Text | Throwable)(using Frame) extends KyoException("Failed http request", cause)
 
 object Requests:
 
@@ -31,7 +26,7 @@ object Requests:
           * @return
           *   The response wrapped in an effect
           */
-        def send[A](r: Request[A, Any]): Response[A] < (Async & Abort[FailedRequest])
+        def send[A: Flat](r: Request[A, Any]): Response[A] < (Async & Abort[FailedRequest])
 
         /** Wraps the Backend with a meter
           *
@@ -42,8 +37,8 @@ object Requests:
           */
         def withMeter(m: Meter)(using Frame): Backend =
             new Backend:
-                def send[A](r: Request[A, Any]) =
-                    m.run(self.send(r))
+                def send[A: Flat](r: Request[A, Any]) =
+                    Abort.run(m.run(self.send(r))).map(r => Abort.get(r.mapFail(FailedRequest(_))))
     end Backend
 
     /** The default live backend implementation */
@@ -68,7 +63,7 @@ object Requests:
 
     /** A basic request with error handling */
     val basicRequest: BasicRequest = sttp.client3.basicRequest.mapResponse {
-        case Left(value)  => Left(FailedRequest(value))
+        case Left(value)  => Left(FailedRequest(value)(using Frame.internal))
         case Right(value) => Right(value)
     }
 

@@ -4,55 +4,67 @@ import Aspect.*
 
 /** Represents an aspect in the Kyo effect system.
   *
-  * An aspect allows for the modification of behavior across multiple points in a program without changing the code of the affected points
-  * directly. It provides a way to "weave" additional behavior into the existing code.
+  * An aspect provides a way to modify or intercept behavior across multiple points in a program without directly changing the affected
+  * code. It works by allowing users to provide implementations for abstract operations at runtime, similar to dependency injection but with
+  * more powerful composition capabilities.
   *
-  * @tparam A
-  *   The input type of the aspect
-  * @tparam B
-  *   The output type of the aspect
+  * Aspects are created using `Aspect.init` and are typically stored as vals at module level. Once initialized, an aspect can be used to
+  * wrap computations that need to be modified, and its behavior can be customized using the `let` method to provide specific
+  * implementations within a given scope. This pattern allows for clean separation between the definition of interceptable operations and
+  * their actual implementations.
+  *
+  * Aspects support multi-shot continuations, meaning that cut implementations can invoke the continuation function multiple times or not at
+  * all. This enables powerful control flow modifications like retry logic, fallback behavior, or conditional execution.
+  *
+  * Internally, aspects function as a form of reified ArrowEffect that can be stored, passed around, and modified at runtime. They maintain
+  * state through a `Local` map of active implementations, allowing them to be dynamically activated and deactivated through operations like
+  * `let` and `sandbox`.
+  *
+  * @tparam Input
+  *   The input type constructor - what values the aspect can process
+  * @tparam Output
+  *   The output type constructor - what results the aspect can produce
   * @tparam S
-  *   The effect type of the aspect
+  *   The effect type - what effects the aspect can perform
   */
-final class Aspect[A, B, S] private[kyo] (default: Cut[A, B, S])(using Frame) extends Cut[A, B, S]:
+final class Aspect[Input[_], Output[_], S] private[kyo] (
+    default: Cut[Input, Output, S]
+)(using Frame):
 
-    /** Applies this aspect to the given computation.
+    /** Applies this aspect to transform a computation.
       *
-      * @param v
-      *   The input value
-      * @param f
-      *   The function to apply after the aspect
-      * @tparam S2
-      *   Additional effects
-      * @return
-      *   The result of applying the aspect and then the function
+      * When called, this method checks if there's a currently active cut for this aspect. If found, it applies that cut, otherwise falls
+      * back to the default behavior.
+      *
+      * @param input
+      *   The input value to transform
+      * @param cont
+      *   The continuation function to apply after the transformation
+      * @tparam C
+      *   The type parameter for the Input/Output type constructors
       */
-    def apply[S2](v: A < S2)(f: A => B < S) =
+    def apply[C](input: Input[C])(cont: Input[C] => Output[C] < S) =
         local.use { map =>
             map.get(this) match
-                case Some(a: Cut[A, B, S] @unchecked) =>
+                case Some(cut) =>
                     local.let(map - this) {
-                        a(v)(f)
+                        cut.asInstanceOf[Cut[Input, Output, S]](input, cont)
                     }
                 case _ =>
-                    default(v)(f)
+                    default(input, cont)
         }
 
-    /** Applies this aspect in a sandboxed environment.
-      *
-      * This method allows you to apply the aspect without affecting the outer context.
+    /** Executes a computation in a sandboxed environment where this aspect's modifications are temporarily disabled.
       *
       * @param v
       *   The computation to sandbox
       * @tparam S
       *   Additional effects
-      * @return
-      *   The result of the sandboxed computation
       */
-    def sandbox[S](v: A < S)(using Frame): A < S =
+    def sandbox[A, S](v: A < S)(using Frame): A < S =
         local.use { map =>
             map.get(this) match
-                case Some(a: Cut[A, B, S] @unchecked) =>
+                case Some(_) =>
                     local.let(map - this) {
                         v
                     }
@@ -60,124 +72,99 @@ final class Aspect[A, B, S] private[kyo] (default: Cut[A, B, S])(using Frame) ex
                     v
         }
 
-    /** Temporarily modifies the behavior of this aspect for the provided computation.
+    /** Temporarily modifies this aspect's behavior for a given computation.
       *
       * @param a
-      *   The new cut to apply
+      *   The new behavior to apply
       * @param v
-      *   The computation to run with the modified aspect
-      * @tparam V
-      *   The type of the computation result
+      *   The computation to run with the modified behavior
+      * @tparam A
+      *   The computation result type
       * @tparam S2
       *   Additional effects
-      * @return
-      *   The result of the computation with the modified aspect
       */
-    def let[V, S2](a: Cut[A, B, S])(v: V < S2)(using Frame): V < (S & S2) =
+    def let[A, S2](a: Cut[Input, Output, S])(v: A < S2)(using Frame): A < (S & S2) =
         local.use { map =>
             val cut =
                 map.get(this) match
-                    case Some(b: Cut[A, B, S] @unchecked) =>
-                        b.andThen(a)
+                    case Some(b: Cut[Input, Output, S] @unchecked) =>
+                        Cut.andThen[Input, Output, S](b, a)
                     case _ =>
                         a
-            local.let(map + (this -> cut))(v)
+            local.let(map + (this -> cut.asInstanceOf[Cut[Const[Any], Const[Any], Any]]))(v)
         }
+
+    /** Converts this aspect into a Cut.
+      *
+      * This method allows using an aspect directly as a cut, which can be useful when composing aspects or when a Cut type is explicitly
+      * required. The resulting cut will have the same behavior as calling the aspect directly.
+      *
+      * @return
+      *   A Cut that delegates to this aspect's implementation
+      */
+    def asCut: Cut[Input, Output, S] =
+        [C] => (input, cont) => this(input)(cont)
+
 end Aspect
 
-/** Companion object for Aspect class. */
 object Aspect:
 
-    private[kyo] val local = Local.init(Map.empty[Aspect[?, ?, ?], Cut[?, ?, ?]])
+    private[kyo] val local = Local.init(Map.empty[Aspect[?, ?, ?], Cut[Const[Any], Const[Any], Any]])
 
-    /** Represents a cut in the Kyo aspect-oriented programming model.
+    /** Represents a cut in the aspect-oriented programming model.
       *
-      * A cut defines how an aspect modifies or intercepts a computation. It provides a way to inject behavior before, after, or around a
-      * given computation.
+      * A cut defines how an aspect modifies or intercepts computations. It provides a way to inject behavior before, after, or around the
+      * intercepted operations.
       *
-      * @tparam A
-      *   The input type of the cut
-      * @tparam B
-      *   The output type of the cut
+      * @tparam Input
+      *   The input type constructor
+      * @tparam Output
+      *   The output type constructor
       * @tparam S
-      *   The effect type of the cut
+      *   The effect type
       */
-    abstract class Cut[A, B, S]:
+    type Cut[I[_], O[_], S] = [C] => (I[C], I[C] => O[C] < S) => O[C] < S
 
-        /** Applies this cut to the given computation.
-          *
-          * @param v
-          *   The input value
-          * @param f
-          *   The function to apply after the cut
-          * @tparam S2
-          *   Additional effects
-          * @return
-          *   The result of applying the cut and then the function
-          */
-        def apply[S2](v: A < S2)(f: A => B < S): B < (S & S2)
+    object Cut:
 
-        /** Chains this cut with another cut.
+        /** Creates a cut from a function.
           *
-          * @param other
-          *   The cut to chain after this one
-          * @return
-          *   A new cut that represents the chained cuts
+          * @param cut
+          *   The function to implement the cut
           */
-        def andThen(other: Cut[A, B, S])(using Frame): Cut[A, B, S] =
-            new Cut[A, B, S]:
-                def apply[S2](v: A < S2)(f: A => B < S) =
-                    Cut.this(v)(other(_)(f))
+        def apply[I[_], O[_], S](cut: Cut[I, O, S]): Cut[I, O, S] = cut
+
+        /** Chains multiple cuts together into a single composite cut.
+          *
+          * @param head
+          *   The first cut to apply
+          * @param tail
+          *   Additional cuts to apply in sequence
+          */
+        def andThen[I[_], O[_], S](a: Cut[I, O, S], b: Cut[I, O, S])(using Frame): Cut[I, O, S] =
+            Cut[I, O, S](
+                [C] => (input, cont) => a(input, b(_, cont))
+            )
     end Cut
 
-    /** Initializes a new Aspect with the default cut.
+    /** Initializes a new aspect with default pass-through behavior.
       *
-      * @tparam A
-      *   The input type of the aspect
-      * @tparam B
-      *   The output type of the aspect
+      * @tparam Input
+      *   The input type constructor
+      * @tparam Output
+      *   The output type constructor
       * @tparam S
-      *   The effect type of the aspect
-      * @return
-      *   A new Aspect instance
+      *   The effect type
       */
-    def init[A, B, S](using Frame): Aspect[A, B, S] =
-        init(new Cut[A, B, S]:
-            def apply[S2](v: A < S2)(f: A => B < S) =
-                v.map(f)
-        )
+    def init[I[_], O[_], S](using Frame): Aspect[I, O, S] =
+        init([C] => (input: I[C], cont: I[C] => O[C] < S) => cont(input))
 
-    /** Initializes a new Aspect with a custom default cut.
+    /** Initializes a new aspect with a custom default behavior.
       *
       * @param default
-      *   The default cut to use
-      * @tparam A
-      *   The input type of the aspect
-      * @tparam B
-      *   The output type of the aspect
-      * @tparam S
-      *   The effect type of the aspect
-      * @return
-      *   A new Aspect instance with the specified default cut
+      *   The default cut to use when no other cut is active
       */
-    def init[A, B, S](default: Cut[A, B, S])(using Frame): Aspect[A, B, S] =
-        new Aspect[A, B, S](default)
+    def init[I[_], O[_], S](default: Cut[I, O, S])(using Frame): Aspect[I, O, S] =
+        new Aspect[I, O, S](default)
 
-    /** Chains multiple cuts together.
-      *
-      * @param head
-      *   The first cut in the chain
-      * @param tail
-      *   The remaining cuts to chain
-      * @tparam A
-      *   The input type of the cuts
-      * @tparam B
-      *   The output type of the cuts
-      * @tparam S
-      *   The effect type of the cuts
-      * @return
-      *   A new cut that represents the chained cuts
-      */
-    def chain[A, B, S](head: Cut[A, B, S], tail: Seq[Cut[A, B, S]])(using Frame) =
-        tail.foldLeft(head)(_.andThen(_))
 end Aspect

@@ -48,6 +48,9 @@ class AdderTest extends Test:
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 0)
         }
+        "LongAdder.initWith" in run {
+            LongAdder.initWith(_.get).map(r => assert(r == 0))
+        }
     }
 
     "double" - {
@@ -79,6 +82,75 @@ class AdderTest extends Test:
                 v1  <- ref.sumThenReset
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 0)
+        }
+        "DoubleAdder.initWith" in run {
+            DoubleAdder.initWith(_.get).map(r => assert(r == 0))
+        }
+    }
+
+    "unsafe" - {
+        import AllowUnsafe.embrace.danger
+
+        "long" - {
+            "should initialize to 0" in {
+                val ref = LongAdder.Unsafe.init()
+                assert(ref.get() == 0)
+            }
+            "should add value" in {
+                val ref = LongAdder.Unsafe.init()
+                ref.add(5)
+                assert(ref.get() == 5)
+            }
+            "should increment the value" in {
+                val ref = LongAdder.Unsafe.init()
+                ref.add(5)
+                ref.increment()
+                assert(ref.get() == 6)
+            }
+            "should decrement the value" in {
+                val ref = LongAdder.Unsafe.init()
+                ref.add(5)
+                ref.decrement()
+                assert(ref.get() == 4)
+            }
+            "should reset the value" in {
+                val ref = LongAdder.Unsafe.init()
+                ref.add(5)
+                ref.reset()
+                assert(ref.get() == 0)
+            }
+            "should sum and reset the value" in {
+                val ref = LongAdder.Unsafe.init()
+                ref.add(5)
+                val v1 = ref.sumThenReset()
+                val v2 = ref.get()
+                assert(v1 == 5 && v2 == 0)
+            }
+        }
+
+        "double" - {
+            "should initialize to 0" in {
+                val ref = DoubleAdder.Unsafe.init()
+                assert(ref.get() == 0.0)
+            }
+            "should add value" in {
+                val ref = DoubleAdder.Unsafe.init()
+                ref.add(5.0)
+                assert(ref.get() == 5.0)
+            }
+            "should reset the value" in {
+                val ref = DoubleAdder.Unsafe.init()
+                ref.add(5.0)
+                ref.reset()
+                assert(ref.get() == 0.0)
+            }
+            "should sum and reset the value" in {
+                val ref = DoubleAdder.Unsafe.init()
+                ref.add(5.0)
+                val v1 = ref.sumThenReset()
+                val v2 = ref.get()
+                assert(v1 == 5.0 && v2 == 0.0)
+            }
         }
     }
 end AdderTest

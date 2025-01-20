@@ -22,7 +22,7 @@ class SemaphoreBench extends Bench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def loop(s: Meter, i: Int): Unit < Async =
+        def loop(s: Meter, i: Int): Unit < (Async & Abort[Closed]) =
             if i >= depth then
                 IO.unit
             else
@@ -43,18 +43,4 @@ class SemaphoreBench extends Bench.ForkOnly(()):
         Semaphore.make(1).flatMap(loop(_, 0))
     end zioBench
 
-    @Benchmark
-    def forkOx() =
-        import java.util.concurrent.Semaphore
-        import ox.*
-        scoped {
-            val sem = new Semaphore(1, true)
-            val f = fork {
-                for _ <- 0 to depth do
-                    sem.acquire()
-                    sem.release()
-            }
-            f.join()
-        }
-    end forkOx
 end SemaphoreBench
