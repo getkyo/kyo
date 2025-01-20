@@ -65,8 +65,24 @@ object TypeIntersection:
       * @return
       *   a List of type class instances
       */
-    transparent inline def summonAll[A: TypeIntersection as ts, F[_]]: List[F[Any]] =
-        summonAllLoop[ts.AsTuple, F]
+    transparent inline def summonAll[A: TypeIntersection, F[_]]: List[F[Any]] =
+        inlineAll[A, F[Any]](new SummonInliner[F])
+
+    class SummonInliner[F[_]] extends Inliner[F[Any]]:
+        inline def apply[T]: F[Any] =
+            summonInline[F[T]].asInstanceOf[F[Any]]
+
+    /** Runs Inliner logic for each component type in A.
+      *
+      * @tparam A
+      *   the intersection type to decompose
+      * @tparam R
+      *   the result type of inline logic
+      * @return
+      *   a List of type class instances
+      */
+    inline def inlineAll[A: TypeIntersection as ts, R](inliner: Inliner[R]): List[R] =
+        Inliner.inlineAllLoop[R, ts.AsTuple](inliner)
 
     /** Type alias for TypeIntersection with a specific tuple type.
       *
@@ -113,28 +129,4 @@ object TypeIntersection:
                 }
         end match
     end deriveImpl
-
-    private transparent inline def summonAllLoop[T <: Tuple, F[_]]: List[F[Any]] =
-        inline erasedValue[T] match
-            case _: EmptyTuple => Nil
-            case _: (h1 *: h2 *: h3 *: h4 *: h5 *: h6 *: h7 *: h8 *: h9 *: h10 *: h11 *: h12 *: h13 *: h14 *: h15 *: h16 *: tail) =>
-                summonInline[F[h1]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h2]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h3]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h4]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h5]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h6]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h7]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h8]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h9]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h10]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h11]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h12]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h13]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h14]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h15]].asInstanceOf[F[Any]] ::
-                    summonInline[F[h16]].asInstanceOf[F[Any]] ::
-                    summonAllLoop[tail, F]
-            case _: (t *: ts) =>
-                summonInline[F[t]].asInstanceOf[F[Any]] :: summonAllLoop[ts, F]
 end TypeIntersection
