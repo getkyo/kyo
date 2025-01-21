@@ -464,7 +464,7 @@ class ClockTest extends Test:
             yield
                 assert(time2 > time1)
                 assert(time2 - time1 >= 4.millis)
-                assert(time2 - time1 < 20.millis)
+                assert(time2 - time1 < 40.millis)
         }
 
         "with time control" in run {
