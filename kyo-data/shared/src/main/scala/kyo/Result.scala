@@ -44,11 +44,7 @@ import scala.util.control.NonFatal
   */
 opaque type Result[+E, +A] >: Success[A] | Error[E] = Success[A] | Error[E]
 
-private trait LowPriorityImplicits:
-    given flatSuccess[A](using Flat[A]): Flat[Success[A]] =
-        Flat.unsafe.bypass
-
-object Result extends LowPriorityImplicits:
+object Result:
 
     import internal.*
 
@@ -694,9 +690,13 @@ object Result extends LowPriorityImplicits:
         end SuccessError
     end internal
 
-    inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Result[E, A], Result[E, A]] = CanEqual.derived
-    inline given [E, A: Flat]: Flat[Result[E, A]]                                              = Flat.unsafe.bypass
-    inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
+    inline given [E1, E2, A1, A2](
+        using
+        inline cee: CanEqual[E1, E2],
+        inline cea: CanEqual[A1, A2]
+    ): CanEqual[Result[E1, A1], Result[E2, A2]] = CanEqual.derived
+    inline given [E, A: Flat]: Flat[Result[E, A]]      = Flat.unsafe.bypass
+    inline given [E, A]: CanEqual[Result[E, A], Panic] = CanEqual.derived
 
     given [E, A, ResultEA <: Result[E, A]](using re: Render[E], ra: Render[A]): Render[ResultEA] with
         def asText(value: ResultEA): String = value match
@@ -708,15 +708,17 @@ object Result extends LowPriorityImplicits:
     opaque type Partial[+E, +A] >: Success[A] | Failure[E] <: Result[E, A] = Success[A] | Failure[E]
 
     object Partial:
-        inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Partial[E, A]] = CanEqual.derived
-        inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Result[E, A]]  = CanEqual.derived
-        inline given [E, A: Flat]: Flat[Partial[E, A]]                                               = Flat.unsafe.bypass
-
-        given [E, A, PartialEA <: Partial[E, A]](using re: Render[E], ra: Render[A]): Render[PartialEA] with
-            def asText(value: PartialEA): String = value match
-                case Success(a)    => s"Success(${ra.asText(a.asInstanceOf[A])})"
-                case f: Failure[?] => s"Failure(${re.asText(f.failure.asInstanceOf[E])})"
-        end given
+        inline given [E1, E2, A1, A2](
+            using
+            inline cee: CanEqual[E1, E2],
+            inline cea: CanEqual[A1, A2]
+        ): CanEqual[Partial[E1, A1], Partial[E2, A2]] = CanEqual.derived
+        inline given [E1, E2, A1, A2](
+            using
+            inline cee: CanEqual[E1, E2],
+            inline cea: CanEqual[A1, A2]
+        ): CanEqual[Partial[E1, A1], Result[E2, A2]] = CanEqual.derived
+        inline given [E, A: Flat]: Flat[Partial[E, A]] = Flat.unsafe.bypass
 
         extension [E, A](self: Partial[E, A])
             inline def foldPartial[B](inline ifFailure: E => B)(inline ifSuccess: A => B): B =
