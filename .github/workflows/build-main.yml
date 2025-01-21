@@ -37,9 +37,9 @@ jobs:
       with:
         path: |
           */target/*
-          !*/*-fastopt
-          !*/native-test
+          !*/*js*/*
+          !*/*native*/*
           **/target/*
-          !**/*-fastopt
-          !**/native-test
+          !**/*js*/*
+          !**/*native*/*
         key: ${{ runner.os }}-build-state-main
