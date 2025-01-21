@@ -38,7 +38,4 @@ jobs:
         path: |
           */target
           **/target
-          !**/target/pack
-          !**/target/scala-*/api
-          !**/target/scala-*/doc
         key: ${{ runner.os }}-build-state-main
