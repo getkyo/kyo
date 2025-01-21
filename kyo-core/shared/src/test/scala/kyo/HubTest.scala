@@ -20,9 +20,9 @@ class HubTest extends Test:
                 h  <- Hub.init[Int](2)
                 _  <- h.listen(0)
                 e1 <- h.empty
-                _  <- h.put(1)
+                _  <- h.put(1) // held by the fiber
                 _  <- h.put(2)
-                _  <- h.put(3) // held by the fiber
+                _  <- h.put(3)
                 e2 <- h.empty
                 f  <- h.full
                 _  <- h.offer(4)
@@ -33,9 +33,9 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](2)
                 _ <- h.listen(0)
-                _ <- h.put(1)
+                _ <- h.put(1) // held by the fiber
                 _ <- h.put(2)
-                _ <- h.put(3) // held by the fiber
+                _ <- h.put(3)
                 r <- h.offer(4)
             yield assert(!r)
         }
@@ -70,8 +70,8 @@ class HubTest extends Test:
         "filtered listeners" in run {
             for
                 h  <- Hub.init[Int](4)
-                l1 <- h.listen(_ % 2 == 0) // even numbers
-                l2 <- h.listen(_ % 2 == 1) // odd numbers
+                l1 <- h.listen(_ % 2 == 0)
+                l2 <- h.listen(_ % 2 == 1)
                 _  <- h.put(1)
                 _  <- h.put(2)
                 v1 <- l1.take
