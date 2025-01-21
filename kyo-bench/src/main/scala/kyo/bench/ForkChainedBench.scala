@@ -26,7 +26,7 @@ class ForkChainedBench extends Bench.ForkOnly(0):
 
         def iterate(p: Promise[Nothing, Unit], n: Int): Unit < IO =
             if n <= 0 then p.complete(Result.unit).unit
-            else IO.unit.flatMap(_ => Async.run(iterate(p, n - 1)).unit)
+            else Kyo.unit.flatMap(_ => Async.run(iterate(p, n - 1)).unit)
 
         for
             p <- Promise.init[Nothing, Unit]

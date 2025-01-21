@@ -14,7 +14,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3.0.2
-    - uses: coursier/cache-action@v6
+    - uses: coursier/cache-action@v6 
     - name: Install Dependencies
       run: |
         sudo apt-get update
@@ -22,16 +22,6 @@ jobs:
     - uses: olafurpg/setup-scala@v13
       with:
         java-version: openjdk@21.0.2=tgz+https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz
-
-    - name: Restore build state
-      uses: actions/cache@v3
-      with:
-        path: |
-          */target
-          **/target
-        key: ${{ runner.os }}-build-state-main
-        restore-keys: |
-          ${{ runner.os }}-build-state-main
 
     - name: Build JVM
       run: sbt '+kyoJVM/testQuick'

@@ -192,7 +192,7 @@ object Process:
                             for
                                 _ <- Async.run(Resource.run(resources))
                             yield ()
-                        case _ => IO.unit
+                        case _ => Kyo.unit
                 yield process
 
             override def cwd(newCwd: Path)                   = self.copy(cwd = Some(newCwd))

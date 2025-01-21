@@ -31,11 +31,3 @@ jobs:
 
     - name: Build Native
       run: sbt '+kyoNative/test'
-
-    - name: Save build state
-      uses: actions/cache@v3
-      with:
-        path: |
-          */target
-          **/target
-        key: ${{ runner.os }}-build-state-main
