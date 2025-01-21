@@ -86,6 +86,7 @@ class HubTest extends Test:
                 _    <- h.put(1)
                 _    <- h.put(2)
                 _    <- h.put(3)
+                _    <- h.put(4)
                 size <- l.size
             yield assert(size == 2)
         }
@@ -119,6 +120,7 @@ class HubTest extends Test:
         "close returns buffered messages" in run {
             for
                 h <- Hub.init[Int](4)
+                _ <- h.listen(0)
                 _ <- h.put(1)
                 _ <- h.put(2)
                 r <- h.close

@@ -100,7 +100,7 @@ final class Hub[A] private[kyo] (
             ch.close.map { r =>
                 IO {
                     val l = Chunk.from(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
-                    discard(listeners.clear())
+                    discard(listeners.removeIf(_ => true)) // clear is not available in Scala Native
                     Kyo.foreachDiscard(l)(_.child.close.unit).andThen(r)
                 }
             }
