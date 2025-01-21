@@ -76,6 +76,13 @@ final class Hub[A] private[kyo] (
       */
     def put(v: A)(using Frame): Unit < (Async & Abort[Closed]) = ch.put(v)
 
+    /** Puts multiple elements into the Hub as a batch.
+      *
+      * @param values
+      *   The sequence of elements to put
+      */
+    def putBatch(values: Seq[A])(using Frame): Unit < (Abort[Closed] & Async) = ch.putBatch(values)
+
     /** Checks if the Hub is closed.
       *
       * @return
@@ -177,31 +184,6 @@ final class Hub[A] private[kyo] (
         }
     end listen
 
-    /** Puts multiple elements into the Hub as a batch.
-      *
-      * @param values
-      *   The sequence of elements to put
-      */
-    def putBatch(values: Seq[A])(using Frame): Unit < (Abort[Closed] & Async) = ch.putBatch(values)
-
-    /** Takes exactly n elements from the Hub's buffer, blocking until enough elements are available.
-      *
-      * @param n
-      *   Number of elements to take
-      * @return
-      *   Chunk containing exactly n elements
-      */
-    def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) = ch.takeExactly(n)
-
-    /** Takes up to max elements from the Hub's buffer without blocking.
-      *
-      * @param max
-      *   Maximum number of elements to take
-      * @return
-      *   Chunk containing up to max elements
-      */
-    def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = ch.drainUpTo(max)
-
     private[kyo] def remove(listener: Listener[A])(using Frame): Unit < IO =
         IO {
             discard(listeners.remove(listener))
@@ -252,7 +234,7 @@ object Hub:
         IO.Unsafe {
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
-            def currentListeners = Chunk.from(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
+            def currentListeners = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
             Async.run {
                 Loop.foreach {
                     channel.take.map { value =>
@@ -379,7 +361,7 @@ object Hub:
           * @return
           *   An asynchronous stream of elements from the listener that completes when closed
           */
-        def stream(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
+        def stream(maxChunkSize: Int = Stream.DefaultChunkSize)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
             child.streamUntilClosed(maxChunkSize)
 
         /** Like stream, but fails when listener is already closed.
@@ -390,7 +372,7 @@ object Hub:
           * @return
           *   Asynchronous stream of elements from listener
           */
-        def streamFailing(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Abort[Closed] & Async] =
+        def streamFailing(maxChunkSize: Int = Stream.DefaultChunkSize)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Abort[Closed] & Async] =
             child.stream(maxChunkSize)
 
         /** Takes up to max elements from the Listener's buffer without blocking.

@@ -123,9 +123,10 @@ class HubTest extends Test:
                 _ <- h.listen(0)
                 _ <- h.put(1)
                 _ <- h.put(2)
+                _ <- h.put(3)
                 _ <- Async.sleep(10.millis)
                 r <- h.close
-            yield assert(r == Maybe(Seq(1, 2)))
+            yield assert(r == Maybe(Seq(2, 3)))
         }
 
         "operations fail after close" in run {
