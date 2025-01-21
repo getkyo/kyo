@@ -155,20 +155,19 @@ final class Hub[A] private[kyo] (
         closed.map {
             case true => fail
             case false =>
-                Channel.initWith[A](bufferSize) { child =>
-                    IO {
-                        val listener = new Listener[A](this, child, filter)
-                        discard(listeners.add(listener))
-                        closed.map {
-                            case true =>
-                                // race condition
-                                IO {
-                                    discard(listeners.remove(listener))
-                                    fail
-                                }
-                            case false =>
-                                Resource.acquireRelease(listener)(_.close.unit)
-                        }
+                IO.Unsafe {
+                    val child    = Channel.Unsafe.init[A](bufferSize, Access.SingleProducerMultiConsumer).safe
+                    val listener = new Listener[A](this, child, filter)
+                    discard(listeners.add(listener))
+                    closed.map {
+                        case true =>
+                            // race condition
+                            IO {
+                                discard(listeners.remove(listener))
+                                fail
+                            }
+                        case false =>
+                            Resource.acquireRelease(listener)(_.close.unit)
                     }
                 }
         }
@@ -210,7 +209,7 @@ object Hub:
       */
     def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & IO) =
         IO.Unsafe {
-            val channel          = Channel.Unsafe.init[A](capacity).safe
+            val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
             def currentListeners = Chunk.from(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
             Async.run {
