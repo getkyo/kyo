@@ -1,7 +1,7 @@
 <!--
 PRs require an approval from any of the core contributors, other than the PR author.
 
-Include if applicable:
+Include this header if applicable:
 Fixes #issue1, #issue2, ...
 -->
 
