@@ -15,10 +15,6 @@ jobs:
     steps:
     - uses: actions/checkout@v3.0.2
     - uses: coursier/cache-action@v6 
-      with:
-        extraFiles: |
-          ["**/target/jvm/**"]
-        extraKey: "jvm-target-pr-${{ github.event.pull_request.number }}"
     - name: Install Dependencies
       run: |
         sudo apt-get update
