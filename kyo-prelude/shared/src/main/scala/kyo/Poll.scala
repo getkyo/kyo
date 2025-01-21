@@ -4,6 +4,11 @@ import kyo.kernel.ArrowEffect
 
 /** Represents polling values from a data source with backpressure control.
   *
+  * * Key behaviors:
+  *   - Poll returns Maybe[V], where:
+  *     - Present(v) indicates a successful poll with value v
+  *     - Absent indicates the end of the stream (no more values will be available)
+  *   - Once Absent is received, the consumer should stop polling as the stream has terminated
   * Poll is used to consume values. Each poll operation signals readiness to receive data, and returns Maybe[V] indicating whether a value
   * was available.
   *
