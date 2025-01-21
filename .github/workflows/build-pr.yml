@@ -18,7 +18,7 @@ jobs:
       with:
         extraFiles: |
           ["**/target/jvm/**"]
-        extraKey: pr-${{ github.event.pull_request.number }}
+        extraKey: "jvm-target-pr-${{ github.event.pull_request.number }}"
     - name: Install Dependencies
       run: |
         sudo apt-get update

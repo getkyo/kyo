@@ -18,6 +18,7 @@ jobs:
       with:
         extraFiles: |
           ["**/target/jvm/**"]
+        extraKey: "jvm-target"
     - name: Install Dependencies
       run: |
         sudo apt-get update
