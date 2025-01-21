@@ -177,6 +177,31 @@ final class Hub[A] private[kyo] (
         IO {
             discard(listeners.remove(listener))
         }
+
+    /** Puts multiple elements into the Hub as a batch.
+      *
+      * @param values
+      *   The sequence of elements to put
+      */
+    def putBatch(values: Seq[A])(using Frame): Unit < (Abort[Closed] & Async) = ch.putBatch(values)
+
+    /** Takes exactly n elements from the Hub's buffer, blocking until enough elements are available.
+      *
+      * @param n
+      *   Number of elements to take
+      * @return
+      *   Chunk containing exactly n elements
+      */
+    def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) = ch.takeExactly(n)
+
+    /** Takes up to max elements from the Hub's buffer without blocking.
+      *
+      * @param max
+      *   Maximum number of elements to take
+      * @return
+      *   Chunk containing up to max elements
+      */
+    def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = ch.drainUpTo(max)
 end Hub
 
 object Hub:
@@ -352,5 +377,13 @@ object Hub:
         def streamFailing(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Abort[Closed] & Async] =
             child.stream(maxChunkSize)
 
+        /** Takes up to max elements from the Listener's buffer without blocking.
+          *
+          * @param max
+          *   Maximum number of elements to take
+          * @return
+          *   Chunk containing up to max elements
+          */
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = child.drainUpTo(max)
     end Listener
 end Hub
