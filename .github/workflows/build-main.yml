@@ -15,6 +15,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3.0.2
     - uses: coursier/cache-action@v6
+      with:
+        extraFiles: |
+          ["**/target/jvm/**"]
     - name: Install Dependencies
       run: |
         sudo apt-get update
@@ -31,15 +34,3 @@ jobs:
 
     - name: Build Native
       run: sbt '+kyoNative/test'
-
-    - name: Save build state
-      uses: actions/cache@v3
-      with:
-        path: |
-          */target/*
-          !*/*js*/*
-          !*/*native*/*
-          **/target/*
-          !**/*js*/*
-          !**/*native*/*
-        key: ${{ runner.os }}-build-state-main
