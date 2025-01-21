@@ -719,8 +719,6 @@ object Result extends LowPriorityImplicits:
         end given
 
         extension [E, A](self: Partial[E, A])
-            def toResult: Result[E, A] = self
-
             inline def foldPartial[B](inline ifFailure: E => B)(inline ifSuccess: A => B): B =
                 self match
                     case Failure(e) => ifFailure(e)
