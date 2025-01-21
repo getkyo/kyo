@@ -27,8 +27,12 @@ jobs:
       uses: actions/cache@v3
       with:
         path: |
-          */target
-          **/target
+          */target/*
+          !*/target/scala-*/.*-fastopt
+          !*/target/scala-*/native-test/*
+          **/target/*
+          !**/target/scala-*/.*-fastopt
+          !**/target/scala-*/native-test/*
         key: ${{ runner.os }}-build-state-main
         restore-keys: |
           ${{ runner.os }}-build-state-main
