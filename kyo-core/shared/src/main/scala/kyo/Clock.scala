@@ -158,6 +158,7 @@ object Clock:
       *   The result of running the effect with scaled time
       */
     def withTimeShift[A, S](factor: Double)(v: => A < S)(using Frame): A < (IO & S) =
+        println(1)
         if factor == 1 then v
         else
             IO.Unsafe.withLocal(local) { clock =>
@@ -176,6 +177,7 @@ object Clock:
                             underlying.sleep(duration * sleepFactor)
                 let(Clock(shifted))(v)
             }
+        end if
     end withTimeShift
 
     /** Interface for controlling time in a test environment.
