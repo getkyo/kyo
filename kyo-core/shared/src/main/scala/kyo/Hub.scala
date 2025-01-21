@@ -72,7 +72,7 @@ final class Hub[A] private[kyo] (
       * full. The element will be delivered to all active listeners once accepted.
       *
       * @param v
-      *   the element to put if the Hub has been closed
+      *   the element to put
       */
     def put(v: A)(using Frame): Unit < (Async & Abort[Closed]) = ch.put(v)
 
