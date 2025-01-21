@@ -30,13 +30,13 @@ class SchedulingBench extends Bench.ForkOnly(1001000):
         import kyo.*
 
         def fiber(i: Int): Int < IO =
-            IO.unit.flatMap { _ =>
+            Kyo.unit.flatMap { _ =>
                 IO(i).flatMap { j =>
-                    IO.unit.flatMap { _ =>
+                    Kyo.unit.flatMap { _ =>
                         if j > depth then
-                            IO.unit.flatMap(_ => IO(j))
+                            Kyo.unit.flatMap(_ => IO(j))
                         else
-                            IO.unit.flatMap(_ => fiber(j + 1))
+                            Kyo.unit.flatMap(_ => fiber(j + 1))
                     }
                 }
             }

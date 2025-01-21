@@ -24,7 +24,7 @@ class SemaphoreBench extends Bench.ForkOnly(()):
 
         def loop(s: Meter, i: Int): Unit < (Async & Abort[Closed]) =
             if i >= depth then
-                IO.unit
+                Kyo.unit
             else
                 s.run(()).flatMap(_ => loop(s, i + 1))
 

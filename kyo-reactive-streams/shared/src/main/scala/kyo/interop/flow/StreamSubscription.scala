@@ -74,7 +74,7 @@ final private[kyo] class StreamSubscription[V, Ctx](
                 fiber.onComplete {
                     case Result.Success(StreamComplete) => IO(subscriber.onComplete())
                     case Result.Panic(e)                => IO(subscriber.onError(e))
-                    case Result.Failure(StreamCanceled) => IO.unit
+                    case Result.Failure(StreamCanceled) => Kyo.unit
                 }.andThen(fiber)
             }
     end consume

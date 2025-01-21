@@ -23,6 +23,8 @@ object Kyo:
       */
     inline def pure[A, S](inline v: A): A < S = v
 
+    inline def unit[S]: Unit < S = ()
+
     /** Zips two effects into a tuple.
       *
       * @param v1
