@@ -24,13 +24,6 @@ opaque type IO <: Abort[Nothing] = Abort[Nothing]
 
 object IO:
 
-    /** Creates a unit IO effect, representing a no-op side effect.
-      *
-      * @return
-      *   A unit value wrapped in an IO effect.
-      */
-    inline def unit: Unit < IO = ()
-
     /** Suspends a potentially side-effecting computation in an IO effect.
       *
       * This method allows you to lift any computation (including those with side effects) into the IO context, deferring its execution
