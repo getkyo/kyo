@@ -4,7 +4,7 @@ This template isn't a strict requirement to open issues, but please try to provi
 
 **Version**: (e.g. `0.16.0`)
 **Module**: (e.g. `kyo-core`)
-**Scala Version**: (e.g. `2.13.10`)
+**Scala Version**: (e.g. `3.6.2`)
 
 ### What did you expect to happen?
 <!--
