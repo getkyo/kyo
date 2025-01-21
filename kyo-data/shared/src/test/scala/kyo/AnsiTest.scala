@@ -24,6 +24,10 @@ class AnsiTest extends Test:
         assert("test".blue == "\u001b[34mtest\u001b[0m")
     }
 
+    "blue2" in {
+        assert("test".blue == "\u001b[34mtest\u001b[0m")
+    }
+
     "magenta" in {
         assert("test".magenta == "\u001b[35mtest\u001b[0m")
     }
