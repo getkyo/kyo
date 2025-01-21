@@ -189,7 +189,7 @@ class AbortCombinatorTest extends Test:
             }
         }
 
-        "catch" - {
+        "catching" - {
             "should catch all abort" in {
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
@@ -250,6 +250,64 @@ class AbortCombinatorTest extends Test:
                 val handledFailure: Result[String | Int | Boolean, Int] < Any =
                     partialHandled.result
                 assert(handledFailure.eval == Result.Success(1))
+            }
+        }
+
+        "foldAbort" - {
+            "should handle success and fail case, throwing panics, when two handlers provided" in {
+                val success: Int < Abort[String] = 23
+                val handledSuccess: String < Any =
+                    success.foldAbort(
+                        i => i.toString,
+                        identity
+                    )
+                assert(handledSuccess.eval == "23")
+                val failure: Int < Abort[String] =
+                    Abort.fail("failure")
+                val handledFailure: String < Any =
+                    failure.foldAbort(
+                        i => i.toString,
+                        identity
+                    )
+                assert(handledFailure.eval == "failure")
+                val panic: Int < Abort[String] = Abort.panic(Exception("message"))
+                try
+                    panic.foldAbort(
+                        i => i.toString,
+                        identity
+                    ).eval
+                    succeed
+                catch
+                    case e: Exception => assert(e.getMessage == "message")
+                end try
+            }
+
+            "should handle all cases when three handlers provided" in {
+                val success: Int < Abort[String] = 23
+                val handledSuccess: String < Any =
+                    success.foldAbort(
+                        i => i.toString,
+                        identity,
+                        _.getMessage
+                    )
+                assert(handledSuccess.eval == "23")
+                val failure: Int < Abort[String] =
+                    Abort.fail("failure")
+                val handledFailure: String < Any =
+                    failure.foldAbort(
+                        i => i.toString,
+                        identity,
+                        _.getMessage
+                    )
+                assert(handledFailure.eval == "failure")
+                val panic: Int < Abort[String] = Abort.panic(Exception("message"))
+                val handledPanic: String < Any =
+                    panic.foldAbort(
+                        i => i.toString,
+                        identity,
+                        _.getMessage
+                    )
+                assert(handledPanic.eval == "message")
             }
         }
 
@@ -344,7 +402,7 @@ class AbortCombinatorTest extends Test:
                 }
             }
 
-            "caught" - {
+            "catching" - {
                 "should catch some abort" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
                     val caught                                = effect.forAbort[String].catching(_ => 99)
@@ -360,7 +418,7 @@ class AbortCombinatorTest extends Test:
                 }
             }
 
-            "caughtPartial" - {
+            "catchingSome" - {
                 "should catch some abort with partial function" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
                     val caught = effect.forAbort[String].catchingSome {

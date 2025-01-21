@@ -285,6 +285,19 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): Result[E, A] < S =
         Abort.run[E](effect)
 
+    /** Handles the Abort effect and returns its result as a `Result.Partial[E, A]`, not handling Panic exceptions.
+      *
+      * @return
+      *   A computation that produces a partial result of this computation with the Abort[E] effect handled
+      */
+    def partialResult(
+        using
+        ct: SafeClassTag[E],
+        fl: Flat[A],
+        fr: Frame
+    ): Result.Partial[E, A] < S =
+        Abort.runPartial[E](effect)
+
     /** Handles the Abort effect, transforming caught errors into a new error as determined by mapping function
       *
       * @return
@@ -369,6 +382,31 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case Result.Panic(e)   => throw e
             case Result.Success(v) => v
         }
+
+    def foldAbort[B, S1](
+        onSuccess: A => B < S1,
+        onFail: E => B < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1) =
+        Abort.fold[E](onSuccess, onFail)(effect)
+
+    def foldAbort[B, S1](
+        onSuccess: A => B < S1,
+        onFail: E => B < S1,
+        onPanic: Throwable => B < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1) =
+        Abort.fold[E](onSuccess, onFail, onPanic)(effect)
 
     /** Handles the Abort effect and applies a partial recovery function to the error.
       *
@@ -530,6 +568,33 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
                     case Result.Success(v)    => v
                     case ab @ Result.Panic(_) => Abort.get(ab.asInstanceOf[Result[Nothing, Nothing]])
                 })
+
+    def fold[B, S1, ER](
+        onSuccess: A => B < S1,
+        onFail: E => B < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        reduce: Reducible[Abort[ER]],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1 & reduce.SReduced) =
+        Abort.fold[E](onSuccess, onFail)(effect)
+
+    def fold[B, S1, ER](
+        onSuccess: A => B < S1,
+        onFail: E => B < S1,
+        onPanic: Throwable => B < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        reduce: Reducible[Abort[ER]],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1 & reduce.SReduced) =
+        Abort.fold[E](onSuccess, onFail, onPanic)(effect)
 
     /** Handles the partial Abort[E1] effect and applies a partial recovery function to the error.
       *

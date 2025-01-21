@@ -1,6 +1,6 @@
 package kyo
 
-class AbortsTest extends Test:
+class AbortTest extends Test:
 
     case class Ex1() extends RuntimeException derives CanEqual
     case class Ex2() derives CanEqual
@@ -295,6 +295,170 @@ class AbortsTest extends Test:
                     val result = nested.eval
                     assert(result == Result.success(Result.panic(ex)))
                 }
+            }
+        }
+        "runPartial" - {
+            "success" in {
+                assert(
+                    Abort.runPartial[Ex1](test(2)).eval ==
+                        Result.success(5)
+                )
+            }
+            "failure" in {
+                assert(
+                    Abort.runPartial[Ex1](test(0)).eval ==
+                        Result.fail(ex1)
+                )
+            }
+            "panic" in {
+                val p = new Exception
+                assertThrows[Exception](
+                    Abort.runPartial[Ex1](throw p).eval
+                )
+            }
+            "suspension + panic" in {
+                val p = new Exception
+                assertThrows[Exception](
+                    Abort.runPartial[Ex1](Abort.get(Right(1)).map(_ => throw p)).eval ==
+                        Result.panic(p)
+                )
+            }
+            "inference" in {
+                def t1(v: Int < Abort[Int | String]) =
+                    Abort.runPartial[Int](v)
+                val _: Result.Partial[Int, Int] < Abort[String] =
+                    t1(42)
+                def t2(v: Int < (Abort[Int] & Abort[String])) =
+                    Abort.runPartial[String](v)
+                val _: Result.Partial[String, Int] < Abort[Int] =
+                    t2(42)
+                def t3(v: Int < Abort[Int]) =
+                    Abort.runPartial[Int](v).eval
+                val _: Result.Partial[Int, Int] =
+                    t3(42)
+                succeed
+            }
+            "super" in {
+                val ex                                = new Exception
+                val a: Int < Abort[Exception]         = Abort.fail(ex)
+                val b: Result.Partial[Throwable, Int] = Abort.runPartial[Throwable](a).eval
+                assert(b == Result.Fail(ex))
+            }
+            "super success" in {
+                val a: Int < Abort[Exception]         = 24
+                val b: Result.Partial[Throwable, Int] = Abort.runPartial[Throwable](a).eval
+                assert(b == Result.Success(24))
+            }
+            "reduce large union incrementally" in {
+                val t1: Int < Abort[Int | String | Boolean | Float | Char | Double] =
+                    18
+                val t2 = Abort.runPartial[Int](t1)
+                val t3 = Abort.runPartial[String](t2)
+                val t4 = Abort.runPartial[Boolean](t3)
+                val t5 = Abort.runPartial[Float](t4)
+                val t6 = Abort.runPartial[Char](t5)
+                val t7 = Abort.runPartial[Double](t6)
+                assert(t7.eval == Result.Success(Result.Success(Result.Success(Result.Success(Result.Success(Result.Success(18)))))))
+            }
+            "reduce large union in a single expression" in {
+                val t: Int < Abort[Int | String | Boolean | Float | Char | Double] = 18
+                // NB: Adding type annotation leads to compilation error
+                val res =
+                    Abort.runPartial[Double](
+                        Abort.runPartial[Char](
+                            Abort.runPartial[Float](
+                                Abort.runPartial[Boolean](
+                                    Abort.runPartial[String](
+                                        Abort.runPartial[Int](t)
+                                    )
+                                )
+                            )
+                        )
+                    ).eval
+                val expected: Result.Partial[
+                    Double,
+                    Result.Partial[Char, Result.Partial[Float, Result.Partial[Boolean, Result.Partial[String, Result.Partial[Int, Int]]]]]
+                ] =
+                    Result.Success(Result.Success(Result.Success(Result.Success(Result.Success(Result.Success(18))))))
+                assert(res == expected)
+            }
+            "nested panic to fail" - {
+                "converts matching Panic to Fail" in {
+                    val ex     = new RuntimeException("Test exception")
+                    val result = Abort.runPartial[RuntimeException](Abort.panic(ex)).eval
+                    assert(result == Result.Fail(ex))
+                }
+
+                "leaves non-matching Panic as Panic" in {
+                    val ex = new IllegalArgumentException("Test exception")
+                    assertThrows[IllegalArgumentException]:
+                        Abort.runPartial[NoSuchElementException](Abort.panic(ex)).eval
+                }
+
+                "doesn't affect Success" in {
+                    val result = Abort.runPartial[RuntimeException](42).eval
+                    assert(result == Result.success(42))
+                }
+
+                "doesn't affect Fail" in {
+                    val ex     = new RuntimeException("Test exception")
+                    val result = Abort.runPartial[RuntimeException](Abort.fail(ex)).eval
+                    assert(result == Result.fail(ex))
+                }
+
+                "works with nested Aborts" in {
+                    val ex = new RuntimeException("Inner exception")
+                    val nested = Abort.runPartial[IllegalArgumentException] {
+                        Abort.runPartial[RuntimeException](Abort.panic(ex))
+                    }
+                    val result = nested.eval
+                    assert(result == Result.success(Result.fail(ex)))
+                }
+            }
+        }
+        "fold" - {
+            "success" in {
+                assert:
+                    Abort.fold[Ex1](
+                        (i: Int) => s"success: $i",
+                        (ex1) => s"fail"
+                    )(test(2)).eval == "success: 5"
+
+                assert:
+                    Abort.fold[Ex1](
+                        (i: Int) => s"success: $i",
+                        (ex1) => s"fail",
+                        (thr) => s"panic: ${thr.getMessage()}"
+                    )(test(2)).eval == "success: 5"
+            }
+            "failure" in {
+                assert:
+                    Abort.fold[Ex1](
+                        (i: Int) => s"success: $i",
+                        (ex1) => s"fail"
+                    )(test(0)).eval == "fail"
+
+                assert:
+                    Abort.fold[Ex1](
+                        (i: Int) => s"success: $i",
+                        (ex1) => s"fail",
+                        (thr) => s"panic: ${thr.getMessage()}"
+                    )(test(0)).eval == "fail"
+            }
+            "panic" in {
+                val p = new Exception("message")
+                assertThrows[Exception]:
+                    Abort.fold[Ex1](
+                        (i: Int) => s"success: $i",
+                        (ex1) => s"fail"
+                    )(Abort.panic(p)).eval
+
+                assert:
+                    Abort.fold[Ex1](
+                        (i: Int) => s"success: $i",
+                        (ex1) => s"fail",
+                        (thr) => s"panic: ${thr.getMessage()}"
+                    )(Abort.panic(p)).eval == "panic: message"
             }
         }
         "fail" in {
@@ -987,4 +1151,4 @@ class AbortsTest extends Test:
         }
     }
 
-end AbortsTest
+end AbortTest

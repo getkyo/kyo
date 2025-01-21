@@ -15,13 +15,21 @@ import scala.util.control.NonFatal
   */
 opaque type Result[+E, +A] >: (Success[A] | Error[E]) = Success[A] | Error[E]
 
+trait LowPriorityImplicits:
+    inline given [E, A: Flat]: Flat[Result[E, A]] = Flat.unsafe.bypass
+
+end LowPriorityImplicits
+
 /** Companion object for Result type */
-object Result:
+object Result extends LowPriorityImplicits:
     import internal.*
 
+    type Partial[+E, +A] = Success[A] | Fail[E]
+
     inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Result[E, A], Result[E, A]] = CanEqual.derived
-    inline given [E, A: Flat]: Flat[Result[E, A]]                                              = Flat.unsafe.bypass
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
+
+    inline given [A: Flat]: Flat[Success[A]] = Flat.unsafe.bypass
 
     given [E, A, ResultEA <: Result[E, A]](using re: Render[E], ra: Render[A]): Render[ResultEA] with
         def asText(value: ResultEA): String = value match
