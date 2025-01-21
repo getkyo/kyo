@@ -80,7 +80,7 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
                     }
                 }
             else
-                IO.unit
+                Kyo.unit
 
         def consume(waiting: AtomicRef[Any], n: Int = 0, acc: Int = 0): Int < Async =
             if n <= depth then
