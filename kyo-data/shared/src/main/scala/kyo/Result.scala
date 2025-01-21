@@ -42,7 +42,7 @@ import scala.util.control.NonFatal
   * @tparam A
   *   The type of the successful value
   */
-opaque type Result[+E, +A] >: (Success[A] | Error[E]) = Success[A] | Error[E]
+opaque type Result[+E, +A] >: Success[A] | Error[E] = Success[A] | Error[E]
 
 private trait LowPriorityImplicits:
     given flatSuccess[A](using Flat[A]): Flat[Success[A]] =
@@ -51,8 +51,6 @@ private trait LowPriorityImplicits:
 object Result extends LowPriorityImplicits:
 
     import internal.*
-
-    type Partial[+E, +A] = Success[A] | Failure[E]
 
     /** Creates a Result from an expression that might throw an exception.
       *
@@ -274,6 +272,13 @@ object Result extends LowPriorityImplicits:
             else
                 throw exception
     end Panic
+
+    /** Provides extension methods for Result type */
+    extension [A](self: Success[A])
+        def successValue: A = self match
+            case v: SuccessError[?] => v.unnest.asInstanceOf[A]
+            case v: A @unchecked    => v
+    end extension
 
     /** Provides extension methods for Result type */
     extension [E, A](self: Result[E, A])
@@ -699,5 +704,48 @@ object Result extends LowPriorityImplicits:
             case f: Failure[?] => s"Failure(${re.asText(f.failure.asInstanceOf[E])})"
             case other         => other.toString()
     end given
+
+    opaque type Partial[+E, +A] >: Success[A] | Failure[E] <: Result[E, A] = Success[A] | Failure[E]
+
+    object Partial:
+        inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Partial[E, A]] = CanEqual.derived
+        inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Result[E, A]]  = CanEqual.derived
+        inline given [E, A: Flat]: Flat[Partial[E, A]]                                               = Flat.unsafe.bypass
+
+        given [E, A, PartialEA <: Partial[E, A]](using re: Render[E], ra: Render[A]): Render[PartialEA] with
+            def asText(value: PartialEA): String = value match
+                case Success(a)    => s"Success(${ra.asText(a.asInstanceOf[A])})"
+                case f: Failure[?] => s"Failure(${re.asText(f.failure.asInstanceOf[E])})"
+        end given
+
+        extension [E, A](self: Partial[E, A])
+            def toResult: Result[E, A] = self
+
+            inline def foldPartial[B](inline ifFailure: E => B)(inline ifSuccess: A => B): B =
+                self match
+                    case Failure(e) => ifFailure(e)
+                    case _          => ifSuccess(self.asInstanceOf[Success[A]].successValue)
+
+            /** Converts the Partial to an Either.
+              *
+              * @return
+              *   An Either with Left containing the error or exception, and Right containing the successful value
+              */
+            def toEitherPartial: Either[E, A] =
+                self.foldPartial(Left(_))(Right(_))
+
+            /** Flattens a nested Partial.
+              *
+              * @param ev
+              *   Evidence that A is a Partial
+              * @return
+              *   The flattened Partial
+              */
+            def flattenPartial[E2, B](using ev: A <:< Partial[E2, B]): Partial[E | E2, B] =
+                foldPartial(_ => self.asInstanceOf[Partial[E, B]])(a => ev(a))
+
+        end extension
+
+    end Partial
 
 end Result

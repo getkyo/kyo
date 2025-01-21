@@ -412,7 +412,7 @@ class AbortTest extends Test:
                         Abort.runPartial[RuntimeException](Abort.panic(ex))
                     }
                     val result = nested.eval
-                    assert(result == Result.Success(Result.fail(ex)))
+                    assert(result == Result.Success(Result.Failure(ex)))
                 }
             }
         }
