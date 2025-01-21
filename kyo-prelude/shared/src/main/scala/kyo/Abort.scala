@@ -370,6 +370,8 @@ object Abort:
           * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
           * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
           *
+          * @param onSuccess
+          *   A function that takes the success value of type A and returns a new computation
           * @param onFail
           *   A function that takes the failure value of type E and returns a new computation
           * @param v
@@ -415,8 +417,12 @@ object Abort:
           * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
           * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
           *
+          * @param onSuccess
+          *   A function that takes the success value of type A and returns a new computation
           * @param onFail
           *   A function that takes the failure value of type E and returns a new computation
+          * @param onPanic
+          *   A function that takes the throwable panic value and returns a new computation
           * @param v
           *   The original computation that may fail
           * @return
@@ -432,7 +438,6 @@ object Abort:
             ct: SafeClassTag[E],
             reduce: Reducible[Abort[ER]]
         ): B < (S & reduce.SReduced) =
-            println("HERE")
             reduce:
                 ArrowEffect.handleCatching[
                     Const[Error[E]],
@@ -452,7 +457,6 @@ object Abort:
                             input.isPanic || input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
                     handle = [C] =>
                         (input, _) =>
-                            println(input)
                             (input: @unchecked) match
                                 case Fail(e)  => onFail(e)
                                 case Panic(e) => onPanic(e),
