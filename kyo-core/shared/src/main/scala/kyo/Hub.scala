@@ -173,11 +173,6 @@ final class Hub[A] private[kyo] (
         }
     end listen
 
-    private[kyo] def remove(listener: Listener[A])(using Frame): Unit < IO =
-        IO {
-            discard(listeners.remove(listener))
-        }
-
     /** Puts multiple elements into the Hub as a batch.
       *
       * @param values
@@ -202,6 +197,11 @@ final class Hub[A] private[kyo] (
       *   Chunk containing up to max elements
       */
     def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = ch.drainUpTo(max)
+
+    private[kyo] def remove(listener: Listener[A])(using Frame): Unit < IO =
+        IO {
+            discard(listeners.remove(listener))
+        }
 end Hub
 
 object Hub:
