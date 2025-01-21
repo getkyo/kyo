@@ -168,14 +168,18 @@ class MeterTest extends Test:
                 (for
                     size    <- Choice.get(Seq(1, 2, 3, 50, 100))
                     meter   <- Meter.initSemaphore(size)
+                    started <- Latch.init(100)
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFibers <- Kyo.foreach(1 to 100)(_ =>
-                        Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
+                        started.release.andThen(
+                            Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
+                        )
                     )
                     interruptFiber <- Async.run(latch.await.andThen(Async.parallelUnbounded(
                         runFibers.take(50).map(_.interrupt(panic))
                     )))
+                    _           <- started.await
                     _           <- latch.release
                     interrupted <- interruptFiber.get
                     completed   <- Kyo.foreach(runFibers)(_.getResult)
@@ -248,12 +252,11 @@ class MeterTest extends Test:
 
         "tryRun" in runNotJS {
             for
-                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.second), Meter.initMutex)
+                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 100.millis), Meter.initMutex)
                 counter <- AtomicInt.init(0)
                 f1      <- Async.run(loop(meter, counter))
                 _       <- Async.sleep(5.millis)
                 _       <- untilTrue(meter.availablePermits.map(_ == 0))
-                _       <- Async.sleep(5.millis)
                 r       <- meter.tryRun(())
                 _       <- f1.interrupt(panic)
             yield assert(r.isEmpty)
