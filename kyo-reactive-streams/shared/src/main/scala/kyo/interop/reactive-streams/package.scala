@@ -16,7 +16,7 @@ package object reactivestreams:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Stream[T, Async] < IO =
+    ): Stream[T, Async] < (Resource & IO) =
         flow.fromPublisher(FlowAdapters.toFlowPublisher(publisher), bufferSize, emitStrategy)
 
     @nowarn("msg=anonymous")

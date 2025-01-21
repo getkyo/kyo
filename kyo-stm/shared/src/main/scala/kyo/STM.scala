@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.Result.Fail
+import kyo.Result.Failure
 import scala.annotation.tailrec
 
 /** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.

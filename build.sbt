@@ -65,6 +65,15 @@ lazy val `kyo-settings` = Seq(
 )
 
 Global / onLoad := {
+
+    val javaVersion  = System.getProperty("java.version")
+    val majorVersion = javaVersion.split("\\.")(0).toInt
+    if (majorVersion < 21) {
+        throw new IllegalStateException(
+            s"Java version $javaVersion is not supported. Please use Java 21 or higher."
+        )
+    }
+
     val project =
         System.getProperty("platform", "JVM").toUpperCase match {
             case "JVM"    => kyoJVM
@@ -90,10 +99,12 @@ lazy val kyoJVM = project
         `kyo-scheduler-zio`.jvm,
         `kyo-scheduler-cats`.jvm,
         `kyo-scheduler-finagle`.jvm,
+        `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
+        `kyo-offheap`.jvm,
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
@@ -190,6 +201,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
+
 lazy val `kyo-scheduler-cats` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -199,6 +211,23 @@ lazy val `kyo-scheduler-cats` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
+        )
+        .jvmSettings(mimaCheck(false))
+        .settings(
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+        )
+
+lazy val `kyo-scheduler-pekko` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-scheduler`)
+        .in(file("kyo-scheduler-pekko"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.1.3",
+            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.1.3" % Test
         )
         .jvmSettings(mimaCheck(false))
         .settings(
@@ -302,6 +331,15 @@ lazy val `kyo-core` =
             `js-settings`,
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
+
+lazy val `kyo-offheap` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-offheap"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)

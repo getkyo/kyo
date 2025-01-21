@@ -58,7 +58,7 @@ object Routes:
                     (i: I) =>
                         Abort.run[E](Env.run(a)(f(i))).map {
                             case Result.Success(v) => Right(v)
-                            case Result.Fail(e)    => Left(e)
+                            case Result.Failure(e) => Left(e)
                             case Result.Panic(ex)  => throw ex
                         }
                 )

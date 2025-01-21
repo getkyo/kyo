@@ -32,8 +32,8 @@ class MonixTest extends AsyncFreeSpec:
                 val task = Task.raiseError(ex)
                 val kyo  = Monix.get(task)
                 Abort.run[Throwable](kyo).map {
-                    case Result.Fail(e) => assert(e == ex)
-                    case _              => fail("Expected Fail result")
+                    case Result.Failure(e) => assert(e == ex)
+                    case _                 => fail("Expected Fail result")
                 }
             }
         }

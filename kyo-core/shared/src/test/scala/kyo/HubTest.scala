@@ -80,7 +80,7 @@ class HubTest extends Test:
             v3 <- Abort.run(l.poll)
             v4 <- l.close
         yield assert(
-            b && c1 == Maybe(Seq()) && v1.isFail && v2.isFail && v3.isFail && v4.isEmpty
+            b && c1 == Maybe(Seq()) && v1.isFailure && v2.isFailure && v3.isFailure && v4.isEmpty
         )
     }
     "close listener w/ buffer" in runNotJS {
@@ -132,7 +132,7 @@ class HubTest extends Test:
             c  <- l.close
             v1 <- h.offer(2)
             v2 <- Abort.run(l.poll)
-        yield assert(c == Maybe(Seq()) && v1 && v2.isFail)
+        yield assert(c == Maybe(Seq()) && v1 && v2.isFailure)
     }
     "hub closure with pending offers" in runNotJS {
         for
@@ -140,7 +140,7 @@ class HubTest extends Test:
             _ <- h.offer(1)
             _ <- h.close
             v <- Abort.run(h.offer(2))
-        yield assert(v.isFail)
+        yield assert(v.isFailure)
     }
     "create listener on empty hub" in runNotJS {
         for
@@ -234,8 +234,8 @@ class HubTest extends Test:
                         if v == 3 then l.close.unit else ()
                 yield ()
             Abort.run[Closed](effect).map:
-                case Result.Fail(_: Closed) => succeed
-                case other                  => fail(s"Stream did not abort with Closed")
+                case Result.Failure(_: Closed) => succeed
+                case other                     => fail(s"Stream did not abort with Closed")
         }
     }
 end HubTest

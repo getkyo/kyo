@@ -102,7 +102,7 @@ class WhileTest extends Test:
                         counter.get.now
                     }
                 }.now
-                assert(result == Result.success(2))
+                assert(result == Result.succeed(2))
             }
         }
     }

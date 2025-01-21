@@ -15,11 +15,12 @@ package object flow:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Stream[T, Async] < IO =
+    ): Stream[T, Async] < (Resource & IO) =
         for
             subscriber <- StreamSubscriber[T](bufferSize, emitStrategy)
             _          <- IO(publisher.subscribe(subscriber))
-        yield subscriber.stream
+            stream     <- subscriber.stream
+        yield stream
 
     @nowarn("msg=anonymous")
     inline def subscribeToStream[T, Ctx](

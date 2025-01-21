@@ -2214,7 +2214,7 @@ val a: Promise[Nothing, Int] < IO =
 
 // Try to fulfill a promise
 val b: Boolean < IO =
-    a.map(_.complete(Result.success(42)))
+    a.map(_.complete(Result.succeed(42)))
 
 // Fullfil the promise with
 // another fiber
@@ -2889,7 +2889,7 @@ import kyo._
 import scala.util.Try
 
 // Create a 'Result' from a value
-val a: Result[Nothing, Int] = Result.success(42)
+val a: Result[Nothing, Int] = Result.succeed(42)
 
 // Create a 'Result' from an failure
 val b: Result[Exception, Int] = Result.fail(new Exception("Oops"))
@@ -2901,35 +2901,35 @@ val c: Result[Nothing, Int] = Result(42 / 0)
 val d: Boolean = a.isSuccess
 
 // 'isFail' checks if the 'Result' is a failure
-val e: Boolean = b.isFail
+val e: Boolean = b.isFailure
 
 // 'get' retrieves the value if successful, otherwise throws
-val f: Int = a.get
+val f: Int = a.getOrThrow
 
 // 'getOrElse' provides a default value for failures
 val g: Int = b.getOrElse(0)
 
-// 'fold' applies a function based on success or failure
-val h: String = a.fold(e => "failure " + e)(_.toString)
+// 'foldError' applies a function based on success or failure
+val h: String = a.foldError(e => "failure " + e)(_.toString)
 
 // 'map' transforms the value if successful
 val i: Result[Nothing, String] = a.map(_.toString)
 
 // 'flatMap' allows chaining 'Result' operations
-val j: Result[Nothing, Int] = a.flatMap(v => Result.success(v + 1))
+val j: Result[Nothing, Int] = a.flatMap(v => Result.succeed(v + 1))
 
 // 'flatten' removes one level of nesting from a 'Result[Result[T]]'
-val k: Result[Nothing, Result[Nothing, Int]] = Result.success(a)
+val k: Result[Nothing, Result[Nothing, Int]] = Result.succeed(a)
 val l: Result[Nothing, Int] = k.flatten
 
 // 'filter' conditionally keeps or discards the value
 val m: Result[NoSuchElementException, Int] = a.filter(_ > 0)
 
-// 'recover' allows handling failures with a partial function
-val n: Result[Exception, Int] = b.recover { case Result.Fail(_: ArithmeticException) => 0 }
+// 'mapFailure' allows mapping failures 
+val n: Result[Int, Int] = b.mapFailure { _ => 0 }
 
-// 'recoverWith' allows handling failures with a partial function returning a 'Result'
-val o: Result[Exception, Int] = b.recoverWith { case Result.Fail(_: ArithmeticException) => Result.success(0) }
+// 'flatMapFailure' allows handling failures with a function returning a 'Result'
+val o: Result[Nothing, Int] = b.flatMapFailure { case _ => Result.succeed(0) }
 
 // 'toEither' converts a 'Result' to an 'Either'
 val p: Either[Throwable, Int] = a.toEither
@@ -2945,8 +2945,8 @@ Since `Result.Success` is unboxed, we recommend using t-string interpolation whe
 ```scala
 import kyo.*
 
-val success: Result[String, Result[String, Int]] = Result.success(Result.success(42))
-val failure: Result[String, Result[String, Int]] = Result.success(Result.fail("failure!"))
+val success: Result[String, Result[String, Int]] = Result.succeed(Result.succeed(42))
+val failure: Result[String, Result[String, Int]] = Result.succeed(Result.fail("failure!"))
 
 println(s"s-string nested results: $success, $failure")
 // Output: s-string nested results: 42, Fail(failure!)

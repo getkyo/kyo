@@ -1,9 +1,11 @@
 package kyo
 
 import Record.*
-import internal.FieldsLikeMacro
+import kyo.internal.Inliner
+import kyo.internal.TypeIntersection
 import scala.annotation.implicitNotFound
 import scala.compiletime.constValue
+import scala.compiletime.erasedValue
 import scala.compiletime.summonInline
 import scala.deriving.Mirror
 import scala.language.dynamics
@@ -71,10 +73,9 @@ import scala.util.NotGiven
   *
   *   - Nested records cannot be created directly
   *   - Tag derivation for Records is not currently supported
-  *   - Records with more than 22 fields have limited type-level support, though runtime support exists for larger structures
   *   - CanEqual and Render instances are not provided for Records
   */
-class Record[+Fields](val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
+final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
 
     /** Retrieves a value from the Record by field name.
       *
@@ -116,21 +117,18 @@ class Record[+Fields](val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dyna
     /** Returns the number of fields in this Record.
       */
     def size: Int = toMap.size
-
 end Record
 
 export Record.`~`
 
 object Record:
+    /** Creates an empty Record
+      */
+    val empty: Record[Any] = Record[Any](Map())
+
     given [Fields]: Flat[Record[Fields]] = Flat.unsafe.bypass
 
-    inline given [Fields]: Tag[Record[Fields]] =
-        scala.compiletime.error(
-            "Cannot derive Tag for Record type. This commonly occurs when trying to nest Records, " +
-                "which is not currently supported by the Tag implementation."
-        )
-
-    infix opaque type ~[Name <: String, Value] = Map[Field[?, ?], Any]
+    final infix class ~[Name <: String, Value] private ()
 
     /** Creates a Record from a product type (case class or tuple).
       */
@@ -235,13 +233,13 @@ object Record:
       * @tparam A
       *   The field type, typically in the form of `"fieldName" ~ ValueType`
       */
-    opaque type AsField[+A] = Field[?, ?]
+    opaque type AsField[Name <: String, Value] = Field[Name, Value]
 
     object AsField:
-        inline given [N <: String, V](using tag: Tag[V]): AsField[N ~ V] =
+        inline given [N <: String, V](using tag: Tag[V]): AsField[N, V] =
             Field(constValue[N], tag)
 
-        def apply[A](using af: AsField[A]): Field[?, ?] = af
+        private[kyo] def toField[Name <: String, Value](as: AsField[Name, Value]): Field[?, ?] = as
     end AsField
 
     /** Type class for working with sets of Record fields.
@@ -254,39 +252,54 @@ object Record:
     opaque type AsFields[+A] <: Set[Field[?, ?]] = Set[Field[?, ?]]
 
     object AsFields:
-        /** Evidence that every tuple member has AsField instance
-          *
-          * @param fields
-          *   Set of all fields of tuple
-          */
-        class All[T <: Tuple](val fields: Set[Field[?, ?]]) extends AnyVal
-        object All:
-            given All[EmptyTuple] = All(Set())
-            given [H, T <: Tuple](using a: AsField[H], f: All[T]): All[H *: T] =
-                All(f.fields + a)
-        end All
-
-        given [A](using ev: FieldsLike[A], a: All[ev.T]): AsFields[A] = a.fields
-
         def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
+
+        inline given [Fields](using ev: TypeIntersection[Fields]): AsFields[Fields] =
+            AsFieldsInternal.summonAsField
     end AsFields
 
-    /** Evidence that type `A` is intersection of `~` types. `T` is a tuple of these types.
-      */
-    @implicitNotFound(
-        "Unable to prove that type `${A}` is an intersection of `~` types"
-    )
-    trait FieldsLike[A]:
-        type T <: Tuple
-    end FieldsLike
+    private type HasCanEqual[Field] =
+        Field match
+            case name ~ value => CanEqual[value, value]
 
-    object FieldsLike:
-        def apply[A](using f: FieldsLike[A]): FieldsLike[A] = f
+    inline given [Fields: TypeIntersection]: CanEqual[Record[Fields], Record[Fields]] =
+        discard(TypeIntersection.summonAll[Fields, HasCanEqual])
+        CanEqual.derived
+    end given
 
-        type Aux[A, _T] = FieldsLike[A]:
-            type T = _T
+    inline given [Fields]: Tag[Record[Fields]] =
+        scala.compiletime.error(
+            "Cannot derive Tag for Record type. This commonly occurs when trying to nest Records, " +
+                "which is not currently supported by the Tag implementation."
+        )
 
-        transparent inline given derive[A]: FieldsLike[A] =
-            ${ FieldsLikeMacro.fieldsLikeImpl[A] }
-    end FieldsLike
+    private object RenderInliner extends Inliner[(String, Render[?])]:
+        inline def apply[T]: (String, Render[?]) =
+            inline erasedValue[T] match
+                case _: (n ~ v) =>
+                    val ev   = summonInline[n <:< String]
+                    val inst = summonInline[Render[v]]
+                    ev(constValue[n]) -> inst
+    end RenderInliner
+
+    inline given [Fields: TypeIntersection]: Render[Record[Fields]] =
+        val insts = TypeIntersection.inlineAll[Fields, (String, Render[?])](RenderInliner).toMap
+        Render.from: (value: Record[Fields]) =>
+            value.toMap.foldLeft(Vector[String]()) { case (acc, (field, value)) =>
+                insts.get(field.name) match
+                    case Some(r: Render[x]) =>
+                        acc :+ (field.name + " ~ " + r.asText(value.asInstanceOf[x]))
+                    case None => acc
+                end match
+            }.mkString(" & ")
+    end given
 end Record
+
+object AsFieldsInternal:
+    private type HasAsField[Field] =
+        Field match
+            case name ~ value => AsField[name, value]
+
+    inline def summonAsField[Fields](using ev: TypeIntersection[Fields]): Set[Field[?, ?]] =
+        TypeIntersection.summonAll[Fields, HasAsField].map(Record.AsField.toField).toSet
+end AsFieldsInternal

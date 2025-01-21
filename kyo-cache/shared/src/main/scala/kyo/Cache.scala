@@ -33,7 +33,7 @@ class Cache(private[kyo] val store: Store):
         f: A => B < S
     )(using Frame): A => B < (Async & S) =
         (v: A) =>
-            Promise.init[Throwable, B].map { p =>
+            Promise.initWith[Throwable, B] { p =>
                 val key = (this, v)
                 IO[B, Async & S] {
                     val p2 = store.get(key, _ => p.asInstanceOf[Promise[Nothing, Any]])

@@ -13,4 +13,5 @@ object Platform:
             .getRuntimeMXBean()
             .getInputArguments()
             .toString.contains("jdwp")
+    def exit(code: Int): Unit = java.lang.System.exit(code)
 end Platform

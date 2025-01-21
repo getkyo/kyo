@@ -162,7 +162,7 @@ class TChunkTest extends Test:
                 }
                 snapshot <- STM.run(chunk.snapshot)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(snapshot == Chunk(1, 2, 3))
         }
 

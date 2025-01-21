@@ -99,8 +99,8 @@ object Resource:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
-        Queue.Unbounded.init[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer).map { q =>
-            Promise.init[Nothing, Unit].map { p =>
+        Queue.Unbounded.initWith[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer) { q =>
+            Promise.initWith[Nothing, Unit] { p =>
                 val finalizer = Finalizer(frame, q)
                 def close: Unit < IO =
                     q.close.map {
@@ -110,7 +110,7 @@ object Resource:
                             Async.parallel(closeParallelism) {
                                 tasks.map { task =>
                                     Abort.run[Throwable](task)
-                                        .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
+                                        .map(_.foldError(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
                                 }
                             }
                                 .unit
