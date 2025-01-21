@@ -110,6 +110,8 @@ final class Hub[A] private[kyo] (
       *
       * @return
       *   a new Listener that will receive messages from the Hub
+      * @see
+      *   [[Hub.DefaultBufferSize]] for the default buffer size used by this method
       */
     def listen(using Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
         listen(DefaultBufferSize)
@@ -130,6 +132,8 @@ final class Hub[A] private[kyo] (
       *   a predicate function that determines which messages this listener receives
       * @return
       *   a new Listener that will only receive messages matching the filter
+      * @see
+      *   [[Hub.DefaultBufferSize]] for the default buffer size used by this method
       */
     def listen(filter: A => Boolean)(using frame: Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
         listen(DefaultBufferSize, filter)
@@ -208,6 +212,18 @@ object Hub:
 
     /** Default buffer size used for Hub listeners when no explicit size is specified. */
     inline def DefaultBufferSize: Int = 4096
+
+    /** Initializes a new Hub with the default capacity.
+      *
+      * @tparam A
+      *   the type of elements in the Hub
+      * @return
+      *   a new Hub instance with default buffer size
+      * @see
+      *   [[Hub.DefaultBufferSize]] for the default capacity value used by this method
+      */
+    def init[A](using Frame): Hub[A] < IO =
+        init(DefaultBufferSize)
 
     /** Initializes a new Hub with the specified capacity.
       *
