@@ -3532,13 +3532,19 @@ trait C
 val effect: Int < Abort[A | B | C] = 1
 
 val handled: Result[A | B | C, Int] < Any = effect.result
+val handledWithoutPanic: Result.Partial[A | B | C, Int] < Any = effect.partialResult
+val folded: String < Any = effect.foldAbort(_.toString, _.toString, _.toString)
+val foldedWithoutPanic: String < Any = effect.foldAbort(_.toString, _.toString)
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
 val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
 
-// Manipulate single types from within the union
+// Handle error types within the union
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
+val handledWithoutPanicA: Result.Partial[A, Int] < Abort[B | C] = effect.forAbort[A].partialResult
+val foldedA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString, _.toString)
+val foldedWithoutPanicA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString)
 val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
 val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
 val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap
