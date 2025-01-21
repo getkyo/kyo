@@ -123,6 +123,7 @@ class HubTest extends Test:
                 _ <- h.listen(0)
                 _ <- h.put(1)
                 _ <- h.put(2)
+                _ <- Async.sleep(10.millis)
                 r <- h.close
             yield assert(r == Maybe(Seq(1, 2)))
         }
