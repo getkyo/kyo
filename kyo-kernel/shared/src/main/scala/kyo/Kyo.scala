@@ -27,8 +27,8 @@ object Kyo:
 
     /** Returns a pure effect that produces Unit.
       *
-      * This is exactly equivalent to `pure(())`, as both simply lift the Unit value into the effect context
-      * without introducing any effect suspension.
+      * This is exactly equivalent to `pure(())`, as both simply lift the Unit value into the effect context without introducing any effect
+      * suspension.
       *
       * @tparam S
       *   The effect context (can be Any)
