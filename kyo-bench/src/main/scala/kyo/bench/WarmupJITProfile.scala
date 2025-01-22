@@ -103,6 +103,7 @@ object WarmupJITProfile:
             new RandomBench,
             new SemaphoreBench,
             new StateMapBench,
-            new StreamBench
+            new StreamBench,
+            new StreamIOBench
         )
 end WarmupJITProfile

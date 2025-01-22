@@ -1,15 +1,14 @@
 package kyo.bench
 
-class StreamBench extends Bench.SyncAndFork(25000000):
+class StreamIOBench extends Bench.SyncAndFork(25000000):
     val seq = (0 until 10000).toVector
 
     def catsBench() =
         import cats.effect.*
         import fs2.*
         Stream.emits(seq)
-            .filter(_ % 2 == 0)
-            .map(_ + 1)
-            .covary[IO]
+            .evalFilter(v => IO(v % 2 == 0))
+            .evalMap(v => IO(v + 1))
             .compile
             .fold(0)(_ + _)
     end catsBench
@@ -17,8 +16,8 @@ class StreamBench extends Bench.SyncAndFork(25000000):
     def kyoBench() =
         import kyo.*
         Stream.init(seq)
-            .filter(_ % 2 == 0)
-            .map(_ + 1)
+            .filter(v => IO(v % 2 == 0))
+            .map(v => IO(v + 1))
             .runFold(0)(_ + _)
     end kyoBench
 
@@ -26,9 +25,8 @@ class StreamBench extends Bench.SyncAndFork(25000000):
         import zio.*
         import zio.stream.*
         ZStream.fromIterable(seq)
-            .filter(_ % 2 == 0)
-            .map(_ + 1)
+            .filterZIO(v => ZIO.succeed(v % 2 == 0))
+            .mapZIO(v => ZIO.succeed(v + 1))
             .runSum
     end zioBench
-
-end StreamBench
+end StreamIOBench
