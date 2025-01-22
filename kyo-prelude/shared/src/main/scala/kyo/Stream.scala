@@ -4,6 +4,7 @@ import kyo.Tag
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.targetName
+import scala.util.NotGiven
 
 /** Represents a stream of values of type `V` with effects of type `S`.
   *
@@ -43,8 +44,8 @@ sealed abstract class Stream[V, -S]:
     def map[V2](f: V => V2)(using
         t1: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
-        fr: Frame,
-        ev: scala.util.NotGiven[V2 <:< (Any < Nothing)]
+        ev: NotGiven[V2 <:< (Any < Nothing)],
+        fr: Frame
     ): Stream[V2, S] =
         Stream[V2, S](ArrowEffect.handleState(t1, (), emit)(
             [C] =>
@@ -75,8 +76,8 @@ sealed abstract class Stream[V, -S]:
         using
         tagV: Tag[Emit[Chunk[V]]],
         tagV2: Tag[Emit[Chunk[V2]]],
-        frame: Frame,
-        ev: scala.util.NotGiven[Seq[V2] <:< (Any < Nothing)]
+        discr: Flat[Boolean],
+        frame: Frame
     ): Stream[V2, S] =
         Stream[V2, S](ArrowEffect.handleState(tagV, (), emit)(
             [C] =>
@@ -250,8 +251,8 @@ sealed abstract class Stream[V, -S]:
       */
     def takeWhile(f: V => Boolean)(using
         tag: Tag[Emit[Chunk[V]]],
-        frame: Frame,
-        ev: scala.util.NotGiven[Boolean <:< (Any < Nothing)]
+        discr: Flat[Boolean],
+        frame: Frame
     ): Stream[V, S] =
         Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
@@ -322,8 +323,8 @@ sealed abstract class Stream[V, -S]:
 
     def filter(f: V => Boolean)(using
         tag: Tag[Emit[Chunk[V]]],
-        frame: Frame,
-        ev: scala.util.NotGiven[Boolean <:< (Any < Nothing)]
+        discr: Flat[Boolean],
+        frame: Frame
     ): Stream[V, S] =
         Stream[V, S](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
