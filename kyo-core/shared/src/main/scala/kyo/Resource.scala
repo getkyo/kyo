@@ -99,8 +99,8 @@ object Resource:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
-        Queue.Unbounded.init[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer).map { q =>
-            Promise.init[Nothing, Unit].map { p =>
+        Queue.Unbounded.initWith[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer) { q =>
+            Promise.initWith[Nothing, Unit] { p =>
                 val finalizer = Finalizer(frame, q)
                 def close: Unit < IO =
                     q.close.map {

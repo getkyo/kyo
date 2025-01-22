@@ -176,6 +176,7 @@ object Clock:
                             underlying.sleep(duration * sleepFactor)
                 let(Clock(shifted))(v)
             }
+        end if
     end withTimeShift
 
     /** Interface for controlling time in a test environment.

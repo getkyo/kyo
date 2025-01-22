@@ -1,5 +1,7 @@
 package kyo
 
+import Result.Error
+
 /** An abstract base class for Kyo applications.
   *
   * This class provides a foundation for building applications using the Kyo framework, with built-in support for logging, random number
@@ -42,9 +44,16 @@ object KyoApp:
 
         protected def run[A: Flat](v: => A < S)(using Frame): Unit
 
-        protected def printResult(result: Result[Any, Any]): Unit =
+        protected def exit(code: Int): Unit = kernel.Platform.exit(code)
+
+        protected def onResult(result: Result[Any, Any]): Unit =
             if !result.exists(().equals(_)) then println(pprint.apply(result).plainText)
-        end printResult
+            result match
+                case Error(e: Throwable) => throw e
+                case Error(_)            => exit(1)
+                case _                   =>
+            end match
+        end onResult
     end Base
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */

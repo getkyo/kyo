@@ -29,7 +29,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
         handleWrappedError(rt)(h)
 
     def ensure[A](f: M[A], e: => M[Unit]) =
-        Promise.init[Nothing, Unit].map { p =>
+        Promise.initWith[Nothing, Unit] { p =>
             def run =
                 Async.run(e).map(p.become).unit
             IO.ensure(run)(f).map(r => p.get.andThen(r))

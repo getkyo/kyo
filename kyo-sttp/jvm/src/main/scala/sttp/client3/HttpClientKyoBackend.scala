@@ -57,7 +57,7 @@ class HttpClientKyoBackend private (
             ) = pipe
 
     override protected def createSimpleQueue[A] =
-        Channel.init[A](Int.MaxValue).map(new KyoSimpleQueue[A](_))
+        Channel.initWith[A](Int.MaxValue)(new KyoSimpleQueue[A](_))
 
     override protected def createSequencer =
         Meter.initMutex.map(new KyoSequencer(_))
