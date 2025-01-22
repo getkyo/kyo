@@ -1,5 +1,6 @@
 package kyo
 
+import java.io.IOException
 import kyo.Result
 import kyo.Result.*
 import scala.util.Try
@@ -1438,6 +1439,70 @@ class ResultTest extends Test:
         assert(result.isFailure)
         assert(!result.isSuccess)
         assert(!result.isPanic)
+    }
+
+    "Result.Partial" - {
+        "construct" in {
+            val success: Partial[String, Int] = Success(23)
+            val failure: Partial[String, Int] = Failure("failed")
+            succeed
+        }
+
+        "is Result" in {
+            val success: Partial[String, Int]   = Success(23)
+            val successRes: Result[String, Int] = success
+            val failure: Partial[String, Int]   = Failure("failed")
+            val failureRes: Result[String, Int] = failure
+            assert(success == successRes && failure == failureRes)
+        }
+
+        "Result API" in {
+            val success: Partial[String, Int] = Success(23)
+            val failure: Partial[String, Int] = Failure("failed")
+
+            val successValue   = success.value
+            val failureValue   = failure.value
+            val successFailure = success.failure
+            val failureFailure = failure.failure
+
+            assert(
+                successValue == Present(23)
+                    && failureValue.isEmpty
+                    && successFailure.isEmpty
+                    && failureFailure == Present("failed")
+            )
+        }
+
+        "foldPartial" in {
+            val success: Partial[String, Int] = Success(23)
+            val failure: Partial[String, Int] = Failure("failed")
+            val onFail                        = (s: String) => s.length < 5 // will be false for "failed"
+            val onSuccess                     = (i: Int) => i > 5           // will be true for 23
+            val foldedSuccess                 = success.foldPartial(onFail)(onSuccess)
+            val foldedFailure                 = failure.foldPartial(onFail)(onSuccess)
+            assert(foldedSuccess && !foldedFailure)
+        }
+
+        "toEitherPartial" in {
+            val success: Partial[String, Int] = Success(23)
+            val failure: Partial[String, Int] = Failure("failed")
+            assert(
+                success.toEitherPartial == Right(23)
+                    && failure.toEitherPartial == Left("failed")
+            )
+        }
+
+        "flattenPartial" in {
+            val success: Partial[String, Partial[Int, Boolean]]  = Success(Success(true))
+            val failure1: Partial[String, Partial[Int, Boolean]] = Success(Failure(0))
+            val failure2: Partial[String, Partial[Int, Boolean]] = Failure("failed")
+            assert(
+                success.flattenPartial == Success(true)
+                    && failure1.flattenPartial == Failure(0)
+                    && failure2.flattenPartial == Failure("failed")
+            )
+        }
+
     }
 
 end ResultTest

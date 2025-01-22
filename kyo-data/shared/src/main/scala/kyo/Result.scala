@@ -711,8 +711,8 @@ object Result:
         extension [E, A](self: Partial[E, A])
             inline def foldPartial[B](inline ifFailure: E => B)(inline ifSuccess: A => B): B =
                 self match
-                    case Failure(e) => ifFailure(e)
-                    case _          => ifSuccess(self.asInstanceOf[Success[A]].successValue)
+                    case failure: Failure[E] @unchecked => ifFailure(failure.failure)
+                    case other                          => ifSuccess(other.asInstanceOf[Success[A]].successValue)
 
             /** Converts the Partial to an Either.
               *
