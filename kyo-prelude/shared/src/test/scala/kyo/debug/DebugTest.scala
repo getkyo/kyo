@@ -170,10 +170,10 @@ class DebugTest extends Test:
 
         "with Stream JS" taggedAs jsOnly in
             testOutput(
-                "DebugTest.scala:55:36",
-                "true",
                 "DebugTest.scala:54:28",
                 "undefined",
+                "DebugTest.scala:55:36",
+                "Seq(Seq(6))",
                 "DebugTest.scala:56:21",
                 "Seq(6)"
             ) {
