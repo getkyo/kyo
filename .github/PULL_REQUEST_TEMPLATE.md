@@ -22,9 +22,3 @@ Add any important additional information as bullet points, such as:
 - Open questions and concerns
 - Limitations
 -->
-
-### Checklist
-
-- [ ] Unit test all changes
-- [ ] Update scaladocs if needed
-- [ ] Update the README if needed
