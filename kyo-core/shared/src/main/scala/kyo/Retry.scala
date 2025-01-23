@@ -51,7 +51,7 @@ object Retry:
                             Abort.get(result)
                         }
                     }
-                case Result.Panic(ex) => Abort.panic(ex)
+                case panic: Result.Panic[?] => Abort.error(panic)
             }
     end RetryOps
 
