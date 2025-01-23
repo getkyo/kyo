@@ -48,7 +48,7 @@ object Retry:
                         schedule.next(now).map { (delay, nextSchedule) =>
                             Async.delay(delay)(Retry[E](nextSchedule)(v))
                         }.getOrElse {
-                            Abort.get(result)
+                            Abort.error(result)
                         }
                     }
                 case panic: Result.Panic[?] => Abort.error(panic)
