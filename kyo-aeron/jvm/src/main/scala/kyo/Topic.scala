@@ -150,7 +150,7 @@ object Topic:
                                 if !publication.isConnected() then backpressured
                                 else
                                     // serialize messages with type tag for runtime verification
-                                    val bytes  = writeBinary((tag.toString, messages))
+                                    val bytes  = writeBinary((tag.raw, messages))
                                     val result = publication.tryClaim(bytes.length, bufferClaim)
                                     if result > 0 then
                                         // write directly to claimed buffer region
@@ -237,7 +237,7 @@ object Topic:
                                             result match
                                                 case Present((tag2, messages)) =>
                                                     // verify message type matches expected type
-                                                    if tag2 != tag.toString then
+                                                    if tag2 != tag.raw then
                                                         Abort.panic(
                                                             new IllegalStateException(
                                                                 s"Expected messages of type ${tag.show} but got ${tag2}"
