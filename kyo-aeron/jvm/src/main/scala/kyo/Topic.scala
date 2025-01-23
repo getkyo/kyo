@@ -25,7 +25,9 @@ import upickle.default.*
   * use [[Topic.stream]] to receive typed messages with automatic reassembly and connection handling.
   *
   * Type safety is enforced by using the message type's Tag to generate unique Aeron stream IDs - this means each exact type gets its own
-  * channel, with no subtype polymorphism. A stream of a parent type cannot receive messages published as a subtype, and vice versa.
+  * channel, with no subtype polymorphism. A stream of a parent type cannot receive messages published as a subtype, and vice versa. Since
+  * stream IDs are generated using a hash function, there is a theoretical possibility of hash collisions between different types. To
+  * mitigate this, a runtime type check is performed on message receipt to ensure the received message type matches the expected type.
   *
   * @see
   *   [[https://aeron.io/]] for documentation on Aeron URIs and more.
