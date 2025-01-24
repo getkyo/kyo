@@ -164,6 +164,20 @@ object Emit:
 
     inline def runFirst[V >: Nothing]: RunFirstOps[V] = RunFirstOps(())
 
+    given [V](using Tag[Emit[V]]): Scope.Stateful[Emit[V]] =
+        new Scope.Stateful[Emit[V]]:
+            type State = Chunk[V]
+            def use[A, S2](f: Chunk[V] => A < S2)(using Frame) = f(Chunk.empty)
+            def resume[A: Flat, S2](state: Chunk[V], v: A < (Emit[V] & S2))(using Frame) =
+                Emit.run(v)
+            def restore[A: Flat, S2](state: Chunk[V], v: A < S2)(using Frame) =
+                Loop(state: Seq[V]) {
+                    case Seq() => Loop.done
+                    case head +: tail =>
+                        Emit.valueWith(head)(Loop.continue(tail))
+                }.andThen(v)
+            end restore
+
     object isolate:
 
         /** Creates an isolate that includes emitted values from isolated computations.

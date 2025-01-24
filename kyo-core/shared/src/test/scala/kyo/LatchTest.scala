@@ -49,7 +49,7 @@ class LatchTest extends Test:
     "countDown(2) + fibers + await" in runNotJS {
         for
             latch <- Latch.init(2)
-            _     <- Async.parallel(latch.release, latch.release)
+            _     <- Async.parallelUnbounded(Seq(latch.release, latch.release))
             _     <- latch.await
         yield succeed
     }

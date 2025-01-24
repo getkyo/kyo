@@ -12,6 +12,18 @@ opaque type Memo <: Var[Memo.Cache] = Var[Memo.Cache]
 
 object Memo:
 
+    given Scope.Stateful[Memo] =
+        new Scope.Stateful[Memo]:
+            type State = Cache
+            def use[A, S2](f: State => A < S2)(using Frame) =
+                Var.use[Cache](f)
+            def resume[A: Flat, S2](state: State, v: A < (Var[Cache] & S2))(using Frame) =
+                Var.runTuple(state)(v)
+            def restore[A: Flat, S2](state: State, v: A < S2)(using Frame) =
+                Var.use[Cache] { prev =>
+                    Var.setAndThen(Cache(prev.map ++ state.map))(v)
+                }
+
     // Used to ensure each memoized function
     // has a different key space
     private[kyo] class MemoIdentity

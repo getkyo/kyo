@@ -14,6 +14,8 @@ sealed trait Resource extends ContextEffect[Resource.Finalizer]
 
 object Resource:
 
+    given Scope.Contextual[Resource] = Scope.Contextual.init
+
     /** Represents a finalizer for a resource. */
     case class Finalizer(createdAt: Frame, queue: Queue.Unbounded[Unit < (Async & Abort[Throwable])])
 
@@ -114,7 +116,7 @@ object Resource:
                                 }
                             }
                                 .unit
-                                .pipe(Async.run)
+                                .pipe(Async.run[Nothing, Unit, Any])
                                 .map(p.becomeDiscard)
                     }
                 ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)

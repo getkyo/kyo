@@ -166,7 +166,15 @@ object Var:
     def runTuple[V, A: Flat, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
         runWith(state)(v)((state, result) => (state, result))
 
+    given [V](using Tag[Var[V]]): Scope.Stateful[Var[V]] =
+        new Scope.Stateful[Var[V]]:
+            type State = V
+            def use[A, S2](f: State => A < S2)(using Frame)                          = Var.use[V](f)
+            def resume[A: Flat, S2](state: State, v: A < (Var[V] & S2))(using Frame) = Var.runTuple(state)(v)
+            def restore[A: Flat, S2](state: State, v: A < S2)(using Frame)           = Var.setAndThen(state)(v)
+
     object isolate:
+
         abstract private[kyo] class Base[V](using Tag[Var[V]]) extends Isolate[Var[V]]:
             type State = V
             def use[A, S2](f: V => A < S2)(using Frame) = Var.use(f)

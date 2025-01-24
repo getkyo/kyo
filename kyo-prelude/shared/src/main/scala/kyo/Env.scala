@@ -12,8 +12,16 @@ import scala.util.NotGiven
   */
 sealed trait Env[+R] extends ContextEffect[TypeMap[R]]
 
+object ttt:
+    def test[S: Scope.Contextual](v: Int < S) = ???
+    // summon[Scope.Contextual[Var[Int]]]
+    // test(1: Int < (Var[Int]))
+end ttt
+
 /** Companion object for Env, providing utility methods for working with environments. */
 object Env:
+
+    given [V]: Scope.Contextual[Env[V]] = Scope.Contextual.init
 
     given eliminateEnv: Reducible.Eliminable[Env[Any]] with {}
     private inline def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
