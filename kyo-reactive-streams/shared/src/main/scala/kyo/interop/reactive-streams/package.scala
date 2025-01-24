@@ -7,7 +7,7 @@ import org.reactivestreams.FlowAdapters
 import scala.annotation.nowarn
 
 package object reactivestreams:
-    inline def fromPublisher[T](
+    def fromPublisher[T](
         publisher: Publisher[T],
         bufferSize: Int,
         emitStrategy: EmitStrategy = EmitStrategy.Eager
@@ -20,29 +20,33 @@ package object reactivestreams:
         flow.fromPublisher(FlowAdapters.toFlowPublisher(publisher), bufferSize, emitStrategy)
 
     @nowarn("msg=anonymous")
-    inline def subscribeToStream[T, Ctx](
-        stream: Stream[T, Ctx],
+    def subscribeToStream[T, S](
+        using Isolate.Contextual[S, IO]
+    )(
+        stream: Stream[T, S & IO],
         subscriber: Subscriber[? >: T]
     )(
         using
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Subscription < (Resource & IO & Ctx) =
+    ): Subscription < (Resource & IO & S) =
         flow.subscribeToStream(stream, FlowAdapters.toFlowSubscriber(subscriber)).map { subscription =>
             new Subscription:
                 override def request(n: Long): Unit = subscription.request(n)
                 override def cancel(): Unit         = subscription.cancel()
         }
 
-    inline def streamToPublisher[T, Ctx](
-        stream: Stream[T, Ctx]
+    def streamToPublisher[T, S](
+        using Isolate.Contextual[S, IO]
+    )(
+        stream: Stream[T, S & IO]
     )(
         using
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Publisher[T] < (Resource & IO & Ctx) = flow.streamToPublisher(stream).map { publisher =>
+    ): Publisher[T] < (Resource & IO & S) = flow.streamToPublisher(stream).map { publisher =>
         FlowAdapters.toPublisher(publisher)
     }
 end reactivestreams

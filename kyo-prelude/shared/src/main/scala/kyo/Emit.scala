@@ -176,18 +176,29 @@ object Emit:
           * @return
           *   An isolate that preserves emitted values
           */
-        def merge[V: Tag]: Isolate[Emit[V]] =
-            new Isolate[Emit[V]]:
+        def merge[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+            new Isolate.Stateful[Emit[V], Any]:
+
                 type State = Chunk[V]
-                def use[A, S2](f: Chunk[V] => A < S2)(using Frame) = f(Chunk.empty)
-                def resume[A: Flat, S2](state: Chunk[V], v: A < (Emit[V] & S2))(using Frame) =
+
+                type Transform[A] = (Chunk[V], A)
+
+                given flatTransform[A: Flat]: Flat[(Chunk[V], A)] = Flat.derive
+
+                def capture[A: Flat, S](f: State => A < S)(using Frame) =
+                    f(Chunk.empty)
+
+                def isolate[A: Flat, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
                     Emit.run(v)
-                def restore[A: Flat, S2](state: Chunk[V], v: A < S2)(using Frame) =
-                    Loop(state: Seq[V]) {
-                        case Seq() => Loop.done
-                        case head +: tail =>
-                            Emit.valueWith(head)(Loop.continue(tail))
-                    }.andThen(v)
+
+                def restore[A: Flat, S](v: (Chunk[V], A) < S)(using Frame) =
+                    v.map { (state, result) =>
+                        Loop(state: Seq[V]) {
+                            case Seq() => Loop.done(result)
+                            case head +: tail =>
+                                Emit.valueWith(head)(Loop.continue(tail))
+                        }
+                    }
                 end restore
 
         /** Creates an isolate that ignores emitted values.
@@ -200,13 +211,22 @@ object Emit:
           * @return
           *   An isolate that discards emitted values
           */
-        def discard[V: Tag]: Isolate[Emit[V]] =
-            new Isolate[Emit[V]]:
+        def discard[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+            new Isolate.Stateful[Emit[V], Any]:
+
                 type State = Chunk[V]
-                def use[A, S2](f: Chunk[V] => A < S2)(using Frame) = f(Chunk.empty)
-                def resume[A: Flat, S2](state: Chunk[V], v: A < (Emit[V] & S2))(using Frame) =
-                    Emit.run(v)
-                def restore[A: Flat, S2](state: Chunk[V], v: A < S2)(using Frame) =
+
+                type Transform[A] = A
+
+                given flatTransform[A: Flat]: Flat[Transform[A]] = Flat.derive
+
+                def capture[A: Flat, S](f: State => A < S)(using Frame) =
+                    f(Chunk.empty)
+
+                def isolate[A: Flat, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
+                    Emit.runDiscard(v)
+
+                def restore[A: Flat, S](v: A < S)(using Frame) =
                     v
     end isolate
 

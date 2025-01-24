@@ -134,106 +134,58 @@ class CheckTest extends Test:
     }
 
     "isolate" - {
-        "merge" - {
-            "combines failures from isolated and outer scopes" in run {
-                val result = Check.runChunk {
-                    for
-                        _ <- Check.require(false, "Outer failure 1")
-                        isolated <- Check.isolate.merge.run {
-                            for
-                                _ <- Check.require(false, "Inner failure 1")
-                                _ <- Check.require(true, "Inner success")
-                                _ <- Check.require(false, "Inner failure 2")
-                            yield "inner"
-                        }
-                        _ <- Check.require(false, "Outer failure 2")
-                    yield (isolated)
-                }
-                result.map { case (failures, value) =>
-                    assert(failures.size == 4)
-                    assert(failures(0).message == "Outer failure 1")
-                    assert(failures(1).message == "Inner failure 1")
-                    assert(failures(2).message == "Inner failure 2")
-                    assert(failures(3).message == "Outer failure 2")
-                    assert(value == "inner")
-                }
+        "combines failures from isolated and outer scopes" in run {
+            val result = Check.runChunk {
+                for
+                    _ <- Check.require(false, "Outer failure 1")
+                    isolated <- Isolate.Stateful[Check, Any].run {
+                        for
+                            _ <- Check.require(false, "Inner failure 1")
+                            _ <- Check.require(true, "Inner success")
+                            _ <- Check.require(false, "Inner failure 2")
+                        yield "inner"
+                    }
+                    _ <- Check.require(false, "Outer failure 2")
+                yield (isolated)
             }
-
-            "proper state restoration after nested isolations" in run {
-                val result = Check.runChunk {
-                    for
-                        _ <- Check.require(false, "Start failure")
-                        v1 <- Check.isolate.merge.run {
-                            for
-                                _ <- Check.require(false, "Inner failure 1")
-                                v2 <- Check.isolate.merge.run {
-                                    Check.require(false, "Nested failure").map(_ => "nested-result")
-                                }
-                            yield v2
-                        }
-                        _ <- Check.require(false, "End failure")
-                    yield v1
-                }
-                result.map { case (failures, value) =>
-                    assert(failures.size == 4)
-                    assert(failures(0).message == "Start failure")
-                    assert(failures(1).message == "Inner failure 1")
-                    assert(failures(2).message == "Nested failure")
-                    assert(failures(3).message == "End failure")
-                    assert(value == "nested-result")
-                }
+            result.map { case (failures, value) =>
+                assert(failures.size == 4)
+                assert(failures(0).message == "Outer failure 1")
+                assert(failures(1).message == "Inner failure 1")
+                assert(failures(2).message == "Inner failure 2")
+                assert(failures(3).message == "Outer failure 2")
+                assert(value == "inner")
             }
         }
 
-        "discard" - {
-            "inner failures don't affect outer scope" in run {
-                val result = Check.runChunk {
-                    for
-                        _ <- Check.require(false, "Outer failure 1")
-                        isolated <- Check.isolate.discard.run {
-                            for
-                                _ <- Check.require(false, "Inner failure 1")
-                                _ <- Check.require(false, "Inner failure 2")
-                            yield "inner"
-                        }
-                        _ <- Check.require(false, "Outer failure 2")
-                    yield isolated
-                }
-                result.map { case (failures, value) =>
-                    assert(failures.size == 2)
-                    assert(failures(0).message == "Outer failure 1")
-                    assert(failures(1).message == "Outer failure 2")
-                    assert(value == "inner")
-                }
+        "proper state restoration after nested isolations" in run {
+            val result = Check.runChunk {
+                for
+                    _ <- Check.require(false, "Start failure")
+                    v1 <- Isolate.Stateful[Check, Any].run {
+                        for
+                            _ <- Check.require(false, "Inner failure 1")
+                            v2 <- Isolate.Stateful[Check, Any].run {
+                                Check.require(false, "Nested failure").map(_ => "nested-result")
+                            }
+                        yield v2
+                    }
+                    _ <- Check.require(false, "End failure")
+                yield v1
             }
-
-            "nested discards maintain isolation" in run {
-                val result = Check.runChunk {
-                    for
-                        _ <- Check.require(false, "Outer failure")
-                        v1 <- Check.isolate.discard.run {
-                            for
-                                _ <- Check.require(false, "Discarded failure 1")
-                                v2 <- Check.isolate.discard.run {
-                                    Check.require(false, "Discarded failure 2").map(_ => "nested-result")
-                                }
-                            yield v2
-                        }
-                        _ <- Check.require(false, "Final failure")
-                    yield v1
-                }
-                result.map { case (failures, value) =>
-                    assert(failures.size == 2)
-                    assert(failures(0).message == "Outer failure")
-                    assert(failures(1).message == "Final failure")
-                    assert(value == "nested-result")
-                }
+            result.map { case (failures, value) =>
+                assert(failures.size == 4)
+                assert(failures(0).message == "Start failure")
+                assert(failures(1).message == "Inner failure 1")
+                assert(failures(2).message == "Nested failure")
+                assert(failures(3).message == "End failure")
+                assert(value == "nested-result")
             }
         }
 
         "composition" - {
             "can combine multiple isolates" in run {
-                val i1 = Check.isolate.merge
+                val i1 = Isolate.Stateful[Check, Any]
                 val i2 = Emit.isolate.merge[String]
 
                 val combined = i1.andThen(i2)
@@ -256,44 +208,13 @@ class CheckTest extends Test:
                 }
             }
 
-            "preserves individual isolation behaviors when composed" in run {
-                val i1 = Check.isolate.discard
-                val i2 = Check.isolate.merge
-
-                val result = Check.runChunk {
-                    for
-                        _ <- Check.require(false, "Start failure")
-                        _ <- i1.run {
-                            Check.require(false, "Discarded failure")
-                        }
-                        middle <- Check.require(false, "Middle failure")
-                        _ <- i2.run {
-                            Check.require(false, "Merged failure")
-                        }
-                        _ <- Check.require(false, "End failure")
-                    yield "done"
-                }
-                result.map { case (failures, value) =>
-                    assert(failures.size == 4)
-                    assert(failures(0).message == "Start failure")
-                    assert(failures(1).message == "Middle failure")
-                    assert(failures(2).message == "Merged failure")
-                    assert(failures(3).message == "End failure")
-                    assert(value == "done")
-                }
-            }
-
             "with Var isolate" in run {
-                val checkIsolate = Check.isolate.discard
-                val varIsolate   = Var.isolate.discard[Int]
-
-                val combined = checkIsolate.andThen(varIsolate)
+                val isolate = Isolate.Stateful[Check, Any].andThen(Var.isolate.update[Int])
 
                 val result = Check.runChunk {
                     Var.runTuple(1) {
-                        combined.run {
+                        isolate.run {
                             for
-                                _ <- Check.require(false, "Check failure")
                                 _ <- Var.update[Int](_ + 1)
                                 v <- Var.get[Int]
                             yield v
@@ -302,7 +223,7 @@ class CheckTest extends Test:
                 }
                 result.map { case (failures, (finalVar, value)) =>
                     assert(failures.isEmpty)
-                    assert(finalVar == 1)
+                    assert(finalVar == 2)
                     assert(value == 2)
                 }
             }

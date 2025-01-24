@@ -92,14 +92,17 @@ class STMTest extends Test:
             Var.run(42) {
                 for
                     ref <- TRef.init(0)
-                    result <- STM.run(Var.isolate.update) {
-                        for
-                            _  <- ref.set(1)
-                            _  <- Var.set(100)
-                            v1 <- ref.get
-                            v2 <- Var.get[Int]
-                        yield (v1, v2)
-                    }
+                    result <-
+                        Var.isolate.update[Int].use {
+                            STM.run {
+                                for
+                                    _  <- ref.set(1)
+                                    _  <- Var.set(100)
+                                    v1 <- ref.get
+                                    v2 <- Var.get[Int]
+                                yield (v1, v2)
+                            }
+                        }
                     finalRef <- STM.run(ref.get)
                     finalVar <- Var.get[Int]
                 yield assert(result == (1, 100) && finalRef == 1 && finalVar == 100)
@@ -110,13 +113,15 @@ class STMTest extends Test:
             for
                 ref <- TRef.init(0)
                 result <- Emit.run {
-                    STM.run(Emit.isolate.merge[Int]) {
-                        for
-                            _ <- ref.set(1)
-                            _ <- Emit.value(42)
-                            v <- ref.get
-                            _ <- Emit.value(v)
-                        yield v
+                    Emit.isolate.merge[Int].use {
+                        STM.run {
+                            for
+                                _ <- ref.set(1)
+                                _ <- Emit.value(42)
+                                v <- ref.get
+                                _ <- Emit.value(v)
+                            yield v
+                        }
                     }
                 }
                 finalValue <- STM.run(ref.get)
@@ -130,13 +135,15 @@ class STMTest extends Test:
                 result <-
                     Emit.run {
                         Abort.run {
-                            STM.run(Emit.isolate.merge[Int]) {
-                                for
-                                    _ <- ref.set(42)
-                                    _ <- Emit.value(1)
-                                    _ <- Abort.fail(ex)
-                                    _ <- Emit.value(2)
-                                yield "unreachable"
+                            Emit.isolate.merge[Int].use {
+                                STM.run {
+                                    for
+                                        _ <- ref.set(42)
+                                        _ <- Emit.value(1)
+                                        _ <- Abort.fail(ex)
+                                        _ <- Emit.value(2)
+                                    yield "unreachable"
+                                }
                             }
                         }
                     }
@@ -149,22 +156,28 @@ class STMTest extends Test:
             Var.run(0) {
                 for
                     ref <- TRef.init(1)
-                    result <- STM.run(Var.isolate.update) {
-                        for
-                            _ <- ref.set(2)
-                            _ <- Var.set(1)
-                            innerResult <- TRefLog.isolate.run {
+                    result <-
+                        Var.isolate.update[Int].use {
+                            STM.run {
                                 for
-                                    _  <- ref.set(3)
-                                    _  <- Var.set(2)
-                                    v1 <- ref.get
-                                    v2 <- Var.get[Int]
-                                yield (v1, v2)
+                                    _ <- ref.set(2)
+                                    _ <- Var.set(1)
+                                    innerResult <-
+                                        Var.isolate.update[Int].use {
+                                            STM.run {
+                                                for
+                                                    _  <- ref.set(3)
+                                                    _  <- Var.set(2)
+                                                    v1 <- ref.get
+                                                    v2 <- Var.get[Int]
+                                                yield (v1, v2)
+                                            }
+                                        }
+                                    outerVar <- Var.get[Int]
+                                    finalRef <- ref.get
+                                yield (innerResult, outerVar, finalRef)
                             }
-                            outerVar <- Var.get[Int]
-                            finalRef <- ref.get
-                        yield (innerResult, outerVar, finalRef)
-                    }
+                        }
                     finalVar <- Var.get[Int]
                 yield assert(result == ((3, 2), 2, 3) && finalVar == 2)
             }
@@ -180,7 +193,7 @@ class STMTest extends Test:
             Memo.run {
                 for
                     ref <- TRef.init(1)
-                    result <- STM.run(Memo.isolate.merge) {
+                    result <- STM.run {
                         for
                             _      <- ref.set(2)
                             v1     <- f(2)
@@ -197,28 +210,26 @@ class STMTest extends Test:
 
         "rollback preserves all effect isolations" in run {
             val ex = new Exception("Test failure")
-            Var.run(0) {
-                for
-                    ref <- TRef.init(0)
-                    result <- Emit.run {
-                        Abort.run {
-                            STM.run(Emit.isolate.merge[Int].andThen(Var.isolate.update)) {
+            for
+                ref <- TRef.init(0)
+                result <- Emit.run {
+                    Abort.run {
+                        Emit.isolate.merge[Int].use {
+                            STM.run {
                                 for
                                     _ <- ref.set(1)
                                     _ <- Emit.value(1)
-                                    _ <- Var.set(1)
                                     _ <- Abort.fail(ex)
                                     _ <- ref.set(2)
                                     _ <- Emit.value(2)
-                                    _ <- Var.set(2)
                                 yield "unreachable"
                             }
                         }
                     }
-                    finalRef <- STM.run(ref.get)
-                    finalVar <- Var.get[Int]
-                yield assert(result == (Chunk.empty, Result.fail(ex)) && finalRef == 0 && finalVar == 0)
-            }
+                }
+                finalRef <- STM.run(ref.get)
+            yield assert(result == (Chunk.empty, Result.fail(ex)) && finalRef == 0)
+            end for
         }
 
     }
@@ -727,7 +738,7 @@ class STMTest extends Test:
 
         val ex = new Exception
 
-        val faultyTransaction: Int < STM = TRef.init(42).map { r =>
+        val faultyTransaction: Int < (STM & IO) = TRef.init(42).map { r =>
             throw ex
             r.get
         }

@@ -260,4 +260,7 @@ object Topic:
             }
         }
     end stream
+
+    given isolate: Isolate.Contextual[Topic, Async] = Isolate.Contextual.derive[Topic, Async]
+
 end Topic

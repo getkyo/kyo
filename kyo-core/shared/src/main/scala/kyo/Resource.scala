@@ -114,7 +114,7 @@ object Resource:
                                 }
                             }
                                 .unit
-                                .pipe(Async.run)
+                                .pipe(Async.run[Nothing, Unit, Any])
                                 .map(p.becomeDiscard)
                     }
                 ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
@@ -122,5 +122,7 @@ object Resource:
                     .map(result => p.get.andThen(result))
             }
         }
+
+    given Isolate.Contextual[Resource, Any] = Isolate.Contextual.derive[Resource, Any]
 
 end Resource

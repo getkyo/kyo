@@ -4,12 +4,11 @@ import java.util.concurrent.Flow.*
 import kyo.*
 import kyo.interop.flow.StreamSubscription.StreamCanceled
 import kyo.interop.flow.StreamSubscription.StreamComplete
-import kyo.kernel.Boundary
 import scala.annotation.nowarn
 
-abstract private[kyo] class StreamPublisher[V, Ctx](
-    stream: Stream[V, Ctx]
-) extends Publisher[V]:
+abstract private[kyo] class StreamPublisher[V, S](
+    stream: Stream[V, S & IO]
+)(using Isolate.Contextual[S, IO]) extends Publisher[V]:
 
     protected def bind(subscriber: Subscriber[? >: V]): Unit
 
@@ -20,24 +19,25 @@ abstract private[kyo] class StreamPublisher[V, Ctx](
             bind(subscriber)
     end subscribe
 
-    private[StreamPublisher] def getSubscription(subscriber: Subscriber[? >: V])(using Frame): StreamSubscription[V, Ctx] < IO =
-        IO.Unsafe(new StreamSubscription[V, Ctx](stream, subscriber))
+    private[StreamPublisher] def getSubscription(subscriber: Subscriber[? >: V])(using Frame): StreamSubscription[V, S] < IO =
+        IO.Unsafe(new StreamSubscription[V, S](stream, subscriber))
     end getSubscription
 
 end StreamPublisher
 
 object StreamPublisher:
 
-    def apply[V, Ctx](
-        stream: Stream[V, Ctx],
+    def apply[V, S](
+        using Isolate.Contextual[S, IO]
+    )(
+        stream: Stream[V, S & IO],
         capacity: Int = Int.MaxValue
     )(
         using
-        Boundary[Ctx, IO & Abort[StreamCanceled]],
         Frame,
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
-    ): StreamPublisher[V, Ctx] < (Resource & IO & Ctx) =
+    ): StreamPublisher[V, S] < (Resource & IO & S) =
         def discardSubscriber(subscriber: Subscriber[? >: V]): Unit =
             subscriber.onSubscribe(new Subscription:
                 override def request(n: Long): Unit = ()
@@ -46,10 +46,10 @@ object StreamPublisher:
         end discardSubscriber
 
         def consumeChannel(
-            publisher: StreamPublisher[V, Ctx],
+            publisher: StreamPublisher[V, S],
             channel: Channel[Subscriber[? >: V]],
             supervisor: Fiber.Promise[Nothing, Unit]
-        ): Unit < (Async & Ctx) =
+        ): Unit < (Async & S) =
             Abort.recover[Closed](_ => supervisor.interrupt.unit)(
                 channel.stream().foreach: subscriber =>
                     for
@@ -65,7 +65,7 @@ object StreamPublisher:
                     _.close.map(_.foreach(_.foreach(discardSubscriber(_))))
                 )
             publisher <- IO.Unsafe {
-                new StreamPublisher[V, Ctx](stream):
+                new StreamPublisher[V, S](stream):
                     override protected def bind(
                         subscriber: Subscriber[? >: V]
                     ): Unit =
@@ -74,28 +74,30 @@ object StreamPublisher:
                             case _                    => discardSubscriber(subscriber)
             }
             supervisor <- Resource.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt.unit)
-            _          <- Resource.acquireRelease(Async._run(consumeChannel(publisher, channel, supervisor)))(_.interrupt.unit)
+            _          <- Resource.acquireRelease(Async.run(consumeChannel(publisher, channel, supervisor)))(_.interrupt.unit)
         yield publisher
         end for
     end apply
 
     object Unsafe:
         @nowarn("msg=anonymous")
-        inline def apply[V, Ctx](
-            stream: Stream[V, Ctx],
-            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & Ctx)) => Unit
+        def apply[V, S](
+            using Isolate.Contextual[S, IO]
+        )(
+            stream: Stream[V, S & IO],
+            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & S)) => Unit
         )(
             using
             AllowUnsafe,
             Frame,
             Tag[Emit[Chunk[V]]],
             Tag[Poll[Chunk[V]]]
-        ): StreamPublisher[V, Ctx] =
-            new StreamPublisher[V, Ctx](stream):
+        ): StreamPublisher[V, S] =
+            new StreamPublisher[V, S](stream):
                 override protected def bind(
                     subscriber: Subscriber[? >: V]
                 ): Unit =
-                    discard(StreamSubscription.Unsafe._subscribe(
+                    discard(StreamSubscription.Unsafe.subscribe(
                         stream,
                         subscriber
                     )(

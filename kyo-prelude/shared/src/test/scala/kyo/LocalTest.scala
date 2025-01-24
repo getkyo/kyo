@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.*
-import kyo.kernel.Boundary
 
 class LocalTest extends Test:
 
@@ -117,10 +116,10 @@ class LocalTest extends Test:
             val isolatedLocal    = Local.initIsolated(10)
             val nonIsolatedLocal = Local.init("test")
 
-            val boundary = Boundary.derive[Any, Any]
+            val isolate = Isolate.Contextual[Any, Any]
 
             val context =
-                isolatedLocal.let(20)(nonIsolatedLocal.let("modified")(boundary { (trace, context) => context })).eval
+                isolatedLocal.let(20)(nonIsolatedLocal.let("modified")(isolate.runInternal { (trace, context) => context })).eval
 
             val nonIsolatedContext = context.get(Tag[Local.internal.State])
             assert(!nonIsolatedContext.contains(isolatedLocal))
@@ -133,16 +132,15 @@ class LocalTest extends Test:
             val isolatedLocal    = Local.initIsolated(10)
             val nonIsolatedLocal = Local.init("test")
 
-            val outerBoundary = Boundary.derive[Any, Any]
-            val innerBoundary = Boundary.derive[Any, Any]
+            val isolate = Isolate.Contextual[Any, Any]
 
             val context =
                 isolatedLocal.let(20)(
                     nonIsolatedLocal.let("outer")(
-                        outerBoundary { (outerTrace, outerContext) =>
+                        isolate.runInternal { (outerTrace, outerContext) =>
                             isolatedLocal.let(30)(
                                 nonIsolatedLocal.let("inner")(
-                                    innerBoundary { (innerTrace, innerContext) => innerContext }
+                                    isolate.runInternal { (innerTrace, innerContext) => innerContext }
                                 )
                             )
                         }
