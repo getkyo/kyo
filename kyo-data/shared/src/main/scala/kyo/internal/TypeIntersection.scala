@@ -34,6 +34,8 @@ sealed abstract class TypeIntersection[A]:
       */
     type Map[F[_]] = Join[Tuple.Map[AsTuple, F]]
 
+    type Filter[F[_] <: Boolean] = Join[Tuple.Filter[AsTuple, F]]
+
 end TypeIntersection
 
 object TypeIntersection:

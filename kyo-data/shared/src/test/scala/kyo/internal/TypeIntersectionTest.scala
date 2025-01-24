@@ -18,6 +18,16 @@ class TypeIntersectionTest extends AnyFreeSpec:
     trait Recursive[T <: Base]     extends Base
     trait Empty                    extends Base with Generic[String]
 
+    "filter" in {
+        val ts = TypeIntersection[Int & String]
+        type IsInt[V] <: Boolean =
+            V match
+                case String => true
+                case _      => false
+        val x: ts.Filter[IsInt] = ???
+        val y                   = x
+    }
+
     "basic type decomposition" - {
         "single trait" in {
             val typeSet = TypeIntersection[A]
