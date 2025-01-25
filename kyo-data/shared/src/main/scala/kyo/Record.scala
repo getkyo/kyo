@@ -130,7 +130,7 @@ object Record:
 
     final infix class ~[Name <: String, Value] private ()
 
-    object ~ :
+    object `~`:
         given [Name <: String, Value](using CanEqual[Value, Value]): CanEqual[Name ~ Value, Name ~ Value] =
             CanEqual.derived
 
@@ -261,10 +261,6 @@ object Record:
         inline given [Fields](using ev: TypeIntersection[Fields]): AsFields[Fields] =
             AsFieldsInternal.summonAsField
     end AsFields
-
-    private type HasCanEqual[Field] =
-        Field match
-            case name ~ value => CanEqual[value, value]
 
     given [Fields, T](using TypeIntersection.Aux[Fields, T], CanEqual[T, T]): CanEqual[Record[Fields], Record[Fields]] =
         CanEqual.derived
