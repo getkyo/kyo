@@ -461,7 +461,6 @@ class RecordTest extends Test:
                 val medium: Record["name" ~ String & "age" ~ Int] = full
                 val minimal: Record["name" ~ String]              = full
 
-                summon[CanEqual[("name" ~ String) *: ("age" ~ Int) *: EmptyTuple, ("name" ~ String) *: ("age" ~ Int) *: EmptyTuple]]
                 assert(minimal == medium)
                 assert(medium == full)
                 assert(minimal == full)
