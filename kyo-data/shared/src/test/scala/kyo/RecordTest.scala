@@ -432,7 +432,7 @@ class RecordTest extends Test:
             """)
         }
 
-        "not compile when fields lack CanEqual" in pendingUntilFixed { // looks like scala3 bug
+        "not compile when fields lack CanEqual" in {
             case class NoEqual(x: Int)
 
             val record1: Record["test" ~ NoEqual] = "test" ~ NoEqual(1)
