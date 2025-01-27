@@ -149,45 +149,59 @@ class LayerTest extends Test:
     }
     "make" - {
         "none" in {
-            assertDoesNotCompile("""Layer.init[String]()""")
+            typeCheckFailure("""Layer.init[String]()""")(
+                "Missing Input: scala.Predef.String"
+            )
         }
         "missing Target" in {
             val a = Layer(true)
             discard(a)
-            assertDoesNotCompile("""Layer.init(a)""")
+            typeCheckFailure("""Layer.init(a)""")(
+                "Missing Target Type; Did you forget to provide it?"
+            )
         }
         "circular dependency" in {
             val a = Layer.from((s: String) => s.size)
             val b = Layer.from((i: Int) => (i % 2 == 0))
             val c = Layer.from((b: Boolean) => b.toString)
             discard(a, b, c)
-            assertDoesNotCompile("""Layer.init[String](a, b, c)""")
+            typeCheckFailure("""Layer.init[String](a, b, c)""")(
+                "Circular dependencies found: c with Inputs: scala.Boolean and Outputs: java.lang.String"
+            )
         }
         "missing input" in {
             val a = Layer.from((s: String) => s.size)
             val b = Layer.from((i: Int) => i % 2 == 0)
             discard(a, b)
-            assertDoesNotCompile("""Layer.init[Boolean](a, b)""")
+            typeCheckFailure("""Layer.init[Boolean](a, b)""")(
+                "Missing Input: java.lang.String for Layer: a"
+            )
         }
         "missing multiple inputs" in {
             val a = Layer.from((s: String) => s.isEmpty)
             val b = Layer.from((i: Int) => i.toDouble)
             val c = Layer.from((_: Boolean, _: Double) => 'c')
             discard(a, b, c)
-            assertDoesNotCompile("""Layer.init[Char](a, b, c)""")
+            typeCheckFailure("""Layer.init[Char](a, b, c)""")(
+                "Missing Input: java.lang.String for Layer"
+            )
         }
         "missing output" in {
             val a = Layer(42)
             val b = Layer.from((i: Int) => i.toDouble)
             val c = Layer.from((d: Double) => d.toLong)
             discard(a, b, c)
-            assertDoesNotCompile("""Layer.init[String](a, b, c)""")
+            typeCheckFailure("""Layer.init[String](a, b, c)""")(
+                "Missing Input: scala.Predef.String"
+            )
         }
         "ambigious input" in {
             val a = Layer(42)
             val b = Layer(42)
             discard(a, b)
-            assertDoesNotCompile("""Layer.init[Int](a, b)""")
+            typeCheckFailure("""Layer.init[Int](a, b)""")(
+                "Ambigious Inputs: a, b for: scala.Int"
+            )
         }
         "complex layer" in run {
             val s = Layer("Start")
@@ -230,12 +244,14 @@ class LayerTest extends Test:
             val b = Layer(true)
             val c = Layer(0)
             discard(a, b, c)
-            assertDoesNotCompile("""Layer.init[String](a, b, c)""")
+            typeCheckFailure("""Layer.init[String](a, b, c)""")
         }
     }
     "runLayer" - {
         "no layer" in {
-            assertDoesNotCompile("""Env.runLayer()(Env.get[Boolean])""")
+            typeCheckFailure("""Env.runLayer()(Env.get[Boolean])""")(
+                "Missing Input: scala.Boolean"
+            )
         }
         "one layer" in run {
             class Foo:
@@ -265,7 +281,9 @@ class LayerTest extends Test:
             val c = Layer('c')
             val d = Layer.from((c: Char) => c.isDigit)
             discard(c, d)
-            assertDoesNotCompile("""Env.runLayer(c, d)(Env.get[String])""")
+            typeCheckFailure("""Env.runLayer(c, d)(Env.get[String])""")(
+                "Missing Input: java.lang.String"
+            )
         }
         "intersection" in run {
             Memo.run(Env.runLayer(Layer(42), Layer("hello"))(Env.get[Int].map(_ => Env.get[String]).map(_ => succeed)))

@@ -9,12 +9,13 @@ class TypeMapTest extends Test:
             assert(TypeMap.empty.isEmpty)
         }
         "get[A]" in {
-            assertDoesNotCompile("TypeMap.empty.get[String]")
-            assertDoesNotCompile("TypeMap.empty.get[AnyVal]")
-            assertDoesNotCompile("TypeMap.empty.get[AnyRef]")
-            assertDoesNotCompile("TypeMap.empty.get[Matchable]")
-            assertDoesNotCompile("TypeMap.empty.get[Object]")
-            assertDoesNotCompile("TypeMap.empty.get[Nothing]")
+            val error = "does not conform to lower bound Any"
+            typeCheckFailure("TypeMap.empty.get[String]")(error)
+            typeCheckFailure("TypeMap.empty.get[AnyVal]")(error)
+            typeCheckFailure("TypeMap.empty.get[AnyRef]")(error)
+            typeCheckFailure("TypeMap.empty.get[Matchable]")(error)
+            typeCheckFailure("TypeMap.empty.get[Object]")(error)
+            typeCheckFailure("TypeMap.empty.get[Nothing]")(error)
         }
         "get[Any]" in {
             assert(TypeMap.empty.get[Any].isInstanceOf[Unit])
@@ -63,7 +64,7 @@ class TypeMapTest extends Test:
             assert(e.size == 4)
         }
         "distinct" in pendingUntilFixed {
-            assertDoesNotCompile("TypeMap(0, 0)")
+            typeCheckFailure("TypeMap(0, 0)")
         }
     }
     "fatal" - {
@@ -89,20 +90,20 @@ class TypeMapTest extends Test:
 
     ".get" - {
         "A & B" in {
-            assertDoesNotCompile(
+            typeCheckFailure(
                 """
                   | def intersection[A, B](m: TypeMap[A & B]) =
                   |     m.get[A & B]
                   |""".stripMargin
-            )
+            )("Method doesn't accept intersection types. Found: A & B")
         }
         "A | B" in {
-            assertDoesNotCompile(
+            typeCheckFailure(
                 """
                   | def union[A, B](m: TypeMap[A & B]) =
                   |     m.get[A | B]
                   |""".stripMargin
-            )
+            )("Method doesn't accept union types. Found: A | B")
         }
         "subtype" in {
             abstract class A
@@ -204,17 +205,21 @@ class TypeMapTest extends Test:
             assert(e2.get[Boolean])
         }
         "A & B" in {
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                   | def intersection[A, B](ab: A & B) =
                   |     TypeMap.empty.add(ab)
-                  |""".stripMargin)
+                  |""".stripMargin)(
+                "Method doesn't accept intersection types. Found: A & B"
+            )
         }
         "A | B" in {
-            assertDoesNotCompile(
+            typeCheckFailure(
                 """
                   | def union[A, B](ab: A | B) =
                   |     TypeMap.empty.add(ab)
                   |""".stripMargin
+            )(
+                "Method doesn't accept union types. Found: A | B"
             )
         }
         "subtype" in {
@@ -226,10 +231,12 @@ class TypeMapTest extends Test:
             val e1: TypeMap[A] = TypeMap(a)
             val e2             = e1.add[A](b1)
             assert(e2.get[A] eq b1)
-            assertDoesNotCompile(
+            typeCheckFailure(
                 """
                   | e2.get[B]
                   |""".stripMargin
+            )(
+                "Type argument B does not conform to lower bound A"
             )
         }
     }
@@ -262,10 +269,12 @@ class TypeMapTest extends Test:
             assert(p.size == 1)
         }
         "Env[Super] -> Env[Sub]" in {
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                   | val e = TypeMap(new Throwable)
                   | val p = e.prune[Exception]
-                  |""".stripMargin)
+                  |""".stripMargin)(
+                "Type argument Exception does not conform to lower bound Throwable"
+            )
         }
         "complex" in {
             val e =

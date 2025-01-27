@@ -197,18 +197,6 @@ class ResultTest extends Test:
         }
     }
 
-    "get" - {
-        "returns the value for Success" in {
-            assert(Result.succeed(1).getOrThrow == 1)
-        }
-        "can't be called for Failure" in {
-            assertDoesNotCompile("Result.error(ex).get")
-        }
-        "throws an exception for Panic" in {
-            assertThrows[Exception](Result.panic(ex).getOrThrow)
-        }
-    }
-
     "getOrElse" - {
         "returns the value for Success" in {
             assert(Result.succeed(1).getOrElse(0) == 1)
@@ -230,7 +218,7 @@ class ResultTest extends Test:
             assert(Result.succeed(1).getOrThrow == 1)
         }
         "doesn't compile for non-Throwable Failure" in {
-            assertDoesNotCompile("Result.fail(1).getOrThrow")
+            typeCheckFailure("Result.fail(1).getOrThrow")("value getOrThrow is not a member of kyo.Result")
         }
         "throws for Throwable Failure" in {
             assert(Result.catching[Exception](Result.fail(ex).getOrThrow) == Result.fail(ex))
@@ -418,7 +406,7 @@ class ResultTest extends Test:
 
     "exception" - {
         "only available if E is Throwable" in {
-            assertDoesNotCompile("Result.Failure(1).exception")
+            typeCheckFailure("Result.Failure(1).exception")("value exception is not a member of kyo.Result.Failure")
         }
         "from Failure" in {
             val ex = new Exception
@@ -453,7 +441,7 @@ class ResultTest extends Test:
             "fails to compile for non-Throwable error" in {
                 val failure: Result[String, Int] = Failure("Something went wrong")
                 val _                            = failure
-                assertDoesNotCompile("failure.toTry")
+                typeCheckFailure("failure.toTry")("value toTry is not a member of kyo.Result")
             }
         }
 

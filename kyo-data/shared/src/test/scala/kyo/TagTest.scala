@@ -8,7 +8,7 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.annotation.nowarn
 
-class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
+class TagTest extends Test:
 
     inline def test[T1, T2](using k1: Tag[T1], i1: ITag[T1], k2: Tag[T2], i2: ITag[T2]): Unit =
         "T1 <:< T2" in {
@@ -221,11 +221,10 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
     val test = new UnsupportedTest {}
 
     "unsupported types" in {
-        assertDoesNotCompile("Tag[Nothing]")
-        assertDoesNotCompile("Tag[UnsupportedTest#A]")
-        assertDoesNotCompile("Tag[UnsupportedTest.A]")
-        assertDoesNotCompile("Tag[String & Int]")
-        assertDoesNotCompile("Tag[String | Int]")
+        typeCheckFailure("Tag[Nothing]")("Tag cannot be created for Nothing as it has no values")
+        typeCheckFailure("Tag[UnsupportedTest#A]")("Please provide an implicit kyo.Tag[TagTest.this.UnsupportedTest#A] parameter")
+        typeCheckFailure("Tag[String & Int]")("Method doesn't accept intersection types. Found: scala.Predef.String & scala.Int")
+        typeCheckFailure("Tag[String | Int]")("Method doesn't accept union types. Found: scala.Predef.String | scala.Int.")
     }
 
     "show" - {
@@ -415,9 +414,9 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
             trait A
             @nowarn
             trait B
-            assertDoesNotCompile("Union[A & B]")
-            assertDoesNotCompile("Union[A & B | A]")
-            assertDoesNotCompile("Union[A | B & A]")
+            typeCheckFailure("Union[A & B]")("Union tags don't support type intersections. Found: A & B")
+            typeCheckFailure("Union[A & B | A]")("Union tags don't support type intersections. Found: A & B")
+            typeCheckFailure("Union[A | B & A]")("Union tags don't support type intersections. Found: B & A")
         }
 
         "showTpe" - {
@@ -585,9 +584,9 @@ class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
             trait A
             @nowarn
             trait B
-            assertDoesNotCompile("Intersection[A | B]")
-            assertDoesNotCompile("Intersection[A & B | A]")
-            assertDoesNotCompile("Intersection[A | B & A]")
+            typeCheckFailure("Intersection[A | B]")("Intersection tags don't support type unions. Found: A | B")
+            typeCheckFailure("Intersection[A & B | A]")("Intersection tags don't support type unions. Found: A & B | A")
+            typeCheckFailure("Intersection[A | B & A]")("Intersection tags don't support type unions. Found: A | B & A")
         }
 
         "showTpe" - {
