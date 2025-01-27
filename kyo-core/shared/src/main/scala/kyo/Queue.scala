@@ -127,7 +127,22 @@ object Queue:
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
     def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Queue[A] < IO =
-        IO.Unsafe(Unsafe.init(capacity, access))
+        initWith[A](capacity, access)(identity)
+
+    /** Uses a new Queue with the provided count.
+      * @param capacity
+      *   the desired capacity of the queue. Note that this will be rounded up to the next power of two.
+      * @param access
+      *   the access pattern (default is MPMC)
+      * @param f
+      *   The function to apply to the new Queue
+      * @return
+      *   The result of applying the function
+      */
+    inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](inline f: Queue[A] => B < S)(
+        using inline frame: Frame
+    ): B < (IO & S) =
+        IO.Unsafe(f(Unsafe.init(capacity, access)))
 
     /** An unbounded queue that can grow indefinitely.
       *
@@ -158,7 +173,23 @@ object Queue:
           *   a new Unbounded Queue instance
           */
         def init[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < IO =
-            IO.Unsafe(Unsafe.init(access, chunkSize))
+            initWith[A](access, chunkSize)(identity)
+
+        /** Uses a new unbounded Queue with the provided count.
+          * @param count
+          *   The initial count for the latch
+          * @param f
+          *   The function to apply to the new Queue
+          * @return
+          *   The result of applying the function
+          */
+        inline def initWith[A](
+            access: Access = Access.MultiProducerMultiConsumer,
+            chunkSize: Int = 8
+        )[B, S](inline f: Unbounded[A] => B < S)(
+            using inline frame: Frame
+        ): B < (IO & S) =
+            IO.Unsafe(f(Unsafe.init(access, chunkSize)))
 
         /** Initializes a new dropping queue with the specified capacity and access pattern.
           *
@@ -296,7 +327,7 @@ object Queue:
             final protected val _closed = AtomicRef.Unsafe.init(Maybe.empty[Result.Error[Closed]])
 
             final def close()(using frame: Frame, allow: AllowUnsafe) =
-                val fail = Result.Fail(Closed("Queue", initFrame))
+                val fail = Result.Failure(Closed("Queue", initFrame))
                 Maybe.when(_closed.compareAndSet(Maybe.empty, Maybe(fail)))(_drain())
             end close
 

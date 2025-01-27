@@ -52,13 +52,13 @@ object Routes:
     def add[A: Tag, I, E: SafeClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Async & Env[A] & Abort[E])
     )(using Frame): Unit < Routes =
-        Emit(
+        Emit.value(
             Route(
                 e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic((a: A) =>
                     (i: I) =>
                         Abort.run[E](Env.run(a)(f(i))).map {
                             case Result.Success(v) => Right(v)
-                            case Result.Fail(e)    => Left(e)
+                            case Result.Failure(e) => Left(e)
                             case Result.Panic(ex)  => throw ex
                         }
                 )

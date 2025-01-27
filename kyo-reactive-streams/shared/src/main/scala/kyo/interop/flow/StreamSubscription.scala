@@ -31,9 +31,9 @@ final private[kyo] class StreamSubscription[V, Ctx](
 
     private[interop] inline def subscribe(using Frame): Unit < IO = IO(subscriber.onSubscribe(this))
 
-    private[interop] def poll(using Tag[Poll[Chunk[V]]], Frame): StreamFinishState < (Async & Poll[Chunk[V]]) =
-        inline def loopPoll(requesting: Long): (Chunk[V] | StreamFinishState) < (IO & Poll[Chunk[V]]) =
-            Loop[Long, Chunk[V] | StreamFinishState, IO & Poll[Chunk[V]]](requesting): requesting =>
+    private[interop] def poll(using Tag[Poll[Chunk[V]]], Frame): StreamComplete < (Async & Poll[Chunk[V]] & Abort[StreamCanceled]) =
+        inline def loopPoll(requesting: Long): (Chunk[V] | StreamComplete) < (IO & Poll[Chunk[V]]) =
+            Loop[Long, Chunk[V] | StreamComplete, IO & Poll[Chunk[V]]](requesting): requesting =>
                 Poll.andMap:
                     case Present(values) =>
                         if values.size <= requesting then
@@ -43,9 +43,9 @@ final private[kyo] class StreamSubscription[V, Ctx](
                             IO(values.take(requesting.intValue).foreach(subscriber.onNext(_)))
                                 .andThen(Loop.done(values.drop(requesting.intValue)))
                     case Absent =>
-                        IO(Loop.done(StreamFinishState.StreamComplete))
+                        IO(Loop.done(StreamComplete))
 
-        Loop[Chunk[V], StreamFinishState, Async & Poll[Chunk[V]]](Chunk.empty[V]): leftOver =>
+        Loop[Chunk[V], StreamComplete, Async & Poll[Chunk[V]] & Abort[StreamCanceled]](Chunk.empty[V]): leftOver =>
             Abort.run[Closed](requestChannel.safe.take).map:
                 case Result.Success(requesting) =>
                     if requesting <= leftOver.size then
@@ -55,11 +55,10 @@ final private[kyo] class StreamSubscription[V, Ctx](
                         IO(leftOver.foreach(subscriber.onNext(_)))
                             .andThen(loopPoll(requesting - leftOver.size))
                             .map {
-                                case nextLeftOver: Chunk[V]   => Loop.continue(nextLeftOver)
-                                case state: StreamFinishState => Loop.done(state)
+                                case nextLeftOver: Chunk[V] => Loop.continue(nextLeftOver)
+                                case _: StreamComplete      => Loop.done(StreamComplete)
                             }
-                case Result.Fail(_)          => IO(Loop.done(StreamFinishState.StreamCanceled))
-                case Result.Panic(exception) => Abort.panic(exception).andThen(Loop.done(StreamFinishState.StreamCanceled))
+                case result => Abort.get(result.mapFailure(_ => StreamCanceled)).andThen(Loop.done(StreamComplete))
     end poll
 
     private[interop] def consume(
@@ -67,15 +66,15 @@ final private[kyo] class StreamSubscription[V, Ctx](
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]],
         Frame,
-        Boundary[Ctx, IO]
-    ): Fiber[Nothing, StreamFinishState] < (IO & Ctx) =
+        Boundary[Ctx, IO & Abort[StreamCanceled]]
+    ): Fiber[StreamCanceled, StreamComplete] < (IO & Ctx) =
         Async
-            ._run[Nothing, StreamFinishState, Ctx](Poll.run(stream.emit)(poll).map(_._2))
+            ._run[StreamCanceled, StreamComplete, Ctx](Poll.run(stream.emit)(poll).map(_._2))
             .map { fiber =>
                 fiber.onComplete {
-                    case Result.Success(StreamFinishState.StreamComplete) => IO(subscriber.onComplete())
-                    case Result.Panic(e)                                  => IO(subscriber.onError(e))
-                    case _                                                => IO.unit
+                    case Result.Success(StreamComplete) => IO(subscriber.onComplete())
+                    case Result.Panic(e)                => IO(subscriber.onError(e))
+                    case Result.Failure(StreamCanceled) => Kyo.unit
                 }.andThen(fiber)
             }
     end consume
@@ -84,9 +83,10 @@ end StreamSubscription
 
 object StreamSubscription:
 
-    private[interop] enum StreamFinishState derives CanEqual:
-        case StreamComplete, StreamCanceled
-    end StreamFinishState
+    type StreamComplete = StreamComplete.type
+    case object StreamComplete
+    type StreamCanceled = StreamCanceled.type
+    case object StreamCanceled
 
     inline def subscribe[V, Ctx](
         stream: Stream[V, Ctx],
@@ -120,7 +120,7 @@ object StreamSubscription:
             stream: Stream[V, Ctx],
             subscriber: Subscriber[? >: V]
         )(
-            subscribeCallback: (Fiber[Nothing, StreamFinishState] < (IO & Ctx)) => Unit
+            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & Ctx)) => Unit
         )(
             using
             AllowUnsafe,
@@ -134,7 +134,7 @@ object StreamSubscription:
             stream: Stream[V, Ctx],
             subscriber: Subscriber[? >: V]
         )(
-            subscribeCallback: (Fiber[Nothing, StreamFinishState] < (IO & Ctx)) => Unit
+            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & Ctx)) => Unit
         )(
             using
             AllowUnsafe,

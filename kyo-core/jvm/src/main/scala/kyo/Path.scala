@@ -162,12 +162,9 @@ class Path private (val path: List[String]) derives CanEqual:
             Resource.acquireRelease(acquire)(release).map { res =>
                 readOnce(res).map { state =>
                     Loop(state) {
-                        case Absent => Loop.done(Ack.Stop)
+                        case Absent => Loop.done
                         case Present(content) =>
-                            Emit.andMap(writeOnce(content)) {
-                                case Ack.Stop => Loop.done(Ack.Stop)
-                                case _        => readOnce(res).map(Loop.continue(_))
-                            }
+                            Emit.valueWith(writeOnce(content))(readOnce(res).map(Loop.continue(_)))
                     }
                 }
             }
@@ -286,7 +283,7 @@ class Path private (val path: List[String]) derives CanEqual:
             (parentExists, createFolders) match
                 case (true, _)     => IO(JFiles.copy(toJava, to.toJava, opts*)).unit
                 case (false, true) => Path(toJava.getParent().toString).mkDir.andThen(IO(JFiles.copy(toJava, to.toJava, opts*)).unit)
-                case _             => IO.unit
+                case _             => ()
         }
     end copy
 

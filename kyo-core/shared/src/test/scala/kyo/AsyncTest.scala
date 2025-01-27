@@ -72,8 +72,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(Duration.Infinity))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(_: Timeout) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Failure(_: Timeout) => succeed
+                    case v                          => fail(v.toString())
                 }
         }
 
@@ -82,8 +82,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(_: Timeout) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Failure(_: Timeout) => succeed
+                    case v                          => fail(v.toString())
                 }
         }
 
@@ -92,8 +92,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(_: Timeout) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Failure(_: Timeout) => succeed
+                    case v                          => fail(v.toString())
                 }
         }
     }
@@ -184,6 +184,11 @@ class AsyncTest extends Test:
                 )
             Abort.run(race).map {
                 r => assert(r == Result.panic(ex1))
+            }
+        }
+        "never" in runNotJS {
+            Async.race(Async.never, 1).map { r =>
+                assert(r == 1)
             }
         }
     }
@@ -520,8 +525,8 @@ class AsyncTest extends Test:
                 yield value
 
             Abort.run[Timeout](result).map {
-                case Result.Fail(_: Timeout) => succeed
-                case other                   => fail(s"Expected Timeout, got $other")
+                case Result.Failure(_: Timeout) => succeed
+                case other                      => fail(s"Expected Timeout, got $other")
             }
         }
 
@@ -541,7 +546,7 @@ class AsyncTest extends Test:
                 result <- Async.run(v)
                 result <- fiber.getResult
                 _      <- untilTrue(flag.get)
-            yield assert(result.isFail)
+            yield assert(result.isFailure)
         }
     }
 
@@ -696,9 +701,9 @@ class AsyncTest extends Test:
             Emit.run {
                 Async.timeout(1.hour, emitIsolate) {
                     for
-                        _ <- Emit(1)
+                        _ <- Emit.value(1)
                         _ <- Async.sleep(1.millis)
-                        _ <- Emit(2)
+                        _ <- Emit.value(2)
                     yield "done"
                 }
             }.map { result =>
@@ -762,14 +767,14 @@ class AsyncTest extends Test:
                     emitIsolate,
                     Seq(
                         for
-                            _ <- Emit("a1")
+                            _ <- Emit.value("a1")
                             _ <- Async.sleep(2.millis)
-                            _ <- Emit("a2")
+                            _ <- Emit.value("a2")
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2
                     )
                 )
@@ -821,14 +826,14 @@ class AsyncTest extends Test:
                     Async.gather(emitIsolate)(
                         Seq(
                             for
-                                _ <- Emit("a1")
+                                _ <- Emit.value("a1")
                                 _ <- Async.sleep(2.millis)
-                                _ <- Emit("a2")
+                                _ <- Emit.value("a2")
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("b2")
+                                _ <- Emit.value("b2")
                             yield 2
                         )
                     )
@@ -845,14 +850,14 @@ class AsyncTest extends Test:
                     Async.gather(1, emitIsolate)(
                         Seq(
                             for
-                                _ <- Emit("a1")
-                                _ <- Async.sleep(5.millis)
-                                _ <- Emit("a2")
+                                _ <- Emit.value("a1")
+                                _ <- Async.sleep(50.millis)
+                                _ <- Emit.value("a2")
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("b2")
+                                _ <- Emit.value("b2")
                             yield 2
                         )
                     )
@@ -869,14 +874,14 @@ class AsyncTest extends Test:
                 Emit.run {
                     Async.gather(emitIsolate)(
                         for
-                            _ <- Emit("a1")
+                            _ <- Emit.value("a1")
                             _ <- Async.sleep(2.millis)
-                            _ <- Emit("a2")
+                            _ <- Emit.value("a2")
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2
                     )
                 }.map { result =>
@@ -891,14 +896,14 @@ class AsyncTest extends Test:
                 Emit.run {
                     Async.gather(1, emitIsolate)(
                         for
-                            _ <- Emit("a1")
-                            _ <- Async.sleep(10.millis)
-                            _ <- Emit("a2")
+                            _ <- Emit.value("a1")
+                            _ <- Async.sleep(50.millis)
+                            _ <- Emit.value("a2")
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2
                     )
                 }.map { result =>
@@ -916,20 +921,20 @@ class AsyncTest extends Test:
                     Abort.run {
                         Async.gather(emitIsolate)(
                             for
-                                _ <- Emit("a1")
+                                _ <- Emit.value("a1")
                                 _ <- Abort.fail(error)
-                                _ <- Emit("a2")
+                                _ <- Emit.value("a2")
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("b2")
+                                _ <- Emit.value("b2")
                             yield 2
                         )
                     }
                 }.map { case (emitted, result) =>
                     assert(emitted == Seq("b1", "b2"))
-                    assert(result == Result.success(Chunk(2)))
+                    assert(result == Result.succeed(Chunk(2)))
                 }
             }
 
@@ -942,23 +947,23 @@ class AsyncTest extends Test:
                     Abort.run {
                         Async.gather(emitIsolate)(
                             for
-                                _ <- Emit("a1")
+                                _ <- Emit.value("a1")
                                 _ <- Abort.fail(error1)
                             yield 1,
                             for
-                                _ <- Emit("b1")
+                                _ <- Emit.value("b1")
                                 _ <- Abort.fail(error2)
                             yield 2,
                             for
-                                _ <- Emit("c1")
+                                _ <- Emit.value("c1")
                                 _ <- Async.sleep(1.millis)
-                                _ <- Emit("c2")
+                                _ <- Emit.value("c2")
                             yield 3
                         )
                     }
                 }.map { case (emitted, result) =>
                     assert(emitted == Chunk("c1", "c2"))
-                    assert(result == Result.success(Chunk(3)))
+                    assert(result == Result.succeed(Chunk(3)))
                 }
             }
 
@@ -969,18 +974,18 @@ class AsyncTest extends Test:
                 Emit.run {
                     Async.gather(2, emitIsolate)(
                         for
-                            _ <- Emit("a1")
+                            _ <- Emit.value("a1")
                             _ <- Abort.fail(error)
                         yield 1,
                         for
-                            _ <- Emit("b1")
+                            _ <- Emit.value("b1")
                             _ <- Async.sleep(2.millis)
-                            _ <- Emit("b2")
+                            _ <- Emit.value("b2")
                         yield 2,
                         for
-                            _ <- Emit("c1")
+                            _ <- Emit.value("c1")
                             _ <- Async.sleep(1.millis)
-                            _ <- Emit("c2")
+                            _ <- Emit.value("c2")
                         yield 3
                     )
                 }.map { case (emitted, results) =>
@@ -1008,7 +1013,7 @@ class AsyncTest extends Test:
                     }
                 }.map { case (finalState, result) =>
                     assert(finalState == 42)
-                    assert(result == Result.success(Chunk("b")))
+                    assert(result == Result.succeed(Chunk("b")))
                 }
             }
         }
@@ -1066,6 +1071,151 @@ class AsyncTest extends Test:
             }.map(_.get).map { result =>
                 assert(result == 1)
             }
+        }
+    }
+
+    "memoize" - {
+        "caches successful results" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    counter.incrementAndGet.map(_ => 42)
+                }
+                v1    <- memoized()
+                v2    <- memoized()
+                v3    <- memoized()
+                count <- counter.get
+            yield
+                assert(v1 == 42)
+                assert(v2 == 42)
+                assert(v3 == 42)
+                assert(count == 1)
+        }
+
+        "retries after failure" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    counter.incrementAndGet.map { count =>
+                        if count == 1 then throw new RuntimeException("First attempt fails")
+                        else 42
+                    }
+                }
+                r1    <- Abort.run(memoized())
+                v2    <- memoized()
+                v3    <- memoized()
+                count <- counter.get
+            yield
+                assert(r1.isPanic)
+                assert(v2 == 42)
+                assert(v3 == 42)
+                assert(count == 2)
+        }
+
+        "works with async operations" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    for
+                        _     <- Async.sleep(1.millis)
+                        count <- counter.incrementAndGet
+                    yield count
+                }
+                v1    <- memoized()
+                v2    <- memoized()
+                v3    <- memoized()
+                count <- counter.get
+            yield
+                assert(v1 == 1)
+                assert(v2 == 1)
+                assert(v3 == 1)
+                assert(count == 1)
+        }
+
+        "handles concurrent access" in run {
+            for
+                counter <- AtomicInt.init(0)
+                memoized <- Async.memoize {
+                    for
+                        _     <- Async.sleep(1.millis)
+                        count <- counter.incrementAndGet
+                    yield count
+                }
+                results <- Async.parallel(
+                    memoized(),
+                    memoized(),
+                    memoized()
+                )
+                count <- counter.get
+            yield
+                assert(results._1 == 1)
+                assert(results._2 == 1)
+                assert(results._3 == 1)
+                assert(count == 1)
+        }
+
+        "handles interruption during initialization" in run {
+            for
+                counter  <- AtomicInt.init(0)
+                started  <- Latch.init(1)
+                sleeping <- Latch.init(1)
+                done     <- Latch.init(1)
+                memoized <- Async.memoize {
+                    IO.ensure(done.release) {
+                        for
+                            _     <- started.release
+                            _     <- Async.sleep(50.millis)
+                            count <- counter.incrementAndGet
+                        yield count
+                    }
+                }
+                fiber <- Async.run(memoized())
+                _     <- started.await
+                _     <- fiber.interrupt
+                _     <- done.await
+                v2    <- memoized()
+                count <- counter.get
+            yield
+                assert(v2 == 1)
+                assert(count == 1)
+        }
+    }
+
+    "apply" - {
+        "suspends computation" in run {
+            var counter = 0
+            val computation = Async {
+                counter += 1
+                counter
+            }
+            for
+                v1 <- computation
+                v2 <- computation
+                v3 <- computation
+            yield
+                assert(v1 == 1)
+                assert(v2 == 2)
+                assert(v3 == 3)
+                assert(counter == 3)
+            end for
+        }
+
+        "preserves effects" in run {
+            var executed = false
+            for
+                started <- Latch.init(1)
+                done    <- Latch.init(1)
+                fiber <- Async.run {
+                    started.release.andThen {
+                        Async { executed = true }.andThen {
+                            done.release
+                        }
+                    }
+                }
+                _ <- started.await
+                _ <- done.await
+            yield assert(executed)
+            end for
         }
     }
 

@@ -81,9 +81,9 @@ class TextTest extends Test:
         }
 
         "invalid ranges" in {
-            assert(Result.catching[IllegalArgumentException](Text("hello").substring(4, 2)).isFail)
-            assert(Result.catching[StringIndexOutOfBoundsException](Text("hello").substring(-1, 2).toString == "he").isFail)
-            assert(Result.catching[StringIndexOutOfBoundsException](Text("hello").substring(3, 10).toString == "lo").isFail)
+            assert(Result.catching[IllegalArgumentException](Text("hello").substring(4, 2)).isFailure)
+            assert(Result.catching[StringIndexOutOfBoundsException](Text("hello").substring(-1, 2).toString == "he").isFailure)
+            assert(Result.catching[StringIndexOutOfBoundsException](Text("hello").substring(3, 10).toString == "lo").isFailure)
         }
 
         "nested cuts" in {

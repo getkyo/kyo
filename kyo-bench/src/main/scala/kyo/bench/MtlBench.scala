@@ -17,7 +17,7 @@ class MtlBench extends Bench(()):
             Kyo.foreachDiscard(loops)(_ =>
                 for
                     conf <- Env.use[EnvValue](_.config)
-                    _    <- Emit(Event(s"Env = $conf"))
+                    _    <- Emit.value(Event(s"Env = $conf"))
                     _    <- Var.update((state: State) => state.copy(value = state.value + 1))
                 yield ()
             )

@@ -1,11 +1,15 @@
 package kyo.scheduler
 
-import Scheduler.*
+import Scheduler.Config
+import java.util.ArrayList
+import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.Callable
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.regulator.Admission
@@ -14,6 +18,7 @@ import kyo.scheduler.top.Reporter
 import kyo.scheduler.top.Status
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
+import kyo.scheduler.util.Singleton
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
@@ -221,6 +226,30 @@ final class Scheduler(
       */
     def asExecutionContext: ExecutionContext =
         ExecutionContext.fromExecutor(asExecutor)
+
+    /** Provides a Java ExecutorService interface to the scheduler.
+      *
+      * Allows using the scheduler as a drop-in replacement for Java ExecutorService implementations while maintaining all scheduler
+      * capabilities like admission control and adaptive concurrency. This implementation provides a minimal ExecutorService that delegates
+      * task execution to the scheduler.
+      *
+      * Note that shutdown-related operations are no-ops in this implementation:
+      *   - shutdown() and shutdownNow() have no effect
+      *   - isShutdown() and isTerminated() always return false
+      *   - awaitTermination() always returns false
+      *
+      * @return
+      *   An ExecutorService that submits Runnables as scheduler tasks
+      */
+    def asExecutorService: ExecutorService =
+        new AbstractExecutorService {
+            def awaitTermination(timeout: Long, unit: TimeUnit): Boolean = false
+            def execute(command: Runnable): Unit                         = schedule(Task(command))
+            def isShutdown(): Boolean                                    = false
+            def isTerminated(): Boolean                                  = false
+            def shutdown(): Unit                                         = {}
+            def shutdownNow(): java.util.List[Runnable]                  = new ArrayList[Runnable]
+        }
 
     /** Schedules a task for execution, optionally specifying the submitting worker.
       *
@@ -469,44 +498,44 @@ object Scheduler {
       *
       * @param minWorkers
       *   Minimum number of worker threads that will be maintained even under low load. A lower number conserves resources but may require
-      *   ramp-up time when load increases. (-Dkyo.scheduler.minWorkers=<value>, default: coreWorkers/2)
+      *   ramp-up time when load increases. (-Dkyo.scheduler.minWorkers=<value>)
       *
       * @param coreWorkers
       *   Initial worker thread count at scheduler startup. Represents the baseline capacity for handling normal workload.
-      *   (-Dkyo.scheduler.coreWorkers=<value>, default: cores * 10)
+      *   (-Dkyo.scheduler.coreWorkers=<value>)
       *
       * @param maxWorkers
       *   Maximum worker thread count beyond which the scheduler won't allocate new workers. Prevents unconstrained thread growth under
-      *   heavy load. Must be greater than or equal to minWorkers. (-Dkyo.scheduler.maxWorkers=<value>, default: coreWorkers * 100)
+      *   heavy load. Must be greater than or equal to minWorkers. (-Dkyo.scheduler.maxWorkers=<value>)
       *
       * @param timeSliceMs
       *   Maximum duration a task can run before being preempted. Lower values (e.g. 5ms) ensure more frequent task switching and better
       *   responsiveness. Higher values (e.g. 20ms) reduce context switching overhead but may delay other tasks.
-      *   (-Dkyo.scheduler.timeSliceMs=<value>, default: 10)
+      *   (-Dkyo.scheduler.timeSliceMs=<value>)
       *
       * @param scheduleStride
       *   Number of workers to examine when scheduling a new task. Larger values find better scheduling targets but take longer to make
-      *   decisions. (-Dkyo.scheduler.scheduleStride=<value>, default: cores)
+      *   decisions. (-Dkyo.scheduler.scheduleStride=<value>)
       *
       * @param stealStride
       *   Number of workers to examine when looking for tasks to steal. Larger values improve load balancing but increase steal overhead.
-      *   (-Dkyo.scheduler.stealStride=<value>, default: cores * 4)
+      *   (-Dkyo.scheduler.stealStride=<value>)
       *
       * @param cycleIntervalNs
       *   Interval between worker health checks in nanoseconds. Controls how quickly the scheduler detects and responds to stalled or
-      *   blocked workers. (-Dkyo.scheduler.cycleIntervalNs=<value>, default: 100000)
+      *   blocked workers. (-Dkyo.scheduler.cycleIntervalNs=<value>)
       *
       * @param virtualizeWorkers
       *   When true, uses virtual threads from Project Loom instead of platform threads. Beneficial for workloads with significant I/O or
-      *   blocking operations. Requires JDK 21+ and appropriate JVM flags. (-Dkyo.scheduler.virtualizeWorkers=<value>, default: false)
+      *   blocking operations. Requires JDK 21+ and appropriate JVM flags. (-Dkyo.scheduler.virtualizeWorkers=<value>)
       *
       * @param enableTopJMX
       *   Exposes scheduler metrics through JMX for monitoring. Useful for observing scheduler behavior in production.
-      *   (-Dkyo.scheduler.enableTopJMX=<value>, default: true)
+      *   (-Dkyo.scheduler.enableTopJMX=<value>)
       *
       * @param enableTopConsoleMs
       *   Interval in milliseconds for printing scheduler metrics to console. Zero disables console output. Useful for development and
-      *   debugging. (-Dkyo.scheduler.enableTopConsoleMs=<value>, default: 0)
+      *   debugging. (-Dkyo.scheduler.enableTopConsoleMs=<value>)
       *
       * @see
       *   Worker for worker implementation details
@@ -529,15 +558,15 @@ object Scheduler {
     object Config {
         val default: Config = {
             val cores             = Runtime.getRuntime().availableProcessors()
-            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores * 10))
+            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores))
             val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
             val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
             val scheduleStride    = Math.max(1, Flag("scheduleStride", cores))
-            val stealStride       = Math.max(1, Flag("stealStride", cores * 4))
+            val stealStride       = Math.max(1, Flag("stealStride", cores * 8))
             val virtualizeWorkers = Flag("virtualizeWorkers", false)
             val timeSliceMs       = Flag("timeSliceMs", 10)
             val cycleIntervalNs   = Flag("cycleIntervalNs", 100000)
-            val enableTopJMX      = Flag("enableTopJMX", true)
+            val enableTopJMX      = Flag("enableTopJMX", false)
             val enableTopConsole  = Flag("enableTopConsoleMs", 0)
             Config(
                 cores,

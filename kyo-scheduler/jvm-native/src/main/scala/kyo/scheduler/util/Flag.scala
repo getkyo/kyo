@@ -1,5 +1,10 @@
 package kyo.scheduler.util
 
+/** Type-safe scheduler configuration using system properties.
+  *
+  * Reads configuration from "kyo.scheduler.[name]" system properties with fallback to defaults. Supports primitive types, strings, and
+  * their lists through implicit readers.
+  */
 private[kyo] object Flag {
     abstract class Reader[A] {
         def apply(s: String): A

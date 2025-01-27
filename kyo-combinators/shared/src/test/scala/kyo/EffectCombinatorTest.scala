@@ -151,7 +151,7 @@ class EffectCombinatorTest extends Test:
                         effect
                     }
                 }.map { result =>
-                    assert(result == Result.success("value"))
+                    assert(result == Result.succeed("value"))
                 }
             }
         }
@@ -351,7 +351,7 @@ class EffectCombinatorTest extends Test:
                 val panicked: Nothing < IO                        = effect.orPanic
                 val unpanicked: Nothing < (Abort[Throwable] & IO) = panicked.unpanic
                 Abort.run[Throwable](unpanicked).map: handled =>
-                    assert(handled == Result.Fail(PanicException("failure")))
+                    assert(handled == Result.Failure(PanicException("failure")))
             }
         }
 

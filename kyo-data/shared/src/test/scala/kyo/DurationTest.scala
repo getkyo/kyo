@@ -122,7 +122,7 @@ class DurationTest extends Test:
             )
 
             testCases.foreach { case (input, expected) =>
-                assert(Duration.parse(input) == Result.success(expected))
+                assert(Duration.parse(input) == Result.succeed(expected))
             }
             succeed
         }
@@ -137,20 +137,20 @@ class DurationTest extends Test:
             )
 
             testCases.foreach { input =>
-                assert(Duration.parse(input).isFail)
+                assert(Duration.parse(input).isFailure)
             }
             succeed
         }
 
         "case insensitivity" in {
-            assert(Duration.parse("1MS") == Result.success(1.millis))
-            assert(Duration.parse("2H") == Result.success(2.hours))
-            assert(Duration.parse("3D") == Result.success(3.days))
+            assert(Duration.parse("1MS") == Result.succeed(1.millis))
+            assert(Duration.parse("2H") == Result.succeed(2.hours))
+            assert(Duration.parse("3D") == Result.succeed(3.days))
         }
 
         "whitespace handling" in {
-            assert(Duration.parse("  1  second  ") == Result.success(1.second))
-            assert(Duration.parse("5\tminutes") == Result.success(5.minutes))
+            assert(Duration.parse("  1  second  ") == Result.succeed(1.second))
+            assert(Duration.parse("5\tminutes") == Result.succeed(5.minutes))
         }
     }
 
@@ -280,7 +280,7 @@ class DurationTest extends Test:
 
         "unsupported ChronoUnit throws exception" in {
             val result = Result.catching[UnsupportedOperationException](1.second.to(ChronoUnit.FOREVER))
-            assert(result.isFail)
+            assert(result.isFailure)
         }
     }
 end DurationTest

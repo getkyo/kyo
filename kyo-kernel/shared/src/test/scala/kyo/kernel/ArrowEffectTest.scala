@@ -272,7 +272,8 @@ class ArrowEffectTest extends Test:
                 x,
                 Context.empty
             )(
-                stop = false,
+                stop =
+                    false,
                 [C] => (input, cont) => cont(input.toString),
                 [C] => (input, cont) => cont(input.toInt)
             )
@@ -287,7 +288,8 @@ class ArrowEffectTest extends Test:
                 x,
                 Context.empty
             )(
-                stop = false,
+                stop =
+                    false,
                 [C] => (input, cont) => cont(input.toString),
                 [C] => (input, cont) => cont(input.toInt)
             )
@@ -303,10 +305,12 @@ class ArrowEffectTest extends Test:
                 x,
                 Context.empty
             )(
-                stop = true,
+                stop =
+                    true,
                 [C] =>
                     (input, cont) =>
-                        called = true; cont(input.toString)
+                        called = true;
+                        cont(input.toString)
                 ,
                 [C] =>
                     (input, cont) =>
@@ -324,7 +328,8 @@ class ArrowEffectTest extends Test:
                 x,
                 Context.empty
             )(
-                stop = false,
+                stop =
+                    false,
                 [C] => (input, cont) => cont(input.toString),
                 [C] => (input, cont) => cont(input.toInt)
             )

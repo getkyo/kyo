@@ -30,7 +30,7 @@ class ZIOsTest extends Test:
 
     "Abort[String]" in runKyo {
         val a: Nothing < (Abort[String] & Async) = ZIOs.get(ZIO.fail("error"))
-        Abort.run(a).map(e => assert(e.isFail))
+        Abort.run(a).map(e => assert(e.isFailure))
     }
     "Abort[Throwable]" in runKyo {
         val a: Boolean < (Abort[Throwable] & Async) = ZIOs.get(ZIO.fail(new RuntimeException).when(false).as(true))
@@ -44,7 +44,7 @@ class ZIOsTest extends Test:
             val a = Abort.fail(kyoFailure)
             val b = ZIOs.get(ZIO.fail(zioFailure))
             Abort.run(a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Failure(ex) =>
                     assert(ex == kyoFailure)
                 case _ =>
                     fail()
@@ -56,7 +56,7 @@ class ZIOsTest extends Test:
             val a = ZIOs.get(ZIO.fail(zioFailure))
             val b = Abort.fail(kyoFailure)
             Abort.run(a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Failure(ex) =>
                     assert(ex == zioFailure)
                 case _ =>
                     fail()
@@ -370,7 +370,7 @@ class ZIOsTest extends Test:
 
     "Exit toResult" - {
         "Success" in {
-            assert(Exit.succeed(42).toResult == Result.success(42))
+            assert(Exit.succeed(42).toResult == Result.succeed(42))
         }
 
         "Failure" in {

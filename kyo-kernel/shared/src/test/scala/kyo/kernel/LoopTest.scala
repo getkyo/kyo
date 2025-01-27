@@ -572,7 +572,7 @@ class LoopTest extends Test:
             var counter = 0
             Loop.foreach {
                 counter += 1
-                if counter < 1 then Loop.continue(()) else Loop.done(())
+                if counter < 1 then Loop.continue(()) else Loop.done
             }.eval
             assert(counter == 1)
         }
@@ -581,7 +581,7 @@ class LoopTest extends Test:
             var sum = 0
             Loop.foreach {
                 sum += 1
-                if sum < 10 then Loop.continue(()) else Loop.done(())
+                if sum < 10 then Loop.continue(()) else Loop.done
             }.eval
             assert(sum == 10)
         }
@@ -590,7 +590,7 @@ class LoopTest extends Test:
             var entered = false
             Loop.foreach {
                 entered = true
-                Loop.done(())
+                Loop.done
             }.eval
             assert(entered)
         }
@@ -600,7 +600,7 @@ class LoopTest extends Test:
             val largeNumber = 100000
             Loop.foreach {
                 counter += 1
-                if counter < largeNumber then Loop.continue(()) else Loop.done(())
+                if counter < largeNumber then Loop.continue(()) else Loop.done
             }.eval
             assert(counter == largeNumber)
         }
@@ -612,7 +612,7 @@ class LoopTest extends Test:
                 if effect.length < 3 then
                     Effect.defer(Loop.continue(()))
                 else
-                    Effect.defer(Loop.done(()))
+                    Effect.defer(Loop.done)
                 end if
             }
             result.eval

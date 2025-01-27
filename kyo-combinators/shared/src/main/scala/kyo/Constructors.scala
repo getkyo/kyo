@@ -87,6 +87,17 @@ extension (kyoObject: Kyo.type)
     def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
         Console.printLine(message)
 
+    /** Emits a value
+      *
+      * @param value
+      *   Value to emit
+      * @return
+      *   An effect that emits a value
+      */
+
+    def emit[A](value: A)(using Tag[A], Frame): Unit < Emit[A] =
+        Emit.value(value)
+
     /** Creates an effect that fails with Abort[E].
       *
       * @param error
@@ -334,9 +345,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that never completes
       */
-    def never(using Frame): Nothing < Async =
-        Fiber.never.join
-            *> IO(throw new IllegalStateException("Async.never completed"))
+    def never(using Frame): Nothing < Async = Async.never
 
     /** Provides a dependency to an effect using Env.
       *
@@ -381,7 +390,10 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that retrieves the dependency from Env and applies the function to it
       */
-    def serviceWith[D](using Tag[D], Frame): [A, S] => (D => A < S) => A < (S & Env[D]) =
+    def serviceWith[D](using
+        Tag[D],
+        Frame
+    ): [A, S] => (D => A < S) => A < (S & Env[D]) =
         [A, S] => (fn: D => (A < S)) => service[D].map(d => fn(d))
 
     /** Sleeps for a given duration using Async.
@@ -460,5 +472,4 @@ extension (kyoObject: Kyo.type)
         sequence: => Seq[A < Async]
     )(using Flat[A], Frame): Unit < Async =
         foreachPar(sequence)(identity).unit
-
 end extension

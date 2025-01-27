@@ -19,51 +19,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && await(IO(True))
+                    True && IO(True).now
                 }
             }
-            "True/False" - {
+            "True/False" in {
                 runLiftTest(False) {
-                    True && await(IO(False))
+                    True && IO(False).now
                 }
             }
-            "False/NotExpected" - {
+            "False/NotExpected" in {
                 runLiftTest(False) {
-                    False && await(IO(NotExpected))
+                    False && IO(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IO(True)) && True
+                    IO(True).now && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IO(True)) && False
+                    IO(True).now && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IO(False)) && NotExpected
+                    IO(False).now && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IO(True)) && await(IO(True))
+                    IO(True).now && IO(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IO(True)) && await(IO(False))
+                    IO(True).now && IO(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IO(False)) && await(IO(NotExpected))
+                    IO(False).now && IO(NotExpected).now
                 }
             }
         }
@@ -77,51 +77,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || await(IO(False))
+                    False || IO(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || await(IO(True))
+                    False || IO(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || await(IO(NotExpected))
+                    True || IO(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IO(False)) || False
+                    IO(False).now || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IO(False)) || True
+                    IO(False).now || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IO(True)) || NotExpected
+                    IO(True).now || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IO(False)) || await(IO(False))
+                    IO(False).now || IO(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IO(False)) || await(IO(True))
+                    IO(False).now || IO(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IO(True)) || await(IO(NotExpected))
+                    IO(True).now || IO(NotExpected).now
                 }
             }
         }

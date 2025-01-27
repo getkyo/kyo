@@ -29,9 +29,9 @@ end Index
 object Index:
 
     val init: Index < (Env[DB.Config] & IO) = defer {
-        val cfg  = await(Env.get[DB.Config])
-        val file = await(open(cfg.workingDir + "/index.dat"))
-        await(IO(Live(file)))
+        val cfg  = Env.get[DB.Config].now
+        val file = open(cfg.workingDir + "/index.dat").now
+        IO(Live(file)).now
     }
 
     final class Live(file: FileChannel) extends Index:

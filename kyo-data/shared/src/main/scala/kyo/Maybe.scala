@@ -415,7 +415,7 @@ object Maybe:
           *   a Result containing the value if defined, or the provided error Result if empty
           */
         inline def toResult[E](inline ifEmpty: => Result[E, A]): Result[E, A] =
-            if isEmpty then ifEmpty else Result.success(get)
+            if isEmpty then ifEmpty else Result.succeed(get)
 
         def show(using r: Render[Maybe[A]]): String = r.asString(self)
 

@@ -1,7 +1,11 @@
 package kyo.kernel.internal
 
+import java.util.concurrent.Executors
 import kyo.Frame
+import kyo.Tagged.*
 import kyo.Test
+import kyo.discard
+import scala.concurrent.Future
 
 class TracePoolTest extends Test:
 
@@ -48,6 +52,80 @@ class TracePoolTest extends Test:
             assert(recycledTrace.index == 0)
         end for
         succeed
+    }
+
+    "borrow should never return null" in {
+        val local = new TestLocal
+
+        val traces = List.newBuilder[Trace]
+        for i <- 1 to TracePool.localCapacity * 2 do
+            val trace = local.borrow()
+            assert(trace != null, s"borrow returned null on iteration $i")
+            traces += trace
+        end for
+
+        traces.result().foreach { trace =>
+            local.release(trace)
+            val borrowed = local.borrow()
+            assert(borrowed != null, "borrow returned null after release")
+        }
+        succeed
+    }
+
+    "size management should be correct" in {
+        val local = new TestLocal
+
+        val traces = for (_ <- 1 to TracePool.localCapacity) yield local.borrow()
+
+        local.release(traces.head)
+
+        val borrowed = local.borrow()
+        assert(borrowed != null, "Failed to borrow after single release")
+
+        traces.tail.foreach(local.release)
+        local.release(borrowed)
+
+        val newTraces =
+            for (_ <- 1 to TracePool.localCapacity) yield
+                val trace = local.borrow()
+                assert(trace != null, "Failed to borrow after releasing all traces")
+                trace
+
+        assert(newTraces.size == TracePool.localCapacity, s"Expected ${TracePool.localCapacity} traces, got ${newTraces.size}")
+    }
+
+    "release should properly clear traces" in {
+        val local = new TestLocal
+        val trace = local.borrow()
+
+        trace.frames(0) = Frame.derive
+        trace.frames(1) = Frame.derive
+        trace.index = 2
+
+        local.release(trace)
+
+        val recycled = local.borrow()
+        assert(recycled.frames.take(2).forall(_ == null), "Frames were not cleared on release")
+        assert(recycled.index == 0, "Index was not reset on release")
+    }
+
+    "sequential borrow/release should maintain pool integrity" in {
+        val local               = new TestLocal
+        var lastBorrowed: Trace = null
+
+        for i <- 1 to TracePool.localCapacity * 3 do
+            val trace = local.borrow()
+            assert(trace != null, s"Got null trace on iteration $i")
+
+            if lastBorrowed != null then
+                local.release(lastBorrowed)
+            lastBorrowed = trace
+        end for
+        if lastBorrowed != null then
+            local.release(lastBorrowed)
+
+        val finalTrace = local.borrow()
+        assert(finalTrace != null, "Pool was corrupted after sequential operations")
     }
 
 end TracePoolTest

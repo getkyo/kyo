@@ -148,7 +148,7 @@ class ResourceTest extends Test:
             .pipe(Async.runAndBlock(timeout))
             .pipe(Abort.run(_))
             .map { finalizedResource =>
-                finalizedResource.fold(_ => ???)(_.closes.get.map(i => assert(i == 1)))
+                finalizedResource.foldError(_ => ???)(_.closes.get.map(i => assert(i == 1)))
             }
     }
 
@@ -201,7 +201,7 @@ class ResourceTest extends Test:
         case object TestException extends NoStackTrace
 
         "acquire fails" taggedAs jvmOnly in run {
-            val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => IO.unit)
+            val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => Kyo.unit)
             Resource.run(io)
                 .pipe(Async.runAndBlock(timeout))
                 .pipe(Abort.run(_))
