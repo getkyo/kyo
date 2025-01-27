@@ -240,7 +240,7 @@ object Topic:
                                                     if tag2 != tag.raw then
                                                         Abort.panic(
                                                             new IllegalStateException(
-                                                                s"Expected messages of type ${tag.show} but got ${tag2}"
+                                                                s"Expected messages of type ${tag.show} but got ${Tag.fromRaw(tag2).show}"
                                                             )
                                                         )
                                                     else
