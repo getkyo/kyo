@@ -787,4 +787,8 @@ class TagTest extends Test:
     opaque type Inner[A]  = List[A]
     opaque type Outer[B]  = Inner[B]
 
+    "hash" in {
+        assert(Tag[Int].hash == Tag[Int].hash)
+    }
+
 end TagTest
