@@ -362,37 +362,38 @@ class KyoTest extends Test:
 
     "flat check" - {
 
-        val error = "No given instance of type kyo.Flat"
+        val noGivenInstance = "No given instance of type kyo.Flat"
 
         "pending type" in {
-            typeCheckFailure("implicitly[Flat[Int < Any]]")(error)
-            typeCheckFailure("implicitly[Flat[Int < Options]]")(error)
-            typeCheckFailure("implicitly[Flat[Int < Nothing]]")(error)
+            typeCheckFailure("implicitly[Flat[Int < Any]]")("Cannot prove 'kyo.kernel.Pending$package.<[scala.Int, scala.Any]'")
+            typeCheckFailure("implicitly[Flat[Int < Options]]")(noGivenInstance)
+            typeCheckFailure("implicitly[Flat[Int < Nothing]]")("Cannot prove 'kyo.kernel.Pending$package.<[scala.Int, scala.Nothing]'")
         }
 
         "nested" in {
-            typeCheckFailure("implicitly[Flat[Int < IOs < IOs]]")(error)
-            typeCheckFailure("implicitly[Flat[Any < IOs < IOs]]")(error)
+            typeCheckFailure("implicitly[Flat[Int < IOs < IOs]]")(noGivenInstance)
+            typeCheckFailure("implicitly[Flat[Any < IOs < IOs]]")(noGivenInstance)
         }
 
         "nested w/ mismatch" in {
-            typeCheckFailure("implicitly[Flat[Int < Options < IOs]]")(error)
-            typeCheckFailure("implicitly[Flat[Int < IOs < Options]]")(error)
+            typeCheckFailure("implicitly[Flat[Int < Options < IOs]]")(noGivenInstance)
+            typeCheckFailure("implicitly[Flat[Int < IOs < Options]]")(noGivenInstance)
         }
 
         "generic" in {
+            val error = "Cannot prove 'A' isn't nested"
             typeCheckFailure("def f[A] = implicitly[Flat[A]]")(error)
             typeCheckFailure("def f[A] = implicitly[Flat[A | Int]]")(error)
         }
 
         "generic pending" in {
-            typeCheckFailure("def f[A] = implicitly[Flat[A < Options]]")(error)
-            typeCheckFailure("def f[A] = implicitly[Flat[A < Any]]")(error)
+            typeCheckFailure("def f[A] = implicitly[Flat[A < Options]]")(noGivenInstance)
+            typeCheckFailure("def f[A] = implicitly[Flat[A < Any]]")("Cannot prove 'kyo.kernel.Pending$package.<[A, scala.Any]'")
         }
 
         "any" in {
-            typeCheckFailure("implicitly[Flat[Any]]")(error)
-            typeCheckFailure("implicitly[Flat[Any < IOs]]")(error)
+            typeCheckFailure("implicitly[Flat[Any]]")("Cannot prove 'scala.Any' isn't nested")
+            typeCheckFailure("implicitly[Flat[Any < IOs]]")(noGivenInstance)
         }
     }
 end KyoTest
