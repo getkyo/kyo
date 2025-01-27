@@ -15,7 +15,7 @@ private[kyo] trait BaseKyoDataTest:
     given [A, B]: CanEqual[Either[A, B], Either[A, B]] = CanEqual.derived
     given CanEqual[Throwable, Throwable]               = CanEqual.derived
 
-    inline def typeCheck(inline code: String): Result[String, Unit] =
+    transparent inline def typeCheck(inline code: String): Result[String, Unit] =
         try
             val errors = typeCheckErrors(code)
             if errors.isEmpty then Result.unit else Result.fail(errors.iterator.map(_.message).mkString("\n"))
@@ -24,7 +24,7 @@ private[kyo] trait BaseKyoDataTest:
                 Result.panic(new RuntimeException("Compilation failed", cause))
     end typeCheck
 
-    inline def typeCheckFailure(inline code: String)(inline error: String): Assertion =
+    transparent inline def typeCheckFailure(inline code: String)(inline error: String): Assertion =
         typeCheck(code) match
             case Result.Failure(errors) =>
                 if errors.contains(error) && !error.isEmpty() then assertionSuccess
