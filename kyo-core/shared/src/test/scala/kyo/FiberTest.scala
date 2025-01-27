@@ -115,7 +115,9 @@ class FiberTest extends Test:
 
     "race" - {
         "zero" in runNotJS {
-            assertDoesNotCompile("Async.raceFiber()")
+            typeCheckFailure("Async.race()")(
+                "None of the overloaded alternatives of method race in object Async"
+            )
         }
         "one" in runNotJS {
             Fiber.race(Seq(1)).map(_.get).map { r =>

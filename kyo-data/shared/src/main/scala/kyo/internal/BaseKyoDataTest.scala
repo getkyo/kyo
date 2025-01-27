@@ -1,6 +1,8 @@
 package kyo.internal
 
+import kyo.Frame
 import kyo.Result
+import scala.compiletime
 import scala.compiletime.testing.typeCheckErrors
 import scala.util.Try
 
@@ -24,11 +26,11 @@ private[kyo] trait BaseKyoDataTest:
                 Result.panic(new RuntimeException("Compilation failed", cause))
     end typeCheck
 
-    transparent inline def typeCheckFailure(inline code: String)(inline error: String): Assertion =
+    transparent inline def typeCheckFailure(inline code: String)(inline expected: String)(using frame: Frame): Assertion =
         typeCheck(code) match
             case Result.Failure(errors) =>
-                if errors.contains(error) && !error.isEmpty() then assertionSuccess
-                else assertionFailure(s"Predicate not satisfied by $errors")
+                if errors.contains(expected) && !expected.isEmpty() then assertionSuccess
+                else assertionFailure(frame.render(Map("expected" -> expected, "actual" -> errors)))
             case Result.Panic(exception) => assertionFailure(exception.getMessage)
             case Result.Success(_)       => assertionFailure("Code type-checked successfully, expected a failure")
 

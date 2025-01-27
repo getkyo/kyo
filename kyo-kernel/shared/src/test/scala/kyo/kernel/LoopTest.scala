@@ -667,10 +667,11 @@ class LoopTest extends Test:
         }
 
         "should not compile for non-Flat output types" in {
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome[Int, Int < Any]]]")
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome2[Int, String, Int < Any]]]")
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Int < Any]]]")
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Int < Any]]]")
+            val error = "This error can be reported an unsupported pending effect is passed to a method"
+            typeCheckFailure("implicitly[Flat[Loop.Outcome[Int, Int < Any]]]")(error)
+            typeCheckFailure("implicitly[Flat[Loop.Outcome2[Int, String, Int < Any]]]")(error)
+            typeCheckFailure("implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Int < Any]]]")(error)
+            typeCheckFailure("implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Int < Any]]]")(error)
         }
     }
 end LoopTest

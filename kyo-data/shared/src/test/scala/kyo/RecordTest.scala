@@ -611,30 +611,32 @@ class RecordTest extends Test:
         "AsFields behavior" - {
             import Record.AsFields
 
+            val error = "No given instance of type kyo.AsFieldsInternal.HasAsField"
+
             "summoning AsFields instance" in {
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     summon[AsFields[Int & "name" ~ String & "age" ~ Int]]
-                """)
+                """)(error)
             }
 
             "AsFields with multiple raw types" in {
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     AsFields[Int & Boolean & "value" ~ String & String]
-                """)
+                """)(error)
             }
 
             "AsFields with duplicate field names" in {
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                    AsFields[Int & "value" ~ String & "value" ~ Int]
-                """)
+                """)(error)
             }
 
             "compact with AsFields" in {
                 val record = ("name" ~ "test" & "age" ~ 42)
                     .asInstanceOf[Record[Int & "name" ~ String & "age" ~ Int]]
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     record.compact
-                """)
+                """)(error)
             }
         }
     }

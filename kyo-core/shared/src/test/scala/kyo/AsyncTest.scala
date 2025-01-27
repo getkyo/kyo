@@ -42,7 +42,9 @@ class AsyncTest extends Test:
             }
         }
         "non IO-based effect" in run {
-            assertDoesNotCompile("Async.run(Vars[Int].get)")
+            typeCheckFailure("Async.run(Var.get[Int])")(
+                "The computation you're trying to fork with Async has pending effects"
+            )
         }
     }
 
@@ -140,7 +142,9 @@ class AsyncTest extends Test:
 
     "race" - {
         "zero" in runNotJS {
-            assertDoesNotCompile("Async.race()")
+            typeCheckFailure("Async.race()")(
+                "None of the overloaded alternatives of method race in object Async"
+            )
         }
         "one" in runNotJS {
             Async.race(1).map { r =>
