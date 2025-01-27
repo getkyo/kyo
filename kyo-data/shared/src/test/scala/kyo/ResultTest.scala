@@ -441,7 +441,7 @@ class ResultTest extends Test:
             "fails to compile for non-Throwable error" in {
                 val failure: Result[String, Int] = Failure("Something went wrong")
                 val _                            = failure
-                typeCheckFailure("failure.toTry")("value toTry is not a member of kyo.Result")
+                typeCheckFailure("failure.toTry")("Failure type must be a 'Throwable' to invoke 'toTry'. Found: 'String'")
             }
         }
 

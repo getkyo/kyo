@@ -64,7 +64,7 @@ class TypeMapTest extends Test:
             assert(e.size == 4)
         }
         "distinct" in pendingUntilFixed {
-            typeCheckFailure("TypeMap(0, 0)")
+            typeCheckFailure("TypeMap(0, 0)")("should fail")
         }
     }
     "fatal" - {
