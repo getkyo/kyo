@@ -95,7 +95,7 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](4)
                 _ <- h.put(1)
-                _ <- Async.sleep(10.millis)
+                _ <- Async.sleep(20.millis)
                 l <- h.listen
                 _ <- h.put(2)
                 v <- l.take
