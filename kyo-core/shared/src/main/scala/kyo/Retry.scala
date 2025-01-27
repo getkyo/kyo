@@ -42,15 +42,16 @@ object Retry:
             Frame
         ): A < (Async & Abort[E] & S) =
             Abort.run[E](v).map {
-                case Result.Success(r) => r
-                case error: Result.Error[?] =>
+                case Result.Success(value) => value
+                case result: Result.Failure[E] @unchecked =>
                     Clock.now.map { now =>
                         schedule.next(now).map { (delay, nextSchedule) =>
                             Async.delay(delay)(Retry[E](nextSchedule)(v))
                         }.getOrElse {
-                            Abort.get(error)
+                            Abort.error(result)
                         }
                     }
+                case panic: Result.Panic => Abort.error(panic)
             }
     end RetryOps
 
