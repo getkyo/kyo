@@ -113,7 +113,7 @@ object Meter:
             new Base(concurrency, reentrant):
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
-                    IO.ensure(discard(release()))(v)
+                    IO.ensure(release())(v)
                 def onClose(): Unit = ()
         }
 
@@ -140,7 +140,7 @@ object Meter:
                     v
 
                 @tailrec def replenish(i: Int = 0): Unit =
-                    if i < rate && release() then
+                    if i < rate && tryRelease() then
                         replenish(i + 1)
 
                 def onClose() = discard(timerTask.unsafe.interrupt())
@@ -360,20 +360,34 @@ object Meter:
 
         final def closed(using Frame) = IO(state.get() == Int.MinValue)
 
-        @tailrec final protected def release(): Boolean =
+        @tailrec final protected def tryRelease(): Boolean =
             val st = state.get()
             if st >= permits || st == Int.MinValue then
                 // No more permits to release or meter is closed
                 false
             else if !state.compareAndSet(st, st + 1) then
                 // CAS failed, retry
-                release()
+                tryRelease()
             else if st < 0 && !pollWaiter().complete(Result.unit) then
                 // Waiter is already complete due to interruption, retry
-                release()
+                tryRelease()
             else
                 // Permit released
                 true
+            end if
+        end tryRelease
+
+        @tailrec final protected def release(): Unit =
+            val st = state.get()
+            // If not closed
+            if st != Int.MinValue then
+                if !state.compareAndSet(st, st + 1) then
+                    // CAS failed, retry
+                    release()
+                else if st < 0 && !pollWaiter().complete(Result.unit) then
+                    // Waiter is already complete due to interruption, retry
+                    release()
+                end if
             end if
         end release
 
