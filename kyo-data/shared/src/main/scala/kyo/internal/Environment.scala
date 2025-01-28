@@ -29,7 +29,7 @@ private[kyo] object Environment:
     val isDevelopment: Boolean = inferIsDevelopment()
 
     private[internal] def inferIsDevelopment(): Boolean =
-        sys.props.get("kyo.development-mode.enable").map(_.toLowerCase) match
+        sys.props.get("kyo.development-mode.enable").flatMap(_.toBooleanOption) match
             case Some("true") => true
             case Some(_)      => false
             case _            => sys.props.get("java.class.path").exists(_.contains("org.scala-sbt"))
