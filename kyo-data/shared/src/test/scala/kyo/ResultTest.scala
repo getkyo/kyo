@@ -304,7 +304,7 @@ class ResultTest extends Test:
             }
         }
 
-        "foldAll" - {
+        "fold" - {
             "should apply success function for Success" in {
                 val result = success.fold(v => s"success: $v", _ => "failure", _ => "panic")
                 assert(result == "success: 42")

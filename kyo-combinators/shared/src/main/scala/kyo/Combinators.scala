@@ -327,7 +327,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl: Flat[A],
         fr: Frame
     ): A < (S & Choice) =
-        effect.result.map(e => Choice.get(e.foldError(_ => Nil)(List(_))))
+        effect.result.map(e => Choice.get(e.foldError(List(_), _ => Nil)))
 
     /** Translates the Abort[E] effect to an Abort[Absent] effect in case of failure.
       *
@@ -706,7 +706,7 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         flat: Flat[A],
         frame: Frame
     ): A < (S & reduce.SReduced & Choice) =
-        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.foldError(_ => Nil)(List(_))))
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.foldError(List(_), _ => Nil)))
 
     /** Translates the partial Abort[E1] effect to an Abort[Absent] effect in case of failure.
       *
