@@ -6,7 +6,7 @@ package kyo.internal
   * verbosity of error messages and debugging information in Kyo's implementations.
   *
   * The development mode can be controlled in two ways:
-  *   1. Explicitly via the system property "-Dkyo.development-mode.enable=true"
+  *   1. Explicitly via the system property "-Dkyo.development=true"
   *   2. Automatically by detecting SBT in the classpath
   * }}}
   */
@@ -16,7 +16,7 @@ private[kyo] object Environment:
       *
       * This method checks the following conditions in order:
       *
-      *   1. If system property "kyo.development-mode.enable" exists:
+      *   1. If system property "kyo.development" exists:
       *      - Returns true if the property value is "true" (case insensitive)
       *      - Returns false if the property value is anything else
       *   2. If the property doesn't exist:
@@ -29,9 +29,10 @@ private[kyo] object Environment:
     val isDevelopment: Boolean = inferIsDevelopment()
 
     private[internal] def inferIsDevelopment(): Boolean =
-        sys.props.get("kyo.development-mode.enable").flatMap(_.toBooleanOption) match
+        sys.props.get("kyo.development").map(_.toLowerCase) match
             case Some("true") => true
             case Some(_)      => false
-            case _            => sys.props.get("java.class.path").exists(_.contains("org.scala-sbt"))
+            case None =>
+                sys.props.get("java.class.path").exists(_.contains("org.scala-sbt"))
 
 end Environment
