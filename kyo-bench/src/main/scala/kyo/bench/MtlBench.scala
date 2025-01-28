@@ -1,4 +1,4 @@
-package kyo.bench.arena
+package kyo.bench
 
 import org.openjdk.jmh.annotations.Benchmark
 
@@ -6,7 +6,7 @@ case class EnvValue(config: String)
 case class Event(name: String)
 case class State(value: Int)
 
-class MtlBench extends ArenaBench(()):
+class MtlBench extends BaseBench:
 
     val loops = (1 to 1000).toList
 
