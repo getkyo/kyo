@@ -715,15 +715,14 @@ object Result:
             case other         => other.toString()
     end given
 
-    /** A subtype of Result representing computations that can succeed or fail with an expected error. Result is
-      * effectively the Kyo equivalent of Either.
+    /** A subtype of Result representing computations that can succeed or fail with an expected error. Result is effectively the Kyo
+      * equivalent of Either.
       *
       * Result has the following possible states:
       *   - `Success[A]`: Contains a successful value of type `A`
       *   - `Failure[E]`: Represents expected errors of type `E`
       *
-      * Being a subtype of Result, Result.Partial supports all the operations of Result as a few narrower versions
-      * of these methods:
+      * Being a subtype of Result, Result.Partial supports all the operations of Result as a few narrower versions of these methods:
       *   - foldPartial
       *   - toEitherPartial
       *   - flattenPartial

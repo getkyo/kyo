@@ -92,6 +92,44 @@ class AbortCombinatorTest extends Test:
             }
         }
 
+        "partialResult" - {
+            "should handle" in {
+                val effect1 = Abort.fail[String]("failure")
+                assert(effect1.partialResult.eval == Result.fail("failure"))
+
+                val effect2 = Abort.get[Boolean](Right(1))
+                assert(effect2.partialResult.eval == Result.succeed(1))
+            }
+
+            "should handle incrementally" in {
+                val effect1: Int < Abort[String | Boolean | Int | Double] =
+                    Abort.fail[String]("failure")
+                val handled = effect1
+                    .forAbort[String].partialResult
+                    .forAbort[Boolean].partialResult
+                    .forAbort[Int].partialResult
+                    .partialResult
+                assert(handled.eval == Result.succeed(Result.succeed(Result.succeed(Result.fail("failure")))))
+            }
+
+            "should handle union" in {
+                val failure: Int < Abort[String | Boolean | Double | Int] =
+                    Abort.fail("failure")
+                val handled: Result.Partial[String | Boolean | Double | Int, Int] < Any =
+                    failure.partialResult
+                assert(handled.eval == Result.fail("failure"))
+            }
+
+            "should throw panic" in {
+                val failure: Int < Abort[String] = Abort.panic(new Exception("message"))
+                try 
+                    val _ = failure.partialResult
+                    fail("Failed to throw expected exception")
+                catch
+                    case e: Exception => assert(e.getMessage() == "message")
+            }
+        }
+
         "mapAbort" - {
             "should map abort" in {
                 val effect1       = Abort.fail[String]("failure")

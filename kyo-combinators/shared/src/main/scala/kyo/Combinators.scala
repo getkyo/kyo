@@ -296,7 +296,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl: Flat[A],
         fr: Frame
     ): Result.Partial[E, A] < S =
-        Abort.runPartial[E](effect)
+        Abort.runPartialOrThrow[A, E, S](effect)
 
     /** Handles the Abort effect, transforming caught errors into a new error as determined by mapping function
       *
@@ -407,7 +407,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl2: Flat[B],
         fr: Frame
     ): B < (S & S1) =
-        Abort.fold[E](onSuccess, onFail)(effect)
+        Abort.foldOrThrow(onSuccess, onFail)(effect)
 
     /** Recovers from an Abort failure by applying the provided function.
       *
@@ -569,10 +569,9 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
-        reduce: Reducible[Abort[ER]],
         fl: Flat[A],
         frame: Frame
-    ): Result.Partial[E1, A] < (S & reduce.SReduced) =
+    ): Result.Partial[E1, A] < (S & Abort[ER]) =
         Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
     /** Handles a partial Abort[E1] effect, transforming caught errors into a new error as determined by mapping function
@@ -635,11 +634,10 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ct: SafeClassTag[E1],
         ev: E => E1 | ER,
-        reduce: Reducible[Abort[ER]],
         fl1: Flat[A],
         fl2: Flat[B],
         fr: Frame
-    ): B < (S & S1 & reduce.SReduced) =
+    ): B < (S & S1 & Abort[ER]) =
         Abort.fold[E1](onSuccess, onFail)(effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
     /** Recovers from an Abort failure by applying the provided function.
