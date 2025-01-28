@@ -61,10 +61,7 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    javaOptions ++= Seq(
-        "-Xmx12G"
-    )
+    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
 
 Global / onLoad := {
@@ -327,7 +324,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.16" % Test
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.16" % Test,
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -343,17 +340,12 @@ lazy val `kyo-offheap` =
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
         .settings(
-            `kyo-settings`,
-            libraryDependencies ++= Seq(
-                "org.scala-native" %%% "scala-native" % "0.4.16",
-                "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
-            )
+            name := "kyo-offheap",
+            version := "0.1.0",
+            scalaVersion := "2.13.15",
+            resolvers += "Sonatype OSS Releases" at "https://oss.sonatype.org/content/repositories/releases/"
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(
-            `native-settings`,
-            libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
-        )
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -607,7 +599,6 @@ lazy val `kyo-bench` =
         .settings(
             `kyo-settings`,
             Test / testForkedParallel := true,
-            // Forks each test suite individually
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector
                 val envsVarsValue    = envVars.value
@@ -718,5 +709,3 @@ def mimaCheck(failOnProblem: Boolean) =
         mimaBinaryIssueFilters ++= Seq(),
         mimaFailOnProblem := failOnProblem
     )
-
-scalacOptions += "-Xno-enrich-error-messages"

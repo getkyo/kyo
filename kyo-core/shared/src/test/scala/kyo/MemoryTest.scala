@@ -1,6 +1,9 @@
 package kyo.offheap
 
-class MemoryTestNative extends Test:
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
+
+class MemoryTest extends Test:
     "Memory allocation and safety" - {
         "zero initialization" in run {
             Arena.run {
@@ -8,7 +11,7 @@ class MemoryTestNative extends Test:
                     mem <- Memory.init[Int](5)
                     v0  <- mem.get(0)
                     v4  <- mem.get(4)
-                yield 
+                yield
                     assert(v0 == 0)
                     assert(v4 == 0)
             }
@@ -17,7 +20,7 @@ class MemoryTestNative extends Test:
         "stack safety" - {
             "recursive method" - {
                 "no effect" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
                         else Memory.init[Int](1).flatMap(_ => allocateMany(n - 1))
 
@@ -25,7 +28,7 @@ class MemoryTestNative extends Test:
                 }
 
                 "effect at start" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
                         else Memory.init[Int](1).set(0, 42).flatMap(_ => allocateMany(n - 1))
 
@@ -33,7 +36,7 @@ class MemoryTestNative extends Test:
                 }
 
                 "effect at end" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
                         else allocateMany(n - 1).flatMap(_ => Memory.init[Int](1).set(0, 42))
 
@@ -41,9 +44,9 @@ class MemoryTestNative extends Test:
                 }
 
                 "multiple effects" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
-                        else 
+                        else
                             for
                                 mem <- Memory.init[Int](1)
                                 _   <- mem.set(0, 42)
@@ -62,7 +65,7 @@ class MemoryTestNative extends Test:
                     mem <- Memory.init[Int](2)
                     r1  <- Abort.run(mem.get(-1))
                     r2  <- Abort.run(mem.get(2))
-                yield 
+                yield
                     assert(r1.isPanic)
                     assert(r2.isPanic)
             }
@@ -82,14 +85,14 @@ class MemoryTestNative extends Test:
                 for
                     mem <- Memory.init[Int](1)
                     _   <- mem.set(0, 42)
-                    r   <- Abort.run {
+                    r <- Abort.run {
                         for
                             _ <- mem.set(0, 24)
                             _ <- Abort.fail("test")
                         yield ()
                     }
-                    v   <- mem.get(0)
-                yield 
+                    v <- mem.get(0)
+                yield
                     assert(r.isPanic)
                     assert(v == 42)
             }
@@ -105,7 +108,7 @@ class MemoryTestNative extends Test:
                     _   <- mem.set(1, Byte.MinValue)
                     v1  <- mem.get(0)
                     v2  <- mem.get(1)
-                yield 
+                yield
                     assert(v1 == Byte.MaxValue)
                     assert(v2 == Byte.MinValue)
             }
@@ -119,7 +122,7 @@ class MemoryTestNative extends Test:
                     _   <- mem.set(1, Long.MinValue)
                     v1  <- mem.get(0)
                     v2  <- mem.get(1)
-                yield 
+                yield
                     assert(v1 == Long.MaxValue)
                     assert(v2 == Long.MinValue)
             }
@@ -130,13 +133,12 @@ class MemoryTestNative extends Test:
         "view bounds" in run {
             Arena.run {
                 for
-                    mem  <- Memory.init[Int](5)
-                    _    <- mem.fill(42)
-                    r1   <- Abort.run(mem.view(-1, 2))
-                    r2   <- Abort.run(mem.view(0, 6))
-                    r3   <- Abort.run(mem.view(4, 2))
-                yield 
-                    assert(r1.isPanic && r2.isPanic && r3.isPanic)
+                    mem <- Memory.init[Int](5)
+                    _   <- mem.fill(42)
+                    r1  <- Abort.run(mem.view(-1, 2))
+                    r2  <- Abort.run(mem.view(0, 6))
+                    r3  <- Abort.run(mem.view(4, 2))
+                yield assert(r1.isPanic && r2.isPanic && r3.isPanic)
             }
         }
 
@@ -149,7 +151,7 @@ class MemoryTestNative extends Test:
                     _    <- view.set(0, 24)
                     v1   <- view.get(0)
                     v2   <- mem.get(1)
-                yield 
+                yield
                     assert(v1 == 24)
                     assert(v2 == 24)
             }
@@ -165,7 +167,7 @@ class MemoryTestNative extends Test:
                         _   <- mem.fill(42)
                         v1  <- mem.get(0)
                         v2  <- mem.get(4)
-                    yield 
+                    yield
                         assert(v1 == 42)
                         assert(v2 == 42)
                 }
@@ -187,7 +189,7 @@ class MemoryTestNative extends Test:
         "stack safety" - {
             "recursive method" - {
                 "no effect" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
                         else Memory.init[Int](1).flatMap(_ => allocateMany(n - 1))
 
@@ -195,7 +197,7 @@ class MemoryTestNative extends Test:
                 }
 
                 "effect at start" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
                         else Memory.init[Int](1).set(0, 42).flatMap(_ => allocateMany(n - 1))
 
@@ -203,7 +205,7 @@ class MemoryTestNative extends Test:
                 }
 
                 "effect at end" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
                         else allocateMany(n - 1).flatMap(_ => Memory.init[Int](1).set(0, 42))
 
@@ -211,9 +213,9 @@ class MemoryTestNative extends Test:
                 }
 
                 "multiple effects" in run {
-                    def allocateMany(n: Int): Unit < Arena = 
+                    def allocateMany(n: Int): Unit < Arena =
                         if n <= 0 then IO.unit
-                        else 
+                        else
                             for
                                 mem <- Memory.init[Int](1)
                                 _   <- mem.set(0, 42)
@@ -242,14 +244,14 @@ class MemoryTestNative extends Test:
                     for
                         mem <- Memory.init[Int](1)
                         _   <- mem.set(0, 42)
-                        r   <- Abort.run {
+                        r <- Abort.run {
                             for
                                 _ <- mem.set(0, 24)
                                 _ <- Abort.fail("test")
                             yield ()
                         }
-                        v   <- mem.get(0)
-                    yield 
+                        v <- mem.get(0)
+                    yield
                         assert(r.isPanic)
                         assert(v == 42)
                 }
@@ -274,10 +276,23 @@ class MemoryTestNative extends Test:
                         _   <- mem.set(0, 42)
                         r1  <- Abort.run(mem.get(0))
                         r2  <- Abort.run(mem.get(-1))
-                    yield 
+                    yield
                         assert(r1.isSuccess)
                         assert(r2.isPanic)
                 }
             }
         }
     }
+end MemoryTest
+
+class MemoryManagementSpec extends AnyFlatSpec with Matchers:
+    "Arena" should "allocate and free memory correctly" in {
+        val arena   = new Arena()
+        val segment = arena.allocate[Int](10) // Allocate space for 10 integers
+
+        segment.allocate(42)           // Set the first integer to 42
+        segment.ptr should not be null // Ensure the pointer is not null
+
+        arena.close(segment) // Free the allocated memory
+    }
+end MemoryManagementSpec
