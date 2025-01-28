@@ -2,7 +2,6 @@ package kyo
 
 import kernel.ArrowEffect
 import kyo.Result.*
-import kyo.Schedule.done
 import kyo.Tag
 import kyo.kernel.Effect
 import scala.annotation.targetName
