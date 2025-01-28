@@ -807,7 +807,7 @@ object Async:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): B < (S & reduce.SReduced & Async) =
-        val x = useResult(v)(_.foldAll(Abort.panic)(Abort.fail)(f))
+        val x = useResult(v)(_.fold(f, Abort.fail, Abort.panic))
         reduce(x)
     end use
 

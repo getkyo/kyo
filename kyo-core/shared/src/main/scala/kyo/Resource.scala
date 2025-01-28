@@ -110,7 +110,7 @@ object Resource:
                             Async.parallel(closeParallelism) {
                                 tasks.map { task =>
                                     Abort.run[Throwable](task)
-                                        .map(_.foldError(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
+                                        .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                                 }
                             }
                                 .unit

@@ -285,56 +285,56 @@ class ResultTest extends Test:
 
         "foldError" - {
             "should apply success function for Success" in {
-                val result = success.foldError(_ => -1)(_ + 1)
+                val result = success.foldError(_ + 1, _ => -1)
                 assert(result == 43)
             }
 
             "should apply error function for both Failure and Panic" in {
-                val failureResult = failure.foldError(_.toString)(_ => "success")
+                val failureResult = failure.foldError(_ => "success", _.toString)
                 assert(failureResult == "Failure(error)")
 
-                val panicResult = panic.foldError(_.toString)(_ => "success")
+                val panicResult = panic.foldError(_ => "success", _.toString)
                 assert(panicResult == Panic(ex).toString)
             }
         }
 
-        "foldFailureOrThrow" - {
+        "foldOrThrow" - {
             "should apply success function for Success" in {
-                val result = success.foldFailureOrThrow(_ => -1)(_ + 1)
+                val result = success.foldOrThrow(_ + 1, _ => -1)
                 assert(result == 43)
             }
 
             "should apply failure function for Failure" in {
-                val result = failure.foldFailureOrThrow(_.length)(_ => -1)
+                val result = failure.foldOrThrow(_ => -1, _.length)
                 assert(result == 5)
             }
 
             "should throw for Panic" in {
                 assertThrows[Exception] {
-                    panic.foldFailureOrThrow(_ => -1)(_ => 42)
+                    panic.foldOrThrow(_ => 42, _ => -1)
                 }
             }
         }
 
         "foldAll" - {
             "should apply success function for Success" in {
-                val result = success.foldAll(_ => "panic")(_ => "failure")(v => s"success: $v")
+                val result = success.fold(v => s"success: $v", _ => "failure", _ => "panic")
                 assert(result == "success: 42")
             }
 
             "should apply failure function for Failure" in {
-                val result = failure.foldAll(_ => "panic")(e => s"failure: $e")(_ => "success")
+                val result = failure.fold(_ => "success", e => s"failure: $e", _ => "panic")
                 assert(result == "failure: error")
             }
 
             "should apply panic function for Panic" in {
-                val result = panic.foldAll(e => s"panic: ${e.getMessage}")(_ => "failure")(_ => "success")
+                val result = panic.fold(_ => "success", _ => "failure", e => s"panic: ${e.getMessage}")
                 assert(result == "panic: test")
             }
 
             "should handle exceptions in success function" in {
                 val ex     = new RuntimeException("fold error")
-                val result = success.foldAll(e => s"panic: $e")(_ => "failure")(_ => throw ex)
+                val result = success.fold(_ => throw ex, _ => "failure", e => s"panic: $e")
                 assert(result == s"panic: $ex")
             }
         }
@@ -593,7 +593,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.foldError(_ => throw exception)(_ => throw exception)
+                    tryy.foldError(_ => throw exception, _ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -605,7 +605,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.foldError(_ => throw exception)(_ => throw exception)
+                    tryy.foldError(_ => throw exception, _ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -617,7 +617,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.foldError(_ => 0)(_ => throw exception)
+                    tryy.foldError(_ => throw exception, _ => 0)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -1478,8 +1478,8 @@ class ResultTest extends Test:
             val failure: Partial[String, Int] = Failure("failed")
             val onFail                        = (s: String) => s.length < 5 // will be false for "failed"
             val onSuccess                     = (i: Int) => i > 5           // will be true for 23
-            val foldedSuccess                 = success.foldPartial(onFail)(onSuccess)
-            val foldedFailure                 = failure.foldPartial(onFail)(onSuccess)
+            val foldedSuccess                 = success.foldPartial(onSuccess, onFail)
+            val foldedFailure                 = failure.foldPartial(onSuccess, onFail)
             assert(foldedSuccess && !foldedFailure)
         }
 

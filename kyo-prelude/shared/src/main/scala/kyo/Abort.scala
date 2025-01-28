@@ -122,7 +122,7 @@ object Abort:
           *   A computation that succeeds with the Success value or fails with the Failure value
           */
         inline def apply[E, A](r: Result[E, A])(using inline frame: Frame): A < Abort[E] =
-            r.foldError(Abort.error)(identity)
+            r.foldError(identity, Abort.error)
 
         /** Lifts a Maybe into the Abort effect.
           *
