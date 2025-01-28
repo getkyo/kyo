@@ -591,8 +591,8 @@ class AbortCombinatorTest extends Test:
                     effect.orPanic.eval
                     fail("Failed to throw expected exception")
                 catch
-                    case bug =>
-                        assert(bug.getMessage.contains(exc.toString))
+                    case exc =>
+                        assert(exc.getMessage == "test-error")
                 end try
             }
 
@@ -602,11 +602,10 @@ class AbortCombinatorTest extends Test:
 
                 try
                     effect.orPanic.eval
-                    assert(???)
+                    fail("Failed to throw expected exception")
                 catch
-                    case bug =>
-                        val panic = PanicException("error")
-                        assert(bug.getMessage.contains(panic.toString))
+                    case exc =>
+                        assert(exc == PanicException("error"))
                 end try
             }
         }
