@@ -203,7 +203,7 @@ object Abort:
 
     /** Runs an Abort effect. This operation handles the Abort effect, converting it into a Result type.
       */
-    inline def runWith[E]: RunWithOps[E] = RunWithOps(())
+    private inline def runWith[E]: RunWithOps[E] = RunWithOps(())
 
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
         /** Runs an Abort effect, converting it to a Result.
