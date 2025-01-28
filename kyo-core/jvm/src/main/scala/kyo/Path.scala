@@ -283,7 +283,7 @@ class Path private (val path: List[String]) derives CanEqual:
             (parentExists, createFolders) match
                 case (true, _)     => IO(JFiles.copy(toJava, to.toJava, opts*)).unit
                 case (false, true) => Path(toJava.getParent().toString).mkDir.andThen(IO(JFiles.copy(toJava, to.toJava, opts*)).unit)
-                case _             => IO.unit
+                case _             => ()
         }
     end copy
 

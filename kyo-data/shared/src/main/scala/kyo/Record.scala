@@ -130,6 +130,10 @@ object Record:
 
     final infix class ~[Name <: String, Value] private ()
 
+    object `~`:
+        given [Name <: String, Value](using CanEqual[Value, Value]): CanEqual[Name ~ Value, Name ~ Value] =
+            CanEqual.derived
+
     /** Creates a Record from a product type (case class or tuple).
       */
     def fromProduct[A](value: A)(using ar: AsRecord[A]): Record[ar.Fields] = ar.asRecord(value)
@@ -258,14 +262,8 @@ object Record:
             AsFieldsInternal.summonAsField
     end AsFields
 
-    private type HasCanEqual[Field] =
-        Field match
-            case name ~ value => CanEqual[value, value]
-
-    inline given [Fields: TypeIntersection]: CanEqual[Record[Fields], Record[Fields]] =
-        discard(TypeIntersection.summonAll[Fields, HasCanEqual])
+    given [Fields, T](using TypeIntersection.Aux[Fields, T], CanEqual[T, T]): CanEqual[Record[Fields], Record[Fields]] =
         CanEqual.derived
-    end given
 
     inline given [Fields]: Tag[Record[Fields]] =
         scala.compiletime.error(

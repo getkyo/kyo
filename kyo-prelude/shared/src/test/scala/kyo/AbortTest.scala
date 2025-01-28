@@ -990,7 +990,7 @@ class AbortTest extends Test:
                 val ex          = new RuntimeException("Panic!")
                 val computation = Abort.panic(ex)
                 val recovered   = Abort.recover[CustomError](_ => 42)(computation)
-                assertDoesNotCompile("val _: Int < Any = recovered")
+                typeCheckFailure("val _: Int < Any = recovered")("Required: Int < Any")
             }
         }
 

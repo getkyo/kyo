@@ -24,7 +24,7 @@ class EnqueueDequeueBench extends Bench.ForkOnly(()):
 
         def loop(c: Channel[Unit], i: Int): Unit < (Async & Abort[Closed]) =
             if i >= depth then
-                IO.unit
+                Kyo.unit
             else
                 c.put(()).flatMap(_ => c.take.flatMap(_ => loop(c, i + 1)))
 

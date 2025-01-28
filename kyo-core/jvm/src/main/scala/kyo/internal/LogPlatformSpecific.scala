@@ -16,13 +16,14 @@ object LogPlatformSpecific:
         object SLF4J:
             def apply(name: String) = new SLF4J(org.slf4j.LoggerFactory.getLogger(name))
 
-        class SLF4J(logger: org.slf4j.Logger) extends Log.Unsafe:
+        final class SLF4J(logger: org.slf4j.Logger) extends Log.Unsafe:
             val level =
-                if logger.isErrorEnabled() then Level.error
-                else if logger.isWarnEnabled() then Level.warn
-                else if logger.isInfoEnabled() then Level.info
+                if logger.isTraceEnabled() then Level.trace
                 else if logger.isDebugEnabled() then Level.debug
-                else Level.trace
+                else if logger.isInfoEnabled() then Level.info
+                else if logger.isWarnEnabled() then Level.warn
+                else if logger.isErrorEnabled() then Level.error
+                else Level.silent
 
             inline def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.trace.enabled(level) then logger.trace(s"[${frame.position.show}] $msg")

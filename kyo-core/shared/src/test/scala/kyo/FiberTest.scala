@@ -115,7 +115,9 @@ class FiberTest extends Test:
 
     "race" - {
         "zero" in runNotJS {
-            assertDoesNotCompile("Async.raceFiber()")
+            typeCheckFailure("Async.race()")(
+                "None of the overloaded alternatives of method race in object Async"
+            )
         }
         "one" in runNotJS {
             Fiber.race(Seq(1)).map(_.get).map { r =>
@@ -999,8 +1001,10 @@ class FiberTest extends Test:
                     _      <- startLatch.await
                     done1  <- fiber.done
                     _      <- promise1.complete(Result.succeed(1))
+                    _      <- Async.sleep(1.milli)
                     done2  <- fiber.done
                     _      <- promise2.complete(Result.succeed(1))
+                    _      <- Async.sleep(1.milli)
                     result <- fiber.get
                     _      <- untilTrue(interruptCount.get.map(_ == 1))
                 yield

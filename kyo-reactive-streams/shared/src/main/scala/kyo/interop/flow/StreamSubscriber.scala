@@ -235,7 +235,7 @@ final private[kyo] class StreamSubscriber[V](
                     end if
                 case other =>
                     if state.compareAndSet(curState, other) then
-                        IO.unit
+                        Kyo.unit
                     else
                         handleInterupt()
             end match

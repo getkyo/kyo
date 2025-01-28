@@ -41,16 +41,16 @@ class DurationTest extends Test:
         }
 
         "invalid conversion shouldn't compile" in {
-            assertDoesNotCompile("2.nano")
-            assertDoesNotCompile("2.micro")
-            assertDoesNotCompile("2.milli")
-            assertDoesNotCompile("2.second")
-            assertDoesNotCompile("2.minute")
-            assertDoesNotCompile("2.hour")
-            assertDoesNotCompile("2.day")
-            assertDoesNotCompile("2.week")
-            assertDoesNotCompile("2.month")
-            assertDoesNotCompile("2.year")
+            typeCheckFailure("2.nano")("please use `.nanos`")
+            typeCheckFailure("2.micro")("please use `.micros`")
+            typeCheckFailure("2.milli")("please use `.millis`")
+            typeCheckFailure("2.second")("please use `.seconds`")
+            typeCheckFailure("2.minute")("please use `.minutes`")
+            typeCheckFailure("2.hour")("please use `.hours`")
+            typeCheckFailure("2.day")("please use `.days`")
+            typeCheckFailure("2.week")("please use `.weeks`")
+            typeCheckFailure("2.month")("please use `.months`")
+            typeCheckFailure("2.year")("please use `.years`")
         }
 
         "equality" in {
@@ -100,7 +100,7 @@ class DurationTest extends Test:
         }
 
         "Long.to* shouldn't compile" in {
-            assertDoesNotCompile("Long.MaxValue.toNanos")
+            typeCheckFailure("Long.MaxValue.toNanos")("value toNanos is not a member of Long")
         }
     }
 

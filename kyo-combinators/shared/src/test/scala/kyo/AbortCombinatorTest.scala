@@ -173,7 +173,9 @@ class AbortCombinatorTest extends Test:
 
             "should not be callable on throwable abort" in {
                 val failure: Int < Abort[IllegalArgumentException] = 23
-                assertDoesNotCompile("failure.abortToThrowable")
+                typeCheckFailure("failure.abortToThrowable")(
+                    "value abortToThrowable is not a member of Int < kyo.Abort[IllegalArgumentException]"
+                )
             }
 
             "should convert empty choice to absent abort" in {
