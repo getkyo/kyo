@@ -288,9 +288,9 @@ end MemoryTest
 class MemoryManagementSpec extends AnyFlatSpec with Matchers:
     "Arena" should "allocate and free memory correctly" in {
         val arena   = new Arena()
-        val segment = arena.allocate[Int](10)
-        segment.allocate(42)
-        segment.ptr should not be null
+        val segment = arena.allocate[Int](10) 
+        segment.allocate(42)           
+        segment.ptr should not be null 
 
         arena.close(segment) // Free the allocated memory
     }
