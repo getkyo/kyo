@@ -8,7 +8,6 @@ package kyo.internal
   * The development mode can be controlled in two ways:
   *   1. Explicitly via the system property "-Dkyo.development=true"
   *   2. Automatically by detecting SBT in the classpath
-  * }}}
   */
 private[kyo] object Environment:
 
