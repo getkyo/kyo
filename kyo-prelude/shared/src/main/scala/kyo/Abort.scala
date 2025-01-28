@@ -2,6 +2,7 @@ package kyo
 
 import kernel.ArrowEffect
 import kyo.Result.*
+import kyo.Schedule.done
 import kyo.Tag
 import kyo.kernel.Effect
 import scala.annotation.targetName
@@ -142,6 +143,63 @@ object Abort:
       */
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
+    final class RunWithOps[E >: Nothing](dummy: Unit) extends AnyVal:
+        /** Runs an Abort effect, converting it to a Result.
+          *
+          * @param v
+          *   The computation to run
+          * @tparam A
+          *   The success type of the computation
+          * @tparam S
+          *   The effect type of the computation
+          * @tparam ER
+          *   Any remaining Abort effects after running this one
+          * @return
+          *   A Result containing either the success value or the failure value, wrapped in the remaining effects
+          */
+        def apply[A: Flat, S, ER, B, S2](
+            v: => A < (Abort[E | ER] & S)
+        )(
+            continue: Result[E, A] => B < S2
+        )(
+            using
+            frame: Frame,
+            ct: SafeClassTag[E],
+            reduce: Reducible[Abort[ER]]
+        ): B < (S & reduce.SReduced & S2) =
+            reduce {
+                ArrowEffect.handleCatching[
+                    Const[Error[E]],
+                    Const[Unit],
+                    Abort[E],
+                    Result[E, A],
+                    B,
+                    Abort[ER] & S,
+                    Abort[ER] & S,
+                    S2
+                ](
+                    erasedTag[E],
+                    v.map(Result.succeed[E, A](_))
+                )(
+                    accept = [C] =>
+                        input =>
+                            input.isPanic ||
+                                input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
+                    handle = [C] => (input, _) => input,
+                    recover =
+                        case ct(fail) if ct <:< SafeClassTag[Throwable] =>
+                            continue(Result.Failure(fail))
+                        case fail =>
+                            continue(Result.Panic(fail)),
+                    done = continue(_)
+                )
+            }
+    end RunWithOps
+
+    /** Runs an Abort effect. This operation handles the Abort effect, converting it into a Result type.
+      */
+    inline def runWith[E]: RunWithOps[E] = RunWithOps(())
+
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
         /** Runs an Abort effect, converting it to a Result.
           *
@@ -162,32 +220,7 @@ object Abort:
             ct: SafeClassTag[E],
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
-            reduce {
-                ArrowEffect.handleCatching[
-                    Const[Error[E]],
-                    Const[Unit],
-                    Abort[E],
-                    Result[E, A],
-                    Result[E, A],
-                    Abort[ER] & S,
-                    Abort[ER] & S,
-                    Any
-                ](
-                    erasedTag[E],
-                    v.map(Result.succeed[E, A](_))
-                )(
-                    accept = [C] =>
-                        input =>
-                            input.isPanic ||
-                                input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
-                    handle = [C] => (input, _) => input,
-                    recover =
-                        case ct(fail) if ct <:< SafeClassTag[Throwable] =>
-                            Result.fail(fail)
-                        case fail =>
-                            Result.panic(fail)
-                )
-            }
+            runWith[E](v)(identity)
         end apply
     end RunOps
 
@@ -216,34 +249,10 @@ object Abort:
             f2: Flat[Result.Partial[E, A]],
             reduce: Reducible[Abort[ER]]
         ): Result.Partial[E, A] < (S & reduce.SReduced) =
-            reduce {
-                ArrowEffect.handleCatching[
-                    Const[Error[E]],
-                    Const[Unit],
-                    Abort[E],
-                    Result[E, A],
-                    Result.Partial[E, A],
-                    Abort[ER] & S,
-                    Abort[ER] & S,
-                    Any
-                ](
-                    erasedTag[E],
-                    v.map(Result.Success(_))
-                )(
-                    accept = [C] =>
-                        input =>
-                            input.isPanic ||
-                                input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
-                    handle = [C] =>
-                        (input, _) => input,
-                    done =
-                        case Panic(ct(fail))                        => Result.Failure(fail)
-                        case Panic(e)                               => throw e
-                        case error: Result.Partial[E, A] @unchecked => error,
-                    recover = e => throw e
-                )
-            }
-        end apply
+            Abort.runWith[E](v):
+                case Panic(thr)                      => throw thr
+                case other: Partial[E, A] @unchecked => other
+
     end RunPartialOps
 
     /** Runs an Abort effect, handling only Success and Fail cases. This operation handles the Abort effect, converting it into Success or
@@ -377,32 +386,10 @@ object Abort:
             ct: SafeClassTag[E],
             reduce: Reducible[Abort[ER]]
         ): B < (S & reduce.SReduced) =
-            reduce:
-                ArrowEffect.handleCatching[
-                    Const[Error[E]],
-                    Const[Unit],
-                    Abort[E],
-                    B,
-                    B,
-                    Abort[ER] & S,
-                    Abort[ER] & S,
-                    Any
-                ](
-                    erasedTag[E],
-                    v.map(onSuccess)
-                )(
-                    accept = [C] =>
-                        input =>
-                            input.isPanic || input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
-                    handle = [C] =>
-                        (input, _) =>
-                            (input: @unchecked) match
-                                case Failure(e) => onFail(e)
-                                case Panic(ct(fail)) if ct <:< SafeClassTag[Throwable] =>
-                                    onFail(fail)
-                                case Panic(e) => throw e,
-                    recover = e => throw e
-                )
+            runWith[E](v):
+                case Success(a) => onSuccess(a)
+                case Failure(e) => onFail(e)
+                case Panic(thr) => throw thr
 
         /** Recovers from an Abort failure by applying the provided function.
           *
@@ -430,35 +417,10 @@ object Abort:
             ct: SafeClassTag[E],
             reduce: Reducible[Abort[ER]]
         ): B < (S & reduce.SReduced) =
-            reduce:
-                ArrowEffect.handleCatching[
-                    Const[Error[E]],
-                    Const[Unit],
-                    Abort[E],
-                    B,
-                    B,
-                    Abort[ER] & S,
-                    Abort[ER] & S,
-                    Any
-                ](
-                    erasedTag[E],
-                    v.map(onSuccess)
-                )(
-                    accept = [C] =>
-                        input =>
-                            input.isPanic || input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
-                    handle = [C] =>
-                        (input, _) =>
-                            (input: @unchecked) match
-                                case Failure(e) => onFail(e)
-                                case Panic(e)   => onPanic(e),
-                    recover =
-                        case ct(fail) if ct <:< SafeClassTag[Throwable] =>
-                            onFail(fail)
-                        case ex =>
-                            onPanic(ex)
-                )
-        end apply
+            runWith[E](v):
+                case Success(a) => onSuccess(a)
+                case Failure(e) => onFail(e)
+                case Panic(thr) => onPanic(thr)
     end FoldOps
 
     /** Provides fold operations for Abort effects.
