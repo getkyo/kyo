@@ -428,22 +428,6 @@ lazy val `kyo-reactive-streams` =
         )
         .jvmSettings(mimaCheck(false))
 
-lazy val `kyo-aeron` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-aeron"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies ++= Seq(
-                "io.aeron"     % "aeron-driver" % "1.46.7",
-                "io.aeron"     % "aeron-client" % "1.46.7",
-                "com.lihaoyi" %% "upickle"      % "4.1.0"
-            )
-        )
-        .jvmSettings(mimaCheck(false))
-
 lazy val `kyo-sttp` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
