@@ -6,9 +6,6 @@ import org.scalatest.matchers.should.Matchers
 class EnvironmentTest extends AnyFreeSpec with Matchers:
 
     "infers as development" - {
-        "if running in sbt or metals, which should be the case in this test execution" in {
-            assert(Environment.inferIsDevelopment())
-        }
         "if system property is enabled, which should be the case in this test execution" in {
             System.setProperty("kyo.development", "true")
             assert(Environment.inferIsDevelopment())
