@@ -104,17 +104,21 @@ class KyoAppTest extends Test:
     }
 
     "effect mismatch" taggedAs jvmOnly in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
             new KyoApp:
-                run(1: Int < Options)
-        """)
+                run(1: Int < Var[Int])
+        """)(
+            "Found:    Int < kyo.Var[Int]"
+        )
     }
 
     "indirect effect mismatch" taggedAs jvmOnly in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
             new KyoApp:
-                run(Choices.run(1: Int < Options))
-        """)
+                run(Choice.run(1: Int < Var[Int]))
+        """)(
+            "Found:    Int < kyo.Var[Int]"
+        )
     }
 
 end KyoAppTest

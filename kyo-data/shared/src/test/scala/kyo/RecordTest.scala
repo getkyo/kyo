@@ -96,17 +96,17 @@ class RecordTest extends Test:
         }
 
         "incorrect type access should not compile" in {
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 val record = "name" ~ "Bob"
                 val name: Int = record.name
-            """)
+            """)("""Invalid field access: ("name" : String)""")
         }
 
         "non-existent field access should not compile" in {
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 val record = "name" ~ "Bob"
                 val city = record.city
-            """)
+            """)("""Invalid field access: ("city" : String)""")
         }
     }
 
@@ -278,9 +278,9 @@ class RecordTest extends Test:
                 "name" ~ "Frank" & "age" ~ 40
             val compacted = record.compact
             assert(compacted.size == 1)
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 compacted.age
-            """)
+            """)("""Invalid field access: ("age" : String)""")
         }
     }
 
@@ -365,9 +365,9 @@ class RecordTest extends Test:
         }
 
         "preserves type safety" in {
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 val partial: Record["name" ~ String] = "age" ~ 30
-            """)
+            """)("""Required: kyo.Record[("name" : String) ~ String]""")
         }
 
         "allows multiple upcasts" in {
@@ -427,20 +427,20 @@ class RecordTest extends Test:
             val record1 = "name" ~ "Alice" & "age" ~ 30
             val record2 = "name" ~ "Alice" & "years" ~ 30
 
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 assert(record1 != record2)
-            """)
+            """)("""cannot be compared with == or !=""")
         }
 
-        "not compile when fields lack CanEqual" in pendingUntilFixed { // looks like scala3 bug
+        "not compile when fields lack CanEqual" in {
             case class NoEqual(x: Int)
 
             val record1: Record["test" ~ NoEqual] = "test" ~ NoEqual(1)
             val record2                           = "test" ~ NoEqual(1)
 
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 assert(record1 == record2)
-            """)
+            """)("""cannot be compared with == or !=""")
         }
 
         "subtype equality" - {
@@ -556,16 +556,16 @@ class RecordTest extends Test:
 
             "cannot call methods that take malformed types" in {
                 def takesMalformed(r: MalformedRecord): String = r.name
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     takesMalformed("name" ~ "test" & "age" ~ 42)
-                """)
+                """)("""Required: kyo.Record[Int & ("age" : String) ~ Int]""")
             }
 
             "cannot return malformed types" in {
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     def returnsMalformed(): MalformedRecord =
                         "name" ~ "test" & "age" ~ 42
-                """)
+                """)("""Required: kyo.Record[Int & ("age" : String) ~ Int]""")
             }
         }
 
@@ -611,30 +611,32 @@ class RecordTest extends Test:
         "AsFields behavior" - {
             import Record.AsFields
 
+            val error = "No given instance of type kyo.AsFieldsInternal.HasAsField"
+
             "summoning AsFields instance" in {
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     summon[AsFields[Int & "name" ~ String & "age" ~ Int]]
-                """)
+                """)(error)
             }
 
             "AsFields with multiple raw types" in {
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     AsFields[Int & Boolean & "value" ~ String & String]
-                """)
+                """)(error)
             }
 
             "AsFields with duplicate field names" in {
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                    AsFields[Int & "value" ~ String & "value" ~ Int]
-                """)
+                """)(error)
             }
 
             "compact with AsFields" in {
                 val record = ("name" ~ "test" & "age" ~ 42)
                     .asInstanceOf[Record[Int & "name" ~ String & "age" ~ Int]]
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     record.compact
-                """)
+                """)(error)
             }
         }
     }

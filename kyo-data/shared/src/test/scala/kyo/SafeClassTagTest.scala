@@ -289,45 +289,48 @@ class SafeClassTagTest extends Test:
     }
 
     "unsupported" - {
+
+        val error = "This method requires a SafeClassTag"
+
         "generic types" - {
             "List[Int]" in {
-                assertDoesNotCompile("SafeClassTag[List[Int]]")
+                typeCheckFailure("SafeClassTag[List[Int]]")(error)
             }
 
             "Option[String]" in {
-                assertDoesNotCompile("SafeClassTag[Option[String]]")
+                typeCheckFailure("SafeClassTag[Option[String]]")(error)
             }
 
             "Map[String, Int]" in {
-                assertDoesNotCompile("SafeClassTag[Map[String, Int]]")
+                typeCheckFailure("SafeClassTag[Map[String, Int]]")(error)
             }
 
             "generic class" in {
                 class Generic[T]
-                assertDoesNotCompile("SafeClassTag[Generic[Int]]")
+                typeCheckFailure("SafeClassTag[Generic[Int]]")(error)
             }
 
             "generic trait" in {
                 trait GenericTrait[T]
-                assertDoesNotCompile("SafeClassTag[GenericTrait[String]]")
+                typeCheckFailure("SafeClassTag[GenericTrait[String]]")(error)
             }
         }
 
         "Null type" - {
             "Null" in {
-                assertDoesNotCompile("SafeClassTag[Null]")
+                typeCheckFailure("SafeClassTag[Null]")(error)
             }
 
             "Null in union" in {
-                assertDoesNotCompile("SafeClassTag[String | Null]")
+                typeCheckFailure("SafeClassTag[String | Null]")(error)
             }
 
             "Null in intersection" in {
-                assertDoesNotCompile("SafeClassTag[Any & Null]")
+                typeCheckFailure("SafeClassTag[Any & Null]")(error)
             }
 
             "Complex type with Null" in {
-                assertDoesNotCompile("SafeClassTag[(String | Int) & (Double | Null)]")
+                typeCheckFailure("SafeClassTag[(String | Int) & (Double | Null)]")(error)
             }
         }
     }

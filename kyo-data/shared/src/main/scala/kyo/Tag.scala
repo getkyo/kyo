@@ -6,6 +6,7 @@ import scala.annotation.switch
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.quoted.*
+import scala.util.hashing.MurmurHash3
 
 opaque type Tag[A] = String
 
@@ -29,6 +30,8 @@ object Tag:
         def showTpe: String =
             val decoded = t1.drop(2).takeWhile(_ != ';')
             TagMacro.fromCompact.getOrElse(decoded, decoded)
+
+        def hash: Int = MurmurHash3.stringHash(t1)
 
         private[kyo] def raw: String = t1
 

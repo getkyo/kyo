@@ -46,7 +46,9 @@ class EnvTest extends Test:
     }
 
     "intersection type env" in {
-        assertDoesNotCompile("Env.get[Int & Double]")
+        typeCheckFailure("Env.get[Int & Double]")(
+            "Method doesn't accept intersection types"
+        )
     }
 
     "reduce large intersection incrementally" in {
@@ -79,11 +81,13 @@ class EnvTest extends Test:
     }
 
     "invalid inference" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
         def t1(v: Int < Env[Int & String]) =
             Env.run(1)(v)
         val _: Int < Any = t1(42)
-        """)
+        """)(
+            "Required: Int < Any"
+        )
     }
 
     "no transformations" in {

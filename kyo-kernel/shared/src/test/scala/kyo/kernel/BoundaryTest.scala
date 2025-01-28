@@ -16,13 +16,15 @@ class BoundaryTest extends Test:
             assert(boundary.isInstanceOf[Boundary[TestEffect1 & TestEffect2, Any]])
         }
 
+        val error = "The computation you're trying to fork with Async has pending effects that aren't supported"
+
         "fails compilation for non-context effects" in {
-            assertDoesNotCompile("Boundary.derive[Int, Any]")
-            assertDoesNotCompile("Boundary.derive[String, Any]")
+            typeCheckFailure("Boundary.derive[Int, Any]")(error)
+            typeCheckFailure("Boundary.derive[String, Any]")(error)
         }
 
         "fails compilation for non-context effect traits" in {
-            assertDoesNotCompile("Boundary.derive[NotContextEffect, Any]")
+            typeCheckFailure("Boundary.derive[NotContextEffect, Any]")(error)
         }
     }
 

@@ -3562,4 +3562,3 @@ License
 -------
 
 See the [LICENSE](https://github.com/getkyo/kyo/blob/master/LICENSE.txt) file for details.
- 

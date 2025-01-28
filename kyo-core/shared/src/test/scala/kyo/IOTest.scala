@@ -109,9 +109,6 @@ class IOTest extends Test:
             }
             succeed
         }
-        "doesn't accept other pending effects" in {
-            assertDoesNotCompile("IO.Unsafe.run[Int < Options](Options.get(Some(1)))")
-        }
     }
 
     "ensure" - {
@@ -175,18 +172,22 @@ class IOTest extends Test:
         }
 
         "does not include wider Abort types" in {
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 val a: Int < Abort[String] = 1
                 val b: Int < IO            = a
-            """)
+            """)(
+                "Required: Int < kyo.IO"
+            )
         }
 
         "preserves Nothing as most specific error type" in {
-            assertDoesNotCompile("""
+            typeCheckFailure("""
                 val io: Int < IO = IO {
                     Abort.fail[String]("error")
                 }
-            """)
+            """)(
+                "Required: Int < kyo.IO"
+            )
         }
     }
 
