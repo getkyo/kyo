@@ -61,7 +61,10 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
+    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    javaOptions ++= Seq(
+        "-Xmx12G"
+    )
 )
 
 Global / onLoad := {
@@ -111,6 +114,7 @@ lazy val kyoJVM = project
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
         `kyo-reactive-streams`.jvm,
+        `kyo-aeron`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
         `kyo-caliban`.jvm,
@@ -333,13 +337,23 @@ lazy val `kyo-core` =
         )
 
 lazy val `kyo-offheap` =
-    crossProject(JVMPlatform)
+    crossProject(JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
-        .settings(`kyo-settings`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies ++= Seq(
+                "org.scala-native" %%% "scala-native" % "0.4.16",
+                "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
+            )
+        )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(
+            `native-settings`,
+            libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
+        )
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -419,6 +433,22 @@ lazy val `kyo-reactive-streams` =
                 "org.reactivestreams" % "reactive-streams"     % "1.0.4",
                 "org.reactivestreams" % "reactive-streams-tck" % "1.0.4"    % Test,
                 "org.scalatestplus"  %% "testng-7-5"           % "3.2.17.0" % Test
+            )
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-aeron` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-aeron"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies ++= Seq(
+                "io.aeron"     % "aeron-driver" % "1.46.7",
+                "io.aeron"     % "aeron-client" % "1.46.7",
+                "com.lihaoyi" %% "upickle"      % "4.1.0"
             )
         )
         .jvmSettings(mimaCheck(false))
@@ -688,3 +718,5 @@ def mimaCheck(failOnProblem: Boolean) =
         mimaBinaryIssueFilters ++= Seq(),
         mimaFailOnProblem := failOnProblem
     )
+
+scalacOptions += "-Xno-enrich-error-messages"

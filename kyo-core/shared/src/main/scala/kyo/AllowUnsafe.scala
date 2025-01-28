@@ -19,8 +19,13 @@ Options (in order of preference):
 
 WARNING: Using AllowUnsafe directly bypasses important safety mechanisms and may break referential transparency. Ensure you fully understand the risks before proceeding this way.
 """)
-opaque type AllowUnsafe = Null
+
+/** Capability marker for unsafe operations */
+opaque type AllowUnsafe = Unit
 
 object AllowUnsafe:
     object embrace:
-        inline given danger: AllowUnsafe = null
+        inline given danger: AllowUnsafe = ()
+
+    given AllowUnsafe = ()
+end AllowUnsafe
