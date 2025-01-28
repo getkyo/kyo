@@ -2,17 +2,14 @@ package kyo
 
 import kyo.*
 import kyo.Ansi.*
+import kyo.internal.Environment
 import scala.util.control.NoStackTrace
 
-class KyoException private[kyo] (
-    message: Text | Null = null,
-    cause: Text | Throwable | Null = null
-)(using val frame: Frame) extends Exception(
-        Option(message) match
-            case Some(message) => message.toString;
-            case _             => null,
+class KyoException private[kyo] (message: Text = "", cause: Text | Throwable = "")(using val frame: Frame)
+    extends Exception(
+        message.toString,
         cause match
-            case cause: Throwable => cause;
+            case cause: Throwable => cause
             case _                => null
     ) with NoStackTrace:
 
@@ -27,8 +24,12 @@ class KyoException private[kyo] (
                 case _: Throwable           => Absent
                 case cause: Text @unchecked => Maybe(cause)
 
-        val msg = frame.render(("⚠️ KyoException".red.bold :: Maybe(message).toList ::: detail.toList).map(_.show)*)
-        s"\n$msg\n"
+        if Environment.isDevelopment() then
+            val msg = frame.render(("⚠️ KyoException".red.bold :: Maybe(message).toList ::: detail.toList).map(_.show)*)
+            s"\n$msg\n"
+        else
+            detail.map(_.toString).getOrElse(null)
+        end if
     end getMessage
 
 end KyoException
