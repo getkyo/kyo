@@ -8,7 +8,7 @@ import scala.reflect.ClassTag
 import scala.util.Random
 import zio.Chunk as ZChunk
 
-class ChunkBench extends Bench(()):
+class ChunkBench extends BaseBench:
     @Param(Array("1024", "1048576"))
     var size: Int = uninitialized
 
