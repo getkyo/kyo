@@ -10,7 +10,7 @@ package kyo.internal
   *   2. Automatically by detecting SBT in the classpath
   * }}}
   */
-object Environment:
+private[kyo] object Environment:
 
     /** Determines if the execution is a development environment.
       *
@@ -26,7 +26,9 @@ object Environment:
       * @return
       *   true if running in a development environment, false otherwise
       */
-    def isDevelopment(): Boolean =
+    val isDevelopment: Boolean = inferIsDevelopment()
+
+    private[internal] def inferIsDevelopment(): Boolean =
         sys.props.get("kyo.development-mode.enable").map(_.toLowerCase) match
             case Some("true") => true
             case Some(_)      => false

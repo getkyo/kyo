@@ -24,7 +24,7 @@ class KyoException private[kyo] (message: Text = "", cause: Text | Throwable = "
                 case _: Throwable           => Absent
                 case cause: Text @unchecked => Maybe(cause)
 
-        if Environment.isDevelopment() then
+        if Environment.isDevelopment then
             val msg = frame.render(("⚠️ KyoException".red.bold :: Maybe(message).toList ::: detail.toList).map(_.show)*)
             s"\n$msg\n"
         else
