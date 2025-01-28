@@ -122,11 +122,12 @@ class AbortCombinatorTest extends Test:
 
             "should throw panic" in {
                 val failure: Int < Abort[String] = Abort.panic(new Exception("message"))
-                try 
+                try
                     val _ = failure.partialResult
                     fail("Failed to throw expected exception")
                 catch
                     case e: Exception => assert(e.getMessage() == "message")
+                end try
             }
         }
 
@@ -577,8 +578,8 @@ class AbortCombinatorTest extends Test:
                         result <- if i > 1 then Abort.fail("error") else (i: Int < Any)
                     yield i
 
-                val effectOrDie: Int < Any = effect.orPanic
-                assert(effectOrDie.eval == 1)
+                val effectOrPanic: Int < Any = effect.orPanic
+                assert(effectOrPanic.eval == 1)
             }
 
             "should remove throwable Abort and throw KyoBugException with error as cause" in {
@@ -588,7 +589,7 @@ class AbortCombinatorTest extends Test:
 
                 try
                     effect.orPanic.eval
-                    assert(???)
+                    fail("Failed to throw expected exception")
                 catch
                     case bug =>
                         assert(bug.getMessage.contains(exc.toString))

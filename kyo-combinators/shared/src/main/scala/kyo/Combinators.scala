@@ -473,7 +473,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         handled.map((v: Result[E, A]) => Abort.get(v.swap))
     end swapAbort
 
-    /** Catches any Aborts and panics instead
+    /** Catches any Aborts and panics instead, throwing exceptions
       *
       * @return
       *   A computation that panics instead of catching Abort effect failures
@@ -484,13 +484,11 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl: Flat[A],
         frame: Frame
     ): A < S =
-        val handled: A < (S & Abort[Nothing]) = Abort.run[E](effect).map:
+        Abort.run[E](effect).map:
             case Result.Success(v)              => v
-            case Result.Failure(thr: Throwable) => Abort.panic(thr)
-            case Result.Failure(other)          => Abort.panic(PanicException(other))
-            case other: Result.Panic            => Abort.get(other)
-
-        summon[Reducible[Abort[Nothing]] { type SReduced = Any }][A, S](handled)
+            case Result.Failure(thr: Throwable) => throw thr
+            case Result.Failure(other)          => throw PanicException(other)
+            case Result.Panic(thr)              => throw thr
     end orPanic
 
 end extension
@@ -776,12 +774,11 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ct: SafeClassTag[E1],
         fl: Flat[A],
         frame: Frame
-    ): A < (S & reduce.SReduced) =
-        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
+    ): A < (S & Abort[ER]) =
+        Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
             case Result.Success(v)              => v
             case Result.Failure(thr: Throwable) => Abort.panic(thr).asInstanceOf[Nothing < Any]
             case Result.Failure(other)          => Abort.panic(PanicException(other)).asInstanceOf[Nothing < Any]
-            case other: Result.Panic            => Abort.get(other).asInstanceOf[Nothing < Any]
 
     end orPanic
 end ForAbortOps
