@@ -582,6 +582,7 @@ lazy val `kyo-bench` =
         .settings(
             `kyo-settings`,
             Test / testForkedParallel := true,
+            // Forks each test suite individually
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector
                 val envsVarsValue    = envVars.value
