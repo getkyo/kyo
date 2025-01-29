@@ -84,7 +84,7 @@ sealed abstract class Stream[V, -S]:
                 (input, _, cont) =>
                     if input.isEmpty then ((), cont(()))
                     else
-                        val s = Chunk.from(f(input))
+                        val s = f(input)
                         if s.isEmpty then ((), cont(()))
                         else
                             Emit.valueWith(Chunk.from(s))(((), cont(())))
@@ -311,7 +311,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A new stream containing only elements that satisfy the predicate
       */
-    def filter[B, S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+    def filter[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
         Stream[V, S & S2](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
                 (input, _, cont) =>
@@ -329,7 +329,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V, S](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
                 (input, _, cont) =>
-                    val c = input.filter(f.asInstanceOf[V => Boolean])
+                    val c = input.filter(f)
                     if c.isEmpty then ((), cont(()))
                     else Emit.valueWith(c)(((), cont(())))
         ))
