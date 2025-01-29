@@ -15,6 +15,8 @@ import scala.util.control.NonFatal
   *   - `Error[E]`: Base type for both Failure and Panic
   *     - `Failure[E]`: Represents expected errors of type `E`
   *     - `Panic`: Represents unexpected runtime exceptions
+  * 
+  * For a narrower version of Result that includes only `Success[A]` and `Failure[E]`, see `Result.Partial[E, A]`.
   *
   * Result provides several groups of operations:
   *   - Fold operations (`fold`, `foldError`, `foldOrThrow`) for matching on the different states
