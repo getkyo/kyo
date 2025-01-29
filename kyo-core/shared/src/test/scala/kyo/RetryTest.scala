@@ -90,25 +90,25 @@ class RetryTest extends Test:
     "panics" - {
         "should not retry on panic" in run {
             var calls = 0
-            Abort.run[Exception] {
-                Retry[Exception](Schedule.repeat(3)) {
+            Abort.run {
+                Retry[Nothing](Schedule.repeat(3)) {
                     calls += 1
                     Abort.panic(new RuntimeException("panic"))
                 }
             }.map { v =>
-                assert(v.isFailure && calls == 1)
+                assert(v.isPanic && calls == 1)
             }
         }
 
         "should not retry on panic with default schedule" in run {
             var calls = 0
-            Abort.run[Exception] {
-                Retry[Exception] {
+            Abort.run {
+                Retry[Nothing] {
                     calls += 1
                     Abort.panic(new RuntimeException("panic"))
                 }
             }.map { v =>
-                assert(v.isFailure && calls == 1)
+                assert(v.isPanic && calls == 1)
             }
         }
     }

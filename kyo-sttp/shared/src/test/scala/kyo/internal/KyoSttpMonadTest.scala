@@ -82,7 +82,7 @@ class KyoSttpMonadTest extends Test:
             }
             Abort.run[Throwable](result).map { r =>
                 assert(!interrupted)
-                assert(r == Result.panic(ex))
+                assert(r == Result.Failure(ex))
             }
         }
 
