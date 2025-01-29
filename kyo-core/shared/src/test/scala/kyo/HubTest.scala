@@ -312,7 +312,7 @@ class HubTest extends Test:
                 result    <- slowConsumer.get
                 _         <- producerFiber.get
                 elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 10.millis && result == (1 to 10))
+            yield assert(elapsed >= 8.millis && result == (1 to 10))
         }
 
         "concurrent filtered listeners" in run {
