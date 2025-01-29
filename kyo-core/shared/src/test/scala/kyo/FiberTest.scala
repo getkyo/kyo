@@ -362,7 +362,7 @@ class FiberTest extends Test:
             for
                 mappedFiber: Fiber[Nothing, Int] <- fiber.mapResult(_ => throw new RuntimeException("Mapping exception"))
                 result                           <- Abort.run[Throwable](mappedFiber.get)
-            yield assert(result.isFailure)
+            yield assert(result.isPanic)
             end for
         }
     }
@@ -382,7 +382,7 @@ class FiberTest extends Test:
             for
                 mappedFiber: Fiber[Nothing, Int] <- fiber.map(_ => throw new RuntimeException("Mapping exception"))
                 result                           <- Abort.run[Throwable](mappedFiber.get)
-            yield assert(result.isFailure)
+            yield assert(result.isPanic)
             end for
         }
     }
@@ -412,7 +412,7 @@ class FiberTest extends Test:
             for
                 flatMappedFiber: Fiber[Nothing, Int] <- fiber.flatMap(_ => throw new RuntimeException("Mapping exception"))
                 result                               <- Abort.run[Throwable](flatMappedFiber.get)
-            yield assert(result.isFailure)
+            yield assert(result.isPanic)
             end for
         }
     }
@@ -437,8 +437,7 @@ class FiberTest extends Test:
             val fiber = Fiber.success[Nothing, Int](42)
             for
                 result <- Abort.run[Throwable](fiber.use(_ => throw new RuntimeException("Use exception")))
-            yield assert(result.isFailure)
-            end for
+            yield assert(result.isPanic)
         }
     }
 
