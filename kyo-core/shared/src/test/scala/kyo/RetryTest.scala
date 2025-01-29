@@ -96,7 +96,7 @@ class RetryTest extends Test:
                     Abort.panic(new RuntimeException("panic"))
                 }
             }.map { v =>
-                assert(v.isPanic && calls == 1)
+                assert(v.isFailure && calls == 1)
             }
         }
 
@@ -108,7 +108,7 @@ class RetryTest extends Test:
                     Abort.panic(new RuntimeException("panic"))
                 }
             }.map { v =>
-                assert(v.isPanic && calls == 1)
+                assert(v.isFailure && calls == 1)
             }
         }
     }

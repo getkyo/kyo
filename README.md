@@ -2912,7 +2912,7 @@ val f: Int = a.getOrThrow
 val g: Int = b.getOrElse(0)
 
 // 'foldError' applies a function based on success or failure
-val h: String = a.foldError(e => "failure " + e)(_.toString)
+val h: String = a.foldError(_.toString, e => "failure " + e)
 
 // 'map' transforms the value if successful
 val i: Result[Nothing, String] = a.map(_.toString)
