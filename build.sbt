@@ -151,7 +151,7 @@ lazy val kyoNative = project
     .in(file("native"))
     .settings(
         name := "kyoNative",
-        `kyo-settings`
+        `native-settings`
     )
     .disablePlugins(MimaPlugin)
     .aggregate(
@@ -680,6 +680,7 @@ lazy val readme =
 lazy val `native-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
+    Test / testForkedParallel                   := false,
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 
