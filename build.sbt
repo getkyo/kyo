@@ -323,7 +323,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.16" % Test,
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.16" % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -338,12 +338,7 @@ lazy val `kyo-offheap` =
         .crossType(CrossType.Full)
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
-        .settings(
-            name := "kyo-offheap",
-            version := "0.1.0",
-            scalaVersion := "2.13.15",
-            resolvers += "Sonatype OSS Releases" at "https://oss.sonatype.org/content/repositories/releases/"
-        )
+        .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-direct` =

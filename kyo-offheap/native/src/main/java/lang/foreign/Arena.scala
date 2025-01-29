@@ -1,4 +1,4 @@
-package kyo.offheap
+package kyo.offheap.native.java.lang.foreign
 
 import scala.scalanative.unsafe._
 import scala.scalanative.libc.stdlib._
