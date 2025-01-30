@@ -10,7 +10,7 @@ import scala.compiletime.uninitialized
 import zio.ZEnvironment
 
 // Based on: https://github.com/zio/zio/blob/series/2.x/benchmarks/src/main/scala/zio/ZEnvironmentBenchmark.scala
-class TypeMapBench extends Bench(()):
+class TypeMapBench extends BaseBench:
     import BenchmarkedEnvironment.*
 
     var zioEnv: ZEnvironment[Env]           = uninitialized
