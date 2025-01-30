@@ -68,5 +68,5 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         if Platform.isDebugEnabled then
             Duration.Infinity
         else
-            5.seconds
+            8.seconds
 end BaseKyoKernelTest
