@@ -76,7 +76,7 @@ sealed abstract class Stream[V, -S]:
         using
         tagV: Tag[Emit[Chunk[V]]],
         tagV2: Tag[Emit[Chunk[V2]]],
-        discr: Flat[Boolean],
+        discr: Stream.Dummy,
         frame: Frame
     ): Stream[V2, S] =
         Stream[V2, S](ArrowEffect.handleState(tagV, (), emit)(
@@ -251,7 +251,7 @@ sealed abstract class Stream[V, -S]:
       */
     def takeWhile(f: V => Boolean)(using
         tag: Tag[Emit[Chunk[V]]],
-        discr: Flat[Boolean],
+        discr: Stream.Dummy,
         frame: Frame
     ): Stream[V, S] =
         Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
@@ -315,7 +315,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V, S & S2](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
                 (input, _, cont) =>
-                    Kyo.filter(input)(f.asInstanceOf[V => Boolean < S2]).map { c =>
+                    Kyo.filter(input)(f).map { c =>
                         if c.isEmpty then ((), cont(()))
                         else Emit.valueWith(c)(((), cont(())))
                 }
@@ -571,5 +571,11 @@ object Stream:
                         end if
                     }
                 }
+
+    /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
+      */
+    sealed class Dummy
+    object Dummy:
+        given Dummy = new Dummy {}
 
 end Stream
