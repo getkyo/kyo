@@ -285,7 +285,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): Result[E, A] < S =
         Abort.run[E](effect)
 
-    /** Handles the Abort effect and returns its result as a `Result.Partial[E, A]`, not handling Panic exceptions.
+    /** Handles the Abort effect and returns its result as a `Result.Partial[E, A]`, not handling Panic exceptions. (This means panics will
+      * be thrown.)
       *
       * @return
       *   A computation that produces a partial result of this computation with the Abort[E] effect handled
@@ -296,7 +297,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl: Flat[A],
         fr: Frame
     ): Result.Partial[E, A] < S =
-        Abort.runPartialOrThrow[A, E, S](effect)
+        Abort.runPartialOrThrow(effect)
 
     /** Handles the Abort effect, transforming caught errors into a new error as determined by mapping function
       *
@@ -386,7 +387,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     /** Recovers from an Abort failure by applying the provided function.
       *
       * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
-      * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
+      * handles failures of type E and throws panic exceptions.
       *
       * @param onSuccess
       *   A function that takes the success value of type A and returns a new computation
@@ -770,7 +771,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     def orPanic[ER](
         using
         ev: E => E1 | ER,
-        reduce: Reducible[Abort[ER]],
         ct: SafeClassTag[E1],
         fl: Flat[A],
         frame: Frame

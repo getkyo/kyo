@@ -5,7 +5,6 @@ import kyo.Result.*
 import kyo.Tag
 import kyo.kernel.Effect
 import scala.annotation.targetName
-import scala.util.NotGiven
 
 /** The Abort effect allows for short-circuiting computations with failure values. This effect is used for handling errors and early
   * termination scenarios in a functional manner and handle thrown exceptions.
@@ -157,7 +156,7 @@ object Abort:
           * @return
           *   A Result containing either the success value or the failure value, wrapped in the remaining effects
           */
-        def apply[A: Flat, S, ER, B, S2](
+        inline def apply[A: Flat, S, ER, B, S2](
             v: => A < (Abort[E | ER] & S)
         )(
             continue: Result[E, A] => B < S2
@@ -185,12 +184,7 @@ object Abort:
                         input =>
                             input.isPanic ||
                                 input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
-                    handle = [C] =>
-                        (input, _) =>
-                            input match
-                                case fail: Failure[E] => fail
-                                case Panic(ct(thr))   => Result.Failure(thr)
-                                case panic: Panic     => panic,
+                    handle = [C] => (input, _) => input,
                     recover =
                         case ct(fail) if ct <:< SafeClassTag[Throwable] =>
                             continue(Result.Failure(fail))
@@ -234,7 +228,7 @@ object Abort:
     inline def run[E]: RunOps[E] = RunOps(())
 
     final class RunPartialOps[E >: Nothing](dummy: Unit) extends AnyVal:
-        /** Runs an Abort effect, converting it to a partial Result.
+        /** Runs an Abort effect, converting it to a partial Result and leaving panic cases.
           *
           * @param v
           *   The computation to run
@@ -254,8 +248,7 @@ object Abort:
             f2: Flat[Result.Partial[E, A]]
         ): Result.Partial[E, A] < (S & Abort[ER]) =
             Abort.runWith[E](v):
-                case panic: Panic =>
-                    Abort.error(panic)
+                case panic: Panic                    => Abort.error(panic)
                 case other: Partial[E, A] @unchecked => other
 
     end RunPartialOps
@@ -265,15 +258,26 @@ object Abort:
       */
     inline def runPartial[E]: RunPartialOps[E] = RunPartialOps(())
 
-    /** Runs an Abort effect, handling only Success and Fail cases. This operation handles the Abort effect, converting it into Success or
-      * Fail.
+    /** Completely handles an Abort effect, converting it to a partial Result and throwing any Panic exceptions.
+      *
+      * @param v
+      *   The computation to run
+      * @tparam A
+      *   The success type of the computation
+      * @tparam S
+      *   The effect type of the computation
+      * @tparam ER
+      *   Any remaining Abort effects after running this one
+      * @return
+      *   A Result containing either the success value or the failure value, wrapped in the remaining effects
       */
-    inline def runPartialOrThrow[A, E, S](v: A < (Abort[E] & S))(
+    def runPartialOrThrow[E, A, S](v: => A < (Abort[E] & S))(
         using
-        frame: Frame,
+        fl: Flat[A],
         ct: SafeClassTag[E],
-        ev: NotGiven[S <:< Abort[Any]]
-    ): Partial[E, A] < S =
+        f2: Flat[Result.Partial[E, A]],
+        frame: Frame
+    ): Result.Partial[E, A] < S =
         Abort.runWith[E](v):
             case Panic(thr)                      => throw thr
             case other: Partial[E, A] @unchecked => other
@@ -334,6 +338,27 @@ object Abort:
       */
     inline def recover[E]: RecoverOps[E] = RecoverOps(())
 
+    /** Recovers from an Abort failure by handling Failure cases with a provided function. Does not handle Panic cases, but throws
+      * underlying exceptions.
+      *
+      * @param onFail
+      *   A function that takes the failure value of type E and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def recoverOrThrow[A, E, B, S](onFail: E => B < S)(v: => A < (Abort[E] & S))(
+        using
+        fl: Flat[A],
+        frame: Frame,
+        ct: SafeClassTag[E]
+    ): (A | B) < S =
+        runWith[E](v):
+            case Success(a) => a
+            case Failure(e) => onFail(e)
+            case Panic(thr) => throw thr
+
     final case class FoldOps[E](dummy: Unit) extends AnyVal:
         /** Recovers from an Abort failure by applying the provided function.
           *
@@ -349,11 +374,11 @@ object Abort:
           * @return
           *   A computation that either succeeds with the original value or the recovered value
           */
-        def apply[A: Flat, B: Flat, S, S2, ER](onSuccess: A => B < S2, onFail: E => B < S2)(v: => A < (Abort[E | ER] & S))(
+        def apply[A: Flat, B: Flat, S, ER](onSuccess: A => B < S, onFail: E => B < S)(v: => A < (Abort[E | ER] & S))(
             using
             frame: Frame,
             ct: SafeClassTag[E]
-        ): B < (S & S2 & Abort[ER]) =
+        ): B < (S & Abort[ER]) =
             runWith[E](v):
                 case Success(a)   => onSuccess(a)
                 case Failure(e)   => onFail(e)
@@ -361,8 +386,8 @@ object Abort:
 
         /** Recovers from an Abort failure by applying the provided function.
           *
-          * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
-          * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
+          * This method allows you to handle failures and panics in an Abort effect and potentially continue the computation with a new
+          * value.
           *
           * @param onSuccess
           *   A function that takes the success value of type A and returns a new computation
@@ -395,16 +420,27 @@ object Abort:
       */
     inline def fold[E]: FoldOps[E] = FoldOps(())
 
-    inline def foldOrThrow[A, B, E, S, S2](
-        onSuccess: A => B < S2,
-        onFail: E => B < S2
-    )(v: A < (Abort[E] & S))(
+    /** Recovers from an Abort failure by applying the provided function.
+      *
+      * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
+      * handles failures of type E and throws any panic exceptions.
+      *
+      * @param onSuccess
+      *   A function that takes the success value of type A and returns a new computation
+      * @param onFail
+      *   A function that takes the failure value of type E and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def foldOrThrow[A, B, E, S](onSuccess: A => B < S, onFail: E => B < S)(v: => A < (Abort[E] & S))(
         using
+        fl: Flat[A],
         frame: Frame,
-        ct: SafeClassTag[E],
-        ev: NotGiven[S <:< Abort[Any]]
-    ): B < (S & S2) =
-        Abort.runWith[E](v):
+        ct: SafeClassTag[E]
+    ): B < S =
+        runWith[E](v):
             case Success(a) => onSuccess(a)
             case Failure(e) => onFail(e)
             case Panic(thr) => throw thr

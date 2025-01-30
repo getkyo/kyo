@@ -272,7 +272,7 @@ class CatsTest extends Test:
             val kyoAbort  = Abort.fail(new Exception("Kyo error"))
             val converted = Cats.get(CatsIO.fromEither(Abort.run(kyoAbort).eval.toEither))
             Abort.run[Throwable](converted).map {
-                case Result.Failure(ex) => assert(ex.getMessage() == "Kyo error")
+                case Result.Panic(ex) => assert(ex.getMessage() == "Kyo error")
                 case _                => fail("Expected a String error")
             }
         }
@@ -281,7 +281,7 @@ class CatsTest extends Test:
             val catsError = CatsIO.raiseError[Int](new Exception("Cats error"))
             val converted = Cats.get(catsError)
             Abort.run[Throwable](converted).map {
-                case Result.Failure(error: Exception) => assert(error.getMessage == "Cats error")
+                case Result.Panic(error: Exception) => assert(error.getMessage == "Cats error")
                 case _                              => fail("Expected an Exception")
             }
         }

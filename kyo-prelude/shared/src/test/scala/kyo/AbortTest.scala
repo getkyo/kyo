@@ -264,10 +264,16 @@ class AbortTest extends Test:
                 Abort.run[Any](throw ex).map(result => assert(result == Result.panic(ex)))
             }
             "nested panic to fail" - {
-                "converts matching Panic to Fail" in {
+                "catches matching throwable as Failure" in {
+                    val ex     = new RuntimeException("Test exception")
+                    val result = Abort.run[RuntimeException](throw ex).eval
+                    assert(result == Result.Failure(ex))
+                }
+
+                "does not convert matching Panic to Failure" in {
                     val ex     = new RuntimeException("Test exception")
                     val result = Abort.run[RuntimeException](Abort.panic(ex)).eval
-                    assert(result == Result.Failure(ex))
+                    assert(result == Result.Panic(ex))
                 }
 
                 "leaves non-matching Panic as Panic" in {
@@ -293,7 +299,7 @@ class AbortTest extends Test:
                         Abort.run[RuntimeException](Abort.panic(ex))
                     }
                     val result = nested.eval
-                    assert(result == Result.Success(Result.Failure(ex)))
+                    assert(result == Result.Success(Result.Panic(ex)))
                 }
             }
         }
@@ -389,16 +395,16 @@ class AbortTest extends Test:
                 assert(res.eval == Result.Success(expected))
             }
             "nested panic to fail" - {
-                "converts matching Panic to Fail" in {
+                "catches matching throwable as Failure" in {
                     val ex     = new RuntimeException("Test exception")
-                    val result = Abort.run(Abort.runPartial[RuntimeException](Abort.panic(ex))).eval
+                    val result = Abort.run(Abort.runPartial[RuntimeException](throw ex)).eval
                     assert(result == Result.Success(Result.Failure(ex)))
                 }
 
-                "leaves non-matching Panic as Panic" in {
-                    val ex     = new IllegalArgumentException("Test exception")
-                    val result = Abort.run(Abort.runPartial[NoSuchElementException](Abort.panic(ex))).eval
-                    assert(result == Result.Panic(ex))
+                "does not convert matching Panic to Failure" in {
+                    val ex     = new RuntimeException("Test exception")
+                    val result = Abort.run(Abort.runPartial[RuntimeException](Abort.panic(ex))).eval
+                    assert(result == Result.Success(Result.Panic(ex)))
                 }
 
                 "doesn't affect Success" in {
@@ -418,7 +424,7 @@ class AbortTest extends Test:
                         Abort.runPartial[RuntimeException](Abort.panic(ex))
                     }
                     val result = Abort.run(nested).eval
-                    assert(result == Result.Success(Result.Success(Result.Failure(ex))))
+                    assert(result == Result.Success(Result.Success(Result.Panic(ex))))
                 }
             }
         }
@@ -477,18 +483,18 @@ class AbortTest extends Test:
             val f = Abort.fail(e)
             assert(Abort.run(f).eval == Result.fail(e))
         }
-        // "error" - {
-        //     "fail" in {
-        //         val ex: Throwable = new Exception("throwable failure")
-        //         val a             = Abort.error(Result.Failure(ex))
-        //         assert(Abort.run[Throwable](a).eval == Result.fail(ex))
-        //     }
-        //     "panic" in {
-        //         val ex: Throwable = new Exception("throwable failure")
-        //         val a             = Abort.error(Result.Panic(ex))
-        //         assert(Abort.run[Throwable](a).eval == Result.panic(ex))
-        //     }
-        // }
+        "error" - {
+            "fail" in {
+                val ex: Throwable = new Exception("throwable failure")
+                val a             = Abort.error(Result.Failure(ex))
+                assert(Abort.run[Throwable](a).eval == Result.fail(ex))
+            }
+            "panic" in {
+                val ex: Throwable = new Exception("throwable failure")
+                val a             = Abort.error(Result.Panic(ex))
+                assert(Abort.run[Throwable](a).eval == Result.panic(ex))
+            }
+        }
         "when" - {
             "basic usage" in {
                 def test(b: Boolean) = Abort.run[String](Abort.when(b)("FAIL!")).eval
