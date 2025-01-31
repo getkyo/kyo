@@ -29,5 +29,5 @@ jobs:
     - name: Build JS
       run: sbt '+kyoJS/testQuick'
 
-    # - name: Build Native
-    #   run: sbt '+kyoNative/testQuick'
+    - name: Build Native
+      run: sbt '+kyoNative/Test/compile' # testQuick
