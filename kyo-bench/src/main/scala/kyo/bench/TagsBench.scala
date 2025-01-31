@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.Benchmark
 
-class TagsBench extends Bench(()):
+class TagsBench extends BaseBench:
 
     class Super
     class Sub1 extends Super

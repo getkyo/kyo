@@ -151,7 +151,7 @@ lazy val kyoNative = project
     .in(file("native"))
     .settings(
         name := "kyoNative",
-        `kyo-settings`
+        `native-settings`
     )
     .disablePlugins(MimaPlugin)
     .aggregate(
@@ -680,6 +680,7 @@ lazy val readme =
 lazy val `native-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
+    Test / testForkedParallel                   := false,
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 
@@ -687,6 +688,7 @@ lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
     fork                                        := false,
     bspEnabled                                  := false,
+    Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
