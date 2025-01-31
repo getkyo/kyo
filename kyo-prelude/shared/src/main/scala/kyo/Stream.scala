@@ -330,7 +330,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A unit effect that runs the stream without collecting results
       */
-    def runDiscard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < S =
+    def discard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < S =
         ArrowEffect.handle(tag, emit)(
             [C] => (input, cont) => cont(())
         )
@@ -342,8 +342,8 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A unit effect that runs the stream and applies f to each value
       */
-    def runForeach[S2](f: V => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
-        runForeachChunk(c => Kyo.foreachDiscard(c)(f))
+    def foreach[S2](f: V => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+        foreachChunk(c => Kyo.foreachDiscard(c)(f))
 
     /** Runs the stream and applies the given function to each emitted chunk.
       *
@@ -352,7 +352,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A unit effect that runs the stream and applies f to each chunk
       */
-    def runForeachChunk[S2](f: Chunk[V] => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+    def foreachChunk[S2](f: Chunk[V] => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
         ArrowEffect.handle(tag, emit)(
             [C] =>
                 (input, cont) =>
@@ -371,7 +371,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   The final accumulated value
       */
-    def runFold[A, S2](acc: A)(f: (A, V) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
+    def fold[A, S2](acc: A)(f: (A, V) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
         ArrowEffect.handleState(tag, acc, emit)(
             handle = [C] =>
                 (input, state, cont) =>
