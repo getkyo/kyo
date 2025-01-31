@@ -4,6 +4,7 @@ import kyo.Tag
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
 import scala.annotation.targetName
+import scala.util.NotGiven
 
 /** Represents a stream of values of type `V` with effects of type `S`.
   *
@@ -33,7 +34,28 @@ sealed abstract class Stream[V, -S]:
     def concat[S2](other: Stream[V, S2])(using Frame): Stream[V, S & S2] =
         Stream(emit.map(_ => other.emit))
 
-    /** Transforms each value in the stream using the given function.
+    /** Transforms each value in the stream using the given pure function.
+      *
+      * @param f
+      *   The function to apply to each value
+      * @return
+      *   A new stream with transformed values
+      */
+    def map[V2](f: V => V2)(using
+        t1: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        ev: NotGiven[V2 <:< (Any < Nothing)],
+        fr: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(t1, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.map(f)
+                    if c.isEmpty then ((), cont(()))
+                    else Emit.valueWith(c)(((), cont(())))
+        ))
+
+    /** Transforms each value in the stream using the given effectful function.
       *
       * @param f
       *   The function to apply to each value
@@ -43,7 +65,33 @@ sealed abstract class Stream[V, -S]:
     def map[V2, S2](f: V => V2 < S2)(using Tag[Emit[Chunk[V]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
         mapChunk(c => Kyo.foreach(c)(f))
 
-    /** Transforms each chunk in the stream using the given function.
+    /** Transforms each chunk in the stream using the given pure function.
+      *
+      * @param f
+      *   The function to apply to each chunk
+      * @return
+      *   A new stream with transformed chunks
+      */
+    def mapChunk[V2](f: Chunk[V] => Seq[V2])(
+        using
+        tagV: Tag[Emit[Chunk[V]]],
+        tagV2: Tag[Emit[Chunk[V2]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(tagV, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    if input.isEmpty then ((), cont(()))
+                    else
+                        val s = f(input)
+                        if s.isEmpty then ((), cont(()))
+                        else
+                            Emit.valueWith(Chunk.from(s))(((), cont(())))
+                    end if
+        ))
+
+    /** Transforms each chunk in the stream using the given effectful function.
       *
       * @param f
       *   The function to apply to each chunk
@@ -194,10 +242,33 @@ sealed abstract class Stream[V, -S]:
                             else Emit.valueWith(c)((0, cont(())))
             ))
 
-    /** Takes elements from the stream while the predicate is true.
+    /** Takes elements from the stream while the pure predicate is true.
       *
       * @param f
-      *   The predicate function
+      *   The pure predicate function
+      * @return
+      *   A new stream containing elements that satisfy the predicate
+      */
+    def takeWhile(f: V => Boolean)(using
+        tag: Tag[Emit[Chunk[V]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V, S] =
+        Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
+            [C] =>
+                (input, state, cont) =>
+                    if !state then (false, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
+                    else if input.isEmpty then (state, cont(()))
+                    else
+                        val c = input.takeWhile(f)
+                        Emit.valueWith(c)((c.size == input.size, cont(())))
+        ))
+    end takeWhile
+
+    /** Takes elements from the stream while the effectful predicate is true.
+      *
+      * @param f
+      *   The effectful predicate function
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
@@ -248,6 +319,19 @@ sealed abstract class Stream[V, -S]:
                         if c.isEmpty then ((), cont(()))
                         else Emit.valueWith(c)(((), cont(())))
                 }
+        ))
+
+    def filter(f: V => Boolean)(using
+        tag: Tag[Emit[Chunk[V]]],
+        discr: Flat[Boolean],
+        frame: Frame
+    ): Stream[V, S] =
+        Stream[V, S](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.filter(f)
+                    if c.isEmpty then ((), cont(()))
+                    else Emit.valueWith(c)(((), cont(())))
         ))
 
     /** Emits only elements that are different from their predecessor.
@@ -362,7 +446,7 @@ sealed abstract class Stream[V, -S]:
                         cont(())
         )
 
-    /** Runs the stream and folds over its values using the given function and initial accumulator.
+    /** Runs the stream and folds over its values using the given pure function and initial accumulator.
       *
       * @param acc
       *   The initial accumulator value
@@ -371,7 +455,27 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   The final accumulated value
       */
-    def runFold[A, S2](acc: A)(f: (A, V) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
+    def runFold[A](acc: A)(f: (A, V) => A)(using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): A < S =
+        ArrowEffect.handleState(tag, acc, emit)(
+            handle = [C] =>
+                (input, state, cont) =>
+                    (input.foldLeft(state)(f), cont(())),
+            done = (state, _) => state
+        )
+
+    /** Runs the stream and folds over its values using the given effectful function and initial accumulator.
+      *
+      * @param acc
+      *   The initial accumulator value
+      * @param f
+      *   The folding function
+      * @return
+      *   The final accumulated value
+      */
+    def runFoldKyo[A, S2](acc: A)(f: (A, V) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
         ArrowEffect.handleState(tag, acc, emit)(
             handle = [C] =>
                 (input, state, cont) =>
@@ -467,5 +571,11 @@ object Stream:
                         end if
                     }
                 }
+
+    /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
+      */
+    sealed class Dummy
+    object Dummy:
+        given Dummy = new Dummy {}
 
 end Stream

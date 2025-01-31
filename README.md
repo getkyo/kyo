@@ -1340,6 +1340,8 @@ val result: Chunk[String] < (Env[Config] & Async) =
 
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
 
+Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unncecessarily lifting them to return `A < Any` will result in perfomance loss.
+
 ### Var: Stateful Computations
 
 The `Var` effect allows for stateful computations, similar to the `State` monad. It enables the management of state within a computation in a purely functional manner.
