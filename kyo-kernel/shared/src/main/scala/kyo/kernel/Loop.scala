@@ -614,4 +614,36 @@ object Loop:
         end loop
         loop(())
     end forever
+
+    /** Executes an operation repeatedly while a condition remains true.
+      *
+      * @param condition
+      *   The condition to check before each iteration. The loop continues while this is true.
+      * @param run
+      *   The operation to execute in each iteration
+      * @return
+      *   Unit after the loop completes
+      */
+    inline def whileTrue[S](inline condition: Safepoint ?=> Boolean < S)(inline run: Unit < S)(
+        using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): Unit < S =
+        @nowarn("msg=anonymous")
+        def loop(v: Unit < S)(using Safepoint): Unit < S =
+            condition.map {
+                case true =>
+                    v match
+                        case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
+                            new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                                def frame = _frame
+                                def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                    loop(kyo(v, context))
+                        case _ =>
+                            loop(run)
+                case false => ()
+            }
+        end loop
+        loop(())
+    end whileTrue
 end Loop
