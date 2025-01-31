@@ -18,15 +18,6 @@ end TraceReceiver
 
 object TraceReceiver:
 
-    lazy val get: TraceReceiver =
-        ServiceLoader.load(classOf[TraceReceiver]).iterator().asScala.toList match
-            case Nil =>
-                TraceReceiver.noop
-            case head :: Nil =>
-                head
-            case l =>
-                TraceReceiver.all(l)
-
     val noop: TraceReceiver =
         new TraceReceiver:
             def startSpan(
@@ -36,6 +27,15 @@ object TraceReceiver:
                 attributes: Attributes = Attributes.empty
             )(using Frame) =
                 Span.noop
+
+    val get: TraceReceiver =
+        ServiceLoader.load(classOf[TraceReceiver]).iterator().asScala.toList match
+            case Nil =>
+                TraceReceiver.noop
+            case head :: Nil =>
+                head
+            case l =>
+                TraceReceiver.all(l)
 
     def all(receivers: List[TraceReceiver]): TraceReceiver =
         new TraceReceiver:

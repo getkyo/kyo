@@ -1,10 +1,13 @@
 package kyo
 
 import kyo.debug.Debug
+import kyo.kernel.ArrowEffect
 import kyo.kernel.Boundary
-import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.annotation.targetName
+import scala.util.NotGiven
+
+sealed case class PanicException[A] private[kyo] (val error: A) extends Exception(s"Uncaught error: $error")
 
 extension [A, S](effect: A < S)
 
@@ -73,11 +76,15 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of the last execution
       */
     def repeat(schedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
-        Loop(schedule) { schedule =>
-            schedule.next.map { (delay, nextSchedule) =>
-                effect.delayed(delay).andThen(Loop.continue(nextSchedule))
-            }.getOrElse {
-                effect.map(Loop.done)
+        Clock.use { clock =>
+            Loop(schedule) { schedule =>
+                clock.now.map { now =>
+                    schedule.next(now).map { (delay, nextSchedule) =>
+                        effect.delayed(delay).andThen(Loop.continue(nextSchedule))
+                    }.getOrElse {
+                        effect.map(Loop.done)
+                    }
+                }
             }
         }
 
@@ -227,8 +234,10 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Abort[Throwable] effect
       */
-    def explicitThrowable(using Flat[A], Frame): A < (S & Abort[Throwable]) =
-        Abort.catching[Throwable](effect)
+    def unpanic(using Flat[A], Frame): A < (S & Abort[Throwable]) =
+        Abort.run[Throwable](effect).map:
+            case Result.Success(v) => v
+            case Result.Error(ex)  => Abort.fail(ex)
 
     /** Performs this computation and applies an effectful function to its result.
       *
@@ -268,63 +277,95 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[E] effect handled
       */
-    def handleAbort(
+    def result(
         using
         ct: SafeClassTag[E],
-        tag: Tag[E],
-        flat: Flat[A]
-    )(using Frame): Result[E, A] < S =
+        fl: Flat[A],
+        fr: Frame
+    ): Result[E, A] < S =
         Abort.run[E](effect)
 
-    def handleSomeAbort[E1 <: E]: HandleSomeAbort[A, S, E, E1] = HandleSomeAbort(effect)
-
-    /** Translates the Abort effect to a Choice effect.
+    /** Handles the Abort effect, transforming caught errors into a new error as determined by mapping function
       *
       * @return
-      *   A computation that produces the result of this computation with the Abort[E] effect translated to Choice
+      *   A computation that fails with Abort[E1], where E1 is an error type mapped from E
       */
-    def abortToChoice(
+    def mapAbort[E1, S1](
+        fn: E => E1 < S1
+    )(
         using
         ct: SafeClassTag[E],
-        tag: Tag[E],
-        flat: Flat[A]
-    )(using Frame): A < (S & Choice) =
-        effect.handleAbort.map(e => Choice.get(e.fold(_ => Nil)(List(_))))
+        ct1: SafeClassTag[E1],
+        fl: Flat[A],
+        fr: Frame
+    ): A < (Abort[E1] & S & S1) =
+        effect.catching(e => fn(e).map(Kyo.fail))
 
-    def someAbortToChoice[E1 <: E](using Frame): SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
+    def forAbort[E1 <: E]: ForAbortOps[A, S, E, E1] = ForAbortOps(effect)
+
+    /** Translates the Abort effect to a Choice effect by handling failures as empty choices.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E] effect translated to an empty Choice
+      */
+    def abortToEmpty(
+        using
+        ct: SafeClassTag[E],
+        fl: Flat[A],
+        fr: Frame
+    ): A < (S & Choice) =
+        effect.result.map(e => Choice.get(e.foldError(_ => Nil)(List(_))))
 
     /** Translates the Abort[E] effect to an Abort[Absent] effect in case of failure.
       *
       * @return
       *   A computation that produces the result of this computation with the Abort[E] effect translated to Abort[Absent]
       */
-    def abortToEmpty(
+    def abortToAbsent(
         using
         ct: SafeClassTag[E],
-        tag: Tag[E],
-        flat: Flat[A]
-    )(using Frame): A < (S & Abort[Absent]) =
-        effect.handleAbort.map {
-            case Result.Fail(_)    => Abort.fail(Absent)
+        fl: Flat[A],
+        fr: Frame
+    ): A < (S & Abort[Absent]) =
+        effect.result.map {
+            case Result.Failure(_) => Abort.fail(Absent)
             case Result.Panic(e)   => throw e
             case Result.Success(a) => a
         }
 
-    def someAbortToEmpty[E1 <: E]: SomeAbortToEmptyOps[A, S, E, E1] = SomeAbortToEmptyOps(effect)
+    /** Translates the Abort[E] effect to an Abort[Throwable] effect in case of failure, by converting non-throwable errors to
+      * PanicException
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E] effect translated to Abort[Absent]
+      */
+    def abortToThrowable(
+        using
+        ng: NotGiven[E <:< Throwable],
+        ct: SafeClassTag[E],
+        fl: Flat[A],
+        fr: Frame
+    ): A < (S & Abort[Throwable]) =
+        effect.result.map {
+            case Result.Success(a)              => a
+            case Result.Failure(thr: Throwable) => Abort.fail(thr)
+            case Result.Failure(err)            => Abort.fail(PanicException(err))
+            case p: Result.Panic                => Abort.get(p)
+        }
 
     /** Handles the Abort effect and applies a recovery function to the error.
       *
       * @return
       *   A computation that produces the result of this computation with the Abort[E] effect handled
       */
-    def catchAbort[A1 >: A, S1](fn: E => A1 < S1)(
+    def catching[A1 >: A, S1](fn: E => A1 < S1)(
         using
         ct: SafeClassTag[E],
-        tag: Tag[E],
-        fl: Flat[A]
-    )(using Frame): A1 < (S & S1) =
-        effect.handleAbort.map {
-            case Result.Fail(e)    => fn(e)
+        fl: Flat[A],
+        fr: Frame
+    ): A1 < (S & S1) =
+        effect.result.map {
+            case Result.Failure(e) => fn(e)
             case Result.Panic(e)   => throw e
             case Result.Success(v) => v
         }
@@ -334,24 +375,19 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Abort[E] effect
       */
-    def catchAbortPartial[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
+    def catchingSome[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
         using
         ct: SafeClassTag[E],
-        tag: Tag[E],
         fl: Flat[A],
         frame: Frame
     ): A1 < (S & S1 & Abort[E]) =
-        effect.handleAbort.map {
-            case Result.Fail(e) =>
+        effect.result.map {
+            case Result.Failure(e) =>
                 if fn.isDefinedAt(e) then fn(e)
                 else Abort.fail(e)
             case Result.Panic(e)   => throw e
             case Result.Success(v) => v
         }
-
-    def catchSomeAbort[E1 <: E](using Frame): CatchSomeAbort[A, S, E, E1] = CatchSomeAbort(effect)
-
-    def catchSomeAbortPartial[E1 <: E](using Frame): CatchSomeAbortPartialOps[A, S, E, E1] = CatchSomeAbortPartialOps(effect)
 
     /** Translates the Abort effect by swapping the error and success types.
       *
@@ -362,30 +398,33 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         cta: SafeClassTag[A],
         cte: SafeClassTag[E],
-        te: Tag[E],
         fl: Flat[A],
         frame: Frame
     ): E < (S & Abort[A]) =
-        val handled: Result[E, A] < S = effect.handleAbort
+        val handled: Result[E, A] < S = effect.result
         handled.map((v: Result[E, A]) => Abort.get(v.swap))
     end swapAbort
 
-    def swapSomeAbort[E1 <: E](using Frame): SwapSomeAbortOps[A, S, E, E1] = SwapSomeAbortOps(effect)
-
-    /** Catches any Throwable in an Abort[Throwable] effect.
+    /** Catches any Aborts and panics instead
       *
       * @return
-      *   A computation that produces the result of this computation with Abort[Throwable] effect
+      *   A computation that panics instead of catching Abort effect failures
       */
-    def implicitThrowable[ER](
+    def orPanic(
         using
-        ev: E => Throwable | ER,
-        f: Flat[A],
-        reduce: Reducible[Abort[ER]],
+        ct: SafeClassTag[E],
+        fl: Flat[A],
         frame: Frame
-    ): A < (S & reduce.SReduced) =
-        Abort.run[Throwable](effect.asInstanceOf[A < (Abort[Throwable | ER] & S)])
-            .map(_.fold(e => throw e.getFailure)(identity))
+    ): A < S =
+        val handled: A < (S & Abort[Nothing]) = Abort.run[E](effect).map:
+            case Result.Success(v)              => v
+            case Result.Failure(thr: Throwable) => Abort.panic(thr)
+            case Result.Failure(other)          => Abort.panic(PanicException(other))
+            case other: Result.Panic            => Abort.get(other)
+
+        summon[Reducible[Abort[Nothing]] { type SReduced = Any }][A, S](handled)
+    end orPanic
+
 end extension
 
 extension [A, S, E](effect: A < (Abort[Absent] & S))
@@ -395,9 +434,9 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Absent] effect handled
       */
-    def handleEmptyAbort(using Flat[A], Frame): Maybe[A] < S =
+    def maybe(using Flat[A], Frame): Maybe[A] < S =
         Abort.run[Absent](effect).map {
-            case Result.Fail(_)    => Absent
+            case Result.Failure(_) => Absent
             case Result.Panic(e)   => throw e
             case Result.Success(a) => Present(a)
         }
@@ -407,158 +446,205 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Choice
       */
-    def emptyAbortToChoice(using Flat[A], Frame): A < (S & Choice) =
-        effect.someAbortToChoice[Absent]()
+    def absentToChoice(using Flat[A], Frame): A < (S & Choice) =
+        effect.forAbort[Absent].toEmpty
+
+    /** Handles Abort[Absent], aborting in Absent cases with NoSuchElementException exceptions
+      *
+      * @return
+      *   A computation that aborts with Maybe.Empty when its Choice effect is reduced to an empty sequence
+      */
+    def absentToThrowable(using Flat[A], Frame): A < (S & Abort[NoSuchElementException]) =
+        for
+            res <- effect.forAbort[Absent].result
+        yield res match
+            case Result.Failure(_) => Abort.catching(Absent.get)
+            case Result.Success(a) => Abort.get(Result.succeed(a))
+            case res: Result.Panic => Abort.get(res)
 
     /** Handles the Abort[Absent] effect translating it to an Abort[E] effect.
       *
       * @return
       *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Abort[E]
       */
-    def emptyAbortToFailure(failure: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
+    def absentToFailure(failure: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
         for
-            res <- effect.handleSomeAbort[Absent]()
+            res <- effect.forAbort[Absent].result
         yield res match
-            case Result.Fail(_)    => Abort.get(Result.Fail(failure))
-            case Result.Success(a) => Abort.get(Result.success(a))
+            case Result.Failure(_) => Abort.get(Result.Failure(failure))
+            case Result.Success(a) => Abort.get(Result.succeed(a))
             case res: Result.Panic => Abort.get(res)
 end extension
 
-class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
-
-    /** Handles the Abort[E] effect and returns its result as a `Choice`.
+class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    /** Handles the partial Abort[E1] effect and returns its result as a `Result[E1, A]`.
       *
       * @return
-      *   A computation that produces the result of this computation with Choice effect
+      *   A computation that produces the result of this computation with the Abort[E1] effect handled
       */
-    def apply[ER]()(
+    def result[ER](
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
-        tag: Tag[E1],
-        reduce: Reducible[Abort[ER]],
-        flat: Flat[A],
-        frame: Frame
-    ): A < (S & reduce.SReduced & Choice) =
-        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.fold(_ => Nil)(List(_))))
-
-end SomeAbortToChoiceOps
-
-class SomeAbortToEmptyOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
-
-    /** Handles the Abort[E] effect translating it to an Abort[Absent] effect.
-      *
-      * @return
-      *   A computation that produces the result of this computation with Abort[Absent] effect
-      */
-    def apply[ER]()(
-        using
-        ev: E => E1 | ER,
-        ct: SafeClassTag[E1],
-        tag: Tag[E1],
-        reduce: Reducible[Abort[ER]],
-        flat: Flat[A],
-        frame: Frame
-    ): A < (S & reduce.SReduced & Abort[Absent]) =
-        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
-            case Result.Fail(_)        => Abort.get(Result.Fail(Absent))
-            case p @ Result.Panic(e)   => Abort.get(p.asInstanceOf[Result[Nothing, Nothing]])
-            case s @ Result.Success(a) => Abort.get(s.asInstanceOf[Result[Nothing, A]])
-        }
-end SomeAbortToEmptyOps
-
-class HandleSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
-
-    /** Handles the Abort[E] effect and returns its result as a `Result[E, A]`.
-      *
-      * @return
-      *   A computation that produces the a `Result[E, A]`
-      */
-    def apply[ER]()(
-        using
-        ev: E => E1 | ER,
-        ct: SafeClassTag[E1],
-        tag: Tag[E1],
         reduce: Reducible[Abort[ER]],
         flat: Flat[A],
         frame: Frame
     ): Result[E1, A] < (S & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
-end HandleSomeAbort
-
-class CatchSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
-
-    /** Handles the Abort[E] effect and applies a recovery function to the error.
+    /** Handles a partial Abort[E1] effect, transforming caught errors into a new error as determined by mapping function
       *
       * @return
-      *   A function that takes a recovery function and returns a computation that produces the result of this computation with the Abort[E]
-      *   effect handled
+      *   A computation that fails with Abort[E2], where E2 is an error type mapped from E1
       */
-    def apply[ER]()(
+    def mapAbort[ER, E2, S1](
+        fn: E1 => E2 < S1
+    )(
+        using
+        ev: E => E1 | ER,
+        ct: SafeClassTag[E1],
+        ct1: SafeClassTag[E2],
+        reduce: Reducible[Abort[ER]],
+        fl: Flat[A],
+        fr: Frame
+    ): A < (Abort[E2] & reduce.SReduced & S & S1) =
+        catching(e => fn(e).map(Kyo.fail))
+
+    /** Handles the partial Abort[E1] effect and applies a recovery function to the error.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E1] effect handled
+      */
+    def catching[ER](
         using
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
         ct: SafeClassTag[E1],
-        tag: Tag[E1],
         f: Flat[A],
         frame: Frame
     ): [A1 >: A, S1] => (E1 => A1 < S1) => A1 < (S & S1 & reduce.SReduced) =
         [A1 >: A, S1] =>
             (fn: E1 => A1 < S1) =>
                 reduce(Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
-                    case Result.Fail(e1)   => fn(e1)
-                    case Result.Success(v) => v
-                    case Result.Panic(ex)  => throw ex
+                    case Result.Failure(e1)   => fn(e1)
+                    case Result.Success(v)    => v
+                    case ab @ Result.Panic(_) => Abort.get(ab.asInstanceOf[Result[Nothing, Nothing]])
                 })
-end CatchSomeAbort
 
-class CatchSomeAbortPartialOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
-
-    /** Handles the Abort[E] effect and applies a partial recovery function to the error.
+    /** Handles the partial Abort[E1] effect and applies a partial recovery function to the error.
       *
       * @return
-      *   A function that takes a partial recovery function and returns a computation that produces the result of this computation with the
-      *   Abort[E] effect handled
+      *   A computation that produces the result of this computation with Abort[E1] effect
       */
-    def apply[ER]()(
+    def catchingSome[ER](
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
-        tag: Tag[E1],
         f: Flat[A],
         frame: Frame
     ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Abort[E]) =
         [A1 >: A, S1] =>
             (fn: PartialFunction[E1, A1 < S1]) =>
                 Abort.run[E1](effect).map {
-                    case Result.Fail(e1) if fn.isDefinedAt(e1) => fn(e1)
-                    case e1: Result.Error[?]                   => Abort.get(e1)
-                    case Result.Success(a)                     => a
+                    case Result.Failure(e1) if fn.isDefinedAt(e1) => fn(e1)
+                    case e1: Result.Error[?]                      => Abort.get(e1)
+                    case Result.Success(a)                        => a
             }
-    end apply
-end CatchSomeAbortPartialOps
 
-class SwapSomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
-
-    /** Translates the Abort[E] effect to an Abort[A] effect.
+    /** Translates the partial Abort[E1] effect to a Choice effect.
       *
       * @return
-      *   A computation that produces the result of this computation with the Abort[E] effect translated to Abort[A]
+      *   A computation that produces the result of this computation with the Abort[E1] effect translated to Choice
       */
-    def apply[ER]()(
+    def toEmpty[ER](
+        using
+        ev: E => E1 | ER,
+        ct: SafeClassTag[E1],
+        reduce: Reducible[Abort[ER]],
+        flat: Flat[A],
+        frame: Frame
+    ): A < (S & reduce.SReduced & Choice) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.foldError(_ => Nil)(List(_))))
+
+    /** Translates the partial Abort[E1] effect to an Abort[Absent] effect in case of failure.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E1] effect translated to Abort[Absent]
+      */
+    def toAbsent[ER](
+        using
+        ev: E => E1 | ER,
+        ct: SafeClassTag[E1],
+        reduce: Reducible[Abort[ER]],
+        flat: Flat[A],
+        frame: Frame
+    ): A < (S & reduce.SReduced & Abort[Absent]) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
+            case Result.Failure(_)     => Abort.get(Result.Failure(Absent))
+            case p @ Result.Panic(_)   => Abort.get(p.asInstanceOf[Result[Nothing, Nothing]])
+            case s @ Result.Success(_) => Abort.get(s.asInstanceOf[Result[Nothing, A]])
+        }
+
+    /** Translates the partial Abort[E1] effect to an Abort[Throwable] effect in case of failure, by converting non-throwable errors to
+      * PanicException
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E] effect translated to Abort[Absent]
+      */
+    def toThrowable[ER](
+        using
+        ng: NotGiven[E1 <:< Throwable],
+        ev: E => E1 | ER,
+        ct: SafeClassTag[E1],
+        reduce: Reducible[Abort[ER]],
+        fl: Flat[A],
+        fr: Frame
+    ): A < (S & Abort[Throwable] & reduce.SReduced) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
+            case Result.Success(a)              => a
+            case Result.Failure(thr: Throwable) => Abort.fail(thr)
+            case Result.Failure(err)            => Abort.fail(PanicException(err))
+            case p: Result.Panic                => Abort.get(p)
+        }
+
+    /** Translates the partial Abort[E1] effect by swapping the error and success types.
+      *
+      * @return
+      *   A computation that produces the failure E1 as result of this computation and the success A as Abort[A] effect
+      */
+    def swap[ER](
         using
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
         ct: SafeClassTag[E1],
-        tag: Tag[E1],
         f: Flat[A],
         frame: Frame
     ): E1 < (S & reduce.SReduced & Abort[A]) =
         val handled = Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
         handled.map((v: Result[E1, A]) => Abort.get(v.swap))
-    end apply
-end SwapSomeAbortOps
+    end swap
+
+    /** Catches partial Abort and panics instead
+      *
+      * @return
+      *   A computation that panics instead of catching Abort effect failures
+      */
+    def orPanic[ER](
+        using
+        ev: E => E1 | ER,
+        reduce: Reducible[Abort[ER]],
+        ct: SafeClassTag[E1],
+        fl: Flat[A],
+        frame: Frame
+    ): A < (S & reduce.SReduced) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
+            case Result.Success(v)              => v
+            case Result.Failure(thr: Throwable) => Abort.panic(thr).asInstanceOf[Nothing < Any]
+            case Result.Failure(other)          => Abort.panic(PanicException(other)).asInstanceOf[Nothing < Any]
+            case other: Result.Panic            => Abort.get(other).asInstanceOf[Nothing < Any]
+
+    end orPanic
+end ForAbortOps
 
 extension [A, S, E](effect: A < (S & Env[E]))
 
@@ -627,6 +713,38 @@ extension [A, S](effect: A < (S & Choice))
       *   A computation that produces a sequence of results from this computation with the Choice effect handled
       */
     def handleChoice(using Flat[A], Frame): Seq[A] < S = Choice.run(effect)
+
+    /** Handles empty cases of Choice effects as Abort[Absent]
+      *
+      * @return
+      *   A computation that aborts with Maybe.Empty when its Choice effect is reduced to an empty sequence
+      */
+    def emptyToAbsent(using Flat[A], Frame): A < (Choice & Abort[Absent] & S) =
+        Choice.run(effect).map:
+            case seq if seq.isEmpty => Abort.fail(Absent)
+            case other              => Choice.get(other)
+
+    /** Handles empty cases of Choice effects as NoSuchElementException aborts
+      *
+      * @return
+      *   A computation that aborts with Maybe.Empty when its Choice effect is reduced to an empty sequence
+      */
+    def emptyToThrowable(using Flat[A], Frame): A < (Choice & Abort[NoSuchElementException] & S) =
+        Choice.run(effect).map:
+            case seq if seq.isEmpty => Abort.catching(Chunk.empty.head)
+            case other              => Choice.get(other)
+
+    /** Handles empty cases of Choice effects as Aborts of a specified instance of E
+      *
+      * @param error
+      *   Error that the resulting effect will abort with if Choice is reduced to empty
+      * @return
+      *   A computation that produces the result of this computation with empty Choice translated to Abort[E]
+      */
+    def emptyToFailure[E](error: => E)(using Flat[A], Frame): A < (Choice & Abort[E] & S) =
+        Choice.run(effect).map:
+            case seq if seq.isEmpty => Abort.fail(error)
+            case other              => Choice.get(other)
 
 end extension
 
@@ -785,4 +903,177 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
             a       <- fiberA.join
             a1      <- fiberA1.join
         yield (a, a1)
+end extension
+
+extension [A, S](effect: Unit < (Emit[Chunk[A]] & S))
+    /** Convert streaming Emit effect to a [[Stream[A, S]]]
+      *
+      * @return
+      *   Stream representation of original effect
+      */
+    def emitToStream: Stream[A, S] = Stream(effect)
+end extension
+
+private case object FinalEmit
+
+extension [A, B, S](effect: B < (Emit[A] & S))
+    /** Handle Emit[A], returning all emitted values along with the original effect's result value.
+      *
+      * @return
+      *   A computation with handled Emit yielding a tuple of emitted values along with the original computation's result
+      */
+    def handleEmit(using Tag[A], Flat[B], Frame): (Chunk[A], B) < S = Emit.run[A](effect)
+
+    /** Handle Emit[A], returning only emitted values, discarding the original effect's result
+      *
+      * @return
+      *   A computation with handled Emit yielding emitted values only
+      */
+    def handleEmitDiscarding(using Tag[A], Flat[B], Frame): Chunk[A] < S = Emit.run[A](effect).map(_._1)
+
+    /** Handle Emit[A], executing function [[fn]] on each emitted value
+      *
+      * @param fn
+      *   Function to handle each emitted value
+      * @return
+      *   A computation with handled Emit
+      */
+    def foreachEmit[S1](
+        fn: A => Unit < S1
+    )(
+        using
+        tag: Tag[Emit[A]],
+        fl: Flat[B],
+        f: Frame
+    ): B < (S & S1) =
+        ArrowEffect.handle(tag, effect):
+            [C] =>
+                (a, cont) =>
+                    fn(a).map(_ => cont(()))
+
+    /** Handle Emit[A] by passing emitted values to [[channel]]. Fails with Abort[Closed] on channel closure
+      *
+      * @param channel
+      *   Channel in which to put emitted values
+      * @return
+      *   Asynchronous computation with handled Emit that can fail with Abort[Closed]
+      */
+    def emitToChannel(channel: Channel[A])(using Tag[A], Flat[B], Frame): B < (S & Async & Abort[Closed]) =
+        effect.foreachEmit(a => channel.put(a))
+
+    /** Handle Emit[A], re-emitting in chunks according to [[chunkSize]]
+      *
+      * @param chunkSize
+      *   maximum size of emitted chunks
+      *
+      * @return
+      */
+    def emitChunked(
+        chunkSize: Int
+    )(
+        using
+        tag: Tag[Emit[A]],
+        fr: Frame,
+        at: Tag[A],
+        fl: Flat[B]
+    ): B < (Emit[Chunk[A]] & S) =
+        ArrowEffect.handleState(tag, Chunk.empty[A], effect)(
+            [C] =>
+                (v, buffer, cont) =>
+                    val b2 = buffer.append(v)
+                    if b2.size >= chunkSize then
+                        Emit.valueWith(b2):
+                            (Chunk.empty, cont(()))
+                    else
+                        (b2, cont(()))
+                    end if
+            ,
+            (buffer, v) =>
+                if buffer.isEmpty then v
+                else Emit.valueWith(buffer)(v)
+        )
+
+    /** Convert emitting effect to stream, chunking Emitted values in [[chunkSize]], and discarding result.
+      *
+      * @param chunkSize
+      *   size of chunks to stream
+      * @return
+      *   Stream of emitted values
+      */
+    def emitChunkedToStreamDiscarding(
+        chunkSize: Int
+    )(
+        using
+        NotGiven[B =:= Unit],
+        Tag[A],
+        Flat[B],
+        Frame
+    ): Stream[A, S] =
+        effect.emitChunked(chunkSize).emitToStreamDiscarding
+
+    /** Convert an effect that emits values of type [[A]] while computing a result of type [[B]] to an asynchronous stream of the emission
+      * type [[A]] along with a separate asynchronous effect that yields the result of the original effect after the stream has been
+      * handled.
+      *
+      * @param chunkSize
+      *   Size of chunks to stream
+      * @return
+      *   Tuple of async stream of type [[A]] and async effect yielding result [[B]]
+      */
+    def emitChunkedToStreamAndResult(
+        using
+        Tag[A],
+        Flat[B],
+        Frame
+    )(chunkSize: Int): (Stream[A, S & Async], B < Async) < Async =
+        effect.emitChunked(chunkSize).emitToStreamAndResult
+end extension
+
+extension [A, B, S](effect: B < (Emit[Chunk[A]] & S))
+    /** Convert emitting effect to stream and discarding result.
+      *
+      * @return
+      *   Stream of emitted values
+      */
+    def emitToStreamDiscarding(
+        using
+        NotGiven[B =:= Unit],
+        Frame
+    ): Stream[A, S] =
+        Stream(effect.unit)
+
+    /** Convert an effect that emits chunks of type [[A]] while computing a result of type [[B]] to an asynchronous stream of the emission
+      * type [[A]] and a separate asynchronous effect that yields the result of the original effect after the stream has been handled.
+      *
+      * @return
+      *   tuple of async stream of type [[A]] and async effect yielding result [[B]]
+      */
+    def emitToStreamAndResult(
+        using
+        Flat[B],
+        Frame
+    ): (Stream[A, S & Async], B < Async) < Async =
+        for
+            p <- Promise.init[Nothing, B]
+            streamEmit = effect.map: b =>
+                p.completeDiscard(Result.succeed(b))
+        yield (Stream(streamEmit), p.join)
+end extension
+
+extension [A, B, S](effect: Unit < (Emit[A] & S))
+    /** Convert emitting effect to stream, chunking Emitted values in [[chunkSize]].
+      *
+      * @param chunkSize
+      *   Size of chunks to stream
+      * @return
+      *   Stream of emitted values
+      */
+    def emitChunkedToStream(
+        chunkSize: Int
+    )(
+        using
+        Tag[A],
+        Frame
+    ): Stream[A, S] =
+        effect.emitChunked(chunkSize).emitToStream
 end extension

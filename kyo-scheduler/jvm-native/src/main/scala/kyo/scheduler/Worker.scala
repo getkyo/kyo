@@ -1,8 +1,6 @@
 package kyo.scheduler
 
 import Worker.State
-import java.lang.invoke.MethodHandles
-import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.LongAdder
@@ -176,7 +174,7 @@ abstract private class Worker(
         val task    = currentTask
         val start   = taskStartMs
         val stalled = (task ne null) && start > 0 && start < nowMs - timeSliceMs
-        if (stalled) {
+        if (stalled && !queue.isEmpty()) {
             task.doPreempt()
         }
         stalled

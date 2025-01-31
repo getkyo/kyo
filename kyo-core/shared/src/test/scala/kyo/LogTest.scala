@@ -40,10 +40,9 @@ class LogTest extends Test:
     "withConsoleLogger" in {
         val output = new StringBuilder
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
-            override def write(b: Int): Unit = output.append(b.toChar)
-        )) {
+            override def write(b: Int): Unit = output.append(b.toChar))) {
             import AllowUnsafe.embrace.danger
-            IO.Unsafe.run {
+            IO.Unsafe.evalOrThrow {
                 for
                     _ <- Log.withConsoleLogger("test.logger", Log.Level.debug) {
                         for
@@ -53,13 +52,13 @@ class LogTest extends Test:
                             _ <- Log.warn("warning", new Exception("test exception"))
                         yield ()
                     }
-                yield
-                    val logs = output.toString.trim.split("\n")
-                    assert(logs.length == 3)
-                    assert(logs(0).matches("DEBUG test.logger -- \\[.*\\] test message"))
-                    assert(logs(1).matches("INFO test.logger -- \\[.*\\] info message"))
-                    assert(logs(2).matches("WARN test.logger -- \\[.*\\] warning java.lang.Exception: test exception"))
-            }.eval
+                yield ()
+            }
+            val logs = output.toString.trim.split("\n")
+            assert(logs.length == 3)
+            assert(logs(0).matches("DEBUG test.logger -- \\[.*\\] test message"))
+            assert(logs(1).matches("INFO test.logger -- \\[.*\\] info message"))
+            assert(logs(2).matches("WARN test.logger -- \\[.*\\] warning java.lang.Exception: test exception"))
         }
     }
 end LogTest

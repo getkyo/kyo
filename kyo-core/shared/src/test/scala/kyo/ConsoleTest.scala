@@ -6,14 +6,14 @@ class ConsoleTest extends Test:
     val obj       = Obj("a")
     val pprintObj = pprint.apply(obj).toString
 
-    "readln" in run {
+    "readLine" in run {
         Console.withIn(List("readln")) {
-            Console.readln.map { result =>
+            Console.readLine.map { result =>
                 assert(result == "readln")
             }
         }
     }
-    "print" in run {
+    "print string" in run {
         Console.withOut(Console.print("print")).map { (out, _) =>
             assert(out.stdOut == "print")
         }
@@ -24,12 +24,12 @@ class ConsoleTest extends Test:
         }
     }
     "println" in run {
-        Console.withOut(Console.println("print")).map { (out, _) =>
+        Console.withOut(Console.printLine("print")).map { (out, _) =>
             assert(out.stdOut == "print\n")
         }
     }
     "printlnErr" in run {
-        Console.withOut(Console.printlnErr("print")).map { (out, _) =>
+        Console.withOut(Console.printLineErr("print")).map { (out, _) =>
             assert(out.stdErr == "print\n")
         }
     }
@@ -38,23 +38,22 @@ class ConsoleTest extends Test:
         val output = new StringBuilder
         val error  = new StringBuilder
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
-            override def write(b: Int): Unit = output.append(b.toChar)
-        )) {
+            override def write(b: Int): Unit = output.append(b.toChar))) {
             scala.Console.withErr(new java.io.PrintStream(new java.io.OutputStream:
-                override def write(b: Int): Unit = error.append(b.toChar)
-            )) {
+                override def write(b: Int): Unit = error.append(b.toChar))) {
                 import AllowUnsafe.embrace.danger
-                IO.Unsafe.run {
-                    for
-                        r1 <- Abort.run(Console.print("test"))
-                        r2 <- Abort.run(Console.println(" message"))
-                        r3 <- Abort.run(Console.printErr("error"))
-                        r4 <- Abort.run(Console.printlnErr(" message"))
-                    yield
-                        assert(r1.isSuccess && r2.isSuccess && r3.isSuccess && r4.isSuccess)
-                        assert(output.toString == "test message\n")
-                        assert(error.toString == "error message\n")
-                }.eval
+                val (r1, r2, r3, r4) =
+                    IO.Unsafe.evalOrThrow {
+                        for
+                            r1 <- Abort.run(Console.print("test"))
+                            r2 <- Abort.run(Console.printLine(" message"))
+                            r3 <- Abort.run(Console.printErr("error"))
+                            r4 <- Abort.run(Console.printLineErr(" message"))
+                        yield (r1, r2, r3, r4)
+                    }
+                assert(r1.isSuccess && r2.isSuccess && r3.isSuccess && r4.isSuccess)
+                assert(output.toString == "test message\n")
+                assert(error.toString == "error message\n")
             }
         }
     }
@@ -64,7 +63,7 @@ class ConsoleTest extends Test:
 
         "should read line correctly" in {
             val testUnsafe = new TestUnsafeConsole("test input")
-            assert(testUnsafe.readln() == Result.success("test input"))
+            assert(testUnsafe.readLine() == Result.succeed("test input"))
         }
 
         "should print correctly" in {
@@ -81,13 +80,13 @@ class ConsoleTest extends Test:
 
         "should println correctly" in {
             val testUnsafe = new TestUnsafeConsole()
-            testUnsafe.println("test line")
+            testUnsafe.printLine("test line")
             assert(testUnsafe.printlns.head == "test line")
         }
 
         "should println error correctly" in {
             val testUnsafe = new TestUnsafeConsole()
-            testUnsafe.printlnErr("test error line")
+            testUnsafe.printLineErr("test error line")
             assert(testUnsafe.printlnErrs.head == "test error line")
         }
 
@@ -105,18 +104,18 @@ class ConsoleTest extends Test:
         var printlns    = List.empty[String]
         var printlnErrs = List.empty[String]
 
-        def readln()(using AllowUnsafe) =
-            Result.success(readlnInput)
+        def readLine()(using AllowUnsafe) =
+            Result.succeed(readlnInput)
         def print(s: String)(using AllowUnsafe) =
             prints = s :: prints
             Result.unit
         def printErr(s: String)(using AllowUnsafe) =
             printErrs = s :: printErrs
             Result.unit
-        def println(s: String)(using AllowUnsafe) =
+        def printLine(s: String)(using AllowUnsafe) =
             printlns = s :: printlns
             Result.unit
-        def printlnErr(s: String)(using AllowUnsafe) =
+        def printLineErr(s: String)(using AllowUnsafe) =
             printlnErrs = s :: printlnErrs
             Result.unit
         def flush()(using AllowUnsafe) = Result.unit

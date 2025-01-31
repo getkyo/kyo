@@ -133,7 +133,7 @@ object Meter:
             new Base(rate, reentrant):
                 val timerTask =
                     // Schedule periodic task to replenish permits
-                    IO.Unsafe.run(Clock.repeatAtInterval(period, period)(replenish())).eval
+                    IO.Unsafe.evalOrThrow(Clock.repeatAtInterval(period, period)(replenish()))
 
                 def dispatch[A, S](v: => A < S) =
                     // Don't release a permit since it's managed by the timer task
@@ -262,12 +262,12 @@ object Meter:
 
         private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (IO & S) =
             if reentrant then
-                acquiredMeters.use { meters =>
+                IO.withLocal(acquiredMeters) { meters =>
                     if meters.contains(this) then reenter
-                    else IO.Unsafe(acquire)
+                    else acquire
                 }
             else
-                IO.Unsafe(acquire)
+                acquire
 
         private inline def withAcquiredMeter[A, S](inline v: => A < S) =
             if reentrant then
@@ -282,7 +282,7 @@ object Meter:
                     if st == Int.MinValue then
                         // Meter is closed
                         closed.safe.get
-                    else if state.cas(st, st - 1) then
+                    else if state.compareAndSet(st, st - 1) then
                         if st > 0 then
                             // Permit available, dispatch immediately
                             dispatch(withAcquiredMeter(v))
@@ -310,7 +310,7 @@ object Meter:
                     else if st <= 0 then
                         // No permit available, return empty
                         Maybe.empty
-                    else if state.cas(st, st - 1) then
+                    else if state.compareAndSet(st, st - 1) then
                         // Permit available, dispatch
                         dispatch(withAcquiredMeter(v.map(Maybe(_))))
                     else
@@ -341,7 +341,7 @@ object Meter:
                 val st = state.getAndSet(Int.MinValue)
                 val ok = st != Int.MinValue // The meter wasn't already closed
                 if ok then
-                    val fail = Result.fail(Closed("Semaphore is closed", initFrame, frame))
+                    val fail = Result.fail(Closed("Meter", initFrame))
                     // Complete the closed promise to fail new operations
                     closed.completeDiscard(fail)
                     // Drain the pending waiters
@@ -365,7 +365,7 @@ object Meter:
             if st >= permits || st == Int.MinValue then
                 // No more permits to release or meter is closed
                 false
-            else if !state.cas(st, st + 1) then
+            else if !state.compareAndSet(st, st + 1) then
                 // CAS failed, retry
                 release()
             else if st < 0 && !pollWaiter().complete(Result.unit) then

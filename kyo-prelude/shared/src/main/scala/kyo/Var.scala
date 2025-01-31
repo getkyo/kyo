@@ -36,7 +36,7 @@ object Var:
             inline tag: Tag[Var[V]],
             inline frame: Frame
         ): A < (Var[V] & S) =
-            ArrowEffect.suspendAndMap[V](tag, Get: Op[V])(f)
+            ArrowEffect.suspendWith[V](tag, Get: Op[V])(f)
     end UseOps
 
     /** Creates a new UseOps instance for the given type V.
@@ -60,6 +60,21 @@ object Var:
     inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         ArrowEffect.suspend[Unit](tag, value: Op[V])
 
+    /** Sets a new value and then executes another computation.
+      *
+      * @param value
+      *   The new value to set in the Var
+      * @param f
+      *   The computation to execute after setting the value
+      * @return
+      *   The result of the computation after setting the new value
+      */
+    private[kyo] inline def setAndThen[V, A, S](inline value: V)(inline f: => A < S)(using
+        inline tag: Tag[Var[V]],
+        inline frame: Frame
+    ): A < (Var[V] & S) =
+        ArrowEffect.suspendWith[Unit](tag, value: Op[V])(_ => f)
+
     /** Sets a new value and returns `Unit`.
       *
       * @param value
@@ -70,7 +85,7 @@ object Var:
       *   Unit
       */
     inline def setDiscard[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        ArrowEffect.suspendAndMap[Unit](tag, value: Op[V])(_ => ())
+        ArrowEffect.suspendWith[Unit](tag, value: Op[V])(_ => ())
 
     /** Applies the update function and returns the new value.
       *
@@ -96,9 +111,9 @@ object Var:
       */
     @nowarn("msg=anonymous")
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        ArrowEffect.suspendAndMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
+        ArrowEffect.suspendWith[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
-    private inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
+    private[kyo] inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
     )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
         ArrowEffect.handleState(tag, state, v)(
@@ -152,7 +167,7 @@ object Var:
         runWith(state)(v)((state, result) => (state, result))
 
     object isolate:
-        abstract private[kyo] class Base[V: Tag] extends Isolate[Var[V]]:
+        abstract private[kyo] class Base[V](using Tag[Var[V]]) extends Isolate[Var[V]]:
             type State = V
             def use[A, S2](f: V => A < S2)(using Frame) = Var.use(f)
             def resume[A: Flat, S2](state: State, v: A < (Var[V] & S2))(using Frame) =
@@ -168,10 +183,10 @@ object Var:
           * @return
           *   An isolate that updates the Var with its isolated value
           */
-        def update[V: Tag]: Isolate[Var[V]] =
+        def update[V](using Tag[Var[V]]): Isolate[Var[V]] =
             new Base[V]:
                 def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
-                    Var.set(state).andThen(v)
+                    Var.setAndThen(state)(v)
 
         /** Creates an isolate that merges Var values using a combination function.
           *
@@ -185,10 +200,10 @@ object Var:
           * @return
           *   An isolate that merges Var values
           */
-        def merge[V: Tag](f: (V, V) => V): Isolate[Var[V]] =
+        def merge[V](f: (V, V) => V)(using Tag[Var[V]]): Isolate[Var[V]] =
             new Base[V]:
                 def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
-                    Var.use[V](prev => Var.set(f(prev, state)).andThen(v))
+                    Var.use[V](prev => Var.setAndThen(f(prev, state))(v))
 
         /** Creates an isolate that keeps Var modifications local.
           *
@@ -200,7 +215,7 @@ object Var:
           * @return
           *   An isolate that discards Var modifications
           */
-        def discard[V: Tag]: Isolate[Var[V]] =
+        def discard[V](using Tag[Var[V]]): Isolate[Var[V]] =
             new Base[V]:
                 def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
                     v

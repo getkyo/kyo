@@ -37,12 +37,24 @@ object Latch:
 
     /** Creates a new Latch initialized with the given count.
       *
-      * @param n
+      * @param count
       *   The initial count for the latch
       * @return
       *   A new Latch instance wrapped in an IO effect
       */
-    def init(n: Int)(using Frame): Latch < IO = IO.Unsafe(Latch(Unsafe.init(n)))
+    def init(count: Int)(using Frame): Latch < IO =
+        initWith(count)(identity)
+
+    /** Uses a new Latch with the provided count.
+      * @param count
+      *   The initial count for the latch
+      * @param f
+      *   The function to apply to the new Latch
+      * @return
+      *   The result of applying the function
+      */
+    inline def initWith[A, S](count: Int)(inline f: Latch => A < S)(using inline frame: Frame): A < (S & IO) =
+        IO.Unsafe(f(Latch(Unsafe.init(count))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
@@ -71,7 +83,7 @@ object Latch:
 
                     def release()(using AllowUnsafe) =
                         @tailrec def loop(c: Int): Unit =
-                            if c > 0 && !count.cas(c, c - 1) then
+                            if c > 0 && !count.compareAndSet(c, c - 1) then
                                 loop(count.get())
                             else if c == 1 then
                                 promise.completeDiscard(Result.unit)

@@ -41,16 +41,16 @@ class DurationTest extends Test:
         }
 
         "invalid conversion shouldn't compile" in {
-            assertDoesNotCompile("2.nano")
-            assertDoesNotCompile("2.micro")
-            assertDoesNotCompile("2.milli")
-            assertDoesNotCompile("2.second")
-            assertDoesNotCompile("2.minute")
-            assertDoesNotCompile("2.hour")
-            assertDoesNotCompile("2.day")
-            assertDoesNotCompile("2.week")
-            assertDoesNotCompile("2.month")
-            assertDoesNotCompile("2.year")
+            typeCheckFailure("2.nano")("please use `.nanos`")
+            typeCheckFailure("2.micro")("please use `.micros`")
+            typeCheckFailure("2.milli")("please use `.millis`")
+            typeCheckFailure("2.second")("please use `.seconds`")
+            typeCheckFailure("2.minute")("please use `.minutes`")
+            typeCheckFailure("2.hour")("please use `.hours`")
+            typeCheckFailure("2.day")("please use `.days`")
+            typeCheckFailure("2.week")("please use `.weeks`")
+            typeCheckFailure("2.month")("please use `.months`")
+            typeCheckFailure("2.year")("please use `.years`")
         }
 
         "equality" in {
@@ -100,7 +100,7 @@ class DurationTest extends Test:
         }
 
         "Long.to* shouldn't compile" in {
-            assertDoesNotCompile("Long.MaxValue.toNanos")
+            typeCheckFailure("Long.MaxValue.toNanos")("value toNanos is not a member of Long")
         }
     }
 
@@ -122,7 +122,7 @@ class DurationTest extends Test:
             )
 
             testCases.foreach { case (input, expected) =>
-                assert(Duration.parse(input) == Result.success(expected))
+                assert(Duration.parse(input) == Result.succeed(expected))
             }
             succeed
         }
@@ -137,20 +137,20 @@ class DurationTest extends Test:
             )
 
             testCases.foreach { input =>
-                assert(Duration.parse(input).isFail)
+                assert(Duration.parse(input).isFailure)
             }
             succeed
         }
 
         "case insensitivity" in {
-            assert(Duration.parse("1MS") == Result.success(1.millis))
-            assert(Duration.parse("2H") == Result.success(2.hours))
-            assert(Duration.parse("3D") == Result.success(3.days))
+            assert(Duration.parse("1MS") == Result.succeed(1.millis))
+            assert(Duration.parse("2H") == Result.succeed(2.hours))
+            assert(Duration.parse("3D") == Result.succeed(3.days))
         }
 
         "whitespace handling" in {
-            assert(Duration.parse("  1  second  ") == Result.success(1.second))
-            assert(Duration.parse("5\tminutes") == Result.success(5.minutes))
+            assert(Duration.parse("  1  second  ") == Result.succeed(1.second))
+            assert(Duration.parse("5\tminutes") == Result.succeed(5.minutes))
         }
     }
 
@@ -280,7 +280,7 @@ class DurationTest extends Test:
 
         "unsupported ChronoUnit throws exception" in {
             val result = Result.catching[UnsupportedOperationException](1.second.to(ChronoUnit.FOREVER))
-            assert(result.isFail)
+            assert(result.isFailure)
         }
     }
 end DurationTest

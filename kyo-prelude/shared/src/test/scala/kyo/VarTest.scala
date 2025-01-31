@@ -51,6 +51,13 @@ class VarTest extends Test:
         assert(r == (2, 3))
     }
 
+    "setAndThen" in {
+        val result = Var.run(1) {
+            Var.setAndThen(2)(Var.use[Int](_ * 2))
+        }.eval
+        assert(result == 4)
+    }
+
     "scope" - {
         "should not affect the outer state" in {
             val result = Var.run(42)(
@@ -293,10 +300,10 @@ class VarTest extends Test:
                             for
                                 _  <- Var.update[Int](_ + 1)
                                 v  <- Var.get[Int]
-                                _  <- Emit(v)
+                                _  <- Emit.value(v)
                                 _  <- Var.update[Int](_ * 2)
                                 v2 <- Var.get[Int]
-                                _  <- Emit(v2)
+                                _  <- Emit.value(v2)
                             yield ()
                         }
                     }

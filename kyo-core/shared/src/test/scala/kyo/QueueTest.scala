@@ -9,6 +9,14 @@ class QueueTest extends Test:
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
+                "initWith" in run {
+                    Queue.initWith[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield assert(b && v == Maybe(1))
+                    }
+                }
                 "isEmpty" in run {
                     for
                         q <- Queue.init[Int](2, access)
@@ -73,13 +81,13 @@ class QueueTest extends Test:
             c2 <- q.close
         yield assert(
             b && c1 == Maybe(Seq(1)) &&
-                v1.isFail &&
-                v2.isFail &&
-                v3.isFail &&
-                v4.isFail &&
-                v5.isFail &&
-                v6.isFail &&
-                v7.isFail &&
+                v1.isFailure &&
+                v2.isFailure &&
+                v3.isFailure &&
+                v4.isFailure &&
+                v5.isFailure &&
+                v6.isFailure &&
+                v7.isFailure &&
                 c2.isEmpty
         )
     }
@@ -90,6 +98,14 @@ class QueueTest extends Test:
             _ <- q.offer(1)
             _ <- q.offer(2)
             v <- q.drain
+        yield assert(v == Seq(1, 2))
+    }
+
+    "drainUpTo" in run {
+        for
+            q <- Queue.init[Int](4)
+            _ <- Kyo.foreach(1 to 4)(q.offer)
+            v <- q.drainUpTo(2)
         yield assert(v == Seq(1, 2))
     }
 
@@ -191,8 +207,17 @@ class QueueTest extends Test:
             testUnsafe.offer(3)
             testUnsafe.offer(4)
             val drained = testUnsafe.drain()
-            assert(drained == Result.success(Seq(3, 4)))
+            assert(drained == Result.succeed(Seq(3, 4)))
             assert(testUnsafe.empty().contains(true))
+        }
+
+        "should drainUpTo correctly" in {
+            val testUnsafe = Queue.Unsafe.init[Int](6)
+            (1 to 6).foreach(testUnsafe.offer)
+            val drained3 = testUnsafe.drainUpTo(3)
+            assert(drained3 == Result.succeed(Seq(1, 2, 3)))
+            val drained5 = testUnsafe.drainUpTo(5)
+            assert(drained5 == Result.succeed(Seq(4, 5, 6)))
         }
 
         "should close correctly" in withQueue { testUnsafe =>
@@ -226,7 +251,7 @@ class QueueTest extends Test:
                 assert(backlog.isDefined)
                 assert(offered.count(_.contains(true)) == backlog.get.size)
                 assert(closedQueue.isEmpty)
-                assert(drained.isFail)
+                assert(drained.isFailure)
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))

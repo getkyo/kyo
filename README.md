@@ -18,23 +18,23 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 Kyo is available on Maven Central in multiple modules:
 
-| Module             | Scala 2 | Scala 3 | Scala JS | Standalone | Description                       |
-| ------------------ | ------- | ------- | -------- | ---------- | --------------------------------- |
-| kyo-prelude        |         | ✅      | ✅       |            | Effects without `IO`              |
-| kyo-core           |         | ✅      | ✅       |            | `Async` and `IO`-based effects    |
-| kyo-direct         |         | ✅      | ✅       |            | Direct syntax support             |
-| kyo-combinators    |         | ✅      | ✅       |            | ZIO-like effect composition       |
-| kyo-sttp           |         | ✅      | ✅       |            | Sttp HTTP Client                  |
-| kyo-tapir          |         | ✅      |          |            | Tapir HTTP Server                 |
-| kyo-zio            |         | ✅      |          |            | ZIO integration                   |
-| kyo-caliban        |         | ✅      |          |            | Caliban GraphQL Server            |
-| kyo-cache          |         | ✅      |          |            | Caffeine caching                  |
-| kyo-stats-otel     | ✅      | ✅      |          |            | Stats exporter for OpenTelemetry  |
-| kyo-tag            |         | ✅      | ✅       | ✅         | Allocation-free type tags         |
-| kyo-data           |         | ✅      | ✅       | ✅         | Low-allocation data types         |
-| kyo-scheduler      | ✅      | ✅      |          | ✅         | Reusable adaptive scheduler       |
-| kyo-scheduler-zio  | ✅      | ✅      |          | ✅         | Adaptive scheduler for ZIO apps   |
+| Module             | Scala 2 | Scala 3 |    JS    |  Native  | Standalone | Description                       |
+| ------------------ | ------- | ------- | -------- | -------- | ---------- | --------------------------------- |
+| kyo-prelude        |         | ✅      | ✅       | ✅       |            | Effects without `IO`              |
+| kyo-core           |         | ✅      | ✅       | ✅       |            | `Async` and `IO`-based effects    |
+| kyo-direct         |         | ✅      | ✅       | ✅       |            | Direct syntax support             |
+| kyo-combinators    |         | ✅      | ✅       |          |            | ZIO-like effect composition       |
+| kyo-sttp           |         | ✅      | ✅       |          |            | Sttp HTTP Client                  |
+| kyo-tapir          |         | ✅      |          |          |            | Tapir HTTP Server                 |
+| kyo-zio            |         | ✅      |          |          |            | ZIO integration                   |
+| kyo-caliban        |         | ✅      |          |          |            | Caliban GraphQL Server            |
+| kyo-cache          |         | ✅      |          |          |            | Caffeine caching                  |
+| kyo-stats-otel     | ✅      | ✅      |          |          |            | Stats exporter for OpenTelemetry  |
+| kyo-data           |         | ✅      | ✅       | ✅       | ✅         | Low-allocation data types         |
+| kyo-scheduler      | ✅      | ✅      |          | ✅       | ✅         | Reusable adaptive scheduler       |
+| kyo-scheduler-zio  | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for ZIO apps   |
 
+> Scala JS and Scala Native artifacts are available only in Scala 3.
 
 The modules marked as `Standalone` are designed to be used independently, without requiring the full Kyo effect system. These modules provide specific functionalities that can be integrated into any Scala project, regardless of whether it uses Kyo's effect system or not. 
 
@@ -51,7 +51,6 @@ libraryDependencies += "io.getkyo" %% "kyo-zio"           % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-caliban"       % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-cache"         % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-stats-otel"    % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-tag"           % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-data"          % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-scheduler"     % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-scheduler-zio" % "<version>"
@@ -60,20 +59,29 @@ libraryDependencies += "io.getkyo" %% "kyo-scheduler-zio" % "<version>"
 For ScalaJS (applicable only to to specific modules):
 
 ```scala 
-libraryDependencies += "io.getkyo" %%  "kyo-prelude"     % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-prelude"     % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-core"        % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-direct"      % "<version>"
-libraryDependencies += "io.getkyo" %%  "kyo-combinators" % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-combinators" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-sttp"        % "<version>"
-libraryDependencies += "io.getkyo" %%  "kyo-tag"         % "<version>"
-libraryDependencies += "io.getkyo" %%  "kyo-data"        % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-data"        % "<version>"
+```
+
+For Scala Native (applicable only to to specific modules):
+
+```scala 
+libraryDependencies += "io.getkyo" %%% "kyo-prelude"   % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-core"      % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-direct"    % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-data"      % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-scheduler" % "<version>"
 ```
 
 Replace `<version>` with the latest version: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
 
 ## IDE Support
 
-Kyo utilizes features from the latest Scala 3 versions that are not yet properly supported by IntelliJ IDEA. For the best development experience and to ensure all Kyo features are correctly recognized, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE for your Kyo projects.
+Kyo utilizes features from the latest Scala 3 versions that are not yet properly supported by IntelliJ IDEA. For the best development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server for improved stability. See the Metals [instructions](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to sbt BSP.
 
 ## Recommended Compiler Flags
 
@@ -81,7 +89,8 @@ We strongly recommend enabling these Scala compiler flags when working with Kyo 
 
 1. `-Wvalue-discard`: Warns when non-Unit expression results are unused.
 2. `-Wnonunit-statement`: Warns when non-Unit expressions are used in statement position.
-3. `-Wconf:msg=(discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
+3. `-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
+4. `-language:strictEquality`: Enforces type-safe equality comparisons by requiring explicit evidence that types can be safely compared.
 
 Add these to your `build.sbt`:
 
@@ -89,16 +98,20 @@ Add these to your `build.sbt`:
 scalacOptions ++= Seq(
     "-Wvalue-discard", 
     "-Wnonunit-statement", 
-    "-Wconf:msg=(discarded.*value|pure.*statement):error")
+    "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error",
+    "-language:strictEquality"
+)
 ```
 
 These flags help catch two common issues in Kyo applications:
 
 1. **A pure expression does nothing in statement position**: Often suggests that a Kyo computation is being discarded and will never execute, though it can also occur with other pure expressions. Common fixes include using `map` to chain transformations or explicitly handling the result.
 
-2. **Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that can only handle some of the effects that your computation requires. For example, passing a computation that needs both `IO` and `Abort[Exception]` effects as a method parameter that only accepts `IO` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
+2. **Unused/Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that can only handle some of the effects that your computation requires. For example, passing a computation that needs both `IO` and `Abort[Exception]` effects as a method parameter that only accepts `IO` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
 
-> Note: You may want to selectively disable these warnings in test code, where it's common to assert side effects without using their returned values.
+3. **Values cannot be compared with == or !=**: The strict equality flag ensures type-safe equality comparisons by requiring that compared types are compatible. This is particularly important for Kyo's opaque types like `Maybe`, where comparing values of different types could lead to inconsistent behavior. The flag helps catch these issues at compile-time, ensuring you only compare values that can be meaningfully compared. For example, you cannot accidentally compare a `Maybe[Int]` with an `Option[Int]` or a raw `Int`, preventing subtle bugs. To disable the check for a specific scope, introduce an unsafe evidence: `given [A, B]: CanEqual[A, B] = CanEqual.derived`
+
+> Note: You may want to selectively disable these warnings in test code, where it's common to assert side effects without using their returned values: `Test / scalacOptions --= Seq(options, to, disable)`
 
 ### The "Pending" type: `<`
 
@@ -117,8 +130,6 @@ Int < Abort[Absent]
 // 'String' pending 'Abort[Absent]' and 'IO'
 String < (Abort[Absent] & IO)
 ```
-
-> Note: The naming convention for effect types is the plural form of the functionalities they manage.
 
 Any type `T` is automatically considered to be of type `T < Any`, where `Any` denotes an absence of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to handle. 
 
@@ -327,9 +338,9 @@ abortExceptionFirst(Abort.fail(ex))     // Result.Success(Result.Fail(ex))
 
 ### Direct Syntax
 
-Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages two primary constructs: `defer` and `await`.
+Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages three constructs: `defer`, `.now`, and `.later`.
 
-Essentially, `await` is a syntactic sugar for the `map` function, allowing developers to directly access values from computations without the need for repetitive `map` chaining. This makes the code more linear and intuitive.
+The `.now` operator sequences an effect immediately, making its result available for use, while `.later` (advanced API) preserves an effect without immediate sequencing for more controlled composition.
 
 ```scala
 import kyo.*
@@ -338,9 +349,9 @@ import kyo.*
 val a: String < (Abort[Exception] & IO) =
     defer {
         val b: String =
-            await(IO("hello"))
+            IO("hello").now
         val c: String =
-            await(Abort.get(Right("world")))
+            Abort.get(Right("world")).now
         b + " " + c
     }
 
@@ -353,9 +364,9 @@ val b: String < (Abort[Exception] & IO) =
     }
 ```
 
-The `defer` macro translates the `defer` and `await` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express compurations in terms of `map`. 
+The `defer` macro translates the `defer` and `.now`/`.later` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express computations in terms of `map`. 
 
-For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `<` type must be enclosed by an `await` block. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
+For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `<` type must be explicitly handled using either `.now` or `.later`. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
 
 ```scala 
 import kyo.*
@@ -364,7 +375,7 @@ import kyo.*
 val a: Int < IO =
     defer {
         // Incorrect usage of a '<' value
-        // without 'await'
+        // without '.now' or '.later'
         IO(println(42))
         42
     }
@@ -372,7 +383,34 @@ val a: Int < IO =
 
 > Note: In the absence of effectful hygiene, the side effect `IO(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
 
-The syntac sugar supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
+The `.now` operator is used when you need the effect's result immediately, while `.later` is an advanced operation that preserves the effect without sequencing it:
+
+```scala
+import kyo.*
+
+// Using .now for immediate sequencing
+val immediate = defer {
+    val x: Int = IO(1).now      // Get result here
+    val y: Int = IO(2).now      // Then get this result
+    x + y                       // Use both results
+}
+
+// Using .later for preserved effects
+val preserved = defer {
+    val effect1: Int < IO = IO(1).later   // Effect preserved
+    val effect2: Int < IO = IO(2).later   // Effect preserved
+    effect1.now + effect2.now             // Sequence effects
+}
+
+// Combining both approaches
+val combined = defer {
+    val effect1: Int < IO = IO(1).later   // Effect preserved
+    val effect2: Int = IO(2).now          // Effect sequenced
+    effect1.now + effect2                 // Combine results
+}
+```
+
+The direct syntax supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
 
 ```scala
 import kyo.*
@@ -382,36 +420,34 @@ defer {
     val a: Int = 5
 
     // Effectful value
-    val b: Int = await(IO(10))
+    val b: Int = IO(10).now
 
     // Control flow
     val c: String =
-        if await(IO(true)) then "True branch" else "False branch"
+        if IO(true).now then "True branch" else "False branch"
 
     // Logical operations
     val d: Boolean =
-        await(IO(true)) && await(IO(false))
+        IO(true).now && IO(false).now
 
     val e: Boolean =
-        await(IO(true)) || await(IO(true))
+        IO(true).now || IO(true).now
 
     // Loop (for demonstration; this loop
     // won't execute its body)
-    while await(IO(false)) do "Looping"
+    while IO(false).now do "Looping"
 
     // Pattern matching
     val matchResult: String =
-        await(IO(1)) match
+        IO(1).now match
             case 1 => "One"
             case _ => "Other"
 }
 ```
 
-The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `await`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
+The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `.now`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
-
-> Note: `defer` is currently the only user-facing macro in Kyo. All other features use regular language constructs.
 
 ### Defining an App
 
@@ -426,11 +462,11 @@ object MyApp extends KyoApp:
     // field initialization issues.
     run {
         for
-            _            <- Console.println(s"Main args: $args")
+            _            <- Console.printLine(s"Main args: $args")
             currentTime  <- Clock.now
-            _            <- Console.println(s"Current time is: $currentTime")
+            _            <- Console.printLine(s"Current time is: $currentTime")
             randomNumber <- Random.nextInt(100)
-            _            <- Console.println(s"Generated random number: $randomNumber")
+            _            <- Console.printLine(s"Generated random number: $randomNumber")
         yield
         // The produced value can be of any type and is
         // automatically printed to the console.
@@ -453,6 +489,46 @@ val b: Result[Throwable, Int] =
     import AllowUnsafe.embrace.danger
     KyoApp.Unsafe.runAndBlock(2.minutes)(a)
 ```
+
+### Displaying Kyo types
+
+Due to the extensive use of opaque types in Kyo, logging Kyo values can lead to confusion, as the output of `toString` will often leave out type information we are used to seeing in boxed types. For instance, when a pure value is lifted to a pending computation, you will see only that value when you print it.
+
+```scala
+import kyo.*
+
+val a: Int < Any = 23
+Console.printLine(s"Kyo effect: $a")
+// Ouput: Kyo effect: 23
+```
+
+This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. In fact, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevetheless, the string representations can mislead us about the types of values we log, which can make it harder to interpret our logs. To make things clearer, Kyo provides an `Render` utility to generate clearer string representation of types:
+
+```scala
+import kyo.*
+
+val a: Int < Any = 23
+
+val aStr: Text = Render.asText(a)
+
+Console.printLine(s"Kyo effect: $aStr")
+// Output: Kyo effect: Kyo(23)
+```
+
+We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below). 
+
+Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Render` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolater, prefix your interpolated strings with `t` instead of `s`.
+
+```scala
+import kyo.*
+
+val a: Int < Any = 23
+
+Console.printLine(t"Kyo effect: $a, Kyo maybe: ${Maybe(23)}")
+// Output: Kyo effect: Kyo(23), Kyo maybe: Present(23)
+```
+
+We recommend using `txt` as the default string interpolator in Kyo applications for the best developer experience.
 
 ## Core Effects
 
@@ -483,6 +559,28 @@ val d: Int < Abort[Exception] =
     Abort.catching(throw new Exception)
 ```
 
+To handle a potentially aborting effect, you can use `Abort.run`. This will produce a `Result`, a high-performance Kyo type equivalent to `Either`:
+
+```scala
+import kyo.*
+
+// The 'get' method "extracts" the value
+// from an 'Either' (right projection)
+val a: Int < Abort[String] =
+    Abort.get(Right(1))
+
+// short-circuiting via 'Left'
+val b: Int < Abort[String] =
+    Abort.get(Left("failed!"))
+
+val aRes: Result[String, Int] < Any = Abort.run(a)
+val bRes: Result[String, Int] < Any = Abort.run(b)
+
+// Note we use a t-string since Result is an unboxed type
+println(t"A: ${aRes.eval}, B: ${bRes.eval}")
+// Output: A: Success(1), B: Fail(failed!)
+```
+
 > Note that the `Abort` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
 
 ### IO: Side Effects
@@ -510,38 +608,10 @@ val a: Int < IO =
     IO(42)
 
 // ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
-val b: Int =
+val b: Int < Abort[Nothing] =
     import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.Unsafe.run(a).eval
+    IO.Unsafe.run(a)
 // ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
-```
-
-The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
-
-```scala
-import kyo.*
-
-// Computation with 'Env' and then 'IO' suspensions
-val a: Int < (Env[Int] & IO) =
-    Env.get[Int].map { v =>
-        IO {
-            println(v)
-            v
-        }
-    }
-
-// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
-// Handle the 'IO' effect lazily
-val b: Int < Env[Int] =
-    import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.Unsafe.runLazy(a)
-// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
-
-// Since the computation is suspended with the
-// 'Env' effect first, the lazy 'IO' execution
-// will be triggered once 'Env' is handled
-val c: Int =
-    Env.run(42)(b).eval
 ```
 
 > IMPORTANT: Avoid handling the `IO` effect directly since it breaks referential transparency. Use `KyoApp` instead.
@@ -961,7 +1031,7 @@ val d: Int < IO =
 val e: Int < (IO & Abort[IOException]) =
     Loop(1)(i =>
         if i < 5 then
-            Console.println(s"Iteration: $i").map(_ => Loop.continue(i + 1))
+            Console.printLine(s"Iteration: $i").map(_ => Loop.continue(i + 1))
         else
             Loop.done(i)
     )
@@ -1012,7 +1082,7 @@ val a: Int < (IO & Abort[IOException]) =
     Loop.indexed(1)((idx, i) =>
         if idx < 10 then
             if idx % 3 == 0 then
-                Console.println(s"Iteration $idx").map(_ => Loop.continue(i + 1))
+                Console.printLine(s"Iteration $idx").map(_ => Loop.continue(i + 1))
             else
                 Loop.continue(i + 1)
         else
@@ -1228,7 +1298,7 @@ val j: Int < Any =
 
 // Process each element with side effects
 val k: Unit < (IO & Abort[IOException]) =
-    a.runForeach(Console.println(_))
+    a.runForeach(Console.printLine(_))
 ```
 
 Streams can be combined with other effects, allowing for powerful and flexible data processing pipelines:
@@ -1269,6 +1339,8 @@ val result: Chunk[String] < (Env[Config] & Async) =
 ```
 
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
+
+Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unncecessarily lifting them to return `A < Any` will result in perfomance loss.
 
 ### Var: Stateful Computations
 
@@ -1328,15 +1400,15 @@ The `Emit` effect is designed to accumulate values throughout a computation, sim
 import kyo.*
 
 // Add a value
-val a: Emit.Ack < Emit[Int] =
-    Emit(42)
+val a: Unit < Emit[Int] =
+    Emit.value(42)
 
 // Add multiple values
 val b: String < Emit[Int] =
     for
-        _ <- Emit(1)
-        _ <- Emit(2)
-        _ <- Emit(3)
+        _ <- Emit.value(1)
+        _ <- Emit.value(2)
+        _ <- Emit.value(3)
     yield "r"
 
 // Handle the effect to obtain the
@@ -1354,9 +1426,9 @@ import kyo.*
 
 val a: String < (Emit[Int] & Emit[String]) =
     for
-        _ <- Emit(1)
-        _ <- Emit("log")
-        _ <- Emit(2)
+        _ <- Emit.value(1)
+        _ <- Emit.value("log")
+        _ <- Emit.value(2)
     yield "result"
 
 // Note how `run` requires an explicit type
@@ -1407,9 +1479,9 @@ val loggingCut =
         [C] =>
             (input, cont) =>
                 for
-                    _      <- Console.println(s"Processing: $input")
+                    _      <- Console.printLine(s"Processing: $input")
                     result <- cont(input)
-                    _      <- Console.println(s"Result: $result")
+                    _      <- Console.printLine(s"Result: $result")
                 yield result
     )
 
@@ -1424,7 +1496,7 @@ val successExample: Unit < (Abort[Throwable] & IO) =
             numberAspect.let(composedCut) {
                 process(5) // Will succeed: 5 * 2 -> 10
             }
-        _ <- Console.println(s"Success result: $result")
+        _ <- Console.printLine(s"Success result: $result")
     yield ()
 
 // Failure case
@@ -1434,7 +1506,7 @@ val failureExample: Unit < (Abort[Throwable] & IO) =
             numberAspect.let(composedCut) {
                 process(-3) // Will fail with Invalid("negative number")
             }
-        _ <- Console.println("This won't be reached due to Abort")
+        _ <- Console.printLine("This won't be reached due to Abort")
     yield ()
 ```
 
@@ -1474,9 +1546,9 @@ val loggingCut =
         [C] =>
             (input, cont) =>
                 for
-                    _      <- Console.println(s"Processing request: ${input}")
+                    _      <- Console.printLine(s"Processing request: ${input}")
                     result <- cont(input)
-                    _      <- Console.println(s"Response: ${result}")
+                    _      <- Console.printLine(s"Response: ${result}")
                 yield result
     )
 
@@ -1499,7 +1571,7 @@ val example: Unit < (IO & Abort[Throwable]) =
             serviceAspect.let(composedCut) {
                 processRequest(req2)
             }
-        _ <- Console.println(s"Results: $r1, $r2")
+        _ <- Console.printLine(s"Results: $r1, $r2")
     yield ()
 ```
 
@@ -1512,13 +1584,13 @@ import kyo.*
 
 // Create a simple check
 val a: Unit < Check =
-    Check(1 + 1 == 2, "Basic math works")
+    Check.require(1 + 1 == 2, "Basic math works")
 
 // Checks can be composed with other effects
 val b: Int < (Check & IO) =
     for
         value <- IO(42)
-        _     <- Check(value > 0, "Value is positive")
+        _     <- Check.require(value > 0, "Value is positive")
     yield value
 
 // Handle checks by converting the first failed check to Abort
@@ -1540,7 +1612,7 @@ import java.io.IOException
 
 // Read a line from the console
 val a: String < (IO & Abort[IOException]) =
-    Console.readln
+    Console.readLine
 
 // Print to stdout
 val b: Unit < (IO & Abort[IOException]) =
@@ -1548,7 +1620,7 @@ val b: Unit < (IO & Abort[IOException]) =
 
 // Print to stdout with a new line
 val c: Unit < (IO & Abort[IOException]) =
-    Console.println("ok")
+    Console.printLine("ok")
 
 // Print to stderr
 val d: Unit < (IO & Abort[IOException]) =
@@ -1556,12 +1628,14 @@ val d: Unit < (IO & Abort[IOException]) =
 
 // Print to stderr with a new line
 val e: Unit < (IO & Abort[IOException]) =
-    Console.printlnErr("fail")
+    Console.printLineErr("fail")
 
 // Explicitly specifying the 'Console' implementation
 val f: Unit < (IO & Abort[IOException]) =
     Console.let(Console.live)(e)
 ```
+
+Note that `Console.printX` methods accept `Text` values. `Text` is a super-type of `String`, however, so you can just pass regular strings. You can also pass `Text` instances generated from the `txt` string interpolator ([see above](#displaying-kyo-types)).
 
 ### Clock: Time Management and Scheduled Tasks
 
@@ -1747,6 +1821,8 @@ val d: Unit < IO =
     Log.error("example", new Exception)
 ```
 
+Note that like `Console`, `Log` methods accept `Text` values. This means they can also accept regular strings as well as outputs of `txt`-interpolation ([see above](#displaying-kyo-types)).
+
 ### Stat: Observability
 
 `Stat` is a pluggable implementation that provides counters, histograms, gauges, and tracing. It uses Java's [service loading](https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html) to locate exporters. 
@@ -1853,7 +1929,7 @@ val lines: Stream[String, Resource & IO] =
 
 // Process the stream
 val result: Unit < (Resource & Console & Async & Abort[IOException]) =
-    lines.map(line => Console.println(line)).runDiscard
+    lines.map(line => Console.printLine(line)).runDiscard
 
 // Walk a directory tree
 val tree: Stream[Path, IO] =
@@ -1861,7 +1937,7 @@ val tree: Stream[Path, IO] =
 
 // Process each file in the tree
 val processedTree: Unit < (Console & Async & Abort[IOException]) =
-    tree.map(file => file.read.map(content => Console.println(s"File: ${file}, Content: $content"))).runDiscard
+    tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).runDiscard
 ```
 
 `Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
@@ -1900,7 +1976,7 @@ import kyo.*
 
 class MyClass extends KyoApp:
     run {
-        Console.println(s"Executed with args: $args")
+        Console.printLine(s"Executed with args: $args")
     }
 end MyClass
 
@@ -2140,7 +2216,7 @@ val a: Promise[Nothing, Int] < IO =
 
 // Try to fulfill a promise
 val b: Boolean < IO =
-    a.map(_.complete(Result.success(42)))
+    a.map(_.complete(Result.succeed(42)))
 
 // Fullfil the promise with
 // another fiber
@@ -2376,27 +2452,34 @@ val b: Boolean < (IO & Abort[Closed]) =
 // only receive messages sent after
 // their cration. To create call
 // `listen`:
-val c: Listener[Int] < (IO & Abort[Closed]) =
+val c: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen)
 
 // Each listener can have an
 // additional message buffer
-val d: Listener[Int] < (IO & Abort[Closed]) =
+val d: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen(bufferSize = 3))
 
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
 // poll, takeFiber, take
-val e: Int < (Async & Abort[Closed]) =
+val e: Int < (Async & Abort[Closed] & Resource) =
     d.map(_.take)
 
 // A listener can be closed
 // individually. If successful,
 // a Some with the backlog of
 // pending messages is returned
-val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
+val f: Maybe[Seq[Int]] < (IO & Abort[Closed] & Resource) =
     d.map(_.close)
+
+// Listeners are also managed
+// resources. They are closed 
+// when their `Resource` effect
+// is handled
+val g: Int < (Async & Abort[Closed]) =
+    Resource.run(e)
 
 // If the Hub is closed, all
 // listeners are automatically
@@ -2404,7 +2487,7 @@ val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
 // only include items pending in
 // the hub's buffer. The listener
 // buffers are discarded
-val g: Maybe[Seq[Int]] < IO =
+val h: Maybe[Seq[Int]] < IO =
     a.map(_.close)
 ```
 
@@ -2572,7 +2655,7 @@ val f: Unit < IO =
 val g: Unit < IO =
     aLong.map(_.lazySet(1L))
 val h: Boolean < IO =
-    aBool.map(_.cas(false, true))
+    aBool.map(_.compareAndSet(false, true))
 val i: String < IO =
     aRef.map(_.getAndSet("new"))
 ```
@@ -2735,6 +2818,21 @@ val result: String =
         case Absent        => "No value"
 ```
 
+`Maybe`'s high performance is due to the fact that it is unboxed. Accordingly, we recommend using t-string interpolation when logging `Maybe`s:
+
+```scala
+import kyo.*
+
+val maybe: Maybe[Maybe[Int]] = Maybe(Maybe(42))
+val maybeNot: Maybe[Maybe[Int]] = Maybe(Maybe.Absent)
+
+println(s"s-string nested maybes: $maybe, $maybeNot")
+// Output: s-string nested maybes: 42, Absent
+
+println(t"t-string nested maybes: $maybe, $maybeNot")
+// Output: t-string nested maybes: Present(Present(42)), Present(Absent)
+```
+
 ### Duration: Time Representation
 
 `Duration` provides a convenient and efficient way to represent and manipulate time durations. It offers a wide range of operations and conversions, making it easy to work with time intervals in various units.
@@ -2793,7 +2891,7 @@ import kyo._
 import scala.util.Try
 
 // Create a 'Result' from a value
-val a: Result[Nothing, Int] = Result.success(42)
+val a: Result[Nothing, Int] = Result.succeed(42)
 
 // Create a 'Result' from an failure
 val b: Result[Exception, Int] = Result.fail(new Exception("Oops"))
@@ -2805,35 +2903,35 @@ val c: Result[Nothing, Int] = Result(42 / 0)
 val d: Boolean = a.isSuccess
 
 // 'isFail' checks if the 'Result' is a failure
-val e: Boolean = b.isFail
+val e: Boolean = b.isFailure
 
 // 'get' retrieves the value if successful, otherwise throws
-val f: Int = a.get
+val f: Int = a.getOrThrow
 
 // 'getOrElse' provides a default value for failures
 val g: Int = b.getOrElse(0)
 
-// 'fold' applies a function based on success or failure
-val h: String = a.fold(e => "failure " + e)(_.toString)
+// 'foldError' applies a function based on success or failure
+val h: String = a.foldError(e => "failure " + e)(_.toString)
 
 // 'map' transforms the value if successful
 val i: Result[Nothing, String] = a.map(_.toString)
 
 // 'flatMap' allows chaining 'Result' operations
-val j: Result[Nothing, Int] = a.flatMap(v => Result.success(v + 1))
+val j: Result[Nothing, Int] = a.flatMap(v => Result.succeed(v + 1))
 
 // 'flatten' removes one level of nesting from a 'Result[Result[T]]'
-val k: Result[Nothing, Result[Nothing, Int]] = Result.success(a)
+val k: Result[Nothing, Result[Nothing, Int]] = Result.succeed(a)
 val l: Result[Nothing, Int] = k.flatten
 
 // 'filter' conditionally keeps or discards the value
 val m: Result[NoSuchElementException, Int] = a.filter(_ > 0)
 
-// 'recover' allows handling failures with a partial function
-val n: Result[Exception, Int] = b.recover { case Result.Fail(_: ArithmeticException) => 0 }
+// 'mapFailure' allows mapping failures 
+val n: Result[Int, Int] = b.mapFailure { _ => 0 }
 
-// 'recoverWith' allows handling failures with a partial function returning a 'Result'
-val o: Result[Exception, Int] = b.recoverWith { case Result.Fail(_: ArithmeticException) => Result.success(0) }
+// 'flatMapFailure' allows handling failures with a function returning a 'Result'
+val o: Result[Nothing, Int] = b.flatMapFailure { case _ => Result.succeed(0) }
 
 // 'toEither' converts a 'Result' to an 'Either'
 val p: Either[Throwable, Int] = a.toEither
@@ -2843,6 +2941,21 @@ val q: Try[Int] = a.toTry
 ```
 
 Under the hood, `Result` is defined as an opaque type that is a supertype of `Success[T]` and `Failure[T]`. Success[T] represents a successful result and is encoded as either the value itself (`T`) or a special SuccessFailure[`T`] case class. The `SuccessFailure[T]` case class is used to handle the rare case where a `Failure[T]` needs to be wrapped in a `Success[T]`. On the other hand, a failed `Result` is always represented by a `Failure[T]` case class, which contains the exception that caused the failure. This means that creating a `Failure[T]` does incur an allocation cost. Additionally, some methods on `Result`, such as `fold`, `map`, and `flatMap`, may allocate in certain cases due to the need to catch and handle exceptions.
+
+Since `Result.Success` is unboxed, we recommend using t-string interpolation when logging `Result`s:
+
+```scala
+import kyo.*
+
+val success: Result[String, Result[String, Int]] = Result.succeed(Result.succeed(42))
+val failure: Result[String, Result[String, Int]] = Result.succeed(Result.fail("failure!"))
+
+println(s"s-string nested results: $success, $failure")
+// Output: s-string nested results: 42, Fail(failure!)
+
+println(t"t-string nested results: $success, $failure")
+// Output: t-string nested results: Success(Success(42)), Success(Fail(failure!))
+```
 
 ### TypeMap: Type-Safe Heterogeneous Maps
 
@@ -3326,66 +3439,114 @@ trait HelloService:
     def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable])
 
 object HelloService:
+    val live = Layer(Live)
+
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable]) =
-            Kyo.suspendAttempt { // Adds IO & Abort[Throwable] effect
+            Kyo.suspendAttempt { // Introduces IO & Abort[Throwable] effect
                 println(s"Hello $saluee!")
             }
     end Live
 end HelloService
 
-val keepTicking: Nothing < (Console & Async & Abort[IOException]) =
-    (Console.print(".") *> Kyo.sleep(1.second)).forever
+val keepTicking: Nothing < (Async & Emit[String]) =
+    (Kyo.emit(".") *> Kyo.sleep(1.second)).forever
 
-val effect: Unit < (Console & Async & Resource & Abort[Throwable] & Env[NameService]) =
+val effect: Unit < (Async & Resource & Abort[Throwable] & Env[HelloService]) =
     for
-        nameService <- Kyo.service[NameService]       // Adds Env[NameService] effect
-        _           <- keepTicking.forkScoped         // Adds Console, Async, and Resource effects
-        saluee      <- Console.readln                 // Uses Console effect
-        _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
-        _           <- nameService.sayHelloTo(saluee) // Adds Abort[Throwable] effect
+        nameService <- Kyo.service[HelloService]      // Introduces Env[NameService]
+        _           <- keepTicking                    // Introduces Async and Emit[String]
+            .foreachEmit(Console.print)               // Handles Emit[String] and introduces Abort[IOException]
+            .forkScoped                               // Introduces Resource
+        saluee      <- Console.readln
+        _           <- Kyo.sleep(2.seconds)
+        _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
     yield ()
+    end for
+end effect
 
 // There are no combinators for handling IO or blocking Async, since this should
 // be done at the edge of the program
-IO.Unsafe.run {                              // Handles IO
-    Async.runAndBlock(Duration.Inf) { // Handles Async
+IO.Unsafe.run {                        // Handles IO
+    Async.runAndBlock(Duration.Inf) {  // Handles Async
         Kyo.scoped {                   // Handles Resource
-            effect
-                .provideAs[HelloService](HelloService.Live) // Handles Env[HelloService]
-                .catchAbort((thr: Throwable) =>             // Handles Abort[Throwable]
-                    Kyo.debug(s"Failed printing to console: ${throwable}")
-                )
-                .provideDefaultConsole // Handles Console
+            Memo.run:                  // Handles Memo (introduced by .provide, below)
+                effect
+                    .catching((thr: Throwable) =>             // Handles Abort[Throwable]
+                        Kyo.debug(s"Failed printing to console: ${throwable}")
+                    )
+                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but introduces Memo effect
         }
     }
 }
 ```
 
-### Failure conversions
+### Error handling
 
-One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result. It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
+Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result.
+
+For each of these, to handle the effect, lifting the result type to `Result`, `Seq`, and `Maybe`, use `.result`, `.handleChoice`, and `.maybe` respectively. Alternatively, you can convert between these different error types using methods usually in the form of `def effect1ToEffect2`, where `effect1` and `effect2` can be "abort" (`Abort[?]`), "absent" (`Abort[Absent]`), "empty" (`Choice`, when reduced to an empty sequence), and "throwable" (`Abort[Throwable]`).
 
 Some examples:
 
 ```scala 
-val abortEffect: Int < Abort[String] = ???
+val abortEffect: Int < Abort[String] = 1
 
 // Converts failures to empty failure
-val maybeEffect: Int < Abort[Absent] = abortEffect.abortToEmpty
+val maybeEffect: Int < Abort[Absent] = abortEffect.abortToAbsent
 
-// Converts empty failure to a single "choice" (or Seq)
-val choiceEffect: Int < Choice = maybeEffect.emptyAbortToChoice
+// Converts an aborted Absent to an empty "choice"
+val choiceEffect: Int < Choice = maybeEffect.absentToEmpty
 
-// Fails with Nil#head exception if empty and succeeds with Seq.head if non-empty
-val newAbortEffect: Int < Abort[Throwable] = choiceEffect.choiceToThrowable
+// Fails with exception if empty
+val newAbortEffect: Int < (Choice & Abort[Throwable]) = choiceEffect.emptyToThrowable
+```
 
-// Throws a throwable Abort failure (will actually throw unless suspended)
-val unsafeEffect: Int < Any = newAbortEffect.implicitAborts
+To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic` and `unpanic` respectively:
+
+```scala
+import kyo.*
+import java.io.IOException
+
+val abortEffect: Int < Abort[String | Throwable] = 1
+
+// unsafeEffect will panic with a `PanicException(err)`
+val unsafeEffect: Int < Any = abortEffect.orPanic
 
 // Catch any suspended throws
-val safeEffect: Int < Abort[Throwable] = unsafeEffect.explicitAborts
+val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
+
+// Use orPanic after forAbort[E] to swallow only errors of type E
+val unsafeForThrowables: Int < Abort[String] = abortEffect.forAbort[Throwable].orPanic
 ```
+
+Other error-handling methods are as follows:
+
+```scala
+import kyo.*
+
+trait A
+trait B
+trait C
+
+val effect: Int < Abort[A | B | C] = 1
+
+val handled: Result[A | B | C, Int] < Any = effect.result
+val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
+val caught: Int < Any = effect.catching(_.toString.size)
+val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
+val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
+
+// Manipulate single types from within the union
+val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
+val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
+val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
+val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap
+val aToAbsent: Int < Abort[Absent | B | C] = effect.forAbort[A].toAbsent
+val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toEmpty
+val aToThrowable: Int < Abort[Throwable | B | C] = effect.forAbort[A].toThrowable
+```
+
 
 ## Acknowledgements
 
@@ -3401,4 +3562,3 @@ License
 -------
 
 See the [LICENSE](https://github.com/getkyo/kyo/blob/master/LICENSE.txt) file for details.
- 

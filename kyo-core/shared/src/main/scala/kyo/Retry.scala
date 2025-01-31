@@ -7,10 +7,25 @@ import scala.util.*
 object Retry:
 
     /** The default retry schedule. */
-    val defaultSchedule = Schedule.exponentialBackoff(initial = 100.millis, factor = 2, maxBackoff = 5.seconds).take(3)
+    val defaultSchedule =
+        Schedule.exponentialBackoff(initial = 100.millis, factor = 2, maxBackoff = 5.seconds)
+            .jitter(0.2).take(3)
 
     /** Provides retry operations for a specific error type. */
     final class RetryOps[E >: Nothing](dummy: Unit) extends AnyVal:
+
+        /** Retries an operation using the default retry schedule.
+          *
+          * Uses [[defaultSchedule]] which implements exponential backoff with jitter. See [[defaultSchedule]] for the specific
+          * configuration.
+          *
+          * @param v
+          *   The operation to retry
+          * @return
+          *   The result of the operation, or an abort if all retries fail
+          */
+        def apply[A: Flat, S](v: => A < (Abort[E] & S))(using SafeClassTag[E], Frame): A < (Async & Abort[E] & S) =
+            apply(defaultSchedule)(v)
 
         /** Retries an operation using a custom policy builder.
           *
@@ -24,19 +39,20 @@ object Retry:
         def apply[A: Flat, S](schedule: Schedule)(v: => A < (Abort[E] & S))(
             using
             SafeClassTag[E],
-            Tag[E],
             Frame
         ): A < (Async & Abort[E] & S) =
-            Loop(schedule) { schedule =>
-                Abort.run[E](v).map(_.fold { r =>
-                    schedule.next.map { (delay, nextSchedule) =>
-                        Async.delay(delay)(Loop.continue(nextSchedule))
-                    }.getOrElse {
-                        Abort.get(r)
+            Abort.run[E](v).map {
+                case Result.Success(value) => value
+                case result: Result.Failure[E] @unchecked =>
+                    Clock.now.map { now =>
+                        schedule.next(now).map { (delay, nextSchedule) =>
+                            Async.delay(delay)(Retry[E](nextSchedule)(v))
+                        }.getOrElse {
+                            Abort.error(result)
+                        }
                     }
-                }(Loop.done(_)))
+                case panic: Result.Panic => Abort.error(panic)
             }
-        end apply
     end RetryOps
 
     /** Creates a RetryOps instance for the specified error type.

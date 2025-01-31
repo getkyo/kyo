@@ -3,13 +3,30 @@ on:
   push:
     branches: [main]
     tags: ["v0.*"]
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: read
+  contents: read
+
 jobs:
   publish:
+    if: |
+      (github.event_name == 'push') ||
+      (github.event_name == 'issue_comment' && 
+       github.event.issue.pull_request && 
+       github.event.comment.body == '/release')
     runs-on: ubuntu-20.04
+    env:
+      JAVA_OPTS: -Xms1G -Xmx1G
+      JVM_OPTS:  -Xms1G -Xmx1G
     steps:
       - uses: actions/checkout@v3.0.2
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
+      - uses: coursier/cache-action@v6
       - uses: olafurpg/setup-scala@v13
         with:
           java-version: openjdk@21.0.2=tgz+https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz

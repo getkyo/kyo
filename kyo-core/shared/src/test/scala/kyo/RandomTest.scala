@@ -3,21 +3,22 @@ package kyo
 class RandomTest extends Test:
 
     "mocked" - {
-        val testRandom: Random = new Random:
-            def nextInt(using Frame)                                   = 10
-            def nextInt(n: Int)(using Frame)                           = Math.min(55, n - 1)
-            def nextLong(using Frame)                                  = 20L
-            def nextBoolean(using Frame)                               = true
-            def nextDouble(using Frame)                                = 30d
-            def nextFloat(using Frame)                                 = 40f
-            def nextGaussian(using Frame)                              = 50d
-            def nextValue[A](seq: Seq[A])(using Frame)                 = seq.last
-            def nextValues[A](length: Int, seq: Seq[A])(using Frame)   = Seq.fill(length)(seq.last)
-            def nextStringAlphanumeric(length: Int)(using Frame)       = "a" * length
-            def nextString(length: Int, chars: Seq[Char])(using Frame) = chars.last.toString * length
-            def nextBytes(length: Int)(using Frame)                    = Seq.fill(length)(1.toByte)
-            def shuffle[A](seq: Seq[A])(using Frame)                   = seq.reverse
-            def unsafe                                                 = ???
+        val testRandom = Random(
+            new Random.Unsafe:
+                def nextInt()(using AllowUnsafe)                                 = 10
+                def nextInt(n: Int)(using AllowUnsafe)                           = Math.min(55, n - 1)
+                def nextLong()(using AllowUnsafe)                                = 20L
+                def nextBoolean()(using AllowUnsafe)                             = true
+                def nextDouble()(using AllowUnsafe)                              = 30d
+                def nextFloat()(using AllowUnsafe)                               = 40f
+                def nextGaussian()(using AllowUnsafe)                            = 50d
+                def nextValue[A](seq: Seq[A])(using AllowUnsafe)                 = seq.last
+                def nextValues[A](length: Int, seq: Seq[A])(using AllowUnsafe)   = Seq.fill(length)(seq.last)
+                def nextStringAlphanumeric(length: Int)(using AllowUnsafe)       = "a" * length
+                def nextString(length: Int, chars: Seq[Char])(using AllowUnsafe) = chars.last.toString * length
+                def nextBytes(length: Int)(using AllowUnsafe)                    = Seq.fill(length)(1.toByte)
+                def shuffle[A](seq: Seq[A])(using AllowUnsafe)                   = seq.reverse
+        )
 
         "nextInt" in run {
             Random.let(testRandom)(Random.nextInt).map { v =>

@@ -80,10 +80,10 @@ case class NettyKyoServer(
         block: () => KyoSttpMonad.M[ServerResponse[NettyResponse]]
     ): (Future[ServerResponse[NettyResponse]], () => Future[Unit]) =
         import AllowUnsafe.embrace.danger
-        val fiber  = IO.Unsafe.run(Async.run(block())).eval
-        val future = IO.Unsafe.run(fiber.toFuture).eval
+        val fiber  = IO.Unsafe.evalOrThrow(Async.run(block()))
+        val future = IO.Unsafe.evalOrThrow(fiber.toFuture)
         val cancel = () =>
-            val _ = IO.Unsafe.run(fiber.interrupt).eval
+            val _ = IO.Unsafe.evalOrThrow(fiber.interrupt)
             Future.unit
         (future, cancel)
     end unsafeRunAsync
@@ -161,8 +161,16 @@ case class NettyKyoServer(
         ).flatMap { _ =>
             nettyFutureToScala(ch.close()).flatMap { _ =>
                 if config.shutdownEventLoopGroupOnClose then
-                    nettyFutureToScala(eventLoopGroup.shutdownGracefully(timeout, timeout, java.util.concurrent.TimeUnit.NANOSECONDS)).unit.andThen {
-                        nettyFutureToScala(eventExecutor.shutdownGracefully(timeout, timeout, java.util.concurrent.TimeUnit.NANOSECONDS)).unit
+                    nettyFutureToScala(eventLoopGroup.shutdownGracefully(
+                        timeout,
+                        timeout,
+                        java.util.concurrent.TimeUnit.NANOSECONDS
+                    )).unit.andThen {
+                        nettyFutureToScala(eventExecutor.shutdownGracefully(
+                            timeout,
+                            timeout,
+                            java.util.concurrent.TimeUnit.NANOSECONDS
+                        )).unit
                     }
                 else ()
             }

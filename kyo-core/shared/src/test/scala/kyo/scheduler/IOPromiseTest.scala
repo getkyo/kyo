@@ -13,9 +13,9 @@ class IOPromiseTest extends Test:
     "complete" - {
         "success" in {
             val p = new IOPromise[Nothing, Int]()
-            assert(p.complete(Result.success(1)))
+            assert(p.complete(Result.succeed(1)))
             assert(p.done())
-            assert(p.block(deadline()) == Result.success(1))
+            assert(p.block(deadline()) == Result.succeed(1))
         }
 
         "failure" in {
@@ -28,17 +28,17 @@ class IOPromiseTest extends Test:
 
         "complete twice" in {
             val p = new IOPromise[Nothing, Int]()
-            assert(p.complete(Result.success(1)))
-            assert(!p.complete(Result.success(2)))
+            assert(p.complete(Result.succeed(1)))
+            assert(!p.complete(Result.succeed(2)))
             assert(p.done())
-            assert(p.block(deadline()) == Result.success(1))
+            assert(p.block(deadline()) == Result.succeed(1))
         }
 
         "complete with null value" in {
             val p = new IOPromise[Nothing, String]()
-            assert(p.complete(Result.success(null)))
+            assert(p.complete(Result.succeed(null)))
             assert(p.done())
-            assert(p.block(deadline()) == Result.success(null))
+            assert(p.block(deadline()) == Result.succeed(null))
         }
 
         "complete with exception" in {
@@ -53,8 +53,8 @@ class IOPromiseTest extends Test:
     "completeDiscard" - {
         "success" in {
             val p = new IOPromise[Nothing, Int]()
-            p.completeDiscard(Result.success(1))
-            assert(p.block(deadline()) == Result.success(1))
+            p.completeDiscard(Result.succeed(1))
+            assert(p.block(deadline()) == Result.succeed(1))
         }
 
         "completeDiscard with failure" in {
@@ -69,10 +69,10 @@ class IOPromiseTest extends Test:
         "success" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
-            assert(p2.complete(Result.success(42)))
+            assert(p2.complete(Result.succeed(42)))
             assert(p1.become(p2))
             assert(p1.done())
-            assert(p1.block(deadline()) == Result.success(42))
+            assert(p1.block(deadline()) == Result.succeed(42))
         }
 
         "failure" in {
@@ -88,19 +88,19 @@ class IOPromiseTest extends Test:
         "already completed" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
-            assert(p1.complete(Result.success(42)))
-            assert(p2.complete(Result.success(99)))
+            assert(p1.complete(Result.succeed(42)))
+            assert(p2.complete(Result.succeed(99)))
             assert(!p1.become(p2))
-            assert(p1.block(deadline()) == Result.success(42))
+            assert(p1.block(deadline()) == Result.succeed(42))
         }
 
         "become with incomplete promise" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             assert(p1.become(p2))
-            p2.complete(Result.success(42))
+            p2.complete(Result.succeed(42))
             assert(p1.done())
-            assert(p1.block(deadline()) == Result.success(42))
+            assert(p1.block(deadline()) == Result.succeed(42))
         }
 
         "become with chain of promises" in {
@@ -109,9 +109,9 @@ class IOPromiseTest extends Test:
             val p3 = new IOPromise[Nothing, Int]()
             p1.become(p2)
             p2.become(p3)
-            p3.complete(Result.success(42))
+            p3.complete(Result.succeed(42))
             val v = p1.block(deadline())
-            assert(v == Result.success(42))
+            assert(v == Result.succeed(42))
         }
     }
 
@@ -119,19 +119,19 @@ class IOPromiseTest extends Test:
         "success" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
-            p2.complete(Result.success(42))
+            p2.complete(Result.succeed(42))
             p1.becomeDiscard(p2)
             val v = p1.block(deadline())
-            assert(v == Result.success(42))
+            assert(v == Result.succeed(42))
         }
 
         "becomeDiscard with incomplete promise" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             p1.becomeDiscard(p2)
-            p2.complete(Result.success(42))
+            p2.complete(Result.succeed(42))
             val v = p1.block(deadline())
-            assert(v == Result.success(42))
+            assert(v == Result.succeed(42))
         }
     }
 
@@ -144,9 +144,9 @@ class IOPromiseTest extends Test:
 
         "interrupt completed promise" in {
             val p = new IOPromise[Nothing, Int]()
-            p.complete(Result.success(42))
+            p.complete(Result.succeed(42))
             assert(!p.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(p.block(deadline()) == Result.success(42))
+            assert(p.block(deadline()) == Result.succeed(42))
         }
 
         "interrupt chain of promises" in {
@@ -171,7 +171,7 @@ class IOPromiseTest extends Test:
             val p      = new IOPromise[Nothing, Int]()
             var called = false
             p.onComplete(_ => called = true)
-            p.complete(Result.success(42))
+            p.complete(Result.succeed(42))
             assert(called)
         }
 
@@ -181,7 +181,7 @@ class IOPromiseTest extends Test:
             var called2 = false
             p.onComplete(_ => called1 = true)
             p.onComplete(_ => called2 = true)
-            p.complete(Result.success(42))
+            p.complete(Result.succeed(42))
             assert(called1 && called2)
         }
 
@@ -190,7 +190,7 @@ class IOPromiseTest extends Test:
             var called = false
             p.onComplete(_ => throw new RuntimeException("Test"))
             p.onComplete(_ => called = true)
-            p.complete(Result.success(42))
+            p.complete(Result.succeed(42))
             assert(called)
         }
     }
@@ -198,21 +198,21 @@ class IOPromiseTest extends Test:
     "block" - {
         "immediate completion" in {
             val p = new IOPromise[Nothing, Int]()
-            p.complete(Result.success(42))
+            p.complete(Result.succeed(42))
             val result = p.block(deadline())
-            assert(result == Result.success(42))
+            assert(result == Result.succeed(42))
         }
 
-        "timeout" in runJVM {
+        "timeout" in runNotJS {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
-            assert(result.isFail)
+            assert(result.isFailure)
         }
 
-        "block with very short timeout" in runJVM {
+        "block with very short timeout" in runNotJS {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
-            assert(result.isFail)
+            assert(result.isFailure)
         }
     }
 
@@ -221,7 +221,7 @@ class IOPromiseTest extends Test:
             def createNestedPromises(depth: Int): IOPromise[Nothing, Int] =
                 @tailrec def loop(currentDepth: Int, promise: IOPromise[Nothing, Int]): IOPromise[Nothing, Int] =
                     if currentDepth == 0 then
-                        promise.complete(Result.success(42))
+                        promise.complete(Result.succeed(42))
                         promise
                     else
                         val newPromise = new IOPromise[Nothing, Int]()
@@ -231,7 +231,7 @@ class IOPromiseTest extends Test:
             end createNestedPromises
 
             val deeplyNested = createNestedPromises(10000)
-            assert(deeplyNested.block(deadline()) == Result.success(42))
+            assert(deeplyNested.block(deadline()) == Result.succeed(42))
         }
 
         "long chain of onComplete callbacks" in {
@@ -242,7 +242,7 @@ class IOPromiseTest extends Test:
                     p.onComplete(_ => count += 1)
                     addCallback(remaining - 1)
             addCallback(10000)
-            p.complete(Result.success(42))
+            p.complete(Result.succeed(42))
             assert(count == 10000)
         }
     }
@@ -323,8 +323,8 @@ class IOPromiseTest extends Test:
             var maskedResult: Maybe[Result[Nothing, Int]] = Absent
             masked.onComplete(r => maskedResult = Maybe(r))
 
-            original.complete(Result.success(42))
-            assert(maskedResult.contains(Result.success(42)))
+            original.complete(Result.succeed(42))
+            assert(maskedResult.contains(Result.succeed(42)))
         }
 
         "propagates failure" in {
@@ -349,8 +349,8 @@ class IOPromiseTest extends Test:
             original.onComplete(r => originalResult = Maybe(r))
             masked.onComplete(r => maskedResult = Maybe(r))
 
-            masked.complete(Result.success(99))
-            assert(maskedResult.contains(Result.success(99)))
+            masked.complete(Result.succeed(99))
+            assert(maskedResult.contains(Result.succeed(99)))
             assert(originalResult.isEmpty)
         }
 
@@ -372,19 +372,19 @@ class IOPromiseTest extends Test:
             assert(!masked1Completed)
             assert(!originalCompleted)
 
-            original.complete(Result.success(42))
+            original.complete(Result.succeed(42))
             assert(masked1Completed)
         }
 
         "mask after completion" in {
             val original = new IOPromise[Nothing, Int]()
-            original.complete(Result.success(42))
+            original.complete(Result.succeed(42))
 
             val masked                                    = original.mask()
             var maskedResult: Maybe[Result[Nothing, Int]] = Absent
             masked.onComplete(r => maskedResult = Maybe(r))
 
-            assert(maskedResult.contains(Result.success(42)))
+            assert(maskedResult.contains(Result.succeed(42)))
         }
 
         "interrupt original completes masked" in {
@@ -422,11 +422,11 @@ class IOPromiseTest extends Test:
             assert(masked1Result.isEmpty)
             assert(originalResult.isEmpty)
 
-            original.complete(Result.success(42))
+            original.complete(Result.succeed(42))
 
-            assert(originalResult.contains(Result.success(42)))
-            assert(masked1Result.contains(Result.success(42)))
-            assert(masked2Result.contains(Result.success(42)))
+            assert(originalResult.contains(Result.succeed(42)))
+            assert(masked1Result.contains(Result.succeed(42)))
+            assert(masked2Result.contains(Result.succeed(42)))
         }
 
         "mask interaction with become" in {
@@ -444,17 +444,17 @@ class IOPromiseTest extends Test:
 
             assert(masked.become(other))
 
-            other.complete(Result.success(99))
+            other.complete(Result.succeed(99))
 
             assert(originalResult.isEmpty)
-            assert(maskedResult.contains(Result.success(99)))
-            assert(otherResult.contains(Result.success(99)))
+            assert(maskedResult.contains(Result.succeed(99)))
+            assert(otherResult.contains(Result.succeed(99)))
 
-            original.complete(Result.success(42))
+            original.complete(Result.succeed(42))
 
-            assert(originalResult.contains(Result.success(42)))
-            assert(maskedResult.contains(Result.success(99)))
-            assert(otherResult.contains(Result.success(99)))
+            assert(originalResult.contains(Result.succeed(42)))
+            assert(maskedResult.contains(Result.succeed(99)))
+            assert(otherResult.contains(Result.succeed(99)))
         }
 
         "mask with interrupts" in {
@@ -495,7 +495,7 @@ class IOPromiseTest extends Test:
             val p           = new IOPromise[Nothing, Int]()
             var interrupted = false
             p.onInterrupt(_ => interrupted = true)
-            p.complete(Result.success(42))
+            p.complete(Result.succeed(42))
             assert(!interrupted)
         }
 
@@ -618,11 +618,11 @@ class IOPromiseTest extends Test:
             val p2 = new IOPromise[Nothing, Int]()
 
             p1.onComplete { _ =>
-                require(p2.complete(Result.success(42)))
+                require(p2.complete(Result.succeed(42)))
             }
 
-            p1.complete(Result.success(1))
-            assert(p2.block(deadline()) == Result.success(42))
+            p1.complete(Result.succeed(1))
+            assert(p2.block(deadline()) == Result.succeed(42))
         }
 
         "interrupting a promise during onComplete callback" in {
@@ -633,7 +633,7 @@ class IOPromiseTest extends Test:
                 require(p2.interrupt(Result.Panic(new Exception("Interrupted during callback"))))
             }
 
-            p1.complete(Result.success(1))
+            p1.complete(Result.succeed(1))
             assert(p2.block(deadline()).isPanic)
         }
 
@@ -646,9 +646,9 @@ class IOPromiseTest extends Test:
                 require(p2.become(p3))
             }
 
-            p1.complete(Result.success(1))
-            p3.complete(Result.success(42))
-            assert(p2.block(deadline()) == Result.success(42))
+            p1.complete(Result.succeed(1))
+            p3.complete(Result.succeed(42))
+            assert(p2.block(deadline()) == Result.succeed(42))
         }
 
         "complex chaining with interrupts and masks" in {
@@ -674,13 +674,13 @@ class IOPromiseTest extends Test:
 
             p1.onComplete { _ =>
                 p2.onComplete { _ =>
-                    require(p3.complete(Result.success(42)))
+                    require(p3.complete(Result.succeed(42)))
                 }
-                require(p2.complete(Result.success(2)))
+                require(p2.complete(Result.succeed(2)))
             }
 
-            p1.complete(Result.success(1))
-            assert(p3.block(deadline()) == Result.success(42))
+            p1.complete(Result.succeed(1))
+            assert(p3.block(deadline()) == Result.succeed(42))
         }
 
         "completing a promise with a failed result during onInterrupt" in {
@@ -692,7 +692,7 @@ class IOPromiseTest extends Test:
             }
 
             p1.interrupt(Result.Panic(new Exception("Interrupted")))
-            assert(p2.block(deadline()).isFail)
+            assert(p2.block(deadline()).isFailure)
         }
     }
 
@@ -700,8 +700,8 @@ class IOPromiseTest extends Test:
         given [A, B]: CanEqual[A, B] = CanEqual.derived
         "covariance of A" in {
             val p: IOPromise[Nothing, AnyRef] = new IOPromise[Nothing, String]()
-            p.complete(Result.success("Hello"))
-            assert(p.block(deadline()) == Result.success("Hello"))
+            p.complete(Result.succeed("Hello"))
+            assert(p.block(deadline()) == Result.succeed("Hello"))
         }
 
         "contravariance of E" in {
@@ -714,17 +714,17 @@ class IOPromiseTest extends Test:
         "variance with become" in {
             val p1: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
             val p2: IOPromise[Exception, String] = new IOPromise[Exception, String]()
-            p2.complete(Result.success("Hello"))
+            p2.complete(Result.succeed("Hello"))
             assert(p1.become(p2))
-            assert(p1.block(deadline()) == Result.success("Hello"))
+            assert(p1.block(deadline()) == Result.succeed("Hello"))
         }
 
         "variance with onComplete" in {
             val p: IOPromise[Exception, String]           = new IOPromise[Exception, String]()
             var result: Option[Result[Throwable, AnyRef]] = None
             p.onComplete(r => result = Some(r.asInstanceOf[Result[Throwable, AnyRef]]))
-            p.complete(Result.success("Hello"))
-            assert(result.contains(Result.success("Hello")))
+            p.complete(Result.succeed("Hello"))
+            assert(result.contains(Result.succeed("Hello")))
         }
 
         "variance with interrupts" in {
@@ -739,8 +739,8 @@ class IOPromiseTest extends Test:
         "variance with mask" in {
             val original: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
             val masked: IOPromise[Throwable, AnyRef]   = original.mask()
-            original.complete(Result.success("Hello"))
-            assert(masked.block(deadline()) == Result.success("Hello"))
+            original.complete(Result.succeed("Hello"))
+            assert(masked.block(deadline()) == Result.succeed("Hello"))
         }
 
         "variance with complex chaining" in {
@@ -750,11 +750,91 @@ class IOPromiseTest extends Test:
 
             p1.become(p2)
             p2.become(p3)
-            p3.complete(Result.success("Hello"))
+            p3.complete(Result.succeed("Hello"))
 
-            assert(p1.block(deadline()) == Result.success("Hello"))
-            assert(p2.block(deadline()) == Result.success("Hello"))
-            assert(p3.block(deadline()) == Result.success("Hello"))
+            assert(p1.block(deadline()) == Result.succeed("Hello"))
+            assert(p2.block(deadline()) == Result.succeed("Hello"))
+            assert(p3.block(deadline()) == Result.succeed("Hello"))
+        }
+    }
+
+    "exception handling" - {
+        val ex = new RuntimeException("test exception")
+
+        "multiple callbacks with exceptions" in {
+            val p                     = new IOPromise[Nothing, Int]()
+            var firstCallbackExecuted = false
+            var lastCallbackExecuted  = false
+
+            p.onComplete(_ => firstCallbackExecuted = true)
+            p.onComplete(_ => throw ex)
+            p.onComplete(_ => throw ex)
+            p.onComplete(_ => lastCallbackExecuted = true)
+
+            p.complete(Result.succeed(42))
+            assert(firstCallbackExecuted)
+            assert(lastCallbackExecuted)
+        }
+
+        "exceptions in onInterrupt callbacks" in {
+            val p                     = new IOPromise[Nothing, Int]()
+            var firstCallbackExecuted = false
+            var lastCallbackExecuted  = false
+
+            p.onComplete(_ => firstCallbackExecuted = true)
+            p.onInterrupt(_ => throw ex)
+            p.onInterrupt(_ => lastCallbackExecuted = true)
+
+            p.interrupt(Result.Panic(new Exception("Test interrupt")))
+            assert(firstCallbackExecuted)
+            assert(lastCallbackExecuted)
+        }
+
+        "nested callbacks with exceptions" in {
+            val p1                    = new IOPromise[Nothing, Int]()
+            val p2                    = new IOPromise[Nothing, Int]()
+            var innerCallbackExecuted = false
+
+            p1.onComplete { _ =>
+                throw ex
+                discard(p2.complete(Result.succeed(42)))
+            }
+
+            p2.onComplete(_ => innerCallbackExecuted = true)
+
+            p1.complete(Result.succeed(1))
+            assert(!innerCallbackExecuted)
+
+            p2.complete(Result.succeed(42))
+            assert(innerCallbackExecuted)
+        }
+
+        "exceptions during promise chaining" in {
+            val p1             = new IOPromise[Nothing, Int]()
+            val p2             = new IOPromise[Nothing, Int]()
+            var chainCompleted = false
+
+            p1.onComplete { _ =>
+                p2.onComplete(_ => throw new RuntimeException("test exception"))
+                p2.onComplete(_ => chainCompleted = true)
+            }
+
+            p1.complete(Result.succeed(1))
+            p2.complete(Result.succeed(2))
+
+            assert(chainCompleted)
+        }
+
+        "exceptions with masked promises" in {
+            val original               = new IOPromise[Nothing, Int]()
+            val masked                 = original.mask()
+            var maskedCallbackExecuted = false
+
+            masked.onComplete(_ => throw ex)
+            masked.onComplete(_ => maskedCallbackExecuted = true)
+
+            original.complete(Result.succeed(42))
+            assert(maskedCallbackExecuted)
         }
     }
 

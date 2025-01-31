@@ -3,7 +3,7 @@ package kyo.debug
 import kyo.*
 import kyo.Ansi.*
 import kyo.kernel.Effect
-import kyo.kernel.Safepoint
+import kyo.kernel.internal.Safepoint
 import scala.collection.mutable.LinkedHashMap
 import scala.language.implicitConversions
 import scala.quoted.*

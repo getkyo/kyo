@@ -3,31 +3,33 @@ package kyo
 import kyo.internal.LogPlatformSpecific
 
 final case class Log(unsafe: Log.Unsafe):
-    def level: Log.Level                                                                                  = unsafe.level
-    inline def trace(inline msg: => String)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.trace(msg))
-    inline def trace(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.trace(msg, t))
-    inline def debug(inline msg: => String)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.debug(msg))
-    inline def debug(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.debug(msg, t))
-    inline def info(inline msg: => String)(using inline frame: Frame): Unit < IO                          = IO.Unsafe(unsafe.info(msg))
-    inline def info(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO  = IO.Unsafe(unsafe.info(msg, t))
-    inline def warn(inline msg: => String)(using inline frame: Frame): Unit < IO                          = IO.Unsafe(unsafe.warn(msg))
-    inline def warn(inline msg: => String, t: => Throwable)(using inline frame: Frame): Unit < IO         = IO.Unsafe(unsafe.warn(msg, t))
-    inline def error(inline msg: => String)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.error(msg))
-    inline def error(inline msg: => String, t: => Throwable)(using inline frame: Frame): Unit < IO        = IO.Unsafe(unsafe.error(msg, t))
+    def level: Log.Level                                                        = unsafe.level
+    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.trace(msg.show))
+    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+        IO.Unsafe(unsafe.trace(msg.show, t))
+    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.debug(msg.show))
+    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+        IO.Unsafe(unsafe.debug(msg.show, t))
+    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.info(msg.show))
+    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.info(msg.show, t))
+    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.warn(msg.show))
+    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO        = IO.Unsafe(unsafe.warn(msg.show, t))
+    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < IO                        = IO.Unsafe(unsafe.error(msg.show))
+    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.error(msg.show, t))
 end Log
 
 /** Logging utility object for Kyo applications. */
 object Log extends LogPlatformSpecific:
 
-    final case class Level private (private val priority: Int) extends AnyVal:
-        def enabled(maxLevel: Level) = maxLevel.priority <= priority
-
+    sealed abstract class Level(private val priority: Int) derives CanEqual:
+        def enabled(other: Level): Boolean = other.priority <= priority
     object Level:
-        val trace: Level = Level(10)
-        val debug: Level = Level(20)
-        val info: Level  = Level(30)
-        val warn: Level  = Level(40)
-        val error: Level = Level(50)
+        case object trace  extends Level(10)
+        case object debug  extends Level(20)
+        case object info   extends Level(30)
+        case object warn   extends Level(40)
+        case object error  extends Level(50)
+        case object silent extends Level(60)
     end Level
 
     private val local = Local.init(live)
@@ -171,9 +173,9 @@ object Log extends LogPlatformSpecific:
     private inline def logWhen(inline level: Level)(inline doLog: Log => Unit < IO)(using
         inline frame: Frame
     ): Unit < IO =
-        use { log =>
+        IO.Unsafe.withLocal(local) { log =>
             if level.enabled(log.level) then
-                IO.Unsafe(doLog(log))
+                doLog(log)
             else
                 (
             )

@@ -457,7 +457,23 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
             cdl.countDown()
         }
 
-        "preempts long-running task" in withWorker { worker =>
+        "preempts long-running task if queue isn't empty" in withWorker { worker =>
+            var preempted = false
+            val longRunningTask = TestTask(
+                _run = () => {
+                    while (!preempted) {}
+                    Task.Done
+                },
+                _preempt = () => preempted = true
+            )
+            worker.enqueue(longRunningTask)
+            worker.enqueue(longRunningTask)
+            eventually {
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(preempted)
+            }
+        }
+        "doesn't preempt long-running task if queue is empty" in withWorker { worker =>
             var preempted = false
             val longRunningTask = TestTask(
                 _run = () => {
@@ -469,7 +485,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
             worker.enqueue(longRunningTask)
             eventually {
                 assert(!worker.checkAvailability(System.currentTimeMillis()))
-                assert(preempted)
+                assert(!preempted)
             }
         }
         "drains queue only once when transitioning to stalled state" in withWorker { worker =>

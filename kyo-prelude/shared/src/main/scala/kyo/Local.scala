@@ -102,13 +102,13 @@ object Local:
             def tag: Tag[E]
 
             def get(using Frame) =
-                ContextEffect.suspendAndMap(tag, Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
+                ContextEffect.suspendWith(tag, Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
 
             def use[B, S](f: A => B < S)(using Frame) =
-                ContextEffect.suspendAndMap(tag, Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
+                ContextEffect.suspendWith(tag, Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
 
             def let[B, S](value: A)(v: B < S)(using Frame) =
-                ContextEffect.handle(tag, Map(this -> value), _.updated(this, value.asInstanceOf[AnyRef]))(v)
+                ContextEffect.handle(tag, Map.empty[Local[?], AnyRef].updated(this, value), _.updated(this, value.asInstanceOf[AnyRef]))(v)
 
             def update[B, S](f: A => A)(v: B < S)(using Frame) =
                 ContextEffect.handle(

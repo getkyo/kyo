@@ -11,74 +11,9 @@ import kyo.kernel.*
   * @tparam V
   *   The type of values that can be emitted
   */
-sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Emit.Ack]]
+sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Unit]]
 
 object Emit:
-
-    /** An acknowledgement type used to control emission of values.
-      *
-      * It is either a [[Continue]] with a positive maximum number of values to emit, or [[Stop]] to indicate that no more values should be
-      * emitted.
-      */
-    opaque type Ack = Int
-    object Ack:
-        given CanEqual[Ack, Ack]         = CanEqual.derived
-        inline given Flat[Ack]           = Flat.unsafe.bypass
-        inline given Flat[Ack.Stop.type] = Flat.unsafe.bypass
-        inline given Flat[Ack.Continue]  = Flat.unsafe.bypass
-
-        /** Creates an [[Ack]] from a maximum number of values to emit.
-          *
-          * @param maxValues
-          *   The mamximum number of values to emit
-          * @return
-          *   [[Continue]] if the maximum number of values is positive, [[Stop]] otherwise
-          */
-        def apply(maxValues: Int): Ack = Math.max(0, maxValues)
-
-        extension (self: Ack)
-            /** Limits the acknowledgement to a maximum number of values.
-              *
-              * If this acknowledgement is [[Stop]] or `n` is non-positive then the returned acknowledgement is [[Stop]]. Otherwise, if this
-              * acknowledgement is [[Continue]] then the returned acknowledgement is [[Continue]] with the minimum of the current maximum
-              * number of values and `n`.
-              *
-              * @param n
-              *   The maximum number of values to emit
-              * @return
-              *   [[Continue]] if the minimum of the current maximum number of values and `n` is positive, [[Stop]] otherwise
-              */
-            def maxValues(n: Int): Ack = Ack(Math.min(self, n))
-
-            /** Chains acknowledgements by executing a function only if not stopped.
-              *
-              * If the current acknowledgement is [[Stop]], returns [[Stop]] immediately. Otherwise, executes the provided function to get
-              * the next acknowledgement.
-              *
-              * @param f
-              *   The function to execute to get the next acknowledgement
-              * @return
-              *   [[Stop]] if current acknowledgement is [[Stop]], otherwise the result of `f`
-              */
-            inline def next[S](inline f: => Ack < S): Ack < S =
-                if stop then Stop
-                else f
-
-            // Workaround for compiler issue with inlined `next`
-            private def stop: Boolean = self == Stop
-        end extension
-
-        /** Indicates to continue emitting values */
-        opaque type Continue <: Ack = Int
-        object Continue:
-            def apply(): Continue = Int.MaxValue
-
-            def unapply(ack: Ack): Maybe.Ops[Int] = Maybe.when(ack > 0)(ack)
-        end Continue
-
-        /** Indicates to stop emitting values */
-        val Stop: Ack = 0
-    end Ack
 
     /** Emits a single value.
       *
@@ -87,7 +22,7 @@ object Emit:
       * @return
       *   An effect that emits the given value
       */
-    inline def apply[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
+    inline def value[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Unit < Emit[V] =
         ArrowEffect.suspend[Any](tag, value)
 
     /** Emits a single value and maps the resulting Ack.
@@ -99,12 +34,12 @@ object Emit:
       * @return
       *   The result of applying f to the Ack
       */
-    inline def andMap[V, A, S](inline value: V)(inline f: Ack => A < S)(
+    inline def valueWith[V, A, S](inline value: V)(inline f: => A < S)(
         using
         inline tag: Tag[Emit[V]],
         inline frame: Frame
     ): A < (S & Emit[V]) =
-        ArrowEffect.suspendAndMap[Any](tag, value)(f(_))
+        ArrowEffect.suspendWith[Any](tag, value)(_ => f)
 
     final class RunOps[V](dummy: Unit) extends AnyVal:
         /** Runs an Emit effect, collecting all emitted values into a Chunk.
@@ -116,7 +51,7 @@ object Emit:
           */
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
             ArrowEffect.handleState(tag, Chunk.empty[V], v)(
-                handle = [C] => (input, state, cont) => (state.append(input), cont(Ack.Continue())),
+                handle = [C] => (input, state, cont) => (state.append(input), cont(())),
                 done = (state, res) => (state, res)
             )
     end RunOps
@@ -129,14 +64,13 @@ object Emit:
           * @param acc
           *   The initial accumulator value
           * @param f
-          *   The folding function that takes the current accumulator and emitted value, and returns a tuple of the new accumulator and an
-          *   Ack to control further emissions
+          *   The folding function that takes the current accumulator and emitted value, and returns an updated accumulator
           * @param v
           *   The computation with Emit effect
           * @return
           *   A tuple of the final accumulator value and the result of the computation
           */
-        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => (A, Ack) < S)(v: B < (Emit[V] & S2))(
+        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(
             using
             tag: Tag[Emit[V]],
             frame: Frame
@@ -144,7 +78,7 @@ object Emit:
             ArrowEffect.handleState(tag, acc, v)(
                 handle = [C] =>
                     (input, state, cont) =>
-                        f(state, input).map((a, ack) => (a, cont(ack))),
+                        f(state, input).map(a => (a, cont(()))),
                 done = (state, res) => (state, res)
             )
     end RunFoldOps
@@ -161,29 +95,74 @@ object Emit:
           */
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < S =
             ArrowEffect.handle(tag, v)(
-                handle = [C] => (input, cont) => cont(Ack.Stop)
+                handle = [C] => (input, cont) => cont(())
             )
     end RunDiscardOps
 
     inline def runDiscard[V >: Nothing]: RunDiscardOps[V] = RunDiscardOps(())
 
-    final class RunAckOps[V](dummy: Unit) extends AnyVal:
-        /** Runs an Emit effect, allowing custom handling of each emitted value via an Ack.
+    final class RunForeachOps[V](dummy: Unit) extends AnyVal:
+        /** Runs an Emit effect, allowing custom handling of each emitted value.
           *
           * @param v
           *   The computation with Emit effect
           * @param f
-          *   A function to process each emitted value and return an Ack
+          *   A function to process each emitted value
           * @return
           *   The result of the computation
           */
-        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Ack < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Unit < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
             ArrowEffect.handle(tag, v)(
                 [C] => (input, cont) => f(input).map(cont)
             )
-    end RunAckOps
+    end RunForeachOps
 
-    inline def runAck[V >: Nothing]: RunAckOps[V] = RunAckOps(())
+    inline def runForeach[V >: Nothing]: RunForeachOps[V] = RunForeachOps(())
+
+    final class RunWhileOps[V](dummy: Unit) extends AnyVal:
+        /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
+          *
+          * @param v
+          *   The computation with Emit effect
+          * @param f
+          *   A function to process each emitted value
+          * @return
+          *   The result of the computation
+          */
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Boolean < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+            ArrowEffect.handleState(tag, true, v)(
+                [C] => (input, cond, cont) => if cond then f(input).map(c => (c, cont(()))) else (cond, cont(()))
+            )
+    end RunWhileOps
+
+    inline def runWhile[V >: Nothing]: RunWhileOps[V] = RunWhileOps(())
+
+    final class RunFirstOps[V](dummy: Unit) extends AnyVal:
+
+        /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
+          *
+          * @param v
+          *   The computation with Emit effect
+          * @return
+          *   A tuple containing:
+          *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
+          *   - A continuation function that returns the remaining computation
+          */
+        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Maybe[V], () => A < (Emit[V] & S)) < S =
+            ArrowEffect.handleFirst(tag, v)(
+                handle = [C] =>
+                    (input, cont) =>
+                        // Effect found, return the input an continuation
+                        (Maybe(input), () => cont(())),
+                done = r =>
+                    // Effect not found, return empty input and a placeholder continuation
+                    // that returns the result of the computation
+                    (Maybe.empty[V], () => r: A < (Emit[V] & S))
+            )
+        end apply
+    end RunFirstOps
+
+    inline def runFirst[V >: Nothing]: RunFirstOps[V] = RunFirstOps(())
 
     object isolate:
 
@@ -207,10 +186,7 @@ object Emit:
                     Loop(state: Seq[V]) {
                         case Seq() => Loop.done
                         case head +: tail =>
-                            Emit.andMap(head) {
-                                case Ack.Stop => Loop.done
-                                case _        => Loop.continue(tail)
-                            }
+                            Emit.valueWith(head)(Loop.continue(tail))
                     }.andThen(v)
                 end restore
 

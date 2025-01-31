@@ -1,9 +1,7 @@
 package kyo.scheduler
 
-abstract class IOPromisePlatformSpecific:
+import kyo.Maybe
 
-    class VarHandle:
-        def compareAndSet(a: Any, b: Any, c: Any): Boolean = ???
+object IOPromisePlatformSpecific:
 
-    private[scheduler] val stateHandle: VarHandle = null
-end IOPromisePlatformSpecific
+    inline def stateHandle = Maybe.empty[IOPromise.StateHandle]

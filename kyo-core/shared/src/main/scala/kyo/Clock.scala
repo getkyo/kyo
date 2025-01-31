@@ -160,24 +160,23 @@ object Clock:
     def withTimeShift[A, S](factor: Double)(v: => A < S)(using Frame): A < (IO & S) =
         if factor == 1 then v
         else
-            use { clock =>
-                IO.Unsafe {
-                    val shifted =
-                        new Unsafe:
-                            val underlying  = clock.unsafe
-                            val start       = underlying.now()
-                            val sleepFactor = (1.toDouble / factor)
-                            def nowMonotonic()(using AllowUnsafe) =
-                                now().toDuration
-                            def now()(using AllowUnsafe) =
-                                val diff = underlying.now() - start
-                                start + (diff * factor)
-                            end now
-                            override def sleep(duration: Duration) =
-                                underlying.sleep(duration * sleepFactor)
-                    let(Clock(shifted))(v)
-                }
+            IO.Unsafe.withLocal(local) { clock =>
+                val shifted =
+                    new Unsafe:
+                        val underlying  = clock.unsafe
+                        val start       = underlying.now()
+                        val sleepFactor = (1.toDouble / factor)
+                        def nowMonotonic()(using AllowUnsafe) =
+                            now().toDuration
+                        def now()(using AllowUnsafe) =
+                            val diff = underlying.now() - start
+                            start + (diff * factor)
+                        end now
+                        override def sleep(duration: Duration) =
+                            underlying.sleep(duration * sleepFactor)
+                let(Clock(shifted))(v)
             }
+        end if
     end withTimeShift
 
     /** Interface for controlling time in a test environment.
@@ -274,7 +273,7 @@ object Clock:
       *   The current time
       */
     def now(using Frame): Instant < IO =
-        use(_.now)
+        IO.Unsafe.withLocal(local)(_.unsafe.now())
 
     /** Gets the current monotonic time using the local Clock instance. Unlike `now`, this is guaranteed to be strictly monotonic and
       * suitable for measuring elapsed time.
@@ -286,10 +285,10 @@ object Clock:
       *   The current monotonic time as a Duration since system start
       */
     def nowMonotonic(using Frame): Duration < IO =
-        use(_.nowMonotonic)
+        IO.Unsafe.withLocal(local)(_.unsafe.nowMonotonic())
 
     private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < IO =
-        use(_.sleep(duration))
+        IO.Unsafe.withLocal(local)(_.unsafe.sleep(duration).safe)
 
     /** Creates a new stopwatch using the local Clock instance.
       *
@@ -297,7 +296,7 @@ object Clock:
       *   A new Stopwatch instance
       */
     def stopwatch(using Frame): Stopwatch < IO =
-        use(_.stopwatch)
+        IO.Unsafe.withLocal(local)(_.unsafe.stopwatch().safe)
 
     /** Creates a new deadline with the specified duration using the local Clock instance.
       *
@@ -307,7 +306,7 @@ object Clock:
       *   A new Deadline instance
       */
     def deadline(duration: Duration)(using Frame): Deadline < IO =
-        use(_.deadline(duration))
+        IO.Unsafe.withLocal(local)(_.unsafe.deadline(duration).safe)
 
     /** Repeatedly executes a task with a fixed delay between completions.
       *
@@ -401,10 +400,12 @@ object Clock:
         Async.run {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
-                    schedule.next match
-                        case Absent => Loop.done(state)
-                        case Present((duration, nextSchedule)) =>
-                            clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(_, nextSchedule))))
+                    clock.now.map { now =>
+                        schedule.next(now) match
+                            case Absent => Loop.done(state)
+                            case Present((duration, nextSchedule)) =>
+                                clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(_, nextSchedule))))
+                    }
                 }
             }
         }
@@ -502,11 +503,13 @@ object Clock:
             Clock.use { clock =>
                 clock.now.map { now =>
                     Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>
-                        period.next match
-                            case Absent => Loop.done(state)
-                            case Present((duration, nextSchedule)) =>
-                                val nextExecution = lastExecution + duration
-                                clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule))))
+                        clock.now.map { now =>
+                            period.next(now) match
+                                case Absent => Loop.done(state)
+                                case Present((duration, nextSchedule)) =>
+                                    val nextExecution = lastExecution + duration
+                                    clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule))))
+                        }
                     }
                 }
             }

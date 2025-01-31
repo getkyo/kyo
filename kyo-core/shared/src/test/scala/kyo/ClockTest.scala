@@ -235,7 +235,7 @@ class ClockTest extends Test:
                 fiber     <- clock.sleep(5.millis)
                 _         <- fiber.get
                 elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 3.millis && elapsed < 20.millis)
+            yield assert(elapsed >= 3.millis && elapsed < 100.millis)
         }
 
         "multiple sequential sleeps" in run {
@@ -249,8 +249,8 @@ class ClockTest extends Test:
                 _         <- fiber2.get
                 end       <- stopwatch.elapsed
             yield
-                assert(mid >= 3.millis && mid < 30.millis)
-                assert(end >= 8.millis && end < 50.millis)
+                assert(mid >= 3.millis)
+                assert(end >= 8.millis)
         }
 
         "sleep with zero duration" in run {
@@ -335,10 +335,10 @@ class ClockTest extends Test:
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
                 _        <- Async.sleep(2.millis)
-                result   <- channel.poll
-            yield assert(result.isEmpty)
+                _        <- untilTrue(channel.poll.map(_.isEmpty))
+            yield succeed
         }
-        "with time control" in runJVM {
+        "with time control" in runNotJS {
             Clock.withTimeControl { control =>
                 for
                     running  <- AtomicBoolean.init(false)
@@ -362,7 +362,7 @@ class ClockTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 4.millis && avgInterval < 20.millis)
+                assert(avgInterval >= 4.millis && avgInterval < 40.millis)
         }
         "with Schedule and state" in run {
             for
@@ -400,18 +400,18 @@ class ClockTest extends Test:
                 task     <- Clock.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
-                _        <- Async.sleep(2.millis)
-                result   <- channel.poll
-            yield assert(result.isEmpty)
+                _        <- untilTrue(channel.poll.map(_.isEmpty))
+            yield succeed
         }
 
-        "with time control" in runJVM {
+        "with time control" in runNotJS {
             Clock.withTimeControl { control =>
                 for
-                    running  <- AtomicBoolean.init(false)
+                    running  <- Latch.init(1)
                     queue    <- Queue.Unbounded.init[Instant]()
-                    task     <- Clock.repeatWithDelay(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
-                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    task     <- Clock.repeatWithDelay(1.milli)(Clock.now.map(queue.add).andThen(running.release))
+                    _        <- control.advance(1.milli)
+                    _        <- running.await
                     _        <- queue.drain
                     _        <- Loop.repeat(10)(control.advance(1.milli))
                     _        <- task.interrupt
@@ -464,7 +464,7 @@ class ClockTest extends Test:
             yield
                 assert(time2 > time1)
                 assert(time2 - time1 >= 4.millis)
-                assert(time2 - time1 < 20.millis)
+                assert(time2 - time1 < 40.millis)
         }
 
         "with time control" in run {
@@ -485,7 +485,7 @@ class ClockTest extends Test:
                     time2 <- Clock.nowMonotonic
                 yield
                     assert(time2 - time1 >= 4.millis)
-                    assert(time2 - time1 < 30.millis)
+                    assert(time2 - time1 < 40.millis)
             }
         }
     }

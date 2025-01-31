@@ -1,14 +1,14 @@
 package kyo
 
 export Fiber.Promise
+import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
-import kyo.Tag
 import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
+import kyo.kernel.internal.*
 import kyo.scheduler.*
 import scala.annotation.tailrec
-import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.NotGiven
@@ -38,7 +38,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that never completes
       */
-    def never[E]: Fiber[E, Unit] = _never.asInstanceOf[Fiber[E, Unit]]
+    def never[E, A]: Fiber[E, A] = _never.asInstanceOf[Fiber[E, A]]
 
     /** Creates a successful Fiber.
       *
@@ -47,7 +47,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes successfully with the given value
       */
-    def success[E, A](v: A): Fiber[E, A] = result(Result.success(v))
+    def success[E, A](v: A): Fiber[E, A] = result(Result.succeed(v))
 
     /** Creates a failed Fiber.
       *
@@ -136,7 +136,7 @@ object Fiber extends FiberPlatformSpecific:
           */
         def onComplete[E2 >: E, A2 >: A](f: Result[E2, A2] => Unit < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onComplete(r => IO.Unsafe.run(f(r)).eval))
+            IO(self.onComplete(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Registers a callback to be called when the Fiber is interrupted.
           *
@@ -150,7 +150,7 @@ object Fiber extends FiberPlatformSpecific:
           */
         def onInterrupt(f: Result.Error[E] => Unit < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onInterrupt(r => IO.Unsafe.run(f(r)).eval))
+            IO(self.onInterrupt(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Blocks until the Fiber completes or the timeout is reached.
           *
@@ -178,7 +178,7 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the mapped result
           */
         def map[B: Flat](f: A => B < IO)(using Frame): Fiber[E, B] < IO =
-            IO.Unsafe(Unsafe.map(self)((r => IO.Unsafe.run(f(r)).eval)))
+            IO.Unsafe(Unsafe.map(self)((r => IO.Unsafe.evalOrThrow(f(r)))))
 
         /** Flat maps the result of the Fiber.
           *
@@ -188,7 +188,7 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the flat mapped result
           */
         def flatMap[E2, B](f: A => Fiber[E2, B] < IO)(using Frame): Fiber[E | E2, B] < IO =
-            IO.Unsafe(Unsafe.flatMap(self)(r => IO.Unsafe.run(f(r)).eval))
+            IO.Unsafe(Unsafe.flatMap(self)(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Maps the Result of the Fiber using the provided function.
           *
@@ -201,7 +201,7 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the mapped Result
           */
         def mapResult[E2, B: Flat](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
-            IO.Unsafe(Unsafe.mapResult(self)(r => IO.Unsafe.run(f(r)).eval))
+            IO.Unsafe(Unsafe.mapResult(self)(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Creates a new Fiber that runs with interrupt masking.
           *
@@ -278,7 +278,7 @@ object Fiber extends FiberPlatformSpecific:
                 val pending = AtomicInt.Unsafe.init(seq.size)
                 def apply(result: Result[E, A]): Unit =
                     val last = pending.decrementAndGet() == 0
-                    result.fold(e => if last then completeDiscard(e))(v => completeDiscard(Result.success(v)))
+                    result.foldError(e => if last then completeDiscard(e))(v => completeDiscard(Result.succeed(v)))
                 end apply
             end State
             val state = new State
@@ -367,9 +367,9 @@ object Fiber extends FiberPlatformSpecific:
                             // Atomically update both ok/nok counters using CAS
                             val p   = packed.get()
                             val ok  = (p & 0xffffffffL) + (if result.isSuccess then 1 else 0)
-                            val nok = (p >>> 32) + (if result.isFail then 1 else 0)
+                            val nok = (p >>> 32) + (if result.isFailure then 1 else 0)
                             val np  = (nok << 32) | ok
-                            if !packed.cas(p, np) then
+                            if !packed.compareAndSet(p, np) then
                                 // CAS failed, retry the update
                                 loop()
                             else
@@ -380,6 +380,7 @@ object Fiber extends FiberPlatformSpecific:
                                             // Store successful result and its original index for ordering
                                             indices(okInt - 1) = idx
                                             results(okInt - 1) = v.asInstanceOf[AnyRef]
+                                            discard(VarHandle.storeStoreFence())
                                     case result: Result.Error[?] =>
                                         if ok == 0 && ok + nok == total then
                                             // If we have no successful results and all computations have completed,
@@ -398,7 +399,7 @@ object Fiber extends FiberPlatformSpecific:
                                     quickSort(indices, results, size)
 
                                     // Limit final result to max successful results
-                                    completeDiscard(Result.success(Chunk.fromNoCopy(results).take(size)))
+                                    completeDiscard(Result.succeed(Chunk.fromNoCopy(results).take(size)))
                                 end if
                             end if
                         end loop
@@ -433,6 +434,7 @@ object Fiber extends FiberPlatformSpecific:
         @tailrec def loop(i: Int): Unit =
             if i < size then
                 if results(i) == null then
+                    discard(VarHandle.loadLoadFence())
                     loop(0)
                 else
                     loop(i + 1)
@@ -546,10 +548,10 @@ object Fiber extends FiberPlatformSpecific:
                         val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
                         val pending = AtomicInt.Unsafe.init(seq.size)
                         def apply(idx: Int, result: Result[E, A]): Unit =
-                            result.fold(this.interruptDiscard) { value =>
+                            result.foldError(this.interruptDiscard) { value =>
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
-                                    this.completeDiscard(Result.success(Chunk.fromNoCopy(results)))
+                                    this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
                             }
                     end State
                     val state = new State
@@ -580,7 +582,7 @@ object Fiber extends FiberPlatformSpecific:
                 def apply(result: Try[A]) =
                     result match
                         case Success(v) =>
-                            completeDiscard(Result.success(v))
+                            completeDiscard(Result.succeed(v))
                         case Failure(ex) =>
                             completeDiscard(Result.fail(ex))
 
@@ -615,7 +617,7 @@ object Fiber extends FiberPlatformSpecific:
 
             def flatMap[E2, B](f: A => Unsafe[E2, B])(using AllowUnsafe): Unsafe[E | E2, B] =
                 val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit):
-                    def apply(r: Result[E, A]) = r.fold(completeDiscard)(v => becomeDiscard(f(v)))
+                    def apply(r: Result[E, A]) = r.foldError(completeDiscard)(v => becomeDiscard(f(v)))
                 self.onComplete(p)
                 p
             end flatMap
@@ -643,7 +645,16 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A new Promise
           */
-        def init[E, A](using Frame): Promise[E, A] < IO = IO(IOPromise())
+        def init[E, A](using Frame): Promise[E, A] < IO = initWith[E, A](identity)
+
+        /** Uses a new Promise with the provided type parameters.
+          * @param f
+          *   The function to apply to the new Promise
+          * @return
+          *   The result of applying the function
+          */
+        inline def initWith[E, A](using inline frame: Frame)[B, S](inline f: Promise[E, A] => B < S): B < (S & IO) =
+            IO(f(IOPromise()))
 
         extension [E, A](self: Promise[E, A])
             /** Completes the Promise with a result.

@@ -6,13 +6,13 @@ class EffectCombinatorTest extends Test:
 
         "debug" - {
             "with string value" in run {
-                val effect = IO("Hello World").debugValue
+                val effect = IO("Hello World")
                 effect.map { handled =>
                     assert(handled == "Hello World")
                 }
             }
             "with integer value" in run {
-                val effect = IO(42).debugValue
+                val effect = IO(42)
                 effect.map { handled =>
                     assert(handled == 42)
                 }
@@ -21,13 +21,13 @@ class EffectCombinatorTest extends Test:
 
         "debug(prefix)" - {
             "with boolean value" in run {
-                val effect = IO(true).debugTrace
+                val effect = IO(true)
                 effect.map { handled =>
                     assert(handled == true)
                 }
             }
             "with string value" in run {
-                val effect = IO("test").debugTrace
+                val effect = IO("test")
                 effect.map { handled =>
                     assert(handled == "test")
                 }
@@ -151,7 +151,7 @@ class EffectCombinatorTest extends Test:
                         effect
                     }
                 }.map { result =>
-                    assert(result == Result.success("value"))
+                    assert(result == Result.succeed("value"))
                 }
             }
         }
@@ -335,18 +335,23 @@ class EffectCombinatorTest extends Test:
 
         }
 
-        "explicitThrowable" - {
-            "with exception" in run {
-                val effect = IO { throw new Exception("Test") }.explicitThrowable
-                Abort.run[Throwable](effect).map { handled =>
-                    assert(handled.isFail)
-                }
+        "unpanic" - {
+            "with throwable" in run {
+                val effect: Nothing < (Abort[Throwable] & IO)     = IO { Abort.fail(Exception("failure")) }
+                val panicked: Nothing < IO                        = effect.orPanic
+                val unpanicked: Nothing < (Abort[Throwable] & IO) = panicked.unpanic
+                Abort.run[Throwable](unpanicked).map: handled =>
+                    val msg = handled.failure.collect:
+                        case thr: Throwable => thr.getMessage()
+                    assert(msg.contains("failure"))
             }
-            "without exception" in run {
-                val effect = IO("Success").explicitThrowable
-                Abort.run[Throwable](effect).map { handled =>
-                    assert(handled.isSuccess)
-                }
+
+            "with non-throwable failure" in run {
+                val effect: Nothing < (Abort[String] & IO)        = IO { Abort.fail("failure") }
+                val panicked: Nothing < IO                        = effect.orPanic
+                val unpanicked: Nothing < (Abort[Throwable] & IO) = panicked.unpanic
+                Abort.run[Throwable](unpanicked).map: handled =>
+                    assert(handled == Result.Failure(PanicException("failure")))
             }
         }
 

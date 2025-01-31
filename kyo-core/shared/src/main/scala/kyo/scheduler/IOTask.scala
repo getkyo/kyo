@@ -4,6 +4,7 @@ import kyo.*
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.ArrowEffect
+import kyo.kernel.internal.*
 import kyo.scheduler.IOTask.*
 import scala.util.control.NonFatal
 
@@ -33,11 +34,14 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
+    private inline def locally[A](inline f: A): A = f
+
     final private def eval(startMillis: Long, clock: InternalClock)(using Safepoint) =
         try
             curr = Boundary.restoring(trace, this) {
                 ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
-                    stop = shouldPreempt(),
+                    stop =
+                        shouldPreempt(),
                     [C] =>
                         (input, cont) =>
                             locally {
@@ -62,7 +66,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                 )
             }
             if !isNull(curr) then
-                curr.evalNow.foreach(a => completeDiscard(Result.success(a)))
+                curr.evalNow.foreach(a => completeDiscard(Result.succeed(a)))
         catch
             case ex =>
                 completeDiscard(Result.panic(ex))
@@ -86,6 +90,9 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     end run
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
+
+    override def toString =
+        s"IOTask(state = ${stateString()}, preempt = ${{ shouldPreempt() }}, finalizers = ${finalizers.size()}, curr = ${curr})"
 
 end IOTask
 

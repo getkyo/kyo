@@ -20,7 +20,7 @@ object Duration:
     inline given Flat[Duration]               = Flat.unsafe.bypass
 
     /** Exception thrown for invalid duration parsing. */
-    case class InvalidDuration(message: String) extends Exception(message)
+    class InvalidDuration(message: Text)(using Frame) extends KyoException(message)
 
     /** Parses a string representation of a duration.
       *
@@ -29,18 +29,18 @@ object Duration:
       * @return
       *   A Result containing either the parsed Duration or an InvalidDuration error
       */
-    def parse(s: String): Result[InvalidDuration, Duration] =
+    def parse(s: String)(using Frame): Result[InvalidDuration, Duration] =
         val pattern = """(\d+)\s*([a-zA-Z]+)""".r
         s.trim.toLowerCase match
-            case "infinity" | "inf" => Result.success(Infinity)
+            case "infinity" | "inf" => Result.succeed(Infinity)
             case pattern(value, unit) =>
                 for
                     longValue <-
                         Result.catching[NumberFormatException](value.toLong)
-                            .mapFail(_ => InvalidDuration(s"Invalid number: $value"))
+                            .mapFailure(_ => InvalidDuration(s"Invalid number: $value"))
                     unitEnum <-
                         Units.values.find(_.names.exists(_.startsWith(unit)))
-                            .map(Result.success)
+                            .map(Result.succeed)
                             .getOrElse(Result.fail(InvalidDuration(s"Invalid unit: $unit")))
                 yield fromUnits(longValue, unitEnum)
             case _ => Result.fail(InvalidDuration(s"Invalid duration format: $s"))
@@ -225,6 +225,7 @@ object Duration:
                     case None =>
                         s"$nanos.nanos"
                 end match
+
         /** Checks if the Duration is finite.
           *
           * @return

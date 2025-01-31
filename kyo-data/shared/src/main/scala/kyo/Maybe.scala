@@ -19,6 +19,14 @@ object Maybe:
     inline given [A: Flat]: Flat[Maybe[A]]                                             = Flat.unsafe.bypass
     given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
+    given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with
+        given CanEqual[Absent, MaybeA] = CanEqual.derived
+        def asText(value: MaybeA): String = (value: Maybe[A]) match
+            case Present(a) => s"Present(${ra.asText(a)})"
+            case Absent     => "Absent"
+            case _          => throw IllegalStateException()
+    end given
+
     /** Creates a Maybe instance from a value.
       *
       * @param v
@@ -71,9 +79,7 @@ object Maybe:
 
     /** Represents a defined value in a Maybe. */
     opaque type Present[+A] = A | PresentAbsent
-
     object Present:
-
         /** Creates a Present instance.
           *
           * @param v
@@ -409,11 +415,9 @@ object Maybe:
           *   a Result containing the value if defined, or the provided error Result if empty
           */
         inline def toResult[E](inline ifEmpty: => Result[E, A]): Result[E, A] =
-            if isEmpty then ifEmpty else Result.success(get)
+            if isEmpty then ifEmpty else Result.succeed(get)
 
-        def show: String =
-            if isEmpty then "Absent"
-            else s"Present(${get})"
+        def show(using r: Render[Maybe[A]]): String = r.asString(self)
 
     end extension
 

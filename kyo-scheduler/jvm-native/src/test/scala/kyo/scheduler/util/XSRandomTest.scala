@@ -37,7 +37,7 @@ class XSRandomTest extends AnyFreeSpec with Matchers {
         executor.shutdown()
 
         val expectedCount = numSamples * numThreads / numBuckets
-        val tolerance     = expectedCount * 0.05
+        val tolerance     = expectedCount * 0.01
 
         buckets.foreach { count =>
             assert(count >= (expectedCount - tolerance))

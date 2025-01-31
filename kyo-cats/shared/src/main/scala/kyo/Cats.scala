@@ -5,7 +5,6 @@ import kyo.kernel.*
 import scala.concurrent.ExecutionContext
 import scala.util.Failure
 import scala.util.Success
-import scala.util.control.NonFatal
 
 object Cats:
 
@@ -22,7 +21,7 @@ object Cats:
             val p                = Promise.Unsafe.init[Nothing, A]()
             val (future, cancel) = io.unsafeToFutureCancelable()
             future.onComplete {
-                case Success(v)  => p.complete(Result.success(v))
+                case Success(v)  => p.complete(Result.succeed(v))
                 case Failure(ex) => p.complete(Result.panic(ex))
             }(ExecutionContext.parasitic)
             p.onInterrupt(_ => discard(cancel()))
@@ -48,7 +47,7 @@ object Cats:
                         Some(CatsIO(fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))).void)
                     }
                 }
-            }.pipe(IO.Unsafe.run).eval
+            }.pipe(IO.Unsafe.evalOrThrow)
         }
     end run
 end Cats

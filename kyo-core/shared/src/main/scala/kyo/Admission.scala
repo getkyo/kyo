@@ -10,7 +10,7 @@ import kyo.scheduler.Scheduler
   * @param frame
   *   The execution frame where the task was rejected
   */
-case class Rejected(frame: Frame) extends Exception(frame.position.show)
+class Rejected()(using Frame) extends KyoException("Admisssion control has rejected execution to mitigate overloading.")
 
 /** Admission control mechanism that helps prevent system overload by selectively rejecting tasks at the boundary of incoming workload.
   *
@@ -47,7 +47,7 @@ object Admission:
       */
     def run[A, S](key: String)(v: A < S)(using frame: Frame): A < (IO & S & Abort[Rejected]) =
         IO {
-            if Scheduler.get.reject(key) then Abort.fail(Rejected(frame))
+            if Scheduler.get.reject(key) then Abort.fail(Rejected())
             else v
         }
 
@@ -72,7 +72,7 @@ object Admission:
       */
     def run[A, S](key: Int)(v: A < S)(using frame: Frame): A < (IO & S & Abort[Rejected]) =
         IO {
-            if Scheduler.get.reject(key) then Abort.fail(Rejected(frame))
+            if Scheduler.get.reject(key) then Abort.fail(Rejected())
             else v
         }
 
@@ -95,7 +95,7 @@ object Admission:
       */
     def run[A, S](v: A < S)(using frame: Frame): A < (IO & S & Abort[Rejected]) =
         IO {
-            if Scheduler.get.reject() then Abort.fail(Rejected(frame))
+            if Scheduler.get.reject() then Abort.fail(Rejected())
             else v
         }
 

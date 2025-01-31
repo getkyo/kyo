@@ -12,7 +12,7 @@ class InstantTest extends Test:
 
         "invalid string" in {
             val result = Instant.parse("invalid")
-            assert(result.isFail)
+            assert(result.isFailure)
         }
 
         "parse near Min" in {
@@ -200,8 +200,10 @@ class InstantTest extends Test:
         }
 
         "unsupported unit" in {
-            assertDoesNotCompile("instant.truncatedTo(Duration.Units.Weeks)")
-            assertDoesNotCompile("instant.truncatedTo(Duration.Units.Months)")
+            val instant = Instant.Min
+            val error   = "Required: kyo.Duration.Units & kyo.Duration.Truncatable"
+            typeCheckFailure("instant.truncatedTo(Duration.Units.Weeks)")(error)
+            typeCheckFailure("instant.truncatedTo(Duration.Units.Months)")(error)
         }
     }
 
