@@ -92,13 +92,65 @@ class AbortCombinatorTest extends Test:
             }
         }
 
+        "orPanic" - {
+            "should not affect success" in {
+                val effect: Int < Abort[String] = 23
+                assert(Abort.run(effect.orPanic).eval == Result.Success(23))
+            }
+
+            "should not affect panic" in {
+                val exc                         = new RuntimeException("message")
+                val effect: Int < Abort[String] = Abort.panic(exc)
+                assert:
+                    Abort.run(effect.orPanic).eval == Result.Panic(exc)
+            }
+
+            "should convert Failure to PanicException and panic" in {
+                val error                       = "error message"
+                val effect: Int < Abort[String] = Abort.fail(error)
+                assert:
+                    Abort.run(effect.orPanic).eval == Result.Panic(PanicException(error))
+            }
+        }
+
+        "orThrow" - {
+            "should not affect success" in {
+                val effect: Int < Abort[String] = 23
+                assert(effect.orThrow.eval == 23)
+            }
+
+            "should throw panic" in {
+                val exc                         = new RuntimeException("message")
+                val effect: Int < Abort[String] = Abort.panic(exc)
+                try
+                    val _ = effect.orThrow.eval
+                    fail("Failed to throw expected exception")
+                catch
+                    case e: RuntimeException => assert(e == exc)
+                    case other               => fail(s"Failed to throw RuntimeException: $other")
+                end try
+            }
+
+            "should convert Failure to PanicException and throw" in {
+                val error                       = "error message"
+                val effect: Int < Abort[String] = Abort.fail(error)
+                try
+                    val _ = effect.orThrow.eval
+                    fail("Failed to throw expected exception")
+                catch
+                    case PanicException(err: String) => assert(err == error)
+                    case other                       => fail(s"Failed to throw PanicException: $other")
+                end try
+            }
+        }
+
         "partialResult" - {
             "should handle" in {
                 val effect1 = Abort.fail[String]("failure")
-                assert(effect1.partialResult.eval == Result.fail("failure"))
+                assert(effect1.partialResult.orThrow.eval == Result.fail("failure"))
 
                 val effect2 = Abort.get[Boolean](Right(1))
-                assert(effect2.partialResult.eval == Result.succeed(1))
+                assert(effect2.partialResult.orThrow.eval == Result.succeed(1))
             }
 
             "should handle incrementally" in {
@@ -109,6 +161,42 @@ class AbortCombinatorTest extends Test:
                     .forAbort[Boolean].partialResult
                     .forAbort[Int].partialResult
                     .partialResult
+                assert(handled.orThrow.eval == Result.succeed(Result.succeed(Result.succeed(Result.fail("failure")))))
+            }
+
+            "should handle union" in {
+                val failure: Int < Abort[String | Boolean | Double | Int] =
+                    Abort.fail("failure")
+                val handled: Result.Partial[String | Boolean | Double | Int, Int] < Abort[Nothing] =
+                    failure.partialResult
+                assert(handled.orThrow.eval == Result.fail("failure"))
+            }
+
+            "should not handle panic" in {
+                val exc                          = new Exception("message")
+                val failure: Int < Abort[String] = Abort.panic(exc)
+                assert:
+                    Abort.run(failure.partialResult).eval == Result.Panic(exc)
+            }
+        }
+
+        "partialResultOrThrow" - {
+            "should handle" in {
+                val effect1 = Abort.fail[String]("failure")
+                assert(effect1.partialResultOrThrow.eval == Result.fail("failure"))
+
+                val effect2 = Abort.get[Boolean](Right(1))
+                assert(effect2.partialResultOrThrow.eval == Result.succeed(1))
+            }
+
+            "should handle incrementally" in {
+                val effect1: Int < Abort[String | Boolean | Int | Double] =
+                    Abort.fail[String]("failure")
+                val handled = effect1
+                    .forAbort[String].partialResult
+                    .forAbort[Boolean].partialResult
+                    .forAbort[Int].partialResult
+                    .partialResultOrThrow
                 assert(handled.eval == Result.succeed(Result.succeed(Result.succeed(Result.fail("failure")))))
             }
 
@@ -116,17 +204,18 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
                 val handled: Result.Partial[String | Boolean | Double | Int, Int] < Any =
-                    failure.partialResult
+                    failure.partialResultOrThrow
                 assert(handled.eval == Result.fail("failure"))
             }
 
-            "should throw panic" in {
-                val failure: Int < Abort[String] = Abort.panic(new Exception("message"))
+            "should not handle panic" in {
+                val exc                          = new Exception("message")
+                val failure: Int < Abort[String] = Abort.panic(exc)
                 try
-                    val _ = failure.partialResult
+                    val _ = failure.partialResultOrThrow.eval
                     fail("Failed to throw expected exception")
                 catch
-                    case e: Exception => assert(e.getMessage() == "message")
+                    case caught => assert(caught == exc)
                 end try
             }
         }
@@ -295,32 +384,30 @@ class AbortCombinatorTest extends Test:
         }
 
         "foldAbort" - {
-            "should handle success and fail case, throwing panics, when two handlers provided" in {
+            "should handle success and fail case, leaving panics unhandled, when two handlers provided" in {
                 val success: Int < Abort[String] = 23
-                val handledSuccess: String < Any =
+                val handledSuccess: String < Abort[Nothing] =
                     success.foldAbort(
                         i => i.toString,
                         identity
                     )
-                assert(handledSuccess.eval == "23")
+                assert(handledSuccess.orThrow.eval == "23")
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
-                val handledFailure: String < Any =
+                val handledFailure: String < Abort[Nothing] =
                     failure.foldAbort(
                         i => i.toString,
                         identity
                     )
-                assert(handledFailure.eval == "failure")
-                val panic: Int < Abort[String] = Abort.panic(Exception("message"))
-                try
-                    panic.foldAbort(
-                        i => i.toString,
-                        identity
-                    ).eval
-                    succeed
-                catch
-                    case e: Exception => assert(e.getMessage == "message")
-                end try
+                assert(handledFailure.orThrow.eval == "failure")
+                val exc                        = Exception("message")
+                val panic: Int < Abort[String] = Abort.panic(exc)
+                val handledPanic: String < Abort[Nothing] = panic.foldAbort(
+                    i => i.toString,
+                    identity
+                )
+                assert:
+                    Abort.run(handledPanic).eval == Result.Panic(exc)
             }
 
             "should handle all cases when three handlers provided" in {
@@ -349,6 +436,37 @@ class AbortCombinatorTest extends Test:
                         _.getMessage
                     )
                 assert(handledPanic.eval == "message")
+            }
+        }
+
+        "foldAbortOrThrow" - {
+            "should handle success and fail case, throwing panics" in {
+                val success: Int < Abort[String] = 23
+                val handledSuccess: String < Any =
+                    success.foldAbortOrThrow(
+                        i => i.toString,
+                        identity
+                    )
+                assert(handledSuccess.eval == "23")
+                val failure: Int < Abort[String] =
+                    Abort.fail("failure")
+                val handledFailure: String < Any =
+                    failure.foldAbortOrThrow(
+                        i => i.toString,
+                        identity
+                    )
+                assert(handledFailure.eval == "failure")
+                val exc                        = Exception("message")
+                val panic: Int < Abort[String] = Abort.panic(exc)
+                try
+                    val _ = panic.foldAbortOrThrow(
+                        i => i.toString,
+                        identity
+                    ).eval
+                    fail("Failed to throw expected exception")
+                catch
+                    case caught => assert(caught == exc)
+                end try
             }
         }
 
@@ -567,46 +685,6 @@ class AbortCombinatorTest extends Test:
                         )
                     assert(handledPanic.eval == "message")
                 }
-            }
-        }
-
-        "orPanic" - {
-            "should remove Abort effects and run successfully if effect has no failures" in {
-                val effect: Int < Abort[String] =
-                    for
-                        i      <- (1: Int < Any)
-                        result <- if i > 1 then Abort.fail("error") else (i: Int < Any)
-                    yield i
-
-                val effectOrPanic: Int < Any = effect.orPanic
-                assert(effectOrPanic.eval == 1)
-            }
-
-            "should remove throwable Abort and throw KyoBugException with error as cause" in {
-                val exc = IndexOutOfBoundsException("test-error")
-                val effect: Int < Abort[Throwable] =
-                    Abort.fail(exc).map(_ => 23)
-
-                try
-                    effect.orPanic.eval
-                    fail("Failed to throw expected exception")
-                catch
-                    case exc =>
-                        assert(exc.getMessage == "test-error")
-                end try
-            }
-
-            "should remove non-throwable Abort and throw PanicException" in {
-                val effect: Int < Abort[String] =
-                    Abort.fail("error").map(_ => 23)
-
-                try
-                    effect.orPanic.eval
-                    fail("Failed to throw expected exception")
-                catch
-                    case exc =>
-                        assert(exc == PanicException("error"))
-                end try
             }
         }
     }
