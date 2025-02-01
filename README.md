@@ -1294,11 +1294,11 @@ val i: Unit < Any =
 
 // Fold over stream elements
 val j: Int < Any =
-    a.runFold(0)(_ + _)
+    a.fold(0)(_ + _)
 
 // Process each element with side effects
 val k: Unit < (IO & Abort[IOException]) =
-    a.runForeach(Console.printLine(_))
+    a.foreach(Console.printLine(_))
 ```
 
 Streams can be combined with other effects, allowing for powerful and flexible data processing pipelines:
