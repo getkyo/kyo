@@ -142,7 +142,7 @@ object Abort:
       */
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
-    final class RunWithOps[E >: Nothing](dummy: Unit) extends AnyVal:
+    final private class RunWithOps[E >: Nothing](dummy: Unit) extends AnyVal:
         /** Runs an Abort effect, converting it to a Result.
           *
           * @param v
