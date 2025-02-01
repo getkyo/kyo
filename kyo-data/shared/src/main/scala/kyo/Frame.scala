@@ -72,7 +72,7 @@ object Frame:
         def show: String = s"Frame(${Position.show(position)}, $className, $methodName, $snippetShort)"
 
         def render: String =
-            Ansi.highlight(s"// ${Position.show(position)} $className $methodName", snippet.toString(), s"", Position.lineNumber(self))
+            Ansi.highlight(s"// ${Position.show(position)} $className $methodName", snippet.toString(), s"", Position.lineNumber(self) - 2)
 
         def render(details: Any*): String =
             val detailsString =
@@ -88,7 +88,7 @@ object Frame:
                 s"// ${Position.show(position)} $className $methodName",
                 snippet.toString(),
                 detailsString,
-                Position.lineNumber(self)
+                Position.lineNumber(self) - 2
             )
         end render
     end extension

@@ -46,9 +46,15 @@ object Debug:
       */
     def trace[A, S](v: => A < S)(using Frame): A < S =
         val interceptor = new Safepoint.Interceptor:
+            var lastFrame = Frame.internal
+            var lastValue = Maybe.empty[Any]
             def enter(frame: Frame, value: Any): Boolean =
-                printValue(value)
-                println(frame.render)
+                if frame ne lastFrame then
+                    lastValue.foreach(printValue)
+                    println(frame.render)
+                    lastFrame = frame
+                end if
+                lastValue = Present(value)
                 true
             end enter
             def addFinalizer(f: () => Unit): Unit    = ()
