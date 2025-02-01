@@ -455,7 +455,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   The final accumulated value
       */
-    def runFold[A](acc: A)(f: (A, V) => A)(using
+    def fold[A](acc: A)(f: (A, V) => A)(using
         tag: Tag[Emit[Chunk[V]]],
         frame: Frame
     ): A < S =
