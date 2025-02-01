@@ -3504,7 +3504,7 @@ val choiceEffect: Int < Choice = maybeEffect.absentToEmpty
 val newAbortEffect: Int < (Choice & Abort[Throwable]) = choiceEffect.emptyToThrowable
 ```
 
-To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic` and `unpanic` respectively:
+To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic`/`orThrow` and `unpanic` respectively:
 
 ```scala
 import kyo.*
@@ -3512,8 +3512,11 @@ import java.io.IOException
 
 val abortEffect: Int < Abort[String | Throwable] = 1
 
-// unsafeEffect will panic with a `PanicException(err)`
-val unsafeEffect: Int < Any = abortEffect.orPanic
+// Will panic with a `PanicException(err)` rather than fail
+val panicEffect: Int < Abort[Nothing] = abortEffect.orPanic
+
+// Will throw `PanicException(err)` when evaluated
+val unsafeEffect: Int < Any = abortEffect.orThrow
 
 // Catch any suspended throws
 val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
@@ -3521,6 +3524,8 @@ val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
 // Use orPanic after forAbort[E] to swallow only errors of type E
 val unsafeForThrowables: Int < Abort[String] = abortEffect.forAbort[Throwable].orPanic
 ```
+
+In general `orPanic` should be preferred over `orThrow`, especially when used in conjunction with `IO` or `Async`, both of which include `Abort[Nothing]`. This will avoid unnecessary catching/re-throwing.
 
 Other error-handling methods are as follows:
 
@@ -3534,9 +3539,11 @@ trait C
 val effect: Int < Abort[A | B | C] = 1
 
 val handled: Result[A | B | C, Int] < Any = effect.result
-val handledWithoutPanic: Result.Partial[A | B | C, Int] < Any = effect.partialResult
+val handledWithoutPanic: Result.Partial[A | B | C, Int] < Abort[Nothing] = effect.partialResult
+val unsafeHandled: Result.Partial[A | B | C, Int] < Any = effect.partialResultOrThrow
 val folded: String < Any = effect.foldAbort(_.toString, _.toString, _.toString)
-val foldedWithoutPanic: String < Any = effect.foldAbort(_.toString, _.toString)
+val foldedWithoutPanic: String < Abort[Nothing] = effect.foldAbort(_.toString, _.toString)
+val unsafeFolded: String < Any = effect.foldAbortOrThrow(_.toString, _.toString)
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
