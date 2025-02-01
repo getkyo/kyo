@@ -332,6 +332,14 @@ class StreamTest extends Test:
                     n / 2
             )
         }
+
+        "with effects" in {
+            def predicate(i: Int) = Var.get[Boolean].map(b => Var.set(!b).andThen(b && !(i % 3 == 0)))
+            val result            = Var.run(false)(Stream.init(1 to n).filter(predicate).run).eval
+            assert(
+                result.size > 0 && result.forall(_ % 2 == 0) && result.forall(i => !(i % 3 == 0))
+            )
+        }
     }
 
     "changes" - {
@@ -781,7 +789,7 @@ class StreamTest extends Test:
 
         "early termination" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val folded = stream.runFold(0) { (acc, v) =>
+            val folded = stream.runFoldKyo(0) { (acc, v) =>
                 if acc < 6 then acc + v else Abort.fail(())
             }
             assert(Abort.run[Unit](folded).eval.foldError(_ => false, _ => true))

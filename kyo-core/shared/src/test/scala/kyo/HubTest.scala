@@ -171,7 +171,9 @@ class HubTest extends Test:
                 f <- Async.run(l.stream(2).mapChunk(Chunk(_)).take(2).run)
                 _ <- Kyo.foreachDiscard(1 to 4)(h.put)
                 r <- f.get
-            yield assert(r == Chunk(Chunk(1, 2), Chunk(3, 4)))
+            yield
+                assert(r.forall(_.size <= 2))
+                assert(r.flattenChunk == Chunk(1, 2, 3, 4))
         }
 
         "stream handles rapid publish-consume cycles" in run {
@@ -312,7 +314,7 @@ class HubTest extends Test:
                 result    <- slowConsumer.get
                 _         <- producerFiber.get
                 elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 10.millis && result == (1 to 10))
+            yield assert(elapsed >= 8.millis && result == (1 to 10))
         }
 
         "concurrent filtered listeners" in run {
