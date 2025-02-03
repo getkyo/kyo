@@ -792,7 +792,7 @@ class StreamTest extends Test:
             val folded = stream.runFoldKyo(0) { (acc, v) =>
                 if acc < 6 then acc + v else Abort.fail(())
             }
-            assert(Abort.run[Unit](folded).eval.foldError(_ => true)(_ => false))
+            assert(Abort.run[Unit](folded).eval.foldError(_ => false, _ => true))
         }
 
         "stack safety" in {

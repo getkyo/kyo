@@ -10,6 +10,6 @@ object PlatformBackend:
             def send[A: Flat](r: Request[A, Any]) =
                 given Frame = Frame.internal
                 Abort.run(Async.fromFuture(r.send(b)))
-                    .map(_.foldError(ex => Abort.fail(FailedRequest(ex.failureOrPanic)))(identity))
+                    .map(_.foldError(identity, ex => Abort.fail(FailedRequest(ex.failureOrPanic))))
             end send
 end PlatformBackend
