@@ -285,6 +285,32 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): Result[E, A] < S =
         Abort.run[E](effect)
 
+    /** Handles the Abort effect and returns its result as a `Result.Partial[E, A]`, not handling Panic exceptions.
+      *
+      * @return
+      *   A computation that produces a partial result of this computation with the Abort[E] effect handled
+      */
+    def partialResult(
+        using
+        ct: SafeClassTag[E],
+        fl: Flat[A],
+        fr: Frame
+    ): Result.Partial[E, A] < (Abort[Nothing] & S) =
+        Abort.runPartial(effect)
+
+    /** Handles the Abort effect and returns its result as a `Result.Partial[E, A]`, throwing Panic exceptions
+      *
+      * @return
+      *   A computation that produces a partial result of this computation with the Abort[E] effect handled
+      */
+    def partialResultOrThrow(
+        using
+        ct: SafeClassTag[E],
+        fl: Flat[A],
+        fr: Frame
+    ): Result.Partial[E, A] < S =
+        Abort.runPartialOrThrow(effect)
+
     /** Handles the Abort effect, transforming caught errors into a new error as determined by mapping function
       *
       * @return
@@ -314,7 +340,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl: Flat[A],
         fr: Frame
     ): A < (S & Choice) =
-        effect.result.map(e => Choice.get(e.foldError(_ => Nil)(List(_))))
+        effect.result.map(e => Choice.get(e.foldError(List(_), _ => Nil)))
 
     /** Translates the Abort[E] effect to an Abort[Absent] effect in case of failure.
       *
@@ -370,6 +396,87 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case Result.Success(v) => v
         }
 
+    /** Recovers from an Abort failure by applying the provided function, leaving Panic exceptions unhandled.
+      *
+      * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
+      * handles failures of type E and throws panic exceptions.
+      *
+      * @param onSuccess
+      *   A function that takes the success value of type A and returns a new computation
+      * @param onFail
+      *   A function that takes the failure value of type E and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def foldAbort[B, S1](
+        onSuccess: A => B < S1,
+        onFail: E => B < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (Abort[Nothing] & S & S1) =
+        Abort.fold(onSuccess, onFail)(effect)
+
+    /** Recovers from an Abort failure by applying the provided function.
+      *
+      * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
+      * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
+      *
+      * @param onSuccess
+      *   A function that takes the success value of type A and returns a new computation
+      * @param onFail
+      *   A function that takes the failure value of type E and returns a new computation
+      * @param onPanic
+      *   A function that takes the throwable panic value and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def foldAbort[B, S1](
+        onSuccess: A => B < S1,
+        onFail: E => B < S1,
+        onPanic: Throwable => B < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1) =
+        Abort.fold[E](onSuccess, onFail, onPanic)(effect)
+
+    /** Recovers from an Abort failure by applying the provided function, throwing Panic exceptions.
+      *
+      * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
+      * handles failures of type E and throws panic exceptions.
+      *
+      * @param onSuccess
+      *   A function that takes the success value of type A and returns a new computation
+      * @param onFail
+      *   A function that takes the failure value of type E and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def foldAbortOrThrow[B, S1](
+        onSuccess: A => B < S1,
+        onFail: E => B < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1) =
+        Abort.foldOrThrow(onSuccess, onFail)(effect)
+
     /** Handles the Abort effect and applies a partial recovery function to the error.
       *
       * @return
@@ -405,7 +512,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         handled.map((v: Result[E, A]) => Abort.get(v.swap))
     end swapAbort
 
-    /** Catches any Aborts and panics instead
+    /** Converts all Aborts to Panic, wrapping non-Throwable Failures in PanicException
       *
       * @return
       *   A computation that panics instead of catching Abort effect failures
@@ -415,15 +522,31 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         ct: SafeClassTag[E],
         fl: Flat[A],
         frame: Frame
-    ): A < S =
-        val handled: A < (S & Abort[Nothing]) = Abort.run[E](effect).map:
+    ): A < (Abort[Nothing] & S) =
+        Abort.run[E](effect).map:
             case Result.Success(v)              => v
             case Result.Failure(thr: Throwable) => Abort.panic(thr)
             case Result.Failure(other)          => Abort.panic(PanicException(other))
-            case other: Result.Panic            => Abort.get(other)
-
-        summon[Reducible[Abort[Nothing]] { type SReduced = Any }][A, S](handled)
+            case panic: Result.Panic            => Abort.error(panic)
     end orPanic
+
+    /** Catches and throws any Abort, wrapping non-Throwable Failures in PanicException
+      *
+      * @return
+      *   A computation that panics instead of catching Abort effect failures
+      */
+    def orThrow(
+        using
+        ct: SafeClassTag[E],
+        fl: Flat[A],
+        frame: Frame
+    ): A < S =
+        Abort.run[E](effect).map:
+            case Result.Success(v)              => v
+            case Result.Failure(thr: Throwable) => throw thr
+            case Result.Failure(other)          => throw PanicException(other)
+            case Result.Panic(thr)              => throw thr
+    end orThrow
 
 end extension
 
@@ -492,6 +615,20 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     ): Result[E1, A] < (S & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
+    /** Handles the partial Abort[E1] effect and returns its result as a `Result.Partial[E1, A]`.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E1] effect handled
+      */
+    def partialResult[ER](
+        using
+        ev: E => E1 | ER,
+        ct: SafeClassTag[E1],
+        fl: Flat[A],
+        frame: Frame
+    ): Result.Partial[E1, A] < (S & Abort[ER]) =
+        Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
+
     /** Handles a partial Abort[E1] effect, transforming caught errors into a new error as determined by mapping function
       *
       * @return
@@ -531,6 +668,64 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
                     case ab @ Result.Panic(_) => Abort.get(ab.asInstanceOf[Result[Nothing, Nothing]])
                 })
 
+    /** Recovers from an Abort failure by applying the provided function.
+      *
+      * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
+      * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
+      *
+      * @param onSuccess
+      *   A function that takes the success value of type A and returns a new computation
+      * @param onFail
+      *   A function that takes the failure value of type E and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def fold[B, S1, ER](
+        onSuccess: A => B < S1,
+        onFail: E1 => B < S1
+    )(
+        using
+        ct: SafeClassTag[E1],
+        ev: E => E1 | ER,
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1 & Abort[ER]) =
+        Abort.fold[E1](onSuccess, onFail)(effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
+
+    /** Recovers from an Abort failure by applying the provided function.
+      *
+      * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
+      * handles failures of type E and leaves panics unhandled (Abort[Nothing]).
+      *
+      * @param onSuccess
+      *   A function that takes the success value of type A and returns a new computation
+      * @param onFail
+      *   A function that takes the failure value of type E and returns a new computation
+      * @param onPanic
+      *   A function that takes the throwable panic value and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def fold[B, S1, ER](
+        onSuccess: A => B < S1,
+        onFail: E1 => B < S1,
+        onPanic: Throwable => B < S1
+    )(
+        using
+        ct: SafeClassTag[E1],
+        ev: E => E1 | ER,
+        reduce: Reducible[Abort[ER]],
+        fl1: Flat[A],
+        fl2: Flat[B],
+        fr: Frame
+    ): B < (S & S1 & reduce.SReduced) =
+        Abort.fold[E1](onSuccess, onFail, onPanic)(effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
+
     /** Handles the partial Abort[E1] effect and applies a partial recovery function to the error.
       *
       * @return
@@ -564,7 +759,7 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         flat: Flat[A],
         frame: Frame
     ): A < (S & reduce.SReduced & Choice) =
-        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.foldError(_ => Nil)(List(_))))
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.foldError(List(_), _ => Nil)))
 
     /** Translates the partial Abort[E1] effect to an Abort[Absent] effect in case of failure.
       *
@@ -632,17 +827,14 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     def orPanic[ER](
         using
         ev: E => E1 | ER,
-        reduce: Reducible[Abort[ER]],
         ct: SafeClassTag[E1],
         fl: Flat[A],
         frame: Frame
-    ): A < (S & reduce.SReduced) =
-        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
+    ): A < (S & Abort[ER]) =
+        Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
             case Result.Success(v)              => v
-            case Result.Failure(thr: Throwable) => Abort.panic(thr).asInstanceOf[Nothing < Any]
-            case Result.Failure(other)          => Abort.panic(PanicException(other)).asInstanceOf[Nothing < Any]
-            case other: Result.Panic            => Abort.get(other).asInstanceOf[Nothing < Any]
-
+            case Result.Failure(thr: Throwable) => Abort.panic(thr)
+            case Result.Failure(other)          => Abort.panic(PanicException(other))
     end orPanic
 end ForAbortOps
 

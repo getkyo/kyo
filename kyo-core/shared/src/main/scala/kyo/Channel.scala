@@ -61,10 +61,13 @@ object Channel:
           */
         def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
             IO.Unsafe {
-                self.offer(value).foldError(Abort.error) {
-                    case true  => ()
-                    case false => self.putFiber(value).safe.get
-                }
+                self.offer(value).foldError(
+                    {
+                        case true  => ()
+                        case false => self.putFiber(value).safe.get
+                    },
+                    Abort.error
+                )
             }
 
         /** Puts elements into the channel as a batch, asynchronously blocking if necessary. Breaks batch up if it exceeds channel capacity.
@@ -90,10 +93,13 @@ object Channel:
           */
         def take(using Frame): A < (Abort[Closed] & Async) =
             IO.Unsafe {
-                self.poll().foldError(Abort.error) {
-                    case Present(value) => value
-                    case Absent         => self.takeFiber().safe.get
-                }
+                self.poll().foldError(
+                    {
+                        case Present(value) => value
+                        case Absent         => self.takeFiber().safe.get
+                    },
+                    Abort.error
+                )
             }
 
         /** Takes [[n]] elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are

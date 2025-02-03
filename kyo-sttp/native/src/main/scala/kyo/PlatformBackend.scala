@@ -11,6 +11,6 @@ object PlatformBackend:
                 given Frame = Frame.internal
                 def call    = r.send(b)
                 Abort.run[Throwable](IO(call))
-                    .map(_.foldError(ex => Abort.fail(FailedRequest(ex.failureOrPanic)))(identity))
+                    .map(_.foldError(identity, ex => Abort.fail(FailedRequest(ex.failureOrPanic))))
             end send
 end PlatformBackend
