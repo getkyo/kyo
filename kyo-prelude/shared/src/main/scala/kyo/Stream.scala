@@ -194,11 +194,6 @@ sealed abstract class Stream[V, -S]:
                         f(input).andThen:
                             Emit.valueWith(input)(((), cont(())))
 
-    private def discard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
-        Stream(ArrowEffect.handle(tag, emit)(
-            [C] => (input, cont) => cont(())
-        ))
-
     /** Takes the first n elements from the stream.
       *
       * @param n

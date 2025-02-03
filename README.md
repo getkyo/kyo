@@ -1290,7 +1290,7 @@ val h: Chunk[Int] < Any =
 
 // Process stream elements without collecting results
 val i: Unit < Any =
-    a.runDiscard
+    a.discard
 
 // Fold over stream elements
 val j: Int < Any =
@@ -1929,7 +1929,7 @@ val lines: Stream[String, Resource & IO] =
 
 // Process the stream
 val result: Unit < (Resource & Console & Async & Abort[IOException]) =
-    lines.map(line => Console.printLine(line)).runDiscard
+    lines.map(line => Console.printLine(line)).discard
 
 // Walk a directory tree
 val tree: Stream[Path, IO] =
@@ -1937,7 +1937,7 @@ val tree: Stream[Path, IO] =
 
 // Process each file in the tree
 val processedTree: Unit < (Console & Async & Abort[IOException]) =
-    tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).runDiscard
+    tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).discard
 ```
 
 `Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
