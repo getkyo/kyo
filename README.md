@@ -2440,13 +2440,13 @@ import kyo.*
 import kyo.Hub.Listener
 
 // Initialize a Hub with a buffer
-val a: Hub[Int] < IO =
+val a: Hub[Int] < (IO & Resource) =
     Hub.init[Int](3)
 
 // Hub provide APIs similar to
 // channels: size, offer, isEmpty,
 // isFull, putFiber, put
-val b: Boolean < (IO & Abort[Closed]) =
+val b: Boolean < (IO & Abort[Closed] & Resource) =
     a.map(_.offer(1))
 
 // But reading from hubs can only
@@ -2489,7 +2489,7 @@ val g: Int < (Async & Abort[Closed]) =
 // only include items pending in
 // the hub's buffer. The listener
 // buffers are discarded
-val h: Maybe[Seq[Int]] < IO =
+val h: Maybe[Seq[Int]] < (IO & Resource) =
     a.map(_.close)
 ```
 
