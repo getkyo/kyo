@@ -204,7 +204,7 @@ object Hub:
       * @see
       *   [[Hub.DefaultBufferSize]] for the default capacity value used by this method
       */
-    def init[A](using Frame): Hub[A] < IO =
+    def init[A](using Frame): Hub[A] < (IO & Resource) =
         init(DefaultBufferSize)
 
     /** Initializes a new Hub with the specified capacity.
@@ -216,7 +216,7 @@ object Hub:
       * @return
       *   a new Hub instance
       */
-    def init[A](capacity: Int)(using Frame): Hub[A] < IO =
+    def init[A](capacity: Int)(using Frame): Hub[A] < (IO & Resource) =
         initWith[A](capacity)(identity)
 
     /** Uses a new Hub with the given type and capacity.
@@ -230,7 +230,7 @@ object Hub:
       * @return
       *   The result of applying the function
       */
-    def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & IO) =
+    def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & IO & Resource) =
         IO.Unsafe {
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
@@ -251,7 +251,9 @@ object Hub:
                     }
                 }
             }.map { fiber =>
-                f(new Hub(channel, fiber, listeners))
+                Resource
+                    .acquireRelease(new Hub(channel, fiber, listeners))(_.close.unit)
+                    .map(f)
             }
         }
 
