@@ -163,7 +163,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A new stream runs f while emitting values
       */
-    def tap[S1](f: V => Unit < S1)(
+    def tap[S1](f: V => Any < S1)(
         using
         tag: Tag[Emit[Chunk[V]]],
         frame: Frame
@@ -182,7 +182,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A new stream runs f while emitting chunks
       */
-    def tapChunk[S1](f: Chunk[V] => Unit < S1)(
+    def tapChunk[S1](f: Chunk[V] => Any < S1)(
         using
         tag: Tag[Emit[Chunk[V]]],
         frame: Frame
@@ -421,7 +421,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A unit effect that runs the stream and applies f to each value
       */
-    def foreach[S2](f: V => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+    def foreach[S2](f: V => Any < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
         foreachChunk(c => Kyo.foreachDiscard(c)(f))
 
     /** Runs the stream and applies the given function to each emitted chunk.
@@ -431,7 +431,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A unit effect that runs the stream and applies f to each chunk
       */
-    def foreachChunk[S2](f: Chunk[V] => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+    def foreachChunk[S2](f: Chunk[V] => Any < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
         ArrowEffect.handle(tag, emit)(
             [C] =>
                 (input, cont) =>

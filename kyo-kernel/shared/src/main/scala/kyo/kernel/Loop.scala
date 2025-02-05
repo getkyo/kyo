@@ -572,9 +572,9 @@ object Loop:
       * @return
       *   Unit after completing all iterations
       */
-    inline def repeat[S](n: Int)(inline run: Safepoint ?=> Unit < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
+    inline def repeat[S](n: Int)(inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(i: Int)(v: Unit < S)(using Safepoint): Unit < S =
+        @tailrec def loop(i: Int)(v: Any < S)(using Safepoint): Unit < S =
             if i > n then ()
             else
                 v match
@@ -600,9 +600,9 @@ object Loop:
       * @return
       *   Nothing, as this loop runs forever unless interrupted
       */
-    inline def forever[S](inline run: Safepoint ?=> Unit < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
+    inline def forever[S](inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Unit < S)(using Safepoint): Unit < S =
+        @tailrec def loop(v: Any < S)(using Safepoint): Unit < S =
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
