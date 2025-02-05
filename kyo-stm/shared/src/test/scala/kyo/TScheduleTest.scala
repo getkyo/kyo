@@ -4,7 +4,7 @@ class TScheduleTest extends Test:
     "init" - {
         "creates a transactional schedule with initial state" in run {
             for
-                ts     <- TSchedule.initNow(Schedule.fixed(1.second))
+                ts     <- TSchedule.init(Schedule.fixed(1.second))
                 next   <- STM.run(ts.next)
                 result <- STM.run(ts.peek)
             yield
@@ -14,7 +14,7 @@ class TScheduleTest extends Test:
 
         "handles never schedule" in run {
             for
-                ts     <- TSchedule.initNow(Schedule.never)
+                ts     <- TSchedule.init(Schedule.never)
                 next   <- STM.run(ts.next)
                 result <- STM.run(ts.peek)
             yield
@@ -24,7 +24,7 @@ class TScheduleTest extends Test:
 
         "handles immediate schedule" in run {
             for
-                ts     <- TSchedule.initNow(Schedule.immediate)
+                ts     <- TSchedule.init(Schedule.immediate)
                 next   <- STM.run(ts.next)
                 result <- STM.run(ts.peek)
             yield
@@ -36,7 +36,7 @@ class TScheduleTest extends Test:
     "next" - {
         "advances schedule state" in run {
             for
-                ts    <- TSchedule.initNow(Schedule.exponential(1.second, 2.0))
+                ts    <- TSchedule.init(Schedule.exponential(1.second, 2.0))
                 next1 <- STM.run(ts.next)
                 next2 <- STM.run(ts.next)
                 next3 <- STM.run(ts.next)
@@ -48,7 +48,7 @@ class TScheduleTest extends Test:
 
         "handles finite schedules" in run {
             for
-                ts    <- TSchedule.initNow(Schedule.fixed(1.second).take(2))
+                ts    <- TSchedule.init(Schedule.fixed(1.second).take(2))
                 next1 <- STM.run(ts.next)
                 next2 <- STM.run(ts.next)
                 next3 <- STM.run(ts.next)
@@ -60,7 +60,7 @@ class TScheduleTest extends Test:
 
         "maintains consistency across transactions" in run {
             for
-                ts <- TSchedule.initNow(Schedule.fixed(1.second))
+                ts <- TSchedule.init(Schedule.fixed(1.second))
                 result <- Abort.run {
                     STM.run {
                         for
@@ -72,7 +72,7 @@ class TScheduleTest extends Test:
                 }
                 nextAfterRollback <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterRollback == Maybe(1.second))
         }
     }
@@ -80,7 +80,7 @@ class TScheduleTest extends Test:
     "peek" - {
         "returns next duration without advancing state" in run {
             for
-                ts    <- TSchedule.initNow(Schedule.fixed(1.second).take(1))
+                ts    <- TSchedule.init(Schedule.fixed(1.second).take(1))
                 peek1 <- STM.run(ts.peek)
                 peek2 <- STM.run(ts.peek)
                 next  <- STM.run(ts.next)
@@ -94,7 +94,7 @@ class TScheduleTest extends Test:
 
         "works with complex schedules" in run {
             for
-                ts    <- TSchedule.initNow(Schedule.exponential(1.second, 2.0).take(3))
+                ts    <- TSchedule.init(Schedule.exponential(1.second, 2.0).take(3))
                 peek1 <- STM.run(ts.peek)
                 _     <- STM.run(ts.next)
                 peek2 <- STM.run(ts.peek)
@@ -113,14 +113,14 @@ class TScheduleTest extends Test:
     "use" - {
         "allows custom operations on schedule state" in run {
             for
-                ts     <- TSchedule.initNow(Schedule.fixed(1.second))
+                ts     <- TSchedule.init(Schedule.fixed(1.second))
                 result <- STM.run(ts.use(dur => dur.map(_.toMillis)))
             yield assert(result == Maybe(1000L))
         }
 
         "maintains transaction isolation" in run {
             for
-                ts <- TSchedule.initNow(Schedule.fixed(1.second).take(1))
+                ts <- TSchedule.init(Schedule.fixed(1.second).take(1))
                 result <- Abort.run {
                     STM.run {
                         for
@@ -131,7 +131,7 @@ class TScheduleTest extends Test:
                 }
                 nextAfterRollback <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterRollback == Maybe(1.second))
         }
     }
@@ -139,7 +139,7 @@ class TScheduleTest extends Test:
     "error handling" - {
         "rolls back on transaction failure" in run {
             for
-                ts <- TSchedule.initNow(Schedule.fixed(1.second))
+                ts <- TSchedule.init(Schedule.fixed(1.second))
                 result <- Abort.run {
                     STM.run {
                         for
@@ -151,13 +151,13 @@ class TScheduleTest extends Test:
                 }
                 nextAfterFailure <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterFailure == Maybe(1.second))
         }
 
         "handles nested transaction failures" in run {
             for
-                ts <- TSchedule.initNow(Schedule.fixed(1.second))
+                ts <- TSchedule.init(Schedule.fixed(1.second))
                 result <- Abort.run {
                     STM.run {
                         for
@@ -173,7 +173,7 @@ class TScheduleTest extends Test:
                 }
                 nextAfterFailure <- STM.run(ts.next)
             yield
-                assert(result.isFail)
+                assert(result.isFailure)
                 assert(nextAfterFailure == Maybe(1.second))
         }
     }

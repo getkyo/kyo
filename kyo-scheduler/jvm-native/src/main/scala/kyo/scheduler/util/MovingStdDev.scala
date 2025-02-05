@@ -1,5 +1,20 @@
 package kyo.scheduler.util
 
+/** Moving standard deviation calculator optimized for high-throughput measurements.
+  *
+  * IMPORTANT: This implementation is not thread-safe and is only be accessed by its owning worker thread.
+  *
+  * This implementation maintains a fixed-size window of values and efficiently calculates rolling statistics without allocation or array
+  * copying. It uses a circular buffer approach to update values in place, making it suitable for high-frequency measurement scenarios like
+  * scheduler instrumentation.
+  *
+  * To use the MovingStdDev, create an instance with a specified window size, then call observe() to record measurements. The current
+  * standard deviation and mean can be retrieved at any time using dev() and avg() respectively. The implementation automatically maintains
+  * the sliding window as new values arrive.
+  *
+  * @param window
+  *   Size of the measurement window
+  */
 final private[kyo] class MovingStdDev(window: Int) {
     private val values = new Array[Long](window)
     private var idx    = 0L

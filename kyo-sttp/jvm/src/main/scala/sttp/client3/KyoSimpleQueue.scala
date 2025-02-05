@@ -15,5 +15,5 @@ class KyoSimpleQueue[A](ch: Channel[A]) extends SimpleQueue[KyoSttpMonad.M, A]:
 
     def poll =
         import kyo.AllowUnsafe.embrace.danger
-        ch.unsafe.takeFiber().mapResult(_.fold(e => throw e.exception)(Result.success)).safe.get
+        ch.unsafe.takeFiber().mapResult(_.foldError(Result.succeed, e => throw e.exception)).safe.get
 end KyoSimpleQueue

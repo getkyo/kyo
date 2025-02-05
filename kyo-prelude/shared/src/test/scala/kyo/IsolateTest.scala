@@ -38,8 +38,8 @@ class IsolateTest extends Test:
             val result = Emit.run {
                 Emit.isolate.merge[Int].run {
                     for
-                        _ <- Emit(1)
-                        _ <- Emit(2)
+                        _ <- Emit.value(1)
+                        _ <- Emit.value(2)
                     yield "done"
                 }
             }
@@ -59,10 +59,10 @@ class IsolateTest extends Test:
                     combined.run {
                         for
                             start <- Var.get[Int]
-                            _     <- Emit(start)
+                            _     <- Emit.value(start)
                             _     <- Var.set(start + 1)
                             end   <- Var.get[Int]
-                            _     <- Emit(end)
+                            _     <- Emit.value(end)
                         yield (start, end)
                     }
                 }
@@ -116,11 +116,11 @@ class IsolateTest extends Test:
                         combined.run {
                             for
                                 start <- Var.get[Int]
-                                _     <- Emit(start)
+                                _     <- Emit.value(start)
                                 a     <- f(start)
                                 _     <- Var.set(a)
                                 end   <- Var.get[Int]
-                                _     <- Emit(end)
+                                _     <- Emit.value(end)
                                 b     <- f(end)
                             yield (start, end, a, b, count)
                         }
@@ -154,15 +154,15 @@ class IsolateTest extends Test:
             val result = Emit.run {
                 Abort.run {
                     for
-                        _ <- Emit(1)
+                        _ <- Emit.value(1)
                         _ <- Emit.isolate.merge[Int].run {
                             for
-                                _ <- Emit(2)
-                                _ <- Emit(3)
+                                _ <- Emit.value(2)
+                                _ <- Emit.value(3)
                                 _ <- Abort.fail("Failed")
                             yield ()
                         }
-                        _ <- Emit(4)
+                        _ <- Emit.value(4)
                     yield "done"
                 }
             }
@@ -200,25 +200,25 @@ class IsolateTest extends Test:
                     Abort.run {
                         for
                             _ <- Var.set(1)
-                            _ <- Emit("start")
+                            _ <- Emit.value("start")
                             _ <-
                                 Var.isolate.update[Int]
                                     .andThen(Emit.isolate.merge[String])
                                     .run {
                                         for
                                             _ <- Var.set(2)
-                                            _ <- Emit("inner")
+                                            _ <- Emit.value("inner")
                                             _ <- (Var.isolate.update[Int].andThen(Emit.isolate.merge[String])).run {
                                                 for
                                                     _ <- Var.set(3)
-                                                    _ <- Emit("nested")
+                                                    _ <- Emit.value("nested")
                                                     _ <- Abort.fail("Failed")
                                                 yield ()
                                             }
                                         yield ()
                                     }
                             v <- Var.get[Int]
-                            _ <- Emit("end")
+                            _ <- Emit.value("end")
                         yield v
                     }
                 }
@@ -239,7 +239,7 @@ class IsolateTest extends Test:
                         Abort.run {
                             for
                                 _ <- Var.set(1)
-                                _ <- Emit("start")
+                                _ <- Emit.value("start")
                                 a <- f(1)
                                 _ <- Var.isolate.update[Int]
                                     .andThen(Emit.isolate.merge[String])
@@ -247,13 +247,13 @@ class IsolateTest extends Test:
                                     .run {
                                         for
                                             _ <- Var.set(2)
-                                            _ <- Emit("inner")
+                                            _ <- Emit.value("inner")
                                             b <- f(2)
                                             _ <- Abort.fail("Failed")
                                         yield (a, b)
                                     }
                                 v <- Var.get[Int]
-                                _ <- Emit("end")
+                                _ <- Emit.value("end")
                             yield v
                         }
                     }

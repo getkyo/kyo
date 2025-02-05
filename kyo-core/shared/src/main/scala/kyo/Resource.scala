@@ -27,7 +27,7 @@ object Resource:
       *   A unit value wrapped in Resource and IO effects.
       */
     def ensure(v: => Unit < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
-        ContextEffect.suspendAndMap(Tag[Resource]) { finalizer =>
+        ContextEffect.suspendWith(Tag[Resource]) { finalizer =>
             Abort.run(finalizer.queue.offer(IO(v))).map {
                 case Result.Success(_) => ()
                 case _ =>
@@ -99,8 +99,8 @@ object Resource:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
-        Queue.Unbounded.init[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer).map { q =>
-            Promise.init[Nothing, Unit].map { p =>
+        Queue.Unbounded.initWith[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer) { q =>
+            Promise.initWith[Nothing, Unit] { p =>
                 val finalizer = Finalizer(frame, q)
                 def close: Unit < IO =
                     q.close.map {
@@ -110,7 +110,7 @@ object Resource:
                             Async.parallel(closeParallelism) {
                                 tasks.map { task =>
                                     Abort.run[Throwable](task)
-                                        .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
+                                        .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                                 }
                             }
                                 .unit

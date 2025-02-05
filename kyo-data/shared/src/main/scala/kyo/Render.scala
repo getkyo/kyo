@@ -16,63 +16,56 @@ sealed trait LowPriorityRenders:
 object Render extends LowPriorityRenders:
     inline def apply[A](using r: Render[A]): Render[A] = r
 
+    def from[A](impl: A => Text): Render[A] =
+        new Render[A]:
+            def asText(value: A): Text = impl(value)
+
     def asText[A](value: A)(using r: Render[A]): Text = r.asText(value)
 
     import scala.compiletime.*
 
-    @nowarn("msg=anonymous")
     private inline def sumRender[A, M <: scala.deriving.Mirror.ProductOf[A]](label: String, mir: M): Render[A] =
         val shows = summonAll[Tuple.Map[mir.MirroredElemTypes, Render]]
-        new Render[A]:
-            def asText(value: A): String =
-                val builder = java.lang.StringBuilder()
-                builder.append(label)
-                builder.append("(")
-                val valIter                         = value.asInstanceOf[Product].productIterator
-                val showIter: Iterator[Render[Any]] = shows.productIterator.asInstanceOf
-                if valIter.hasNext then
-                    builder.append(showIter.next().asText(valIter.next()))
-                    ()
-                while valIter.hasNext do
-                    builder.append(",")
-                    builder.append(showIter.next().asText(valIter.next()))
-                    ()
-                end while
-                builder.append(")")
-                builder.toString()
-            end asText
-        end new
+        Render.from: (value: A) =>
+            val builder = java.lang.StringBuilder()
+            builder.append(label)
+            builder.append("(")
+            val valIter                         = value.asInstanceOf[Product].productIterator
+            val showIter: Iterator[Render[Any]] = shows.productIterator.asInstanceOf
+            if valIter.hasNext then
+                builder.append(showIter.next().asText(valIter.next()))
+                ()
+            while valIter.hasNext do
+                builder.append(",")
+                builder.append(showIter.next().asText(valIter.next()))
+                ()
+            end while
+            builder.append(")")
+            builder.toString()
     end sumRender
 
-    @nowarn("msg=anonymous")
     inline given [A](using mir: scala.deriving.Mirror.Of[A]): Render[A] = inline mir match
         case sumMir: scala.deriving.Mirror.SumOf[?] =>
             val shows = summonAll[Tuple.Map[sumMir.MirroredElemTypes, Render]]
-            new Render[A]:
-                def asText(value: A): Text =
-                    val caseIndex                 = sumMir.ordinal(value)
-                    val showInstance: Render[Any] = shows.productElement(caseIndex).asInstanceOf
-                    showInstance.asText(value)
-                end asText
-            end new
+            Render.from: (value: A) =>
+                val caseIndex                 = sumMir.ordinal(value)
+                val showInstance: Render[Any] = shows.productElement(caseIndex).asInstanceOf
+                showInstance.asText(value)
         case singMir: scala.deriving.Mirror.Singleton =>
             val label: String = constValue[singMir.MirroredLabel]
-            new Render[A]:
-                def asText(value: A): Text = label
+            Render.from(_ => label)
         case prodMir: scala.deriving.Mirror.ProductOf[?] => inline erasedValue[A] match
                 case _: Tuple =>
                     inline erasedValue[prodMir.MirroredElemTypes] match
                         case _: EmptyTuple =>
-                            new Render[A]:
-                                def asText(value: A): Text = "()"
+                            Render.from(_ => "()")
                         case _ =>
                             sumRender[A, prodMir.type]("", prodMir)
                 case _ =>
                     val label: String = constValue[prodMir.MirroredLabel]
                     inline erasedValue[prodMir.MirroredElemTypes] match
                         case _: EmptyTuple =>
-                            new Render[A]:
-                                def asText(value: A): Text = label + "()"
+                            Render.from(_ => label + "()")
                         case _ =>
                             sumRender[A, prodMir.type](label, prodMir)
                     end match
@@ -97,3 +90,4 @@ extension (sc: StringContext)
             text = text + ai.next
             text = text + StringContext.processEscapes(pi.next())
         text
+end extension

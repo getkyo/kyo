@@ -508,8 +508,8 @@ class MaybeTest extends Test:
 
     "toResult" - {
         "without error parameter" - {
-            "should return Result.success for Present" in {
-                assert(Present(1).toResult == Result.success(1))
+            "should return Result.succeed for Present" in {
+                assert(Present(1).toResult == Result.succeed(1))
             }
 
             "should return Result.absent for Absent" in {
@@ -518,8 +518,8 @@ class MaybeTest extends Test:
         }
 
         "with custom error" - {
-            "should return Result.success for Present" in {
-                assert(Present(1).toResult(Result.fail("error")) == Result.success(1))
+            "should return Result.succeed for Present" in {
+                assert(Present(1).toResult(Result.fail("error")) == Result.succeed(1))
             }
 
             "should return provided error Result for Absent" in {

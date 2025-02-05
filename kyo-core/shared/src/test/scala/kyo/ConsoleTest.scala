@@ -89,11 +89,9 @@ class ConsoleTest extends Test:
         val output = new StringBuilder
         val error  = new StringBuilder
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
-            override def write(b: Int): Unit = output.append(b.toChar)
-        )) {
+            override def write(b: Int): Unit = output.append(b.toChar))) {
             scala.Console.withErr(new java.io.PrintStream(new java.io.OutputStream:
-                override def write(b: Int): Unit = error.append(b.toChar)
-            )) {
+                override def write(b: Int): Unit = error.append(b.toChar))) {
                 import AllowUnsafe.embrace.danger
                 val (r1, r2, r3, r4) =
                     IO.Unsafe.evalOrThrow {
@@ -116,7 +114,7 @@ class ConsoleTest extends Test:
 
         "should read line correctly" in {
             val testUnsafe = new TestUnsafeConsole("test input")
-            assert(testUnsafe.readLine() == Result.success("test input"))
+            assert(testUnsafe.readLine() == Result.succeed("test input"))
         }
 
         "should print correctly" in {
@@ -163,7 +161,7 @@ class ConsoleTest extends Test:
         var printlnErrs = List.empty[String]
 
         def readLine()(using AllowUnsafe) =
-            Result.success(readlnInput)
+            Result.succeed(readlnInput)
         def print(s: String)(using AllowUnsafe) =
             prints = s :: prints
             ()

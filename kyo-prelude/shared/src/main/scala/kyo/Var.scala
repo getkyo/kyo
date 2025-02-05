@@ -36,7 +36,7 @@ object Var:
             inline tag: Tag[Var[V]],
             inline frame: Frame
         ): A < (Var[V] & S) =
-            ArrowEffect.suspendAndMap[V](tag, Get: Op[V])(f)
+            ArrowEffect.suspendWith[V](tag, Get: Op[V])(f)
     end UseOps
 
     /** Creates a new UseOps instance for the given type V.
@@ -73,7 +73,7 @@ object Var:
         inline tag: Tag[Var[V]],
         inline frame: Frame
     ): A < (Var[V] & S) =
-        ArrowEffect.suspendAndMap[Unit](tag, value: Op[V])(_ => f)
+        ArrowEffect.suspendWith[Unit](tag, value: Op[V])(_ => f)
 
     /** Sets a new value and returns `Unit`.
       *
@@ -85,7 +85,7 @@ object Var:
       *   Unit
       */
     inline def setDiscard[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        ArrowEffect.suspendAndMap[Unit](tag, value: Op[V])(_ => ())
+        ArrowEffect.suspendWith[Unit](tag, value: Op[V])(_ => ())
 
     /** Applies the update function and returns the new value.
       *
@@ -111,7 +111,7 @@ object Var:
       */
     @nowarn("msg=anonymous")
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        ArrowEffect.suspendAndMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
+        ArrowEffect.suspendWith[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
     private[kyo] inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2

@@ -98,6 +98,7 @@ class KyoSttpMonadTest extends Test:
                     }
                 }
                 _           <- started.await
+                _           <- Async.sleep(10.millis)
                 interrupted <- fiber.interrupt
                 _           <- cancelled.await
                 result      <- fiber.getResult

@@ -23,7 +23,7 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
         contentLength: Option[Long],
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Array[Byte]] =
-        Promise.init[Nothing, Array[Byte]].map { p =>
+        Promise.initWith[Nothing, Array[Byte]] { p =>
             val fut = SimpleSubscriber.processAll(publisher, contentLength, maxBytes)
             fut.onComplete { r =>
                 import AllowUnsafe.embrace.danger

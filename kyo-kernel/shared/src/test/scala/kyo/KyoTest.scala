@@ -37,12 +37,16 @@ class KyoTest extends Test:
 
     "eval" in {
         assert(TestEffect1.run(TestEffect1(1).map(_ + 1)).eval == 3)
-        assertDoesNotCompile("TestEffect1(1).eval")
+        typeCheckFailure("TestEffect1(1).eval")(
+            "value eval is not a member of Int < KyoTest.this.TestEffect1"
+        )
         assert(widen(TypeMap(1, true)).eval.get[Boolean])
     }
 
     "eval widened" in {
-        assertDoesNotCompile("widen(TestEffect1(1).map(_ + 1)).eval")
+        typeCheckFailure("widen(TestEffect1(1).map(_ + 1)).eval")(
+            "Cannot prove 'kyo.kernel.Pending$package.<[scala.Int, KyoTest.this.TestEffect1]' isn't nested"
+        )
     }
 
     "map" in {
@@ -101,7 +105,9 @@ class KyoTest extends Test:
         }
 
         "eval doesn't compile" in {
-            assertDoesNotCompile("TestEffect1.run(io).eval")
+            typeCheckFailure("TestEffect1.run(io).eval")(
+                "Cannot prove 'kyo.kernel.Pending$package.<[scala.Int, KyoTest.this.TestEffect1]' isn't nested"
+            )
         }
     }
 
@@ -357,6 +363,51 @@ class KyoTest extends Test:
             assert(Kyo.findFirst(List(1, 2, 3))(pred).eval == Maybe(2))
             assert(Kyo.findFirst(Vector(1, 2, 3))(pred).eval == Maybe(2))
             assert(Kyo.findFirst(Chunk(1, 2, 3))(pred).eval == Maybe(2))
+        }
+    }
+
+    "flat check" - {
+
+        def error(tpe: String) = s"Cannot prove 'kyo.kernel.Pending$$package.<[$tpe]'"
+
+        "pending type" in {
+            typeCheckFailure("implicitly[Flat[Int < Any]]")(error("scala.Int, scala.Any"))
+            typeCheckFailure("implicitly[Flat[Int < TestEffect1]]")(error("scala.Int, KyoTest.this.TestEffect1"))
+            typeCheckFailure("implicitly[Flat[Int < Nothing]]")(error("scala.Int, scala.Nothing"))
+        }
+
+        "nested" in {
+            typeCheckFailure("implicitly[Flat[Int < TestEffect1 < TestEffect1]]")(
+                error("kyo.kernel.Pending$package.<[scala.Int, KyoTest.this.TestEffect1], KyoTest.this.TestEffect1")
+            )
+            typeCheckFailure("implicitly[Flat[Any < TestEffect1 < TestEffect1]]")(
+                error("kyo.kernel.Pending$package.<[scala.Any, KyoTest.this.TestEffect1], KyoTest.this.TestEffect1")
+            )
+        }
+
+        "nested w/ mismatch" in {
+            typeCheckFailure("implicitly[Flat[Int < TestEffect2 < TestEffect1]]")(
+                error("kyo.kernel.Pending$package.<[scala.Int, KyoTest.this.TestEffect2], KyoTest.this.TestEffect1")
+            )
+            typeCheckFailure("implicitly[Flat[Int < TestEffect1 < TestEffect2]]")(
+                error("kyo.kernel.Pending$package.<[scala.Int, KyoTest.this.TestEffect1], KyoTest.this.TestEffect2")
+            )
+        }
+
+        "generic" in {
+            val error = "Cannot prove 'A' isn't nested"
+            typeCheckFailure("def f[A] = implicitly[Flat[A]]")(error)
+            typeCheckFailure("def f[A] = implicitly[Flat[A | Int]]")(error)
+        }
+
+        "generic pending" in {
+            typeCheckFailure("def f[A] = implicitly[Flat[A < TestEffect2]]")(error("A, KyoTest.this.TestEffect2"))
+            typeCheckFailure("def f[A] = implicitly[Flat[A < Any]]")(error("A, scala.Any"))
+        }
+
+        "any" in {
+            typeCheckFailure("implicitly[Flat[Any]]")("Cannot prove 'scala.Any' isn't nested")
+            typeCheckFailure("implicitly[Flat[Any < TestEffect2]]")(error("scala.Any, KyoTest.this.TestEffect2"))
         }
     }
 end KyoTest

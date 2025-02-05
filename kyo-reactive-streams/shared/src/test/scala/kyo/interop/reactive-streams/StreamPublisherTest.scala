@@ -8,7 +8,7 @@ import org.reactivestreams.tck.PublisherVerification
 import org.reactivestreams.tck.TestEnvironment
 import org.scalatestplus.testng.*
 
-final class StreamPublisherTest extends PublisherVerification[Int](new TestEnvironment(10L)), TestNGSuiteLike:
+final class StreamPublisherTest extends PublisherVerification[Int](new TestEnvironment(50L)), TestNGSuiteLike:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 

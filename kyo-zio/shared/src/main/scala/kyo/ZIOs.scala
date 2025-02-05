@@ -60,7 +60,7 @@ object ZIOs:
                 ZIO.asyncInterrupt[Any, E, A] { cb =>
                     fiber.unsafe.onComplete {
                         case Result.Success(a) => cb(Exit.succeed(a))
-                        case Result.Fail(e)    => cb(Exit.fail(e))
+                        case Result.Failure(e) => cb(Exit.fail(e))
                         case Result.Panic(e)   => cb(Exit.die(e))
                     }
                     Left(ZIO.succeed {
@@ -79,8 +79,9 @@ object ZIOs:
           */
         def toResult(using Frame, CanEqual[E, E]): Result[E, A] =
             exit match
-                case Exit.Success(a)     => Result.success(a)
+                case Exit.Success(a)     => Result.succeed(a)
                 case Exit.Failure(cause) => cause.toError
+    end extension
 
     extension [E](cause: zio.Cause[E])
         /** Converts a zio.Cause to a kyo.Result.Error.
@@ -94,7 +95,7 @@ object ZIOs:
             import zio.Cause.*
             def loop(cause: zio.Cause[E]): Maybe[Result.Error[E]] =
                 cause match
-                    case Fail(e, trace)            => Maybe(Result.Fail(e))
+                    case Fail(e, trace)            => Maybe(Result.Failure(e))
                     case Die(e, trace)             => Maybe(Result.Panic(e))
                     case Interrupt(fiberId, trace) => Maybe(Result.Panic(Fiber.Interrupted(frame)))
                     case Then(left, right)         => loop(left).orElse(loop(right))

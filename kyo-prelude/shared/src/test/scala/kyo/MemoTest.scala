@@ -437,9 +437,9 @@ class MemoTest extends Test:
                         combined.run {
                             for
                                 a <- f(1)
-                                _ <- Emit(a)
+                                _ <- Emit.value(a)
                                 b <- f(2)
-                                _ <- Emit(b)
+                                _ <- Emit.value(b)
                             yield (a, b)
                         }
                     }
@@ -465,14 +465,14 @@ class MemoTest extends Test:
                             _ <- i1.run {
                                 for
                                     b <- f(2)
-                                    _ <- Emit(b)
+                                    _ <- Emit.value(b)
                                 yield b
                             }
                             c <- f(2)
                             _ <- i2.run {
                                 for
                                     d <- f(3)
-                                    _ <- Emit(d)
+                                    _ <- Emit.value(d)
                                 yield d
                             }
                             e <- f(3)

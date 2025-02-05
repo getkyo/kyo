@@ -338,9 +338,9 @@ abortExceptionFirst(Abort.fail(ex))     // Result.Success(Result.Fail(ex))
 
 ### Direct Syntax
 
-Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages two primary constructs: `defer` and `await`.
+Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages three constructs: `defer`, `.now`, and `.later`.
 
-Essentially, `await` is a syntactic sugar for the `map` function, allowing developers to directly access values from computations without the need for repetitive `map` chaining. This makes the code more linear and intuitive.
+The `.now` operator sequences an effect immediately, making its result available for use, while `.later` (advanced API) preserves an effect without immediate sequencing for more controlled composition.
 
 ```scala
 import kyo.*
@@ -349,9 +349,9 @@ import kyo.*
 val a: String < (Abort[Exception] & IO) =
     defer {
         val b: String =
-            await(IO("hello"))
+            IO("hello").now
         val c: String =
-            await(Abort.get(Right("world")))
+            Abort.get(Right("world")).now
         b + " " + c
     }
 
@@ -364,9 +364,9 @@ val b: String < (Abort[Exception] & IO) =
     }
 ```
 
-The `defer` macro translates the `defer` and `await` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express compurations in terms of `map`. 
+The `defer` macro translates the `defer` and `.now`/`.later` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express computations in terms of `map`. 
 
-For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `<` type must be enclosed by an `await` block. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
+For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `<` type must be explicitly handled using either `.now` or `.later`. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
 
 ```scala 
 import kyo.*
@@ -375,7 +375,7 @@ import kyo.*
 val a: Int < IO =
     defer {
         // Incorrect usage of a '<' value
-        // without 'await'
+        // without '.now' or '.later'
         IO(println(42))
         42
     }
@@ -383,7 +383,34 @@ val a: Int < IO =
 
 > Note: In the absence of effectful hygiene, the side effect `IO(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
 
-The syntac sugar supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
+The `.now` operator is used when you need the effect's result immediately, while `.later` is an advanced operation that preserves the effect without sequencing it:
+
+```scala
+import kyo.*
+
+// Using .now for immediate sequencing
+val immediate = defer {
+    val x: Int = IO(1).now      // Get result here
+    val y: Int = IO(2).now      // Then get this result
+    x + y                       // Use both results
+}
+
+// Using .later for preserved effects
+val preserved = defer {
+    val effect1: Int < IO = IO(1).later   // Effect preserved
+    val effect2: Int < IO = IO(2).later   // Effect preserved
+    effect1.now + effect2.now             // Sequence effects
+}
+
+// Combining both approaches
+val combined = defer {
+    val effect1: Int < IO = IO(1).later   // Effect preserved
+    val effect2: Int = IO(2).now          // Effect sequenced
+    effect1.now + effect2                 // Combine results
+}
+```
+
+The direct syntax supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
 
 ```scala
 import kyo.*
@@ -393,32 +420,32 @@ defer {
     val a: Int = 5
 
     // Effectful value
-    val b: Int = await(IO(10))
+    val b: Int = IO(10).now
 
     // Control flow
     val c: String =
-        if await(IO(true)) then "True branch" else "False branch"
+        if IO(true).now then "True branch" else "False branch"
 
     // Logical operations
     val d: Boolean =
-        await(IO(true)) && await(IO(false))
+        IO(true).now && IO(false).now
 
     val e: Boolean =
-        await(IO(true)) || await(IO(true))
+        IO(true).now || IO(true).now
 
     // Loop (for demonstration; this loop
     // won't execute its body)
-    while await(IO(false)) do "Looping"
+    while IO(false).now do "Looping"
 
     // Pattern matching
     val matchResult: String =
-        await(IO(1)) match
+        IO(1).now match
             case 1 => "One"
             case _ => "Other"
 }
 ```
 
-The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `await`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
+The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `.now`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
@@ -553,6 +580,8 @@ val bRes: Result[String, Int] < Any = Abort.run(b)
 println(t"A: ${aRes.eval}, B: ${bRes.eval}")
 // Output: A: Success(1), B: Fail(failed!)
 ```
+
+Note that `Kyo` has two error channels: an explicitly typed channel represented by `Abort[E]` as well as a `Throwable` "panic" channel for unexpected errors. The `Result` generated by `Abort.run` includes both `Failure[E]` and `Panic` error cases. To handle `Failure[E]` without also handling `Panic`, you can use `Abort.runPartial`, which will produce a `Result.Partial[E, A]`, a subtype of `Result` consisting of only `Success[A] | Failure[E]` (note that if the effect panics it will throw the underlying exception). Alternatively, you can use `Abort.fold`, which is overloaded to handle either all three cases or just success and failure.
 
 > Note that the `Abort` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
 
@@ -1313,6 +1342,8 @@ val result: Chunk[String] < (Env[Config] & Async) =
 
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
 
+Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unncecessarily lifting them to return `A < Any` will result in perfomance loss.
+
 ### Var: Stateful Computations
 
 The `Var` effect allows for stateful computations, similar to the `State` monad. It enables the management of state within a computation in a purely functional manner.
@@ -1371,15 +1402,15 @@ The `Emit` effect is designed to accumulate values throughout a computation, sim
 import kyo.*
 
 // Add a value
-val a: Ack < Emit[Int] =
-    Emit(42)
+val a: Unit < Emit[Int] =
+    Emit.value(42)
 
 // Add multiple values
 val b: String < Emit[Int] =
     for
-        _ <- Emit(1)
-        _ <- Emit(2)
-        _ <- Emit(3)
+        _ <- Emit.value(1)
+        _ <- Emit.value(2)
+        _ <- Emit.value(3)
     yield "r"
 
 // Handle the effect to obtain the
@@ -1397,9 +1428,9 @@ import kyo.*
 
 val a: String < (Emit[Int] & Emit[String]) =
     for
-        _ <- Emit(1)
-        _ <- Emit("log")
-        _ <- Emit(2)
+        _ <- Emit.value(1)
+        _ <- Emit.value("log")
+        _ <- Emit.value(2)
     yield "result"
 
 // Note how `run` requires an explicit type
@@ -1555,13 +1586,13 @@ import kyo.*
 
 // Create a simple check
 val a: Unit < Check =
-    Check(1 + 1 == 2, "Basic math works")
+    Check.require(1 + 1 == 2, "Basic math works")
 
 // Checks can be composed with other effects
 val b: Int < (Check & IO) =
     for
         value <- IO(42)
-        _     <- Check(value > 0, "Value is positive")
+        _     <- Check.require(value > 0, "Value is positive")
     yield value
 
 // Handle checks by converting the first failed check to Abort
@@ -2187,7 +2218,7 @@ val a: Promise[Nothing, Int] < IO =
 
 // Try to fulfill a promise
 val b: Boolean < IO =
-    a.map(_.complete(Result.success(42)))
+    a.map(_.complete(Result.succeed(42)))
 
 // Fullfil the promise with
 // another fiber
@@ -2409,13 +2440,13 @@ import kyo.*
 import kyo.Hub.Listener
 
 // Initialize a Hub with a buffer
-val a: Hub[Int] < IO =
+val a: Hub[Int] < (IO & Resource) =
     Hub.init[Int](3)
 
 // Hub provide APIs similar to
 // channels: size, offer, isEmpty,
 // isFull, putFiber, put
-val b: Boolean < (IO & Abort[Closed]) =
+val b: Boolean < (IO & Abort[Closed] & Resource) =
     a.map(_.offer(1))
 
 // But reading from hubs can only
@@ -2423,27 +2454,34 @@ val b: Boolean < (IO & Abort[Closed]) =
 // only receive messages sent after
 // their cration. To create call
 // `listen`:
-val c: Listener[Int] < (IO & Abort[Closed]) =
+val c: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen)
 
 // Each listener can have an
 // additional message buffer
-val d: Listener[Int] < (IO & Abort[Closed]) =
+val d: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen(bufferSize = 3))
 
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
 // poll, takeFiber, take
-val e: Int < (Async & Abort[Closed]) =
+val e: Int < (Async & Abort[Closed] & Resource) =
     d.map(_.take)
 
 // A listener can be closed
 // individually. If successful,
 // a Some with the backlog of
 // pending messages is returned
-val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
+val f: Maybe[Seq[Int]] < (IO & Abort[Closed] & Resource) =
     d.map(_.close)
+
+// Listeners are also managed
+// resources. They are closed 
+// when their `Resource` effect
+// is handled
+val g: Int < (Async & Abort[Closed]) =
+    Resource.run(e)
 
 // If the Hub is closed, all
 // listeners are automatically
@@ -2451,7 +2489,7 @@ val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
 // only include items pending in
 // the hub's buffer. The listener
 // buffers are discarded
-val g: Maybe[Seq[Int]] < IO =
+val h: Maybe[Seq[Int]] < (IO & Resource) =
     a.map(_.close)
 ```
 
@@ -2855,7 +2893,7 @@ import kyo._
 import scala.util.Try
 
 // Create a 'Result' from a value
-val a: Result[Nothing, Int] = Result.success(42)
+val a: Result[Nothing, Int] = Result.succeed(42)
 
 // Create a 'Result' from an failure
 val b: Result[Exception, Int] = Result.fail(new Exception("Oops"))
@@ -2867,35 +2905,35 @@ val c: Result[Nothing, Int] = Result(42 / 0)
 val d: Boolean = a.isSuccess
 
 // 'isFail' checks if the 'Result' is a failure
-val e: Boolean = b.isFail
+val e: Boolean = b.isFailure
 
 // 'get' retrieves the value if successful, otherwise throws
-val f: Int = a.get
+val f: Int = a.getOrThrow
 
 // 'getOrElse' provides a default value for failures
 val g: Int = b.getOrElse(0)
 
-// 'fold' applies a function based on success or failure
-val h: String = a.fold(e => "failure " + e)(_.toString)
+// 'foldError' applies a function based on success or failure
+val h: String = a.foldError(_.toString, e => "failure " + e)
 
 // 'map' transforms the value if successful
 val i: Result[Nothing, String] = a.map(_.toString)
 
 // 'flatMap' allows chaining 'Result' operations
-val j: Result[Nothing, Int] = a.flatMap(v => Result.success(v + 1))
+val j: Result[Nothing, Int] = a.flatMap(v => Result.succeed(v + 1))
 
 // 'flatten' removes one level of nesting from a 'Result[Result[T]]'
-val k: Result[Nothing, Result[Nothing, Int]] = Result.success(a)
+val k: Result[Nothing, Result[Nothing, Int]] = Result.succeed(a)
 val l: Result[Nothing, Int] = k.flatten
 
 // 'filter' conditionally keeps or discards the value
 val m: Result[NoSuchElementException, Int] = a.filter(_ > 0)
 
-// 'recover' allows handling failures with a partial function
-val n: Result[Exception, Int] = b.recover { case Result.Fail(_: ArithmeticException) => 0 }
+// 'mapFailure' allows mapping failures 
+val n: Result[Int, Int] = b.mapFailure { _ => 0 }
 
-// 'recoverWith' allows handling failures with a partial function returning a 'Result'
-val o: Result[Exception, Int] = b.recoverWith { case Result.Fail(_: ArithmeticException) => Result.success(0) }
+// 'flatMapFailure' allows handling failures with a function returning a 'Result'
+val o: Result[Nothing, Int] = b.flatMapFailure { case _ => Result.succeed(0) }
 
 // 'toEither' converts a 'Result' to an 'Either'
 val p: Either[Throwable, Int] = a.toEither
@@ -2911,8 +2949,8 @@ Since `Result.Success` is unboxed, we recommend using t-string interpolation whe
 ```scala
 import kyo.*
 
-val success: Result[String, Result[String, Int]] = Result.success(Result.success(42))
-val failure: Result[String, Result[String, Int]] = Result.success(Result.fail("failure!"))
+val success: Result[String, Result[String, Int]] = Result.succeed(Result.succeed(42))
+val failure: Result[String, Result[String, Int]] = Result.succeed(Result.fail("failure!"))
 
 println(s"s-string nested results: $success, $failure")
 // Output: s-string nested results: 42, Fail(failure!)
@@ -3407,21 +3445,23 @@ object HelloService:
 
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable]) =
-            Kyo.suspendAttempt { // Adds IO & Abort[Throwable] effect
+            Kyo.suspendAttempt { // Introduces IO & Abort[Throwable] effect
                 println(s"Hello $saluee!")
             }
     end Live
 end HelloService
 
-val keepTicking: Nothing < (Async & Abort[IOException]) =
-    (Console.print(".") *> Kyo.sleep(1.second)).forever
+val keepTicking: Nothing < (Async & Emit[String]) =
+    (Kyo.emit(".") *> Kyo.sleep(1.second)).forever
 
 val effect: Unit < (Async & Resource & Abort[Throwable] & Env[HelloService]) =
     for
-        nameService <- Kyo.service[HelloService]      // Adds Env[NameService] effect
-        _           <- keepTicking.forkScoped         // Adds Async, Abort[IOException], and Resource effects
+        nameService <- Kyo.service[HelloService]      // Introduces Env[NameService]
+        _           <- keepTicking                    // Introduces Async and Emit[String]
+            .foreachEmit(Console.print)               // Handles Emit[String] and introduces Abort[IOException]
+            .forkScoped                               // Introduces Resource
         saluee      <- Console.readln
-        _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
+        _           <- Kyo.sleep(2.seconds)
         _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
     yield ()
     end for
@@ -3437,7 +3477,7 @@ IO.Unsafe.run {                        // Handles IO
                     .catching((thr: Throwable) =>             // Handles Abort[Throwable]
                         Kyo.debug(s"Failed printing to console: ${throwable}")
                     )
-                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but adds Memo effect
+                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but introduces Memo effect
         }
     }
 }
@@ -3464,7 +3504,7 @@ val choiceEffect: Int < Choice = maybeEffect.absentToEmpty
 val newAbortEffect: Int < (Choice & Abort[Throwable]) = choiceEffect.emptyToThrowable
 ```
 
-To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic` and `unpanic` respectively:
+To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic`/`orThrow` and `unpanic` respectively:
 
 ```scala
 import kyo.*
@@ -3472,8 +3512,11 @@ import java.io.IOException
 
 val abortEffect: Int < Abort[String | Throwable] = 1
 
-// unsafeEffect will panic with a `PanicException(err)`
-val unsafeEffect: Int < Any = abortEffect.orPanic
+// Will panic with a `PanicException(err)` rather than fail
+val panicEffect: Int < Abort[Nothing] = abortEffect.orPanic
+
+// Will throw `PanicException(err)` when evaluated
+val unsafeEffect: Int < Any = abortEffect.orThrow
 
 // Catch any suspended throws
 val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
@@ -3481,6 +3524,8 @@ val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
 // Use orPanic after forAbort[E] to swallow only errors of type E
 val unsafeForThrowables: Int < Abort[String] = abortEffect.forAbort[Throwable].orPanic
 ```
+
+In general `orPanic` should be preferred over `orThrow`, especially when used in conjunction with `IO` or `Async`, both of which include `Abort[Nothing]`. This will avoid unnecessary catching/re-throwing.
 
 Other error-handling methods are as follows:
 
@@ -3494,17 +3539,27 @@ trait C
 val effect: Int < Abort[A | B | C] = 1
 
 val handled: Result[A | B | C, Int] < Any = effect.result
+val handledWithoutPanic: Result.Partial[A | B | C, Int] < Abort[Nothing] = effect.partialResult
+val unsafeHandled: Result.Partial[A | B | C, Int] < Any = effect.partialResultOrThrow
+val folded: String < Any = effect.foldAbort(_.toString, _.toString, _.toString)
+val foldedWithoutPanic: String < Abort[Nothing] = effect.foldAbort(_.toString, _.toString)
+val unsafeFolded: String < Any = effect.foldAbortOrThrow(_.toString, _.toString)
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
+val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
 
-// Manipulate single types from within the union
+// Select error types within the Abort union for handling
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
+val handledWithoutPanicA: Result.Partial[A, Int] < Abort[B | C] = effect.forAbort[A].partialResult
+val foldedA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString, _.toString)
+val foldedWithoutPanicA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString)
 val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
 val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
+val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap
 val aToAbsent: Int < Abort[Absent | B | C] = effect.forAbort[A].toAbsent
 val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toEmpty
-val aToThrowable: Int < (Abort[Throwable | B | C]) = effect.forAbort[A].toThrowable
+val aToThrowable: Int < Abort[Throwable | B | C] = effect.forAbort[A].toThrowable
 ```
 
 
@@ -3522,4 +3577,3 @@ License
 -------
 
 See the [LICENSE](https://github.com/getkyo/kyo/blob/master/LICENSE.txt) file for details.
- 

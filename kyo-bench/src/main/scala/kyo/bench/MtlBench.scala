@@ -6,7 +6,7 @@ case class EnvValue(config: String)
 case class Event(name: String)
 case class State(value: Int)
 
-class MtlBench extends Bench(()):
+class MtlBench extends BaseBench:
 
     val loops = (1 to 1000).toList
 
@@ -17,7 +17,7 @@ class MtlBench extends Bench(()):
             Kyo.foreachDiscard(loops)(_ =>
                 for
                     conf <- Env.use[EnvValue](_.config)
-                    _    <- Emit(Event(s"Env = $conf"))
+                    _    <- Emit.value(Event(s"Env = $conf"))
                     _    <- Var.update((state: State) => state.copy(value = state.value + 1))
                 yield ()
             )

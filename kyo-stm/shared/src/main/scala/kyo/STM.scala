@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.Result.Fail
+import kyo.Result.Failure
 import scala.annotation.tailrec
 
 /** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
@@ -16,7 +16,7 @@ class FailedTransaction()(using Frame) extends KyoException
   * references are safe and encouraged, while external side effects should be performed after the transaction commits.
   *
   * The core operations are:
-  *   - TRef.init and TRef.initNow create transactional references that can be shared between threads
+  *   - TRef.init creates transactional references that can be shared between threads
   *   - TRef.get and TRef.set read and modify references within transactions
   *   - STM.run executes transactions that either fully commit or rollback
   *   - STM.retry and STM.retryIf provide manual control over transaction retry behavior
@@ -102,7 +102,7 @@ object STM:
       *   The result of the computation if successful
       */
     def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(using Frame): A < (Async & Abort[E | FailedTransaction]) =
-        TID.use {
+        TID.useIO {
             case -1L =>
                 // New transaction without a parent, use regular commit flow
                 Retry[FailedTransaction](retrySchedule) {
