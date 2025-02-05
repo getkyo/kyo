@@ -2,9 +2,9 @@ package kyo
 
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.OutputStream
 import java.io.PrintStream
 import java.io.StringWriter
-import java.io.OutputStream
 
 class ConsoleTest extends Test:
 
@@ -42,8 +42,7 @@ class ConsoleTest extends Test:
 
     "checkErrors on out channel" in {
         val buffer = new PrintStream(new OutputStream:
-            override def write(b: Int): Unit = throw IOException()
-        )
+            override def write(b: Int): Unit = throw IOException())
         scala.Console.withOut(buffer) {
             import AllowUnsafe.embrace.danger
             val (r1, r2) =
@@ -60,8 +59,7 @@ class ConsoleTest extends Test:
 
     "checkErrors on err channel" in {
         val buffer = new PrintStream(new OutputStream:
-            override def write(b: Int): Unit = throw IOException()
-        )
+            override def write(b: Int): Unit = throw IOException())
         scala.Console.withErr(buffer) {
             import AllowUnsafe.embrace.danger
             val (r1, r2) =
