@@ -1,5 +1,11 @@
 package kyo
 
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.PrintStream
+import java.io.StringWriter
+import java.io.OutputStream
+
 class ConsoleTest extends Test:
 
     case class Obj(a: String)
@@ -33,6 +39,51 @@ class ConsoleTest extends Test:
             assert(out.stdErr == "print\n")
         }
     }
+
+    "checkErrors on out channel" in {
+        val buffer = new PrintStream(new OutputStream:
+            override def write(b: Int): Unit = throw IOException()
+        )
+        scala.Console.withOut(buffer) {
+            import AllowUnsafe.embrace.danger
+            val (r1, r2) =
+                IO.Unsafe.evalOrThrow {
+                    for
+                        r1 <- Abort.run(Console.print("test"))
+                        r2 <- Abort.run(Console.checkErrors)
+                    yield (r1, r2)
+                }
+            assert(r1.isSuccess && r2.isSuccess)
+            assert(r2.get)
+        }
+    }
+
+    "checkErrors on err channel" in {
+        val buffer = new PrintStream(new OutputStream:
+            override def write(b: Int): Unit = throw IOException()
+        )
+        scala.Console.withErr(buffer) {
+            import AllowUnsafe.embrace.danger
+            val (r1, r2) =
+                IO.Unsafe.evalOrThrow {
+                    for
+                        r1 <- Abort.run(Console.printErr("test"))
+                        r2 <- Abort.run(Console.checkErrors)
+                    yield (r1, r2)
+                }
+            assert(r1.isSuccess && r2.isSuccess)
+            assert(r2.get)
+        }
+    }
+
+    // "myTest" in {
+    //     val buffer = new PrintStream(new ByteArrayOutputStream())
+    //     buffer.close()
+    //     scala.Console.withOut(buffer) {
+    //         scala.Console.print("test")
+    //         assert(scala.Console.out.checkError())
+    //     }
+    // }
 
     "live" in {
         val output = new StringBuilder
@@ -92,6 +143,11 @@ class ConsoleTest extends Test:
             assert(testUnsafe.printlnErrs.head == "test error line")
         }
 
+        "should check errors correctly" in {
+            val testUnsafe = new TestUnsafeConsole(error = true)
+            assert(testUnsafe.checkErrors)
+        }
+
         "should convert to safe Console" in {
             val testUnsafe  = new TestUnsafeConsole()
             val safeConsole = testUnsafe.safe
@@ -99,7 +155,7 @@ class ConsoleTest extends Test:
         }
     }
 
-    class TestUnsafeConsole(input: String = "") extends Console.Unsafe:
+    class TestUnsafeConsole(input: String = "", error: Boolean = false) extends Console.Unsafe:
         var readlnInput = input
         var prints      = List.empty[String]
         var printErrs   = List.empty[String]
@@ -110,17 +166,18 @@ class ConsoleTest extends Test:
             Result.success(readlnInput)
         def print(s: String)(using AllowUnsafe) =
             prints = s :: prints
-            Result.unit
+            ()
         def printErr(s: String)(using AllowUnsafe) =
             printErrs = s :: printErrs
-            Result.unit
+            ()
         def printLine(s: String)(using AllowUnsafe) =
             printlns = s :: printlns
-            Result.unit
+            ()
         def printLineErr(s: String)(using AllowUnsafe) =
             printlnErrs = s :: printlnErrs
-            Result.unit
-        def flush()(using AllowUnsafe) = Result.unit
+            ()
+        def checkErrors(using AllowUnsafe): Boolean = error
+        def flush()(using AllowUnsafe)              = ()
     end TestUnsafeConsole
 
 end ConsoleTest
