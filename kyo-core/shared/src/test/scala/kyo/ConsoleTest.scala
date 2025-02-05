@@ -54,7 +54,7 @@ class ConsoleTest extends Test:
                     yield (r1, r2)
                 }
             assert(r1.isSuccess && r2.isSuccess)
-            assert(r2.get)
+            assert(r2.getOrThrow)
         }
     }
 
@@ -72,18 +72,9 @@ class ConsoleTest extends Test:
                     yield (r1, r2)
                 }
             assert(r1.isSuccess && r2.isSuccess)
-            assert(r2.get)
+            assert(r2.getOrThrow)
         }
     }
-
-    // "myTest" in {
-    //     val buffer = new PrintStream(new ByteArrayOutputStream())
-    //     buffer.close()
-    //     scala.Console.withOut(buffer) {
-    //         scala.Console.print("test")
-    //         assert(scala.Console.out.checkError())
-    //     }
-    // }
 
     "live" in {
         val output = new StringBuilder

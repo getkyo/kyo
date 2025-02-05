@@ -161,10 +161,18 @@ object Console:
             val stdErr = new StringBuffer
             val proxy =
                 new Proxy(console.unsafe):
-                    override def print(s: String)(using AllowUnsafe)        = Result.succeed(stdOut.append(s)).unit
-                    override def printErr(s: String)(using AllowUnsafe)     = Result.succeed(stdErr.append(s)).unit
-                    override def printLine(s: String)(using AllowUnsafe)    = Result.succeed(stdOut.append(s + "\n")).unit
-                    override def printLineErr(s: String)(using AllowUnsafe) = Result.succeed(stdErr.append(s + "\n")).unit
+                    override def print(s: String)(using AllowUnsafe)        = 
+                      stdOut.append(s)
+                      ()
+                    override def printErr(s: String)(using AllowUnsafe)     = 
+                      stdErr.append(s)
+                      ()
+                    override def printLine(s: String)(using AllowUnsafe)    = 
+                      stdOut.append(s + "\n")
+                      ()
+                    override def printLineErr(s: String)(using AllowUnsafe) = 
+                      stdErr.append(s + "\n")
+                      ()
             let(Console(proxy))(v)
                 .map(r => IO((Out(stdOut.toString(), stdErr.toString()), r)))
         }
@@ -189,39 +197,39 @@ object Console:
       * @param v
       *   The value to print.
       */
-    def print[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        IO.Unsafe.withLocal(local)(console => Abort.get(console.unsafe.print(toString(v))))
+    def print[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.print(toString(v)))
 
     /** Prints a value to the console's error stream without a newline.
       *
       * @param v
       *   The value to print to the error stream.
       */
-    def printErr[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        IO.Unsafe.withLocal(local)(console => Abort.get(console.unsafe.printErr(toString(v))))
+    def printErr[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.printErr(toString(v)))
 
     /** Prints a value to the console followed by a newline.
       *
       * @param v
       *   The value to print.
       */
-    def printLine[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        IO.Unsafe.withLocal(local)(console => Abort.get(console.unsafe.printLine(toString(v))))
+    def printLine[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.printLine(toString(v)))
 
     /** Prints a value to the console's error stream followed by a newline.
       *
       * @param v
       *   The value to print to the error stream.
       */
-    def printLineErr[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        IO.Unsafe.withLocal(local)(console => Abort.get(console.unsafe.printLineErr(toString(v))))
+    def printLineErr[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.printLineErr(toString(v)))
 
     /** Checks if an error occurred in the console output or error streams.
       *
       * @return
       *   True if an error occurred, false otherwise.
       */
-    def checkErrors(using Frame): Boolean < IO = local.use(_.checkErrors)
+    def checkErrors(using Frame): Boolean < IO = IO.Unsafe.withLocal(local)(console => console.unsafe.checkErrors)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
