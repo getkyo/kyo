@@ -46,7 +46,7 @@ final class StreamSubscriberTest extends Test:
             subscriber <- StreamSubscriber[Int](BufferSize, EmitStrategy.Eager)
             subStream  <- subscriber.stream
             _ = publisher.subscribe(subscriber)
-            results <- subStream.take(StreamLength).runFold(0)(_ + _)
+            results <- subStream.take(StreamLength).fold(0)(_ + _)
         yield assert(results == (StreamLength >> 1) * (StreamLength + 1))
         end for
     }
@@ -57,7 +57,7 @@ final class StreamSubscriberTest extends Test:
             subscriber <- StreamSubscriber[Int](BufferSize, EmitStrategy.Buffer)
             subStream  <- subscriber.stream
             _ = publisher.subscribe(subscriber)
-            results <- subStream.take(StreamLength).runFold(0)(_ + _)
+            results <- subStream.take(StreamLength).fold(0)(_ + _)
         yield assert(results == (StreamLength >> 1) * (StreamLength + 1))
         end for
     }
@@ -72,8 +72,8 @@ final class StreamSubscriberTest extends Test:
             _ = publisher.subscribe(subscriber1)
             _ = publisher.subscribe(subscriber2)
             results <- Async.parallelUnbounded(List(
-                subStream1.take(StreamLength >> 1).runFold(0)(_ + _),
-                subStream2.take(StreamLength >> 1).runFold(0)(_ + _)
+                subStream1.take(StreamLength >> 1).fold(0)(_ + _),
+                subStream2.take(StreamLength >> 1).fold(0)(_ + _)
             ))
         yield
             assert(results.size == 2)

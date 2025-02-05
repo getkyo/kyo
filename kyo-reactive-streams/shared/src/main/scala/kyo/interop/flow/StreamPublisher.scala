@@ -51,7 +51,7 @@ object StreamPublisher:
             supervisor: Fiber.Promise[Nothing, Unit]
         ): Unit < (Async & Ctx) =
             Abort.recover[Closed](_ => supervisor.interrupt.unit)(
-                channel.stream().runForeach: subscriber =>
+                channel.stream().foreach: subscriber =>
                     for
                         subscription <- publisher.getSubscription(subscriber)
                         fiber        <- subscription.subscribe.andThen(subscription.consume)
