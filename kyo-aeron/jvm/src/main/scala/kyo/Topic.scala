@@ -144,7 +144,7 @@ object Topic:
 
                 // ensure publication is closed after use
                 IO.ensure(IO(publication.close())) {
-                    stream.runForeachChunk { messages =>
+                    stream.foreachChunk { messages =>
                         Retry[Backpressured](retrySchedule) {
                             IO {
                                 if !publication.isConnected() then backpressured

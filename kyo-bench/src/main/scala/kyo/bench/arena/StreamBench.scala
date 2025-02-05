@@ -20,7 +20,7 @@ class StreamBench extends ArenaBench.SyncAndFork(25000000):
         Stream.init(seq)
             .filter(_ % 2 == 0)
             .map(_ + 1)
-            .runFold(0)(_ + _)
+            .fold(0)(_ + _)
     end kyoBench
 
     def zioBench() =
