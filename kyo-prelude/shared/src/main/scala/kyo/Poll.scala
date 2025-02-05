@@ -45,12 +45,12 @@ object Poll:
           * @return
           *   A computation that processes values until completion or limit reached
           */
-        def apply[S](n: Int)(f: V => Unit < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
+        def apply[S](n: Int)(f: V => Any < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
             Loop.indexed { idx =>
                 if idx == n then Loop.done
                 else
                     Poll.andMap[V] {
-                        case Present(v) => f(v).map(Loop.continue)
+                        case Present(v) => f(v).map(_ => Loop.continue(()))
                         case Absent     => Loop.done
                     }
             }
@@ -62,10 +62,10 @@ object Poll:
           * @return
           *   A computation that processes values until completion
           */
-        def apply[S](f: V => Unit < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
+        def apply[S](f: V => Any < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
             Loop(()) { _ =>
                 Poll.andMap[V] {
-                    case Present(v) => f(v).map(Loop.continue)
+                    case Present(v) => f(v).map(_ => Loop.continue(()))
                     case Absent     => Loop.done
                 }
             }

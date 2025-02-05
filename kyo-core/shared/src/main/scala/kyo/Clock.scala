@@ -320,7 +320,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delay: Duration)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatWithDelay[E, S](delay: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
         repeatWithDelay(Duration.Zero, delay)(f)
 
     /** Repeatedly executes a task with a fixed delay between completions, starting after an initial delay.
@@ -338,9 +338,9 @@ object Clock:
         startAfter: Duration,
         delay: Duration
     )(
-        f: => Unit < (Async & Abort[E])
+        f: => Any < (Async & Abort[E])
     )(using Frame): Fiber[E, Unit] < IO =
-        repeatWithDelay(startAfter, delay, ())(_ => f)
+        repeatWithDelay(startAfter, delay, ())(_ => f.unit)
 
     /** Repeatedly executes a task with a fixed delay between completions, maintaining state between executions.
       *
@@ -375,8 +375,8 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
-        repeatWithDelay(delaySchedule, ())(_ => f)
+    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+        repeatWithDelay(delaySchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with delays determined by a custom schedule, maintaining state between executions.
       *
@@ -422,7 +422,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](interval: Duration)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatAtInterval[E, S](interval: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
         repeatAtInterval(Duration.Zero, interval)(f)
 
     /** Repeatedly executes a task at fixed time intervals, starting after an initial delay.
@@ -440,9 +440,9 @@ object Clock:
         startAfter: Duration,
         interval: Duration
     )(
-        f: => Unit < (Async & Abort[E])
+        f: => Any < (Async & Abort[E])
     )(using Frame): Fiber[E, Unit] < IO =
-        repeatAtInterval(startAfter, interval, ())(_ => f)
+        repeatAtInterval(startAfter, interval, ())(_ => f.unit)
 
     /** Repeatedly executes a task at fixed time intervals, maintaining state between executions.
       *
@@ -477,8 +477,8 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
-        repeatAtInterval(intervalSchedule, ())(_ => f)
+    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+        repeatAtInterval(intervalSchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule, maintaining state between executions.
       *

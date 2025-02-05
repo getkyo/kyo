@@ -134,9 +134,9 @@ object Fiber extends FiberPlatformSpecific:
           * @param f
           *   The callback function
           */
-        def onComplete[E2 >: E, A2 >: A](f: Result[E2, A2] => Unit < IO)(using Frame): Unit < IO =
+        def onComplete[E2 >: E, A2 >: A](f: Result[E2, A2] => Any < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onComplete(r => IO.Unsafe.evalOrThrow(f(r))))
+            IO(self.onComplete(r => IO.Unsafe.evalOrThrow(f(r).unit)))
 
         /** Registers a callback to be called when the Fiber is interrupted.
           *
@@ -148,9 +148,9 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A unit value wrapped in IO, representing the registration of the callback
           */
-        def onInterrupt(f: Result.Error[E] => Unit < IO)(using Frame): Unit < IO =
+        def onInterrupt(f: Result.Error[E] => Any < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onInterrupt(r => IO.Unsafe.evalOrThrow(f(r))))
+            IO(self.onInterrupt(r => IO.Unsafe.evalOrThrow(f(r).unit)))
 
         /** Blocks until the Fiber completes or the timeout is reached.
           *

@@ -121,7 +121,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
         becomeLoop(other.compress())
     end become
 
-    inline def onComplete(inline f: Result[E, A] => Unit): Unit =
+    inline def onComplete(inline f: Result[E, A] => Any): Unit =
         @tailrec def onCompleteLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -130,11 +130,11 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                 case l: Linked[E, A] @unchecked =>
                     onCompleteLoop(l.p)
                 case v =>
-                    IOPromise.eval(f(v.asInstanceOf[Result[E, A]]))
+                    IOPromise.eval(discard(f(v.asInstanceOf[Result[E, A]])))
         onCompleteLoop(this)
     end onComplete
 
-    inline def onInterrupt(inline f: Error[E] => Unit): Unit =
+    inline def onInterrupt(inline f: Error[E] => Any): Unit =
         @tailrec def onInterruptLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -241,14 +241,14 @@ private[kyo] object IOPromise:
         def run[E2 >: E, A2 >: A](v: Result[E2, A2]): Pending[E2, A2]
 
         @nowarn("msg=anonymous")
-        inline def onComplete(inline f: Result[E, A] => Unit): Pending[E, A] =
+        inline def onComplete(inline f: Result[E, A] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def waiters: Int = self.waiters + 1
                 def interrupt[E2 >: E](error: Error[E2]) =
-                    eval(f(error.asInstanceOf[Error[E]]))
+                    eval(discard(f(error.asInstanceOf[Error[E]])))
                     self
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
-                    eval(f(v.asInstanceOf[Result[E, A]]))
+                    eval(discard(f(v.asInstanceOf[Result[E, A]])))
                     self
                 end run
 
@@ -262,10 +262,10 @@ private[kyo] object IOPromise:
                     self
 
         @nowarn("msg=anonymous")
-        inline def onInterrupt(inline f: Error[E] => Unit): Pending[E, A] =
+        inline def onInterrupt(inline f: Error[E] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt[E2 >: E](error: Error[E2]) =
-                    eval(f(error.asInstanceOf[Error[E]]))
+                    eval(discard(f(error.asInstanceOf[Error[E]])))
                     self
                 def waiters: Int = self.waiters + 1
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =

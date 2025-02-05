@@ -61,8 +61,8 @@ object IO:
       * @return
       *   The result of the main computation, with the finalizer guaranteed to run.
       */
-    def ensure[A, S](f: => Unit < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
-        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f))(v))
+    def ensure[A, S](f: => Any < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
+        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f.unit))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

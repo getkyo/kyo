@@ -26,9 +26,9 @@ object Resource:
       * @return
       *   A unit value wrapped in Resource and IO effects.
       */
-    def ensure(v: => Unit < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
+    def ensure(v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
         ContextEffect.suspendWith(Tag[Resource]) { finalizer =>
-            Abort.run(finalizer.queue.offer(IO(v))).map {
+            Abort.run(finalizer.queue.offer(IO(v.unit))).map {
                 case Result.Success(_) => ()
                 case _ =>
                     throw new Closed(
@@ -51,7 +51,7 @@ object Resource:
       * @return
       *   The acquired resource wrapped in Resource, IO, and S effects.
       */
-    def acquireRelease[A, S](acquire: A < S)(release: A => Unit < (Async & Abort[Throwable]))(using Frame): A < (Resource & IO & S) =
+    def acquireRelease[A, S](acquire: A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Resource & IO & S) =
         acquire.map { resource =>
             ensure(release(resource)).andThen(resource)
         }

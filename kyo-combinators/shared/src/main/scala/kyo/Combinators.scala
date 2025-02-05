@@ -265,7 +265,7 @@ extension [A, S](effect: A < S)
       * @return
       *   An effect that executes the finalizer after this effect
       */
-    def ensuring(finalizer: => Unit < Async)(using Frame): A < (S & Resource & IO) =
+    def ensuring(finalizer: => Any < Async)(using Frame): A < (S & Resource & IO) =
         Resource.ensure(finalizer).andThen(effect)
 
 end extension

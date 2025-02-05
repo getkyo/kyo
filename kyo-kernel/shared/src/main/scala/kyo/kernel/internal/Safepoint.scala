@@ -146,11 +146,12 @@ object Safepoint:
     end ensuring
 
     @nowarn("msg=anonymous")
-    private[kyo] inline def ensure[A, S](inline f: => Unit)(inline v: => A < S)(using safepoint: Safepoint, inline _frame: Frame): A < S =
+    private[kyo] inline def ensure[A, S](inline f: => Any)(inline v: => A < S)(using safepoint: Safepoint, inline _frame: Frame): A < S =
         // ensures the function is called once even if an
         // interceptor executes it multiple times
         val ensure = new Ensure:
-            def run: Unit = f
+            def run: Unit =
+                val _ = f
 
         def ensureLoop(v: A < S)(using safepoint: Safepoint): A < S =
             v match
