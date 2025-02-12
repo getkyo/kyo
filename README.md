@@ -827,6 +827,7 @@ val a: Int < IO =
 val b: Int < IO =
     myLocal.let(42)(a.map(_ + 1))
 ```
+I find it confusing that `myLocal` uses 42 and `let` uses 42. I don't know which one has priority in this example.
 
 > Note: Kyo's effects are designed so locals are properly propagated. For example, they're automatically inherited by forked computations in `Async`.
 
