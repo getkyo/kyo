@@ -275,7 +275,7 @@ Here, `example1` is designed to accept an `Int < (Options & Abort[Exception])`. 
 
 Effects follow a naming convention for common operations:
 
-- `init*`: Initializes an instance of the container type handled by the effect. For instance, `Async.run` returns a new `Fiber`.
+- `init*`: Initializes an instance of the container type handled by the effect. For instance, `Async.run` It is confusing the example is using `run` and not `init` returns a new `Fiber`.
 - `get*`: Allows the "extraction" of the value of the container type. `Async.get` returns a `T < Async` for a `Fiber[T]`.
 - `run*`: Handles the effect.
 
