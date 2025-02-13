@@ -528,7 +528,7 @@ Console.printLine(t"Kyo effect: $a, Kyo maybe: ${Maybe(23)}")
 // Output: Kyo effect: Kyo(23), Kyo maybe: Present(23)
 ```
 
-We recommend using `txt` as the default string interpolator in Kyo applications for the best developer experience.
+We recommend using `t` string interpolator by default in Kyo applications for the best developer experience.
 
 ## Core Effects
 
