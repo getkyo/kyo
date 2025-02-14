@@ -19,7 +19,7 @@ final class Arena extends AutoCloseable {
     */
   def allocate(byteSize: Long): MemorySegment = {
     val p = malloc(byteSize.toULong).asInstanceOf[Ptr[Byte]]
-    if (p == null) throw new OutOfMemoryError("malloc failed")
+    if (p == null) throw new RuntimeException("malloc failed: insufficient memory")
     allocations.add(p)
     new MemorySegment(p, byteSize)
   }
