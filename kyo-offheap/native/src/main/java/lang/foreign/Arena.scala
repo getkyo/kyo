@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
   * automatically deallocated when the scope ends.
   */
 final class Arena extends AutoCloseable {
-  private val allocations = new ConcurrentLinkedQueue[MemorySegment]()
+  private val allocations = new ConcurrentLinkedQueue[Ptr[Byte]]()
 
   /** Allocates a block of off-heap memory of the given size (in bytes).
     *
@@ -20,16 +20,18 @@ final class Arena extends AutoCloseable {
   def allocate(byteSize: Long): MemorySegment = {
     val p = malloc(byteSize.toULong).asInstanceOf[Ptr[Byte]]
     if (p == null) throw new OutOfMemoryError("malloc failed")
-    val segment = new MemorySegment(p, byteSize)
-    allocations.add(segment)
-    segment
+    allocations.add(p)
+    new MemorySegment(p, byteSize)
   }
 
   /** Frees all memory that was allocated through this Arena.
     */
   override def close(): Unit = {
-    allocations.forEach(seg => free(seg.ptr))
-    allocations.clear()
+    var ptr = allocations.poll()
+    while (ptr != null) {
+      free(ptr)
+      ptr = allocations.poll()
+    }
   }
 }
 
