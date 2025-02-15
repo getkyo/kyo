@@ -1,7 +1,7 @@
 package java.lang.foreign
 
 import scala.scalanative.unsafe._
-import scala.scalanative.libc.stdlib.{malloc, free}
+import scala.scalanative.libc.stdlib.free
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /** A minimal stub for Java's Arena using Scala Native.
@@ -18,10 +18,9 @@ final class Arena extends AutoCloseable {
     * @return A MemorySegment representing the allocated block.
     */
   def allocate(byteSize: Long): MemorySegment = {
-    val p = malloc(byteSize.toULong).asInstanceOf[Ptr[Byte]]
-    if (p == null) throw new RuntimeException("malloc failed: insufficient memory")
-    allocations.add(p)
-    new MemorySegment(p, byteSize)
+    val segment = MemorySegment.allocate(byteSize)
+    allocations.add(segment.ptr)
+    segment
   }
 
   /** Frees all memory that was allocated through this Arena.
