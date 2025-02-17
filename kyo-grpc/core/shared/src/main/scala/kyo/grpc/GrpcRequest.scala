@@ -25,7 +25,7 @@ object GrpcRequest:
                 val p = new IOPromise[Errors, Response]()
                 f.onComplete {
                     case Success(v) =>
-                        p.complete(Result.success(v))
+                        p.complete(Result.succeed(v))
                     case Failure(ex: Errors) =>
                         p.complete(Result.fail(ex))
                     case Failure(ex) =>
@@ -41,12 +41,9 @@ object GrpcRequest:
         Abort.run[StatusRuntimeException](Abort.run[StatusException](request)).map(_.flatten)
 
     def mergeErrors[Request: Flat, S](request: Request < (GrpcRequest & S))(using Frame): Request < (Async & Abort[StatusException] & S) =
-        // TODO: This ought to be easier.
-        Abort.run[StatusRuntimeException](request).map(_.fold[Request < Abort[StatusException]]({
-            // TODO: Why the partial match here?
-            case Result.Fail(ex: StatusRuntimeException) =>
-                Abort.fail(StatusException(ex.getStatus, ex.getTrailers).tap(_.setStackTrace(ex.getStackTrace)))
-            case Panic(ex) => Abort.panic(ex)
+        // TODO: This ought to be easier (still).
+        Abort.run[StatusRuntimeException](request).map(_.foldFailureOrThrow[Request < Abort[StatusException]]({ ex =>
+            Abort.fail(StatusException(ex.getStatus, ex.getTrailers).tap(_.setStackTrace(ex.getStackTrace)))
         })(identity))
 
 end GrpcRequest

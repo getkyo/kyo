@@ -5,18 +5,16 @@ import io.grpc.StatusException
 import io.grpc.stub.ServerCallStreamObserver
 import io.grpc.stub.StreamObserver
 import kyo.*
-import kyo.Emit.Ack
-import kyo.Emit.Ack.*
 import kyo.Result.*
 import kyo.scheduler.top.Status
 import scala.language.future
 
-class BidiRequestStreamObserver[Request: Tag, Response: Flat: Tag] private (
+class BidiRequestStreamObserver[Request: Tag, Response: { Flat, Tag }] private (
     f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
     requestChannel: Channel[Result[GrpcRequest.Errors, Request]],
     requestsCompleted: AtomicBoolean,
     responseObserver: ServerCallStreamObserver[Response]
-)(using Frame) extends StreamObserver[Request]:
+)(using Frame, AllowUnsafe) extends StreamObserver[Request]:
 
     private val responses = Stream.embed(f(StreamChannel.stream(requestChannel, requestsCompleted)))
 
@@ -28,23 +26,23 @@ class BidiRequestStreamObserver[Request: Tag, Response: Flat: Tag] private (
 
     override def onNext(request: Request): Unit =
         // TODO: Do a better job of backpressuring here.
-        IO.run(Async.run(requestChannel.put(Success(request)))).unit.eval
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Success(request))).getOrThrow
 
     override def onError(t: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
-        IO.run(Async.run(requestChannel.put(Fail(StreamNotifier.throwableToStatusException(t))))).unit.eval
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Failure(StreamNotifier.throwableToStatusException(t)))).getOrThrow
 
     override def onCompleted(): Unit =
-        IO.run(requestsCompleted.set(true)).unit.eval
+        Abort.run(IO.Unsafe.run(requestsCompleted.set(true))).eval.getOrThrow
 
 end BidiRequestStreamObserver
 
 object BidiRequestStreamObserver:
 
-    def init[Request: Tag, Response: Flat: Tag](
+    def init[Request: Tag, Response: { Flat, Tag }](
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
-    )(using Frame): BidiRequestStreamObserver[Request, Response] < IO =
+    )(using Frame, AllowUnsafe): BidiRequestStreamObserver[Request, Response] < IO =
         for
             requestChannel    <- StreamChannel.init[Request, GrpcRequest.Errors]
             requestsCompleted <- AtomicBoolean.init(false)

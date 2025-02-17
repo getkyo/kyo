@@ -26,8 +26,12 @@ private[grpc] object StreamNotifier:
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
     )(using Frame): Unit < (IO & S) =
-        def foo(a: A): Unit < IO =
-            Console.println(s"StreamNotifier.notifyObserver: a = $a").map(_ => IO(observer.onNext(a)))
+        // TODO: Rename
+        def foo(a: A) =
+            // TODO: Remove this
+            println(s"StreamNotifier.notifyObserver: a = $a")
+            IO(observer.onNext(a))
+        end foo
         Abort.run[E](values.runForeach(foo)).map(notifyCompleteOrError(_, observer))
     end notifyObserver
 
@@ -35,6 +39,7 @@ private[grpc] object StreamNotifier:
         complete: Result[E, Unit],
         requestObserver: StreamObserver[?]
     )(using Frame): Unit < IO =
+        // TODO: Remove this
         println(s"StreamNotifier.notifyCompleteOrError: complete = $complete")
         complete match
             case Result.Success(_) => IO(requestObserver.onCompleted())
@@ -50,8 +55,8 @@ private[grpc] object StreamNotifier:
         IO {
             // TODO: Why the non-exhaustive match here?
             result match
-                case Result.Fail(s: E) => requestObserver.onError(s)
-                case Result.Panic(t)   => requestObserver.onError(throwableToStatusException(t))
+                case Result.Failure(s: E) => requestObserver.onError(s)
+                case Result.Panic(t)      => requestObserver.onError(throwableToStatusException(t))
         }
 
     // TODO: This doesn't belong here.

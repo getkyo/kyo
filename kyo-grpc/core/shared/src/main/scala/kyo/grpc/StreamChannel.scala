@@ -1,9 +1,7 @@
 package kyo.grpc
 
 import kyo.*
-import kyo.Emit.Ack
-import kyo.Emit.Ack.*
-import kyo.Result.*
+import kyo.kernel.Loop.Outcome
 
 object StreamChannel:
 
@@ -19,39 +17,32 @@ object StreamChannel:
             for
                 ch   <- channel
                 comp <- complete
-            yield emit(ch, comp)
+            yield emitChunks(ch, comp)
         )
 
-    def emit[A: Tag, E](channel: Channel[Result[E, A]], complete: AtomicBoolean)(using Frame): Ack < (Emit[Chunk[A]] & Abort[E] & Async) =
-        Emit.andMap(Chunk.empty)(emitLoop(channel, complete))
-
-    // TODO: Remember to convert Panic to StatusException using StreamNotifier.throwableToStatusException.
-    // TODO: Use Loop here instead?
-    private def emitLoop[A: Tag, E](channel: Channel[Result[E, A]], complete: AtomicBoolean)(ack: Ack)(using
+    // TODO: This was copied from Channel because we don't have a way of closing the Channel without draining.
+    // See https://github.com/getkyo/kyo/issues/721.
+    private def emitChunks[A: Tag, E](channel: Channel[Result[E, A]], complete: AtomicBoolean, maxChunkSize: Int = Int.MaxValue)(
+        using
+        Tag[Emit[Chunk[A]]],
         Frame
-    ): Ack < (Emit[Chunk[A]] & Abort[E] & Async) =
-        ack match
-            case Stop => Stop
-            // TODO: Can we take multiple? https://github.com/getkyo/kyo/issues/678
-            case Continue(n) =>
-                for
-                    isDrained  <- channel.empty
-                    isComplete <- complete.get
-                    ack <-
-                        if isDrained && isComplete then channel.close.map(_ => Kyo.pure[Ack](Stop))
-                        else
-                            // TODO: Unnest this.
-                            for
-                                result <- takeMaybe(channel)
-                                maybeA <- Abort.get(result)
-                            yield maybeA.fold(Kyo.pure[Ack](Stop))(a => Emit.andMap(Chunk(a))(emitLoop(channel, complete)))
-                yield ack
-                end for
-
-    private def takeMaybe[A: Tag, E](channel: Channel[Result[E, A]])(using Frame): Result[E, Maybe[A]] < Async =
-        // TODO: Is there a better way to do this?
-        Abort.run[Closed](channel.take).map { closedResult =>
-            closedResult.fold(_ => Success(Maybe.empty))(_.map(Maybe(_)))
-        }
+    ): Unit < (Emit[Chunk[A]] & Abort[E] & Async) =
+        if maxChunkSize <= 0 then ()
+        else
+            Loop(()): _ =>
+                Abort.recover[Closed](_ => Loop.done[Unit]):
+                    for
+                        head <- channel.take
+                        tail <- channel.drainUpTo(maxChunkSize - 1)
+                        // TODO: There ought to be a better way to do this.
+                        // See https://github.com/getkyo/kyo/issues/721.
+                        empty        <- channel.empty
+                        closeIfEmpty <- complete.get
+                        _            <- if empty && closeIfEmpty then channel.close else Kyo.pure(Maybe.empty)
+                        // TODO: Can we avoid the extra Chunk allocation here?
+                        results = Chunk(head).concat(tail)
+                        // TODO: Should be easier to fold Result[E, A] to A < Abort[E]
+                        chunk <- Kyo.collect(results.map(_.foldFailureOrThrow(Abort.fail)(identity)))
+                    yield Emit.valueWith(chunk)(Loop.continue(()))
 
 end StreamChannel

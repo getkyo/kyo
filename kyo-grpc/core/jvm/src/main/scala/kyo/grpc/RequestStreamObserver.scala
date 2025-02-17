@@ -13,7 +13,7 @@ class RequestStreamObserver[Request: Tag, Response: Flat](
     requestChannel: Channel[Result[GrpcRequest.Errors, Request]],
     requestsCompleted: AtomicBoolean,
     responseObserver: ServerCallStreamObserver[Response]
-)(using Frame) extends StreamObserver[Request]:
+)(using Frame, AllowUnsafe) extends StreamObserver[Request]:
 
     private val response = f(StreamChannel.stream(requestChannel, requestsCompleted))
 
@@ -25,14 +25,14 @@ class RequestStreamObserver[Request: Tag, Response: Flat](
 
     override def onNext(request: Request): Unit =
         // TODO: Do a better job of backpressuring here.
-        IO.run(Async.run(requestChannel.put(Success(request)))).unit.eval
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Success(request))).getOrThrow
 
     override def onError(t: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
-        IO.run(Async.run(requestChannel.put(Fail(StreamNotifier.throwableToStatusException(t))))).unit.eval
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Failure(StreamNotifier.throwableToStatusException(t)))).getOrThrow
 
     override def onCompleted(): Unit =
-        IO.run(requestsCompleted.set(true)).unit.eval
+        Abort.run(IO.Unsafe.run(requestsCompleted.set(true))).eval.getOrThrow
 
 end RequestStreamObserver
 
@@ -41,7 +41,7 @@ object RequestStreamObserver:
     def init[Request: Tag, Response: Flat: Tag](
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
-    )(using Frame): RequestStreamObserver[Request, Response] < IO =
+    )(using Frame, AllowUnsafe): RequestStreamObserver[Request, Response] < IO =
         for
             requestChannel    <- StreamChannel.init[Request, GrpcRequest.Errors]
             requestsCompleted <- AtomicBoolean.init(false)

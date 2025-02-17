@@ -26,9 +26,9 @@ object ClientCall:
         requests: Stream[Request, GrpcRequest]
     )(using Frame): Response < GrpcRequest =
         for
-            promise <- Promise.init[GrpcResponse.Errors, Response]
-            responseObserver = SingleResponseStreamObserver(promise)
-            requestObserver  = ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver)
+            promise          <- Promise.init[GrpcResponse.Errors, Response]
+            responseObserver <- IO.Unsafe(SingleResponseStreamObserver(promise))
+            requestObserver = ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver)
             _        <- StreamNotifier.notifyObserver(requests, requestObserver)
             response <- promise.get
         yield response
@@ -43,7 +43,7 @@ object ClientCall:
             for
                 responseChannel    <- StreamChannel.init[Response, GrpcResponse.Errors]
                 responsesCompleted <- AtomicBoolean.init(false)
-                responseObserver = ResponseStreamObserver(responseChannel, responsesCompleted)
+                responseObserver   <- IO.Unsafe(ResponseStreamObserver(responseChannel, responsesCompleted))
                 // TODO: Do we have to cancel the observer returned here?
                 _ = ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver)
             yield StreamChannel.stream(responseChannel, responsesCompleted)

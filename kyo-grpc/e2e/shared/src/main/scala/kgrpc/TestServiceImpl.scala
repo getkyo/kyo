@@ -4,8 +4,6 @@ import io.grpc.*
 import kgrpc.test.*
 import kgrpc.test.given
 import kyo.*
-import kyo.Emit.Ack
-import kyo.Emit.Ack.*
 import kyo.Result
 import kyo.Result.Panic
 import kyo.grpc.*
@@ -54,30 +52,35 @@ object TestServiceImpl extends TestService:
         Stream(GrpcRequest.mergeErrors(requests.map(oneToOne).emit))
 
     private def stream(responses: Seq[Response < GrpcResponse]): Stream[Response, GrpcResponse] =
-        // Stream(Kyo.collect(responses).map(Emit(_)))
+        // TODO: Tidy up.
+        val a: Chunk[Response] < GrpcResponse                = Kyo.collect(responses)
+        val b: Unit < (Emit[Chunk[Response]] & GrpcResponse) = a.map(c => Emit.value(c))
+        Stream(b)
+//        Stream(Kyo.collect(responses).map: r =>
+//            Emit.valueWith(r))
 
-        // Stream[Response, GrpcResponse](
-        //     Emit.andMap(Chunk.empty[Response]) { ack =>
-        //         Loop(responses, ack) { (responses, ack) =>
-        //             ack match
-        //                 case Stop => Loop.done(Stop)
-        //                 case Continue(n) =>
-        //                     val (init, tail) = responses.splitAt(n)
-        //                     if init.isEmpty then Loop.done(Stop)
-        //                     else Kyo.collect(init).map(Emit.andMap(_)(ack => Loop.continue(tail, ack)))
-        //         }
-        //     }
-        // )
+    // Stream[Response, GrpcResponse](
+    //     Emit.andMap(Chunk.empty[Response]) { ack =>
+    //         Loop(responses, ack) { (responses, ack) =>
+    //             ack match
+    //                 case Stop => Loop.done(Stop)
+    //                 case Continue(n) =>
+    //                     val (init, tail) = responses.splitAt(n)
+    //                     if init.isEmpty then Loop.done(Stop)
+    //                     else Kyo.collect(init).map(Emit.andMap(_)(ack => Loop.continue(tail, ack)))
+    //         }
+    //     }
+    // )
 
-        def emit(remaining: Seq[Response < GrpcResponse])(ack: Ack): Ack < (Emit[Chunk[Response]] & GrpcResponse) =
-            ack match
-                case Stop => Stop
-                case Continue(_) =>
-                    remaining match
-                        case head +: tail => head.map(response => Emit.andMap(Chunk(response))(emit(tail)(_)))
-                        case _            => Stop
-
-        Stream(Emit.andMap(Chunk.empty)(emit(responses)))
+//        def emit(remaining: Seq[Response < GrpcResponse])(ack: Ack): Ack < (Emit[Chunk[Response]] & GrpcResponse) =
+//            ack match
+//                case Stop => Stop
+//                case Continue(_) =>
+//                    remaining match
+//                        case head +: tail => head.map(response => Emit.andMap(Chunk(response))(emit(tail)(_)))
+//                        case _            => Stop
+//
+//        Stream(Emit.andMap(Chunk.empty)(emit(responses)))
     end stream
 
 end TestServiceImpl
