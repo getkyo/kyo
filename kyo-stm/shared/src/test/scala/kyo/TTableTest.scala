@@ -178,12 +178,16 @@ class TTableTest extends Test:
             "should not compile when querying non-indexed fields" in run {
                 for
                     table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
-                yield assertDoesNotCompile("""table.query("name" ~ "Alice")""")
+                yield typeCheckFailure("""table.query("name" ~ "Alice")""")(
+                    "Cannot query on fields that are not indexed."
+                )
             }
 
             "should not compile when querying partially indexed fields" in run {
                 for table <- TTable.Indexed.init["name" ~ String & "age" ~ Int, "age" ~ Int]
-                yield assertDoesNotCompile("""table.query("name" ~ "Alice" & "age" ~ 30)""")
+                yield typeCheckFailure("""table.query("name" ~ "Alice" & "age" ~ 30)""")(
+                    "Cannot query on fields that are not indexed."
+                )
             }
         }
 

@@ -16,8 +16,10 @@ import scala.util.control.NonFatal
   *     - `Failure[E]`: Represents expected errors of type `E`
   *     - `Panic`: Represents unexpected runtime exceptions
   *
+  * For a narrower version of Result that includes only `Success[A]` and `Failure[E]`, see `Result.Partial[E, A]`.
+  *
   * Result provides several groups of operations:
-  *   - Fold operations (`foldError`, `foldFailureOrThrow`, `foldAll`) for matching on the different states
+  *   - Fold operations (`fold`, `foldError`, `foldOrThrow`) for matching on the different states
   *   - Map operations (`map`, `mapError`, `mapFailure`, `mapPanic`) for transforming specific states
   *   - FlatMap operations (`flatMap`, `flatMapError`, `flatMapFailure`, `flatMapPanic`) for sequencing computations and handling errors
   *   - Query operations (`isSuccess`, `isError`, `isFailure`, `isPanic`, `contains`, `exists`, `forall`)
@@ -42,7 +44,7 @@ import scala.util.control.NonFatal
   * @tparam A
   *   The type of the successful value
   */
-opaque type Result[+E, +A] >: (Success[A] | Error[E]) = Success[A] | Error[E]
+opaque type Result[+E, +A] >: Success[A] | Error[E] = Success[A] | Error[E]
 
 object Result:
 
@@ -186,7 +188,7 @@ object Result:
           *   A Maybe containing the successful value, or empty for non-Success Results
           */
         def unapply[E, A](self: Result[E, A]): Maybe.Ops[A] =
-            self.foldError(_ => Absent)(Present(_))
+            self.foldError(Present(_), _ => Absent)
 
     end Success
 
@@ -270,6 +272,13 @@ object Result:
     end Panic
 
     /** Provides extension methods for Result type */
+    extension [A](self: Success[A])
+        def successValue: A = self match
+            case v: SuccessError[?] => v.unnest.asInstanceOf[A]
+            case v: A @unchecked    => v
+    end extension
+
+    /** Provides extension methods for Result type */
     extension [E, A](self: Result[E, A])
 
         /** Checks if the Result is a Success.
@@ -305,75 +314,86 @@ object Result:
           * @return
           *   A Maybe containing the successful value, or empty for non-Success Results
           */
-        def value: Maybe[A] = foldError(_ => Absent)(Present(_))
+        def value: Maybe[A] = foldError(Present(_), _ => Absent)
 
         /** Gets the error value or panic exception if present.
           *
           * @return
           *   A Maybe containing either the error value or panic exception, or empty for Success Results
           */
-        def error: Maybe[Error[E]] = foldError(Present(_))(_ => Absent)
+        def error: Maybe[Error[E]] = foldError(_ => Absent, Present(_))
 
         /** Gets the error value if present.
           *
           * @return
           *   A Maybe containing the error value, or empty for non-Failure Results
           */
-        def failure: Maybe[E] = foldAll(_ => Absent)(Present(_))(_ => Absent)
+        def failure: Maybe[E] = fold(_ => Absent, Present(_), _ => Absent)
 
         /** Gets the panic exception if present.
           *
           * @return
           *   A Maybe containing the panic exception, or empty for non-Panic Results
           */
-        def panic: Maybe[Throwable] = foldAll(Present(_))(_ => Absent)(_ => Absent)
+        def panic: Maybe[Throwable] = fold(_ => Absent, _ => Absent, Present(_))
 
         /** Gets either the failure value or panic exception if present.
           *
           * @return
           *   A Maybe containing either the failure value or panic exception, or empty for Success Results
           */
-        def failureOrPanic: Maybe[E | Throwable] = foldAll(Present(_))(Present(_))(_ => Absent)
+        def failureOrPanic: Maybe[E | Throwable] = fold(_ => Absent, Present(_), Present(_))
 
         /** Folds a Result into a value, with separate handling for errors and successes.
           *
           * @param ifError
           *   Function to apply if the Result is an Error (either Failure or Panic)
-          * @param ifSuccess
+          * @param onSuccess
           *   Function to apply if the Result is a Success
           * @return
           *   The result of applying the appropriate function
           */
-        inline def foldError[B](ifError: Error[E] => B)(inline ifSuccess: A => B): B =
+        inline def foldError[B](inline onSuccess: A => B, ifError: Error[E] => B): B =
             try
                 self match
                     case error: Error[E] @unchecked => ifError(error)
-                    case _                          => ifSuccess(self.asInstanceOf[Result[Nothing, A]].getOrThrow)
+                    case _                          => onSuccess(self.asInstanceOf[Result[Nothing, A]].getOrThrow)
             catch
                 case ex => ifError(Panic(ex))
 
-        /** Folds a Result into a value, with separate handling for failures and successes, throwing any panics.
+        /** Folds a Result into a value, with separate handling for successes, failures, and panics.
           *
-          * @param ifFailure
-          *   Function to apply if the Result is a Failure
-          * @param ifSuccess
+          * @param onSuccess
           *   Function to apply if the Result is a Success
+          * @param onFailure
+          *   Function to apply if the Result is a Failure
           * @return
           *   The result of applying the appropriate function
           * @throws Throwable
           *   if the Result is a Panic
           */
-        inline def foldFailureOrThrow[B](inline ifFailure: E => B)(inline ifSuccess: A => B): B =
-            foldAll(throw _)(ifFailure)(ifSuccess)
-
-        inline def foldAll[B](inline ifPanic: Throwable => B)(inline ifFailure: E => B)(inline ifSuccess: A => B): B =
+        inline def fold[B](inline onSuccess: A => B, inline onFailure: E => B, inline onPanic: Throwable => B): B =
             try
                 self match
-                    case Panic(ex)  => ifPanic(ex)
-                    case Failure(e) => ifFailure(e)
-                    case _          => ifSuccess(self.asInstanceOf[Result[Nothing, A]].getOrThrow)
+                    case Panic(ex)  => onPanic(ex)
+                    case Failure(e) => onFailure(e)
+                    case _          => onSuccess(self.asInstanceOf[Result[Nothing, A]].getOrThrow)
             catch
-                case ex if NonFatal(ex) => ifPanic(ex)
+                case ex if NonFatal(ex) => onPanic(ex)
+
+        /** Folds a Result into a value, with separate handling for successes and failures, throwing any panics.
+          *
+          * @param onSuccess
+          *   Function to apply if the Result is a Success
+          * @param onFailure
+          *   Function to apply if the Result is a Failure
+          * @return
+          *   The result of applying the appropriate function
+          * @throws Throwable
+          *   if the Result is a Panic
+          */
+        inline def foldOrThrow[B](inline onSuccess: A => B, inline onFailure: E => B): B =
+            fold(onSuccess, onFailure, throw _)
 
         /** Gets the successful value or throws the error.
           *
@@ -406,7 +426,7 @@ object Result:
           *   The successful value or the default value
           */
         inline def getOrElse[B >: A](inline default: => B): B =
-            foldError(_ => default)(identity)
+            foldError(identity, _ => default)
 
         /** Returns this Result if it's a Success, or an alternative Result if it's not.
           *
@@ -416,7 +436,7 @@ object Result:
           *   This Result if it's a Success, or the alternative Result
           */
         def orElse[E2, B >: A](alternative: => Result[E2, B]): Result[E | E2, B] =
-            foldError(_ => alternative)(Result.succeed)
+            foldError(Result.succeed, _ => alternative)
 
         /** Applies a function to the successful value of this Result.
           *
@@ -436,7 +456,7 @@ object Result:
           *   A new Result with the mapped error type
           */
         inline def mapError[E2](inline f: Error[E] => E2): Result[E2, A] =
-            try foldError(e => Result.fail(f(e)))(Result.succeed)
+            try foldError(Result.succeed, e => Result.fail(f(e)))
             catch
                 case ex => Panic(ex)
 
@@ -448,10 +468,13 @@ object Result:
           *   A new Result with the mapped failure type
           */
         inline def mapFailure[E2](inline f: E => E2): Result[E2, A] =
-            foldError {
-                case error: Failure[E] => Result.fail(f(error.failure))
-                case error: Panic      => error
-            }(Result.succeed)
+            foldError(
+                Result.succeed,
+                {
+                    case error: Failure[E] => Result.fail(f(error.failure))
+                    case error: Panic      => error
+                }
+            )
 
         /** Maps only the panic exception to an error value.
           *
@@ -461,7 +484,7 @@ object Result:
           *   A new Result with the mapped panic as a failure
           */
         inline def mapPanic[E2](inline f: Throwable => E2): Result[E | E2, A] =
-            try foldAll(e => Result.fail(f(e)))(Result.fail)(Result.succeed)
+            try fold(Result.succeed, Result.fail, e => Result.fail(f(e)))
             catch
                 case ex => Panic(ex)
 
@@ -551,7 +574,7 @@ object Result:
           *   An Either with Left containing the error or exception, and Right containing the successful value
           */
         def toEither: Either[E | Throwable, A] =
-            foldAll(Left(_))(Left(_))(Right(_))
+            fold(Right(_), Left(_), Left(_))
 
         /** Converts the Result to a Maybe.
           *
@@ -559,7 +582,7 @@ object Result:
           *   A Maybe containing the successful value, or empty for non-Success Results
           */
         def toMaybe: Maybe[A] =
-            foldError(_ => Absent)(Present(_))
+            foldError(Present(_), _ => Absent)
 
         /** Converts the Result to a Try.
           *
@@ -572,7 +595,7 @@ object Result:
             @implicitNotFound("Failure type must be a 'Throwable' to invoke 'toTry'. Found: '${E}'")
             ev: E <:< Throwable
         ): Try[A] =
-            foldError(e => scala.util.Failure(e.failureOrPanic.asInstanceOf[Throwable]))(scala.util.Success(_))
+            foldError(scala.util.Success(_), e => scala.util.Failure(e.failureOrPanic.asInstanceOf[Throwable]))
 
         /** Converts the Result to a Result[E, Unit].
           *
@@ -588,7 +611,7 @@ object Result:
           *   A new Result with success and failure swapped
           */
         def swap: Result[A, E] =
-            foldAll(_ => self.asInstanceOf[Result[A, E]])(Result.succeed)(Result.fail)
+            fold(Result.fail, Result.succeed, _ => self.asInstanceOf[Result[A, E]])
 
         /** Checks if the Result is a Success and contains the given value.
           *
@@ -598,7 +621,7 @@ object Result:
           *   true if the Result is a Success and contains the given value, false otherwise
           */
         def contains(value: A)(using CanEqual[A, A]): Boolean =
-            foldError(_ => false)(_ == value)
+            foldError(_ == value, _ => false)
 
         /** Checks if the Result is a Success and the predicate holds for its value.
           *
@@ -608,7 +631,7 @@ object Result:
           *   true if the Result is a Success and the predicate holds, false otherwise
           */
         def exists(pred: A => Boolean): Boolean =
-            foldError(_ => false)(pred)
+            foldError(pred, _ => false)
 
         /** Checks if the Result is a Success and the predicate holds for its value, or if the Result is a Failure.
           *
@@ -618,7 +641,7 @@ object Result:
           *   true if the Result is a Failure, or if it's a Success and the predicate holds
           */
         def forall(pred: A => Boolean): Boolean =
-            foldError(_ => true)(pred)
+            foldError(pred, _ => true)
 
         /** Applies a predicate to the successful value of this Result.
           *
@@ -693,5 +716,57 @@ object Result:
             case f: Failure[?] => s"Failure(${re.asText(f.failure.asInstanceOf[E])})"
             case other         => other.toString()
     end given
+
+    /** A subtype of Result representing computations that can succeed or fail with an expected error. Result is effectively the Kyo
+      * equivalent of Either.
+      *
+      * Result has the following possible states:
+      *   - `Success[A]`: Contains a successful value of type `A`
+      *   - `Failure[E]`: Represents expected errors of type `E`
+      *
+      * Being a subtype of Result, Result.Partial supports all the operations of Result as a few narrower versions of these methods:
+      *   - foldPartial
+      *   - toEitherPartial
+      *   - flattenPartial
+      *
+      * @tparam E
+      *   The type of expected errors that can occur
+      * @tparam A
+      *   The type of the successful value
+      */
+    opaque type Partial[+E, +A] >: Success[A] | Failure[E] <: Result[E, A] = Success[A] | Failure[E]
+
+    object Partial:
+        inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Partial[E, A]] = CanEqual.derived
+        inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Result[E, A]]  = CanEqual.derived
+        inline given [E, A: Flat]: Flat[Partial[E, A]]                                               = Flat.unsafe.bypass
+
+        extension [E, A](self: Partial[E, A])
+            inline def foldPartial[B](inline onSuccess: A => B, inline onFailure: E => B): B =
+                self match
+                    case failure: Failure[E] @unchecked => onFailure(failure.failure)
+                    case other                          => onSuccess(other.asInstanceOf[Success[A]].successValue)
+
+            /** Converts the Partial to an Either.
+              *
+              * @return
+              *   An Either with Left containing the error or exception, and Right containing the successful value
+              */
+            def toEitherPartial: Either[E, A] =
+                foldPartial(Right(_), Left(_))
+
+            /** Flattens a nested Partial.
+              *
+              * @param ev
+              *   Evidence that A is a Partial
+              * @return
+              *   The flattened Partial
+              */
+            def flattenPartial[E2, B](using ev: A <:< Partial[E2, B]): Partial[E | E2, B] =
+                foldPartial(a => ev(a), _ => self.asInstanceOf[Partial[E, B]])
+
+        end extension
+
+    end Partial
 
 end Result

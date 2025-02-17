@@ -187,7 +187,7 @@ object TTable:
                         removeFromIndexes(id, prev.get)
                             .andThen(updateIndexes(id, record))
                     else
-                        Kyo.pure(())
+                        Kyo.unit
             yield prev
 
         def upsert(id: Id, record: Record[Fields])(using Frame) =
@@ -197,7 +197,7 @@ object TTable:
             for
                 record  <- store.get(id)
                 deleted <- store.remove(id)
-                _       <- if deleted.nonEmpty then removeFromIndexes(id, record.get) else Kyo.pure(())
+                _       <- if deleted.nonEmpty then removeFromIndexes(id, record.get) else Kyo.unit
             yield deleted
 
         def size(using Frame)     = store.size

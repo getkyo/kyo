@@ -100,6 +100,7 @@ lazy val kyoJVM = project
         `kyo-scheduler-zio`.jvm,
         `kyo-scheduler-cats`.jvm,
         `kyo-scheduler-finagle`.jvm,
+        `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
@@ -111,6 +112,7 @@ lazy val kyoJVM = project
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
         `kyo-reactive-streams`.jvm,
+        `kyo-aeron`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
         `kyo-caliban`.jvm,
@@ -153,7 +155,7 @@ lazy val kyoNative = project
     .in(file("native"))
     .settings(
         name := "kyoNative",
-        `kyo-settings`
+        `native-settings`
     )
     .disablePlugins(MimaPlugin)
     .aggregate(
@@ -205,6 +207,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
+
 lazy val `kyo-scheduler-cats` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -214,6 +217,23 @@ lazy val `kyo-scheduler-cats` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
+        )
+        .jvmSettings(mimaCheck(false))
+        .settings(
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+        )
+
+lazy val `kyo-scheduler-pekko` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-scheduler`)
+        .in(file("kyo-scheduler-pekko"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.1.3",
+            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.1.3" % Test
         )
         .jvmSettings(mimaCheck(false))
         .settings(
@@ -406,6 +426,22 @@ lazy val `kyo-reactive-streams` =
                 "org.reactivestreams" % "reactive-streams"     % "1.0.4",
                 "org.reactivestreams" % "reactive-streams-tck" % "1.0.4"    % Test,
                 "org.scalatestplus"  %% "testng-7-5"           % "3.2.17.0" % Test
+            )
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-aeron` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-aeron"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies ++= Seq(
+                "io.aeron"     % "aeron-driver" % "1.46.7",
+                "io.aeron"     % "aeron-client" % "1.46.7",
+                "com.lihaoyi" %% "upickle"      % "4.1.0"
             )
         )
         .jvmSettings(mimaCheck(false))
@@ -789,6 +825,7 @@ lazy val readme =
 lazy val `native-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
+    Test / testForkedParallel                   := false,
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 
@@ -796,6 +833,7 @@ lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
     fork                                        := false,
     bspEnabled                                  := false,
+    Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )

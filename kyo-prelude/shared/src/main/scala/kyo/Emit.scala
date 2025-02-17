@@ -64,8 +64,7 @@ object Emit:
           * @param acc
           *   The initial accumulator value
           * @param f
-          *   The folding function that takes the current accumulator and emitted value, and returns a tuple of the new accumulator and an
-          *   Ack to control further emissions
+          *   The folding function that takes the current accumulator and emitted value, and returns an updated accumulator
           * @param v
           *   The computation with Emit effect
           * @return
@@ -112,9 +111,9 @@ object Emit:
           * @return
           *   The result of the computation
           */
-        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Unit < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Any < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
             ArrowEffect.handle(tag, v)(
-                [C] => (input, cont) => f(input).map(cont)
+                [C] => (input, cont) => f(input).map(_ => cont(()))
             )
     end RunForeachOps
 
@@ -147,7 +146,7 @@ object Emit:
           * @return
           *   A tuple containing:
           *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
-          *   - A continuation function that takes an Ack and returns the remaining computation
+          *   - A continuation function that returns the remaining computation
           */
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Maybe[V], () => A < (Emit[V] & S)) < S =
             ArrowEffect.handleFirst(tag, v)(

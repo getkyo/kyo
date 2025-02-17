@@ -4,21 +4,16 @@ import kyo.kernel.ArrowEffect
 
 /** Represents polling values from a data source with backpressure control.
   *
-  * Poll is used to consume values while maintaining flow control through acknowledgements. Each poll operation takes an Ack that determines
-  * how many values can be consumed, and returns Maybe[V] indicating whether a value was available.
-  *
-  * Key behaviors:
-  *   - Each poll operation requires an Ack value that signals the consumer's readiness to receive more data
+  * * Key behaviors:
   *   - Poll returns Maybe[V], where:
   *     - Present(v) indicates a successful poll with value v
   *     - Absent indicates the end of the stream (no more values will be available)
   *   - Once Absent is received, the consumer should stop polling as the stream has terminated
-  *   - Backpressure is maintained through the Ack responses:
-  *     - Continue signals readiness to receive more values
-  *     - Stop indicates the consumer wants to pause receiving values
+  * Poll is used to consume values. Each poll operation signals readiness to receive data, and returns Maybe[V] indicating whether a value
+  * was available.
   *
   * The effect enables building streaming data pipelines with controlled consumption rates. Handlers can process values at their own pace by
-  * returning appropriate Ack responses, while respecting stream termination signals.
+  * polling only as needed.
   *
   * @tparam V
   *   The type of values being polled from the data source.
@@ -50,12 +45,12 @@ object Poll:
           * @return
           *   A computation that processes values until completion or limit reached
           */
-        def apply[S](n: Int)(f: V => Unit < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
+        def apply[S](n: Int)(f: V => Any < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
             Loop.indexed { idx =>
                 if idx == n then Loop.done
                 else
                     Poll.andMap[V] {
-                        case Present(v) => f(v).map(Loop.continue)
+                        case Present(v) => f(v).map(_ => Loop.continue(()))
                         case Absent     => Loop.done
                     }
             }
@@ -67,10 +62,10 @@ object Poll:
           * @return
           *   A computation that processes values until completion
           */
-        def apply[S](f: V => Unit < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
+        def apply[S](f: V => Any < S)(using tag: Tag[Poll[V]], frame: Frame): Unit < (Poll[V] & S) =
             Loop(()) { _ =>
                 Poll.andMap[V] {
-                    case Present(v) => f(v).map(Loop.continue)
+                    case Present(v) => f(v).map(_ => Loop.continue(()))
                     case Absent     => Loop.done
                 }
             }
@@ -152,9 +147,8 @@ object Poll:
 
         /** Runs a Poll effect with a single input value, stopping after the first poll operation.
           *
-          * This method provides a single input value to the Poll effect and stops after the first poll. It returns a tuple containing:
-          *   - An Ack value indicating whether to continue or stop
-          *   - A continuation function that can process the Maybe[V] result of the poll
+          * This method provides a single input value to the Poll effect and stops after the first poll. It returns a continuation function
+          * that can process the Maybe[V] result of the poll
           *
           * @param v
           *   The computation requiring Poll values

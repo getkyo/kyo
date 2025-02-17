@@ -42,7 +42,7 @@ object StreamChannel:
                         // TODO: Can we avoid the extra Chunk allocation here?
                         results = Chunk(head).concat(tail)
                         // TODO: Should be easier to fold Result[E, A] to A < Abort[E]
-                        chunk <- Kyo.collect(results.map(_.foldFailureOrThrow(Abort.fail)(identity)))
+                        chunk <- Kyo.collect(results.map(_.foldOrThrow(identity, Abort.fail)))
                     yield Emit.valueWith(chunk)(Loop.continue(()))
 
 end StreamChannel

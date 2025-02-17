@@ -1,9 +1,11 @@
 package kyo
 
 import Record.*
+import kyo.internal.Inliner
 import kyo.internal.TypeIntersection
 import scala.annotation.implicitNotFound
 import scala.compiletime.constValue
+import scala.compiletime.erasedValue
 import scala.compiletime.summonInline
 import scala.deriving.Mirror
 import scala.language.dynamics
@@ -73,7 +75,7 @@ import scala.util.NotGiven
   *   - Tag derivation for Records is not currently supported
   *   - CanEqual and Render instances are not provided for Records
   */
-class Record[+Fields](val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
+final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
 
     /** Retrieves a value from the Record by field name.
       *
@@ -115,15 +117,22 @@ class Record[+Fields](val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dyna
     /** Returns the number of fields in this Record.
       */
     def size: Int = toMap.size
-
 end Record
 
 export Record.`~`
 
 object Record:
+    /** Creates an empty Record
+      */
+    val empty: Record[Any] = Record[Any](Map())
+
     given [Fields]: Flat[Record[Fields]] = Flat.unsafe.bypass
 
     final infix class ~[Name <: String, Value] private ()
+
+    object `~`:
+        given [Name <: String, Value](using CanEqual[Value, Value]): CanEqual[Name ~ Value, Name ~ Value] =
+            CanEqual.derived
 
     /** Creates a Record from a product type (case class or tuple).
       */
@@ -253,20 +262,35 @@ object Record:
             AsFieldsInternal.summonAsField
     end AsFields
 
-    private type HasCanEqual[Field] =
-        Field match
-            case name ~ value => CanEqual[value, value]
-
-    transparent inline given [Fields]: CanEqual[Record[Fields], Record[Fields]] =
-        discard(TypeIntersection.summonAll[Fields, HasCanEqual])
+    given [Fields, T](using TypeIntersection.Aux[Fields, T], CanEqual[T, T]): CanEqual[Record[Fields], Record[Fields]] =
         CanEqual.derived
-    end given
 
     inline given [Fields]: Tag[Record[Fields]] =
         scala.compiletime.error(
             "Cannot derive Tag for Record type. This commonly occurs when trying to nest Records, " +
                 "which is not currently supported by the Tag implementation."
         )
+
+    private object RenderInliner extends Inliner[(String, Render[?])]:
+        inline def apply[T]: (String, Render[?]) =
+            inline erasedValue[T] match
+                case _: (n ~ v) =>
+                    val ev   = summonInline[n <:< String]
+                    val inst = summonInline[Render[v]]
+                    ev(constValue[n]) -> inst
+    end RenderInliner
+
+    inline given [Fields: TypeIntersection]: Render[Record[Fields]] =
+        val insts = TypeIntersection.inlineAll[Fields, (String, Render[?])](RenderInliner).toMap
+        Render.from: (value: Record[Fields]) =>
+            value.toMap.foldLeft(Vector[String]()) { case (acc, (field, value)) =>
+                insts.get(field.name) match
+                    case Some(r: Render[x]) =>
+                        acc :+ (field.name + " ~ " + r.asText(value.asInstanceOf[x]))
+                    case None => acc
+                end match
+            }.mkString(" & ")
+    end given
 end Record
 
 object AsFieldsInternal:

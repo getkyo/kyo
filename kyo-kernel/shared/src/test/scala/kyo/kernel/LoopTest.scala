@@ -667,10 +667,66 @@ class LoopTest extends Test:
         }
 
         "should not compile for non-Flat output types" in {
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome[Int, Int < Any]]]")
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome2[Int, String, Int < Any]]]")
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Int < Any]]]")
-            assertDoesNotCompile("implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Int < Any]]]")
+            val error = "This error can be reported an unsupported pending effect is passed to a method"
+            typeCheckFailure("implicitly[Flat[Loop.Outcome[Int, Int < Any]]]")(error)
+            typeCheckFailure("implicitly[Flat[Loop.Outcome2[Int, String, Int < Any]]]")(error)
+            typeCheckFailure("implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Int < Any]]]")(error)
+            typeCheckFailure("implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Int < Any]]]")(error)
+        }
+    }
+
+    "whileTrue" - {
+        "continues while condition is true" in {
+            var counter = 0
+            Loop.whileTrue(counter < 5) {
+                counter += 1
+            }.eval
+            assert(counter == 5)
+        }
+
+        "does not execute when condition is initially false" in {
+            var executed = false
+            Loop.whileTrue(false) {
+                executed = true
+            }.eval
+            assert(!executed)
+        }
+
+        "with suspended condition" in {
+            var counter = 0
+            val result = Loop.whileTrue(Effect.defer(counter < 3)) {
+                counter += 1
+            }
+            result.eval
+            assert(counter == 3)
+        }
+
+        "with suspended body" in {
+            var counter = 0
+            val result = Loop.whileTrue(counter < 3) {
+                Effect.defer(counter += 1)
+            }
+            result.eval
+            assert(counter == 3)
+        }
+
+        "stack safety" in {
+            var counter     = 0
+            val largeNumber = 100000
+            Loop.whileTrue(counter < largeNumber) {
+                counter += 1
+            }.eval
+            assert(counter == largeNumber)
+        }
+
+        "stack safety with suspended operations" in {
+            var counter     = 0
+            val largeNumber = 10000
+            val result = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
+                Effect.defer(counter += 1)
+            }
+            result.eval
+            assert(counter == largeNumber)
         }
     }
 end LoopTest

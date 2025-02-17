@@ -1,0 +1,54 @@
+name: Bug Report
+description: File a bug report
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What version of Kyo are you using?
+      placeholder: e.g. 0.16.0
+    validations:
+      required: true
+
+  - type: input
+    id: scala-version
+    attributes:
+      label: Scala Version
+      description: What version of Scala are you using?
+      placeholder: e.g. 3.6.2
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should happen? Be specific about the expected outcome.
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What went wrong? Include error messages, stack traces, or logs if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Please provide a step by step guide to reproduce the issue. Include minimal code examples and any specific configuration or environment details needed.
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current Workaround
+      description: If you've found a temporary solution, describe it here to help others encountering the same issue.
+    validations:
+      required: false

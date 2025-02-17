@@ -42,8 +42,11 @@ object GrpcRequest:
 
     def mergeErrors[Request: Flat, S](request: Request < (GrpcRequest & S))(using Frame): Request < (Async & Abort[StatusException] & S) =
         // TODO: This ought to be easier (still).
-        Abort.run[StatusRuntimeException](request).map(_.foldFailureOrThrow[Request < Abort[StatusException]]({ ex =>
-            Abort.fail(StatusException(ex.getStatus, ex.getTrailers).tap(_.setStackTrace(ex.getStackTrace)))
-        })(identity))
+        Abort.run[StatusRuntimeException](request).map(_.foldOrThrow[Request < Abort[StatusException]](
+            identity,
+            { ex =>
+                Abort.fail(StatusException(ex.getStatus, ex.getTrailers).tap(_.setStackTrace(ex.getStackTrace)))
+            }
+        ))
 
 end GrpcRequest

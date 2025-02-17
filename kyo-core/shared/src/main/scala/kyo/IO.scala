@@ -24,13 +24,6 @@ opaque type IO <: Abort[Nothing] = Abort[Nothing]
 
 object IO:
 
-    /** Creates a unit IO effect, representing a no-op side effect.
-      *
-      * @return
-      *   A unit value wrapped in an IO effect.
-      */
-    inline def unit: Unit < IO = ()
-
     /** Suspends a potentially side-effecting computation in an IO effect.
       *
       * This method allows you to lift any computation (including those with side effects) into the IO context, deferring its execution
@@ -68,8 +61,8 @@ object IO:
       * @return
       *   The result of the main computation, with the finalizer guaranteed to run.
       */
-    def ensure[A, S](f: => Unit < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
-        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f))(v))
+    def ensure[A, S](f: => Any < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
+        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f.unit))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

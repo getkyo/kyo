@@ -235,7 +235,7 @@ final private[kyo] class StreamSubscriber[V](
                     end if
                 case other =>
                     if state.compareAndSet(curState, other) then
-                        IO.unit
+                        Kyo.unit
                     else
                         handleInterupt()
             end match
@@ -258,7 +258,9 @@ final private[kyo] class StreamSubscriber[V](
             }
         }
 
-    def stream(using Frame, Tag[Emit[Chunk[V]]]): Stream[V, Async] = Stream(emit)
+    def stream(using Frame, Tag[Emit[Chunk[V]]]): Stream[V, Async] < (Resource & IO) =
+        Resource.ensure(interupt).andThen:
+            Stream(emit)
 
 end StreamSubscriber
 

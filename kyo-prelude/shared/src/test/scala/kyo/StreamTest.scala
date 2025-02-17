@@ -332,6 +332,14 @@ class StreamTest extends Test:
                     n / 2
             )
         }
+
+        "with effects" in {
+            def predicate(i: Int) = Var.get[Boolean].map(b => Var.set(!b).andThen(b && !(i % 3 == 0)))
+            val result            = Var.run(false)(Stream.init(1 to n).filter(predicate).run).eval
+            assert(
+                result.size > 0 && result.forall(_ % 2 == 0) && result.forall(i => !(i % 3 == 0))
+            )
+        }
     }
 
     "changes" - {
@@ -679,40 +687,40 @@ class StreamTest extends Test:
         }
     }
 
-    "runDiscard" - {
+    "discard" - {
         "non-empty stream" in {
             assert(
                 Var.run(0) {
-                    Stream.init(0 until 100).map(i => Var.update[Int](_ + i)).runDiscard.andThen(Var.get[Int])
+                    Stream.init(0 until 100).map(i => Var.update[Int](_ + i)).discard.andThen(Var.get[Int])
                 }.eval == 4950
             )
         }
 
         "empty stream" in {
             assert(
-                Stream.init(Seq.empty[Int]).runDiscard.eval == ()
+                Stream.init(Seq.empty[Int]).discard.eval == ()
             )
         }
     }
 
-    "runForeach" - {
+    "foreach" - {
         "executes the function for each element" in run {
             var sum = 0
-            Stream.init(Seq(1, 2, 3, 4, 5)).runForeach(i => sum += i).map { _ =>
+            Stream.init(Seq(1, 2, 3, 4, 5)).foreach(i => sum += i).map { _ =>
                 assert(sum == 15)
             }
         }
 
         "works with empty stream" in run {
             var executed = false
-            Stream.init(Seq.empty[Int]).runForeach(_ => executed = true).map { _ =>
+            Stream.init(Seq.empty[Int]).foreach(_ => executed = true).map { _ =>
                 assert(!executed)
             }
         }
 
         "works with effects" in run {
             var sum = 0
-            Stream.init(Seq(1, 2, 3, 4, 5)).runForeach { i =>
+            Stream.init(Seq(1, 2, 3, 4, 5)).foreach { i =>
                 Env.use[Int] { multiplier =>
                     sum += i * multiplier
                 }
@@ -724,7 +732,7 @@ class StreamTest extends Test:
         "short-circuits on abort" in run {
             var sum = 0
             val result = Abort.run[String] {
-                Stream.init(Seq(1, 2, 3, 4, 5)).runForeach { i =>
+                Stream.init(Seq(1, 2, 3, 4, 5)).foreach { i =>
                     sum += i
                     if i >= 3 then Abort.fail("Reached 3")
                     else Abort.get(Right(()))
@@ -737,10 +745,10 @@ class StreamTest extends Test:
         }
     }
 
-    "runForeachChunk" - {
+    "foreachChunk" - {
         "executes the function for each chunk" in run {
             var sum = 0
-            Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk(chunk =>
+            Stream.init(Chunk(1, 2, 3, 4, 5)).foreachChunk(chunk =>
                 sum += chunk.foldLeft(0)(_ + _)
             ).map { _ =>
                 assert(sum == 15)
@@ -749,14 +757,14 @@ class StreamTest extends Test:
 
         "works with empty stream" in run {
             var executed = false
-            Stream.init(Chunk.empty[Int]).runForeachChunk(_ => executed = true).map { _ =>
+            Stream.init(Chunk.empty[Int]).foreachChunk(_ => executed = true).map { _ =>
                 assert(!executed)
             }
         }
 
         "works with effects" in run {
             var sum = 0
-            Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk { chunk =>
+            Stream.init(Chunk(1, 2, 3, 4, 5)).foreachChunk { chunk =>
                 Env.use[Int] { multiplier =>
                     sum += chunk.foldLeft(0)(_ + _) * multiplier
                 }
@@ -766,30 +774,30 @@ class StreamTest extends Test:
         }
     }
 
-    "runFold" - {
+    "fold" - {
         "sum" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).runFold(0)(_ + _).eval == 6
+                Stream.init(Seq(1, 2, 3)).fold(0)(_ + _).eval == 6
             )
         }
 
         "concat" in {
             assert(
-                Stream.init(Seq("a", "b", "c")).runFold("")(_ + _).eval == "abc"
+                Stream.init(Seq("a", "b", "c")).fold("")(_ + _).eval == "abc"
             )
         }
 
         "early termination" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val folded = stream.runFold(0) { (acc, v) =>
+            val folded = stream.foldKyo(0) { (acc, v) =>
                 if acc < 6 then acc + v else Abort.fail(())
             }
-            assert(Abort.run[Unit](folded).eval.foldError(_ => true)(_ => false))
+            assert(Abort.run[Unit](folded).eval.foldError(_ => false, _ => true))
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1)).runFold(0)(_ + _).eval == n
+                Stream.init(Seq.fill(n)(1)).fold(0)(_ + _).eval == n
             )
         }
     }

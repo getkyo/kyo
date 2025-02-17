@@ -22,7 +22,7 @@ private[grpc] object StreamNotifier:
             case result: Result.Error[E] => notifyError(result, observer)
         }
 
-    def notifyObserver[A: Flat: Tag, E <: Throwable: SafeClassTag, S](
+    def notifyObserver[A: { Flat, Tag }, E <: Throwable: SafeClassTag, S](
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
     )(using Frame): Unit < (IO & S) =
@@ -32,7 +32,7 @@ private[grpc] object StreamNotifier:
             println(s"StreamNotifier.notifyObserver: a = $a")
             IO(observer.onNext(a))
         end foo
-        Abort.run[E](values.runForeach(foo)).map(notifyCompleteOrError(_, observer))
+        Abort.run[E](values.foreach(foo)).map(notifyCompleteOrError(_, observer))
     end notifyObserver
 
     private def notifyCompleteOrError[E <: Throwable](

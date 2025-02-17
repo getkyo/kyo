@@ -35,7 +35,7 @@ object TestServiceImpl extends TestService:
                         stream(echos :+ Abort.panic(new Exception(message)))
 
     override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
-        val result = requests.runFold(Maybe.empty[String])((acc, request) =>
+        val result = requests.foldKyo(Maybe.empty[String])((acc, request) =>
             for
                 response <- oneToOne(request)
                 nextAcc <- response.asNonEmpty.get match
