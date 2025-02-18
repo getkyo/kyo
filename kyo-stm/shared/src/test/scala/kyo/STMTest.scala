@@ -738,7 +738,7 @@ class STMTest extends Test:
 
         val ex = new Exception
 
-        val faultyTransaction: Int < (STM & IO) = TRef.init(42).map { r =>
+        val faultyTransaction: Int < STM = TRef.init(42).map { r =>
             throw ex
             r.get
         }
