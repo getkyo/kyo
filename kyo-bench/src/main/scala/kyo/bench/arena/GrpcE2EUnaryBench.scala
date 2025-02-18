@@ -1,14 +1,14 @@
-package kyo.bench
+package kyo.bench.arena
 
 import io.grpc.Grpc
 import kgrpc.helloworld.testservice.*
 import kyo.*
-import kyo.bench.GrpcService.*
+import kyo.bench.arena.GrpcService.*
 import kyo.grpc.GrpcRequest
 import scalapb.zio_grpc.Server
 import zio.UIO
 
-class GrpcE2EUnaryBench extends Bench.ForkOnly(reply):
+class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
 
     override def catsBench() =
         ???

@@ -1,4 +1,4 @@
-package kyo.bench
+package kyo.bench.arena
 
 import io.grpc
 import io.grpc.ManagedChannelBuilder

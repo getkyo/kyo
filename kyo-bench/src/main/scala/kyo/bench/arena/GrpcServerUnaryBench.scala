@@ -1,16 +1,16 @@
-package kyo.bench
+package kyo.bench.arena
 
 import io.grpc.ManagedChannelBuilder
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 import kgrpc.helloworld.testservice.*
 import kyo.*
-import kyo.bench.GrpcService.*
+import kyo.bench.arena.GrpcService.*
 import org.openjdk.jmh.annotations.TearDown
 import scalapb.zio_grpc.Server
 import zio.ZIO
 
-class GrpcServerUnaryBench extends Bench.ForkOnly(reply):
+class GrpcServerUnaryBench extends ArenaBench.ForkOnly(reply):
 
     private val channel      = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build
     private val blockingStub = GreeterGrpc.blockingStub(channel)
