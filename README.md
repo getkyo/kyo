@@ -806,7 +806,7 @@ val result: Unit < (IO & Memo) =
 
 ### Local: Scoped Values
 
-The `Local` effect operates on top of `IO` and enables the definition of scoped values. This mechanism is typically used to store contextual information of a computation. For example, in request processing, locals can be used to store information about the user who initiated the request. This provides the power of ThreadLocals to effectful programs.
+The `Local` effect operates on top of `IO` and enables the definition of scoped values. This mechanism is typically used to store contextual information of a computation. For example, in request processing, locals can be used to store information about the user who initiated the request. This provides a functionality similar to `ThreadLocal`s but with a more flexible scoping to effectful programs.
 
 ```scala
 import kyo.*
