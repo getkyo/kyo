@@ -77,8 +77,8 @@ object STM:
 
     /** Executes a transactional computation with state isolation and the a custom retry schedule.
       *
-      * @param isolate
-      *   The isolation scope for the transaction
+      * @param retrySchedule
+      *   The schedule for retrying failed transactions
       * @param v
       *   The transactional computation to run
       * @return
