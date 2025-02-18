@@ -210,26 +210,30 @@ class STMTest extends Test:
 
         "rollback preserves all effect isolations" in run {
             val ex = new Exception("Test failure")
-            for
-                ref <- TRef.init(0)
-                result <- Emit.run {
-                    Abort.run {
-                        Emit.isolate.merge[Int].use {
-                            STM.run {
-                                for
-                                    _ <- ref.set(1)
-                                    _ <- Emit.value(1)
-                                    _ <- Abort.fail(ex)
-                                    _ <- ref.set(2)
-                                    _ <- Emit.value(2)
-                                yield "unreachable"
+            Var.run(0) {
+                for
+                    ref <- TRef.init(0)
+                    result <- Emit.run {
+                        Abort.run {
+                            Emit.isolate.merge[Int].andThen(Var.isolate.update[Int]).use {
+                                STM.run {
+                                    for
+                                        _ <- ref.set(1)
+                                        _ <- Emit.value(1)
+                                        _ <- Var.set(1)
+                                        _ <- Abort.fail(ex)
+                                        _ <- ref.set(2)
+                                        _ <- Emit.value(2)
+                                        _ <- Var.set(2)
+                                    yield "unreachable"
+                                }
                             }
                         }
                     }
-                }
-                finalRef <- STM.run(ref.get)
-            yield assert(result == (Chunk.empty, Result.fail(ex)) && finalRef == 0)
-            end for
+                    finalRef <- STM.run(ref.get)
+                    finalVar <- Var.get[Int]
+                yield assert(result == (Chunk.empty, Result.fail(ex)) && finalRef == 0 && finalVar == 0)
+            }
         }
 
     }
