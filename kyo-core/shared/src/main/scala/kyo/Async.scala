@@ -158,18 +158,23 @@ object Async:
     def timeout[E, A: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        isolate.capture { state =>
-            Async.run(isolate.isolate(state, v)).map { task =>
-                Clock.use { clock =>
-                    IO.Unsafe {
-                        val sleepFiber = clock.unsafe.sleep(after)
-                        sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout()))))
-                        task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
-                        isolate.restore(task.get)
+        if after == Duration.Zero then Abort.fail(Timeout())
+        else if !after.isFinite then v
+        else
+            isolate.capture { state =>
+                Async.run(isolate.isolate(state, v)).map { task =>
+                    Clock.use { clock =>
+                        IO.Unsafe {
+                            val sleepFiber = clock.unsafe.sleep(after)
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout()))))
+                            task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
+                            isolate.restore(task.get)
+                        }
                     }
                 }
             }
-        }
+        end if
+    end timeout
 
     /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
       * are interrupted.
