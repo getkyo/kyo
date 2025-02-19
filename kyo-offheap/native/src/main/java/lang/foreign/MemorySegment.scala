@@ -10,7 +10,7 @@ import scala.scalanative.unsigned.*
   * This implementation wraps a pointer along with the allocated size in bytes. It also provides basic support for slicing and for
   * reading/writing primitive values, which are used by the Layout instances in the shared code.
   */
-final class MemorySegment private (ptr: Ptr[Byte], val byteSize: Long):
+final class MemorySegment private (private[foreign] val ptr: Ptr[Byte], val byteSize: Long):
     /** Creates a new MemorySegment that is a slice of this segment.
       *
       * @param offset
@@ -29,28 +29,28 @@ final class MemorySegment private (ptr: Ptr[Byte], val byteSize: Long):
     /** Reads a value from memory using the provided layout.
       */
     def get(layout: ValueLayout.ofBoolean, offset: Long): Boolean =
-        require(offset + unsafe.sizeOf[Bool] <= byteSize)
+        require(offset + unsafe.sizeOf[CBool] <= byteSize)
         !(ptr + offset).cast[Bool]
     def get(layout: ValueLayout.ofByte, offset: Long): Byte =
         require(offset + unsafe.sizeOf[Byte] <= byteSize)
         !(ptr + offset).cast[Byte]
     def get(layout: ValueLayout.ofShort, offset: Long): Short =
-        require(offset + unsafe.sizeOf[Short] <= byteSize)
+        require(offset + unsafe.sizeOf[CShort] <= byteSize)
         !(ptr + offset).cast[Short]
     def get(layout: ValueLayout.ofInt, offset: Long): Int =
-        require(offset + unsafe.sizeOf[Int] <= byteSize)
+        require(offset + unsafe.sizeOf[CInt] <= byteSize)
         !(ptr + offset).cast[Int]
     def get(layout: ValueLayout.ofLong, offset: Long): Long =
-        require(offset + unsafe.sizeOf[Long] <= byteSize)
+        require(offset + unsafe.sizeOf[CLong] <= byteSize)
         !(ptr + offset).cast[Long]
     def get(layout: ValueLayout.ofFloat, offset: Long): Float =
-        require(offset + unsafe.sizeOf[Float] <= byteSize)
+        require(offset + unsafe.sizeOf[CFloat] <= byteSize)
         !(ptr + offset).cast[Float]
     def get(layout: ValueLayout.ofDouble, offset: Long): Double =
-        require(offset + unsafe.sizeOf[Double] <= byteSize)
+        require(offset + unsafe.sizeOf[CDouble] <= byteSize)
         !(ptr + offset).cast[Double]
     def get(layout: ValueLayout.ofChar, offset: Long): Char =
-        require(offset + unsafe.sizeOf[Char] <= byteSize)
+        require(offset + unsafe.sizeOf[CChar] <= byteSize)
         !(ptr + offset).cast[Char]
     def get(layout: AddressLayout, offset: Long): MemorySegment =
         new MemorySegment(!(ptr + offset).cast[Ptr[Byte]], byteSize)
@@ -58,28 +58,28 @@ final class MemorySegment private (ptr: Ptr[Byte], val byteSize: Long):
     /** Writes a value to memory using the provided layout.
       */
     def set(layout: ValueLayout.ofBoolean, offset: Long, value: Boolean): Unit =
-        require(offset + unsafe.sizeOf[Bool] <= byteSize)
+        require(offset + unsafe.sizeOf[CBool] <= byteSize)
         !(ptr + offset).cast[Bool] = value
     def set(layout: ValueLayout.ofByte, offset: Long, value: Byte): Unit =
         require(offset + unsafe.sizeOf[Byte] <= byteSize)
         !(ptr + offset).cast[Byte] = value
     def set(layout: ValueLayout.ofShort, offset: Long, value: Short): Unit =
-        require(offset + unsafe.sizeOf[Short] <= byteSize)
+        require(offset + unsafe.sizeOf[CShort] <= byteSize)
         !(ptr + offset).cast[Short] = value
     def set(layout: ValueLayout.ofInt, offset: Long, value: Int): Unit =
-        require(offset + unsafe.sizeOf[Int] <= byteSize)
+        require(offset + unsafe.sizeOf[CInt] <= byteSize)
         !(ptr + offset).cast[Int] = value
     def set(layout: ValueLayout.ofLong, offset: Long, value: Long): Unit =
-        require(offset + unsafe.sizeOf[Long] <= byteSize)
+        require(offset + unsafe.sizeOf[CLong] <= byteSize)
         !(ptr + offset).cast[Long] = value
     def set(layout: ValueLayout.ofFloat, offset: Long, value: Float): Unit =
-        require(offset + unsafe.sizeOf[Float] <= byteSize)
+        require(offset + unsafe.sizeOf[CFloat] <= byteSize)
         !(ptr + offset).cast[Float] = value
     def set(layout: ValueLayout.ofDouble, offset: Long, value: Double): Unit =
-        require(offset + unsafe.sizeOf[Double] <= byteSize)
+        require(offset + unsafe.sizeOf[CDouble] <= byteSize)
         !(ptr + offset).cast[Double] = value
     def set(layout: ValueLayout.ofChar, offset: Long, value: Char): Unit =
-        require(offset + unsafe.sizeOf[Char] <= byteSize)
+        require(offset + unsafe.sizeOf[CChar] <= byteSize)
         !(ptr + offset).cast[Char] = value
     def set(layout: AddressLayout, offset: Long, value: MemorySegment): Unit =
         !(ptr + offset).cast[Ptr[Byte]] = value.ptr
@@ -87,7 +87,7 @@ end MemorySegment
 
 object MemorySegment:
     private[foreign] def allocate(byteSize: Long): MemorySegment =
-        val ptr = malloc(byteSize.toULong).asInstanceOf[Ptr[Byte]]
+        val ptr = malloc(byteSize).asInstanceOf[Ptr[Byte]]
         if ptr == null then throw new RuntimeException("malloc returned null")
         new MemorySegment(ptr, byteSize)
     end allocate
