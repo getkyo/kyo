@@ -358,7 +358,7 @@ object Isolate:
                 case t                           => List(t)
 
         val pass   = flatten(TypeRepr.of[P])
-        val retain = flatten(TypeRepr.of[R]).filterNot(t => pass.exists(t <:< _))
+        val retain = flatten(TypeRepr.of[R]).filterNot(t => pass.exists(t =:= _))
         handler(retain, pass)
     end commonDeriveImpl
 
