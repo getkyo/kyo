@@ -555,8 +555,8 @@ class AsyncTest extends Test:
     }
 
     "isolated locals inheritance" - {
-        val isolatedInt    = Local.initIsolated(10)
-        val isolatedString = Local.initIsolated("initial")
+        val isolatedInt    = Local.initNoninheritable(10)
+        val isolatedString = Local.initNoninheritable("initial")
         val regularLocal   = Local.init("regular")
 
         "run" in run {

@@ -246,7 +246,7 @@ object Meter:
             end new
         }
 
-    private val acquiredMeters = Local.initIsolated(Set.empty[Meter])
+    private val acquiredMeters = Local.initNoninheritable(Set.empty[Meter])
 
     abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
 

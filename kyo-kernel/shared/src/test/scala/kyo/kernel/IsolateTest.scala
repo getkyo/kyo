@@ -197,7 +197,7 @@ class IsolateTest extends Test:
     }
 
     "context inheritance" - {
-        sealed trait IsolatedEffect    extends ContextEffect[Int] with ContextEffect.Isolated
+        sealed trait IsolatedEffect    extends ContextEffect[Int] with ContextEffect.Noninheritable
         sealed trait NonIsolatedEffect extends ContextEffect[String]
 
         given Isolate.Contextual[NonIsolatedEffect, Any] = Isolate.Contextual.derive
