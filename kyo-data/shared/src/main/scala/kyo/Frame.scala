@@ -107,13 +107,11 @@ object Frame:
     private def frameImpl(internal: Boolean)(using Quotes): Expr[String] =
         import quotes.reflect.*
 
-        val pos                      = quotes.reflect.Position.ofMacroExpansion
-        val (startLine, startColumn) = (pos.startLine, pos.startColumn)
-        val endLine                  = pos.endLine
+        val pos      = quotes.reflect.Position.ofMacroExpansion
+        val fileName = pos.sourceFile.name
 
         if !internal then
             findEnclosing { sym =>
-                val fileName = pos.sourceFile.name
                 sym.fullName.startsWith("kyo") && !allowKyoFileSuffixes.exists(fileName.endsWith)
             }.foreach { sym =>
                 report.errorAndAbort(
@@ -129,19 +127,21 @@ object Frame:
             }
         end if
 
-        val fileContent =
-            pos.sourceFile.content
-                .getOrElse(report.errorAndAbort("Can't locate source code to generate frame."))
+        val cls    = findEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
+        val method = if internal then "?" else findEnclosing(_.isDefDef).map(_.name).getOrElse("?")
 
-        val markedContent = fileContent.take(pos.end) + "📍" + fileContent.drop(pos.end)
-        val lines         = markedContent.linesIterator.toList
-        val snippetLines  = lines.slice(startLine - 1, endLine + 2).filter(_.exists(_ != ' '))
-        val toDrop        = snippetLines.map(_.takeWhile(_ == ' ').size).minOption.getOrElse(0)
-        val snippet       = if internal then "<internal>" else snippetLines.map(_.drop(toDrop)).mkString("\n")
-        val cls           = findEnclosing(_.isClassDef).map(render).getOrElse("?")
-        val method        = findEnclosing(_.isDefDef).map(render).getOrElse("?")
+        val snippet =
+            if internal then "<internal>"
+            else
+                val content = pos.sourceFile.content.getOrElse(
+                    report.errorAndAbort("Can't locate source code")
+                )
+                val marked = content.take(pos.end) + "📍" + content.drop(pos.end)
+                val lines  = marked.linesIterator.slice(pos.startLine - 1, pos.endLine + 2).filter(_.exists(_ != ' '))
+                val toDrop = lines.map(_.takeWhile(_ == ' ').length).min
+                lines.map(_.drop(toDrop)).mkString("\n")
 
-        Expr(s"$version${pos.sourceFile.name}:${startLine + 1}:${startColumn + 1}|$cls|$method|$snippet")
+        Expr(s"$version$fileName:${pos.startLine + 1}:${pos.startColumn + 1}|$cls|$method|$snippet")
     end frameImpl
 
     private def render(using Quotes)(symbol: quotes.reflect.Symbol): String =
