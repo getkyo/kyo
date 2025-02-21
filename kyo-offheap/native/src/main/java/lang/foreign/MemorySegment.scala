@@ -53,7 +53,10 @@ final class MemorySegment private (private[foreign] val ptr: Ptr[Byte], val byte
         require(offset + unsafe.sizeOf[CChar] <= byteSize)
         !(ptr + offset).cast[Char]
     def get(layout: AddressLayout, offset: Long): MemorySegment =
-        new MemorySegment(!(ptr + offset).cast[Ptr[Byte]], byteSize)
+        val newByteSize = byteSize - offset
+        require(newByteSize >= 0)
+        new MemorySegment(!(ptr + offset).cast[Ptr[Byte]], newByteSize)
+    end get
 
     /** Writes a value to memory using the provided layout.
       */
@@ -82,7 +85,9 @@ final class MemorySegment private (private[foreign] val ptr: Ptr[Byte], val byte
         require(offset + unsafe.sizeOf[CChar] <= byteSize)
         !(ptr + offset).cast[Char] = value
     def set(layout: AddressLayout, offset: Long, value: MemorySegment): Unit =
-        !(ptr + offset).cast[Ptr[Byte]] = value.ptr
+        require(offset + value.byteSize <= byteSize)
+        memcpy((ptr + offset).cast[Ptr[Byte]], value.ptr, value.byteSize.toULong)
+    end set
 end MemorySegment
 
 object MemorySegment:
@@ -106,8 +111,10 @@ object MemorySegment:
       *   The number of bytes to copy.
       */
     def copy(srcSegment: MemorySegment, srcOffset: Long, dstSegment: MemorySegment, dstOffset: Long, bytes: Long): Unit =
+        require(srcOffset + bytes <= srcSegment.byteSize)
+        require(dstOffset + bytes <= dstSegment.byteSize)
         memcpy(dstSegment.ptr + dstOffset, srcSegment.ptr + srcOffset, bytes.toULong)
-        ()
+    end copy
 end MemorySegment
 
 /** Minimal inline stub for ValueLayout. This defines constants for the primitive types.
@@ -124,19 +131,14 @@ object ValueLayout:
     sealed trait ofFloat   extends ValueLayout
     sealed trait ofDouble  extends ValueLayout
 
-    case object JAVA_BOOLEAN          extends ValueLayout
-    case object JAVA_BYTE             extends ValueLayout
-    case object JAVA_CHAR             extends ValueLayout
-    case object JAVA_CHAR_UNALIGNED   extends ValueLayout
-    case object JAVA_SHORT            extends ValueLayout
-    case object JAVA_SHORT_UNALIGNED  extends ValueLayout
-    case object JAVA_INT              extends ValueLayout
-    case object JAVA_INT_UNALIGNED    extends ValueLayout
-    case object JAVA_LONG             extends ValueLayout
-    case object JAVA_LONG_UNALIGNED   extends ValueLayout
-    case object JAVA_FLOAT            extends ValueLayout
-    case object JAVA_FLOAT_UNALIGNED  extends ValueLayout
-    case object JAVA_DOUBLE           extends ValueLayout
-    case object JAVA_DOUBLE_UNALIGNED extends ValueLayout
+    case object JAVA_BOOLEAN extends ofBoolean
+    case object JAVA_BYTE    extends ofByte
+    case object JAVA_CHAR    extends ofChar
+    case object JAVA_SHORT   extends ofShort
+    case object JAVA_INT     extends ofInt
+    case object JAVA_LONG    extends ofLong
+    case object JAVA_FLOAT   extends ofFloat
+    case object JAVA_DOUBLE  extends ofDouble
+    case object ADDRESS      extends ValueLayout
 end ValueLayout
 sealed trait AddressLayout extends ValueLayout
