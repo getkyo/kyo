@@ -1309,7 +1309,7 @@ case class Config(someConfig: String)
 
 // Stream with IO effect
 val a: Stream[String, IO] =
-    Stream.init(Seq("file1.", "file2."))
+    Stream.init(Seq("file1.txt", "file2.txt"))
         .map(fileName => IO(scala.io.Source.fromFile(fileName).mkString))
 
 // Stream with Abort effect
@@ -1887,7 +1887,7 @@ val b: Int < IO =
 import kyo.*
 
 // Create a Path instance representing a path
-val path: Path = Path("tmp", "file.")
+val path: Path = Path("tmp", "file.txt")
 
 // Read the entire contents of a file as a String
 val content: String < IO =
@@ -3573,4 +3573,4 @@ Lastly, the name "Kyo" is derived from the last character of Nam-myoho-renge-kyo
 License
 -------
 
-See the [LICENSE](https://github.com/getkyo/kyo/blob/master/LICENSE.) file for details.
+See the [LICENSE](https://github.com/getkyo/kyo/blob/master/LICENSE.txt) file for details.
