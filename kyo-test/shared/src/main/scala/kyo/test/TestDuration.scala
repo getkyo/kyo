@@ -1,47 +1,51 @@
-package zio.test
+package kyo.test
 
+import java.time.Duration as JDuration
 import java.time.Instant
-import zio.*
+import kyo.env.*
+import kyo.io.*
+import scala.concurrent.duration.*
 
-sealed trait TestDuration:
+sealed trait Duration:
     self =>
-    import TestDuration.*
+    import Duration.*
 
-    final def <>(that: TestDuration): TestDuration =
-        (self, that) match
-            case (Zero, right) => right
-            case (left, Zero)  => left
-            case (Finite(leftStart, leftEnd), Finite(rightStart, rightEnd)) =>
-                val start = if leftStart.isBefore(rightStart) then leftStart else rightStart
-                val end   = if leftEnd.isAfter(rightEnd) then leftEnd else rightEnd
-                Finite(start, end)
+    final def <>(that: Duration): Duration = (self, that) match
+        case (Zero, right) => right
+        case (left, Zero)  => left
+        case (Finite(leftStart, leftEnd), Finite(rightStart, rightEnd)) =>
+            val start = if leftStart.isBefore(rightStart) then leftStart else rightStart
+            val end   = if leftEnd.isAfter(rightEnd) then leftEnd else rightEnd
+            Finite(start, end)
 
-    final def isZero: Boolean =
-        toDuration.isZero
+    final def isZero: Boolean = toDuration.isZero
 
-    final def render: String =
-        toDuration.render
+    final def render: String = s"${toDuration.toMillis}ms"
 
-    final def toDuration: Duration =
-        self match
-            case Zero               => Duration.Zero
-            case Finite(start, end) => Duration.fromInterval(start, end)
+    // Convert to a java.time.Duration for effectful duration operations
+    final def toDuration: JDuration = self match
+        case Zero               => JDuration.ZERO
+        case Finite(start, end) => JDuration.between(start, end)
 
-    final def toMillis: Long =
-        toDuration.toMillis
+    final def toMillis: Long = toDuration.toMillis
 
-    final def toNanos: Long =
-        toDuration.toNanos
-end TestDuration
+    final def toNanos: Long = toDuration.toNanos
+end Duration
+
+object Duration:
+    private case class Finite(start: Instant, end: Instant) extends Duration
+    private case object Zero                                extends Duration
+
+    def fromInterval(start: Instant, end: Instant): Duration = Finite(start, end)
+    val zero: Duration                                       = Zero
+end Duration
 
 object TestDuration:
+    def timeout(duration: Duration): String < (Env[Any] & IO) =
+        // Pure computation: concatenating a string is pure and automatically promoted
+        "Timeout reached: " + duration.toMillis + "ms"
 
-    final private case class Finite(start: Instant, end: Instant) extends TestDuration
-    private case object Zero                                      extends TestDuration
-
-    def fromInterval(start: Instant, end: Instant): TestDuration =
-        Finite(start, end)
-
-    val zero: TestDuration =
-        Zero
+    def printDuration(duration: Duration): Unit < IO =
+        // Wrap the side-effecting println in a suspended effect
+        kyo.suspend(println(s"Duration: ${duration.toMillis}ms"))
 end TestDuration

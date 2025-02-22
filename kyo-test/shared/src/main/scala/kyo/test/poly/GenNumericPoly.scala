@@ -1,24 +1,7 @@
-/*
- * Copyright 2020-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test.poly
 
-package zio.test.poly
-
-import zio.Trace
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.Gen
+import kyo.Frame
+import kyo.test.Gen
 
 /** `GenNumericPoly` provides evidence that instances of `Gen[T]` and `Numeric[T]` exist for some concrete but unknown type `T`.
   */
@@ -39,27 +22,27 @@ object GenNumericPoly:
 
     /** Provides evidence that instances of `Gen` and `Numeric` exist for bytes.
       */
-    def byte(implicit trace: Trace): GenNumericPoly =
+    def byte(implicit trace: Frame): GenNumericPoly =
         GenIntegralPoly.byte
 
     /** Provides evidence that instances of `Gen` and `Numeric` exist for characters.
       */
-    def char(implicit trace: Trace): GenNumericPoly =
+    def char(implicit trace: Frame): GenNumericPoly =
         GenIntegralPoly.char
 
     /** Provides evidence that instances of `Gen` and `Numeric` exist for doubles.
       */
-    def double(implicit trace: Trace): GenNumericPoly =
+    def double(implicit trace: Frame): GenNumericPoly =
         GenFractionalPoly.double
 
     /** Provides evidence that instances of `Gen` and `Numeric` exist for floats.
       */
-    def float(implicit trace: Trace): GenNumericPoly =
+    def float(implicit trace: Frame): GenNumericPoly =
         GenFractionalPoly.float
 
     /** A generator of polymorphic values constrainted to have a `Numeric` instance.
       */
-    def genNumericPoly(implicit trace: Trace): Gen[Any, GenNumericPoly] =
+    def genNumericPoly(implicit trace: Frame): Gen[Any, GenNumericPoly] =
         Gen.elements(
             byte,
             char,
@@ -72,16 +55,16 @@ object GenNumericPoly:
 
     /** Provides evidence that instances of `Gen` and `Numeric` exist for integers.
       */
-    def int(implicit trace: Trace): GenNumericPoly =
+    def int(implicit trace: Frame): GenNumericPoly =
         GenIntegralPoly.int
 
     /** Provides evidence that instances of `Gen` and `Numeric` exist for longs.
       */
-    def long(implicit trace: Trace): GenNumericPoly =
+    def long(implicit trace: Frame): GenNumericPoly =
         GenIntegralPoly.long
 
     /** Provides evidence that instances of `Gen` and `Numeric` exist for shorts.
       */
-    def short(implicit trace: Trace): GenNumericPoly =
+    def short(implicit trace: Frame): GenNumericPoly =
         GenIntegralPoly.long
 end GenNumericPoly

@@ -1,26 +1,9 @@
-/*
- * Copyright 2020-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test.poly
 
-package zio.test.poly
-
+import kyo.Frame
+import kyo.Random
+import kyo.test.Gen
 import scala.annotation.tailrec
-import zio.Random
-import zio.Trace
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.Gen
 
 /** `GenOrderingPoly` provides evidence that instances of `Gen[T]` and `Ordering[T]` exist for some concrete but unknown type `T`.
   */
@@ -40,30 +23,30 @@ object GenOrderingPoly:
 
     /** Provides evidence that instances of `Gen` and a `Ordering` exist for booleans.
       */
-    def boolean(implicit trace: Trace): GenOrderingPoly =
+    def boolean(implicit trace: Frame): GenOrderingPoly =
         GenOrderingPoly(Gen.boolean, Ordering.Boolean)
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for bytes.
       */
-    def byte(implicit trace: Trace): GenOrderingPoly =
+    def byte(implicit trace: Frame): GenOrderingPoly =
         GenNumericPoly.byte
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for characters.
       */
-    def char(implicit trace: Trace): GenOrderingPoly =
+    def char(implicit trace: Frame): GenOrderingPoly =
         GenNumericPoly.char
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for doubles.
       */
-    def double(implicit trace: Trace): GenOrderingPoly =
+    def double(implicit trace: Frame): GenOrderingPoly =
         GenNumericPoly.double
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for floats.
       */
-    def float(implicit trace: Trace): GenOrderingPoly =
+    def float(implicit trace: Frame): GenOrderingPoly =
         GenNumericPoly.float
 
-    def genOrderingPoly(implicit trace: Trace): Gen[Any, GenOrderingPoly] =
+    def genOrderingPoly(implicit trace: Frame): Gen[Any, GenOrderingPoly] =
         val primitives = Gen.elements(
             boolean,
             byte,
@@ -87,45 +70,45 @@ object GenOrderingPoly:
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for integers.
       */
-    def int(implicit trace: Trace): GenOrderingPoly =
+    def int(implicit trace: Frame): GenOrderingPoly =
         GenNumericPoly.int
 
     /** Provides evidence that instances of `Gen[List[T]]` and `Ordering[List[T]]` exist for any type for which `Gen[T]` and `Ordering[T]`
       * exist.
       */
-    def list(poly: GenOrderingPoly)(implicit trace: Trace): GenOrderingPoly =
+    def list(poly: GenOrderingPoly)(implicit trace: Frame): GenOrderingPoly =
         GenOrderingPoly(Gen.listOf(poly.genT), ListOrdering(poly.ordT))
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for longs.
       */
-    def long(implicit trace: Trace): GenOrderingPoly =
+    def long(implicit trace: Frame): GenOrderingPoly =
         GenNumericPoly.long
 
     /** Provides evidence that instances of `Gen[Option[T]]` and `Ordering[Option[T]]` exist for any type for which `Gen[T]` and
       * `Ordering[T]` exist.
       */
-    def option(poly: GenOrderingPoly)(implicit trace: Trace): GenOrderingPoly =
+    def option(poly: GenOrderingPoly)(implicit trace: Frame): GenOrderingPoly =
         GenOrderingPoly(Gen.option(poly.genT), Ordering.Option(poly.ordT))
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for shorts.
       */
-    def short(implicit trace: Trace): GenOrderingPoly =
+    def short(implicit trace: Frame): GenOrderingPoly =
         GenNumericPoly.long
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for strings.
       */
-    def string(implicit trace: Trace): GenOrderingPoly =
+    def string(implicit trace: Frame): GenOrderingPoly =
         GenOrderingPoly(Gen.string, Ordering.String)
 
     /** Provides evidence that instances of `Gen` and `Ordering` exist for the unit value.
       */
-    def unit(implicit trace: Trace): GenOrderingPoly =
+    def unit(implicit trace: Frame): GenOrderingPoly =
         GenOrderingPoly(Gen.unit, Ordering.Unit)
 
     /** Provides evidence that instances of `Gen[Vector[T]]` and `Ordering[Vector[T]]` exist for any type for which `Gen[T]` and
       * `Ordering[T]` exist.
       */
-    def vector(poly: GenOrderingPoly)(implicit trace: Trace): GenOrderingPoly =
+    def vector(poly: GenOrderingPoly)(implicit trace: Frame): GenOrderingPoly =
         GenOrderingPoly(Gen.vectorOf(poly.genT), VectorOrdering(poly.ordT))
 
     /** Derives an `Ordering[List[A]]` given an `Ordering[A]`.

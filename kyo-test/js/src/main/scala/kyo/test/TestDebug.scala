@@ -1,11 +1,8 @@
-package zio.test
-
-import zio.Ref
-import zio.ZIO
+package kyo.test
 
 // TODO Implement this with appropriate JS filesystem APIs after JVM version is finalized
 private[test] object TestDebug:
-    def print(executionEvent: ExecutionEvent, lock: TestDebugFileLock) =
+    def print(executionEvent: ExecutionEvent, lock: TestDebugFileLock): Unit < Any =
         executionEvent match
             case t: ExecutionEvent.TestStarted =>
                 write(t.fullyQualifiedName, s"${t.labels.mkString(" - ")} STARTED\n", true, lock)
@@ -13,21 +10,21 @@ private[test] object TestDebug:
             case t: ExecutionEvent.Test[?] =>
                 removeLine(t.fullyQualifiedName, t.labels.mkString(" - ") + " STARTED", lock)
 
-            case _ => ZIO.unit
+            case _ => ()
 
     private def write(
         fullyQualifiedTaskName: String,
         content: => String,
         append: Boolean,
         lock: TestDebugFileLock
-    ): ZIO[Any, Nothing, Unit] =
-        ZIO.unit
+    ): Unit < Any =
+        ()
 
-    private def removeLine(fullyQualifiedTaskName: String, searchString: String, lock: TestDebugFileLock) =
-        ZIO.unit
+    private def removeLine(fullyQualifiedTaskName: String, searchString: String, lock: TestDebugFileLock): Unit < Any =
+        ()
 
-    def createDebugFile(fullyQualifiedTaskName: String): ZIO[Any, Nothing, Unit] =
-        ZIO.unit
+    def createDebugFile(fullyQualifiedTaskName: String): Unit < Any =
+        ()
 
-    def deleteIfEmpty(fullyQualifiedTaskName: String): ZIO[Any, Nothing, Unit] = ZIO.unit
+    def deleteIfEmpty(fullyQualifiedTaskName: String): Unit < Any = ()
 end TestDebug

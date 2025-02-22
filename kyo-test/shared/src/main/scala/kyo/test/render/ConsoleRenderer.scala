@@ -1,37 +1,19 @@
-/*
- * Copyright 2019-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test.render
 
-package zio.test.render
-
-import zio.Cause
-import zio.Trace
-import zio.internal.ansi.AnsiStringOps
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.*
-import zio.test.ExecutionEvent.SectionEnd
-import zio.test.ExecutionEvent.SectionStart
-import zio.test.ExecutionEvent.Test
-import zio.test.ExecutionEvent.TestStarted
-import zio.test.ExecutionEvent.TopLevelFlush
-import zio.test.render.ExecutionResult.ResultType
-import zio.test.render.ExecutionResult.Status
-import zio.test.render.LogLine.Fragment
-import zio.test.render.LogLine.Fragment.Style
-import zio.test.render.LogLine.Line
-import zio.test.render.LogLine.Message
+import kyo.*
+import kyo.Ansi.*
+import kyo.test.*
+import kyo.test.ExecutionEvent.SectionEnd
+import kyo.test.ExecutionEvent.SectionStart
+import kyo.test.ExecutionEvent.Test
+import kyo.test.ExecutionEvent.TestStarted
+import kyo.test.ExecutionEvent.TopLevelFlush
+import kyo.test.render.ExecutionResult.ResultType
+import kyo.test.render.ExecutionResult.Status
+import kyo.test.render.LogLine.Fragment
+import kyo.test.render.LogLine.Fragment.Style
+import kyo.test.render.LogLine.Line
+import kyo.test.render.LogLine.Message
 
 trait ConsoleRenderer extends TestRenderer:
     private val tabSize = 2
@@ -105,7 +87,7 @@ trait ConsoleRenderer extends TestRenderer:
             case TopLevelFlush(_) =>
                 Nil
 
-    override protected def renderOutput(results: Seq[ExecutionResult])(implicit trace: Trace): Seq[String] =
+    override protected def renderOutput(results: Seq[ExecutionResult])(implicit trace: Frame): Seq[String] =
         results.map { result =>
             val message = Message(result.streamingLines).intersperse(Line.fromString("\n"))
 
@@ -214,7 +196,7 @@ trait ConsoleRenderer extends TestRenderer:
     private def renderOffset(n: Int)(s: String) =
         " " * (n * tabSize) + s
 
-    import zio.duration2DurationOps
+    import kyo.duration2DurationOps
     def renderSummary(summary: Summary): String =
         s"""${summary.success} tests passed. ${summary.fail} tests failed. ${summary.ignore} tests ignored.
        |${summary.failureDetails}

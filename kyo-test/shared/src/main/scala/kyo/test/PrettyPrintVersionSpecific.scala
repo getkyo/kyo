@@ -1,6 +1,6 @@
-package zio.test
-
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+package kyo.test
+// Converted from ZIO to Kyo test system
+// import zio.stacktracer.TracingImplicits.disableAutoTrace
 
 private[test] trait PrettyPrintVersionSpecific:
     def labels(product: Product): Iterator[String] = product.productElementNames

@@ -1,8 +1,8 @@
-package zio.test.results
+package kyo.test.results
 
-import zio.ZIO
-import zio.ZLayer
-import zio.test.ExecutionEvent
+import kyo.ZIO
+import kyo.ZLayer
+import kyo.test.ExecutionEvent
 
 trait ResultPrinter:
     def print[E](event: ExecutionEvent.Test[E]): ZIO[Any, Nothing, Unit]

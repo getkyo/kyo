@@ -1,26 +1,9 @@
-/*
- * Copyright 2019-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test.internal.myers
 
-package zio.test.internal.myers
-
-import zio.Chunk
-import zio.ChunkBuilder
-import zio.internal.ansi.AnsiStringOps
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.ConsoleUtils
+import kyo.Ansi.*
+import kyo.Chunk
+import kyo.ChunkBuilder
+import kyo.test.ConsoleUtils
 
 sealed trait Action[A]
 
@@ -66,7 +49,7 @@ final case class DiffResult[A](actions: Chunk[Action[A]]):
         actions.map {
             case Action.Delete(s) => s"-${Console.UNDERLINED}$s".red
             case Action.Insert(s) => s"+${Console.UNDERLINED}$s".green
-            case Action.Keep(s)   => s"$s".faint
+            case Action.Keep(s)   => s"$s".grey
         }
             .mkString("")
 
@@ -74,7 +57,7 @@ final case class DiffResult[A](actions: Chunk[Action[A]]):
         actions.map {
             case Action.Delete(s) => s"-$s".red
             case Action.Insert(s) => s"+$s".green
-            case Action.Keep(s)   => Console.RESET + s" $s".faint
+            case Action.Keep(s)   => Console.RESET + s" $s".grey
         }
             .mkString("\n")
 end DiffResult
@@ -82,20 +65,20 @@ end DiffResult
 object MyersDiff:
     def diffWords(original: String, modified: String): DiffResult[String] =
         diff(
-            Chunk.fromIterable(original.split("\\b")),
-            Chunk.fromIterable(modified.split("\\b"))
+            Chunk.Indexed.from(original.split("\\b")),
+            Chunk.Indexed.from(modified.split("\\b"))
         )
 
     def diffChars(original: String, modified: String): DiffResult[String] =
         diff(
-            Chunk.fromIterable(original.toList.map(_.toString)),
-            Chunk.fromIterable(modified.toList.map(_.toString))
+            Chunk.Indexed.from(original.toList.map(_.toString)),
+            Chunk.Indexed.from(modified.toList.map(_.toString))
         )
 
     def diff(original: String, modified: String): DiffResult[String] =
         diff(
-            Chunk.fromIterable(original.split("\n")),
-            Chunk.fromIterable(modified.split("\n"))
+            Chunk.Indexed.from(original.split("\n")),
+            Chunk.Indexed.from(modified.split("\n"))
         )
 
     def diff[A](original: Chunk[A], modified: Chunk[A]): DiffResult[A] =

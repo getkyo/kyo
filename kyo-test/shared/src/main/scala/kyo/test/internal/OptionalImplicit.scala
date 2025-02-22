@@ -1,6 +1,4 @@
-package zio.test.internal
-
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+package kyo.test.internal
 
 trait OptionalImplicit[A]:
     def value: Option[A]
@@ -8,7 +6,7 @@ trait OptionalImplicit[A]:
 object OptionalImplicit extends LowPriOptionalImplicit:
     def apply[A: OptionalImplicit]: Option[A] = implicitly[OptionalImplicit[A]].value
 
-    implicit def some[A](implicit instance: A): OptionalImplicit[A] = new OptionalImplicit[A]:
+    implicit def some[A](using instance: A): OptionalImplicit[A] = new OptionalImplicit[A]:
         val value: Option[A] = Some(instance)
 end OptionalImplicit
 

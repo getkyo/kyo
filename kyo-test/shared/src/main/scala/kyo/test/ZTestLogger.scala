@@ -1,55 +1,69 @@
-package zio.test
+package kyo.test
 
+import java.util.concurrent.atomic.AtomicReference
+import kyo.Abort
+import kyo.Env
+import kyo.IO
+import kyo.Layer
 import scala.annotation.tailrec
-import zio.*
 
-/** A `ZTestLogger` is an implementation of a `ZLogger` that writes all log messages to an internal data structure. The contents of this
-  * data structure can be accessed using the `logOutput` operator. This makes it easy to write tests to verify that expected messages are
-  * being logged.
-  *
-  * {{{
-  * test("logging works") {
-  *   for {
-  *     _      <- ZIO.logDebug("It's alive!")
-  *     output <- ZTestLogger.logOutput
-  *   } yield assertTrue(output.length == 1) &&
-  *     assertTrue(output(0).message() == "It's alive!") &&
-  *     assertTrue(output(0).logLevel == LogLevel.Debug)
-  * }
-  * }}}
-  */
+// Placeholder definitions for types used in logging. In an actual conversion these should be imported from appropriate modules.
+
+type Trace = Any
+
+type FiberId = Any
+
+type LogLevel = Any
+
+type Cause[A] = Any
+
+type FiberRefs = Any
+
+type LogSpan = Any
+
+case class Chunk[A](elems: List[A]):
+    def :+(elem: A): Chunk[A] = Chunk(elems :+ elem)
+object Chunk:
+    def empty[A]: Chunk[A] = Chunk(Nil)
+
+// Base trait for loggers, assuming a similar signature as in the ZIO version.
+trait ZLogger[-Message, +Output]:
+    def apply(
+        trace: Trace,
+        fiberId: FiberId,
+        logLevel: LogLevel,
+        message: () => String,
+        cause: Cause[Any],
+        context: FiberRefs,
+        spans: List[LogSpan],
+        annotations: Map[String, String]
+    ): Output
+end ZLogger
+
+// The converted ZTestLogger that writes logs to an internal data structure.
 sealed trait ZTestLogger[-Message, +Output] extends ZLogger[Message, Output]:
-
-    /** Returns the contents of the log.
-      */
-    def logOutput: UIO[Chunk[ZTestLogger.LogEntry]]
-end ZTestLogger
+    def logOutput: Chunk[LogEntry] < (Env[Any] & IO & Abort[Nothing])
 
 object ZTestLogger:
+    // Placeholder for a function to retrieve loggers from the environment. In the actual conversion, this should interface with Kyo's environment.
+    def loggersWith[A](f: List[Any] => A): A = f(Nil) // Placeholder implementation
 
-    /** A layer which constructs a new `ZTestLogger` and runs the effect it is provided to with the `Runtime` updated to add the
-      * `ZTestLogger`.
-      */
-    val default: ZLayer[Any, Nothing, Unit] =
-        ZLayer.scoped {
-            for
-                testLogger <- ZTestLogger.make
-                acquire    <- FiberRef.currentLoggers.locallyScopedWith(_ + testLogger)
-            yield ()
+    // A layer that constructs a new ZTestLogger and sets up the logging environment.
+    val default: Layer[Unit, Nothing] = Layer.scoped {
+        for testLogger <- make
+        // Note: In the original ZIO version, the current loggers were updated via FiberRef.currentLoggers.locallyScopedWith(_ + testLogger).
+        // This part is omitted in this conversion.
+        yield ()
+    }
+
+    // Provides access to the log output of the current test logger.
+    val logOutput: Chunk[LogEntry] < (Env[Any] & IO & Abort[Nothing]) =
+        loggersWith { loggers =>
+            loggers.collectFirst { case l: ZTestLogger[?, ?] => l.logOutput }
+                .getOrElse(Abort.fail("Defect: ZTestLogger is missing"))
         }
 
-    /** Accesses the contents of the current test logger.
-      */
-    val logOutput: UIO[Chunk[ZTestLogger.LogEntry]] =
-        ZIO.loggersWith { loggers =>
-            loggers.collectFirst { case testLogger: ZTestLogger[?, ?] =>
-                testLogger.logOutput
-            }
-                .getOrElse(ZIO.dieMessage("Defect: ZTestLogger is missing"))
-        }
-
-    /** A log entry captures all of the contents of a log message as a data structure.
-      */
+    // Captures all details of a log message.
     final case class LogEntry(
         trace: Trace,
         fiberId: FiberId,
@@ -64,35 +78,29 @@ object ZTestLogger:
             zlogger(trace, fiberId, logLevel, message, cause, context, spans, annotations)
     end LogEntry
 
-    /** Constructs a `ZTestLogger`.
-      */
-    private def make: UIO[ZLogger[String, Unit]] =
-        ZIO.succeed {
+    // Constructs a new ZTestLogger that accumulates log entries in an atomic reference.
+    private def make: ZTestLogger[String, Unit] < (Env[Any] & IO & Abort[Nothing]) =
+        val _logOutput = new AtomicReference[Chunk[LogEntry]](Chunk.empty)
+        new ZTestLogger[String, Unit]:
+            @tailrec
+            def apply(
+                trace: Trace,
+                fiberId: FiberId,
+                logLevel: LogLevel,
+                message: () => String,
+                cause: Cause[Any],
+                context: FiberRefs,
+                spans: List[LogSpan],
+                annotations: Map[String, String]
+            ): Unit =
+                val newEntry = LogEntry(trace, fiberId, logLevel, message, cause, context, spans, annotations)
+                val oldState = _logOutput.get
+                if !_logOutput.compareAndSet(oldState, oldState :+ newEntry) then
+                    apply(trace, fiberId, logLevel, message, cause, context, spans, annotations)
+                else ()
+            end apply
 
-            val _logOutput = new java.util.concurrent.atomic.AtomicReference[Chunk[LogEntry]](Chunk.empty)
-
-            new ZTestLogger[String, Unit]:
-                @tailrec
-                def apply(
-                    trace: Trace,
-                    fiberId: FiberId,
-                    logLevel: LogLevel,
-                    message: () => String,
-                    cause: Cause[Any],
-                    context: FiberRefs,
-                    spans: List[LogSpan],
-                    annotations: Map[String, String]
-                ): Unit =
-                    val newEntry = LogEntry(trace, fiberId, logLevel, message, cause, context, spans, annotations)
-
-                    val oldState = _logOutput.get
-
-                    if !_logOutput.compareAndSet(oldState, oldState :+ newEntry) then
-                        apply(trace, fiberId, logLevel, message, cause, context, spans, annotations)
-                    else ()
-                end apply
-                val logOutput: UIO[Chunk[LogEntry]] =
-                    ZIO.succeed(_logOutput.get)
-            end new
-        }
+            val logOutput: Chunk[LogEntry] < (Env[Any] & IO & Abort[Nothing]) = _logOutput.get
+        end new
+    end make
 end ZTestLogger

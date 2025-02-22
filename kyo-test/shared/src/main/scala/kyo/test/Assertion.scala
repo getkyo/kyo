@@ -1,17 +1,16 @@
-package zio.test
+package kyo.test
 
+import kyo.Ansi.*
+import kyo.Cause
+import kyo.Exit
+import kyo.Frame
+import kyo.ZIO
+import kyo.internal.stacktracer.Frame
+import kyo.test.Assertion.Arguments
+import kyo.test.ErrorMessage as M
+import kyo.test.internal.SmartAssertions
 import scala.reflect.ClassTag
 import scala.util.Try
-import zio.Cause
-import zio.Exit
-import zio.Trace
-import zio.ZIO
-import zio.internal.ansi.AnsiStringOps
-import zio.internal.stacktracer.SourceLocation
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.Assertion.Arguments
-import zio.test.ErrorMessage as M
-import zio.test.internal.SmartAssertions
 
 final case class Assertion[-A](arrow: TestArrow[A, Boolean]):
     self =>
@@ -30,7 +29,7 @@ final case class Assertion[-A](arrow: TestArrow[A, Boolean]):
     def negate: Assertion[A] =
         Assertion(!arrow)
 
-    def test(value: A)(implicit sourceLocation: SourceLocation): Boolean =
+    def test(value: A)(implicit Frame: Frame): Boolean =
         TestArrow.run(arrow.withLocation, Right(value)).isSuccess
 
     // TODO: IMPLEMENT LABELING
@@ -40,7 +39,7 @@ final case class Assertion[-A](arrow: TestArrow[A, Boolean]):
     def ??(message: String): Assertion[A] =
         self.label(message)
 
-    def run(value: => A)(implicit sourceLocation: SourceLocation): TestResult =
+    def run(value: => A)(implicit Frame: Frame): TestResult =
         Assertion.smartAssert(value)(self)
 
     private[test] def withCode(code: String, arguments: Arguments*): Assertion[A] =
@@ -56,7 +55,7 @@ object Assertion extends AssertionVariants:
         assertionString: Option[String] = None
     )(
         assertion: Assertion[A]
-    )(implicit sourceLocation: SourceLocation): TestResult =
+    )(implicit Frame: Frame): TestResult =
         lazy val value0 = expr
         val completeString =
             codeString.flatMap(code =>
@@ -72,7 +71,7 @@ object Assertion extends AssertionVariants:
 
     private[test] def smartAssertZIO[R, E, A](
         expr: => ZIO[R, E, A]
-    )(assertion: Assertion[A])(implicit trace: Trace, sourceLocation: SourceLocation): ZIO[R, E, TestResult] =
+    )(assertion: Assertion[A])(implicit trace: Frame, Frame: Frame): ZIO[R, E, TestResult] =
         lazy val value0 = expr
         value0.map(smartAssert(_)(assertion))
     end smartAssertZIO

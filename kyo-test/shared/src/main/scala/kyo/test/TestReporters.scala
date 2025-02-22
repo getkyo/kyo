@@ -1,26 +1,27 @@
-package zio.test
+package kyo.test
 
-import zio.Ref
-import zio.ZIO
+import kyo.Ref
+import kyo.effect.Abort
+import kyo.effect.Env
+// Assuming SuiteId is available in the kyo.test package
+import kyo.test.SuiteId
 
 object TestReporters:
-    val make: ZIO[Any, Nothing, TestReporters] =
+    val make: TestReporters < (Env[Any] & Abort[Nothing]) =
         // This SuiteId should probably be passed in a more obvious way
         Ref.make(List(SuiteId.global)).map(TestReporters(_))
 end TestReporters
 
 case class TestReporters(reportersStack: Ref[List[SuiteId]]):
-
-    def attemptToGetPrintingControl(id: SuiteId, ancestors: List[SuiteId]): ZIO[Any, Nothing, Boolean] =
+    def attemptToGetPrintingControl(id: SuiteId, ancestors: List[SuiteId]): Boolean < (Env[Any] & Abort[Nothing]) =
         reportersStack.updateSomeAndGet {
             case Nil =>
                 List(id)
-
             case reporters if ancestors.nonEmpty && reporters.head == ancestors.head =>
                 id :: reporters
         }.map(_.head == id)
 
-    def relinquishPrintingControl(id: SuiteId): ZIO[Any, Nothing, Unit] =
+    def relinquishPrintingControl(id: SuiteId): Unit < (Env[Any] & Abort[Nothing]) =
         reportersStack.updateSome {
             case currentReporter :: reporters if currentReporter == id =>
                 reporters

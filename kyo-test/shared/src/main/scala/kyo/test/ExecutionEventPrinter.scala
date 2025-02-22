@@ -1,30 +1,34 @@
-package zio.test
+package kyo.test
 
-import zio.Console
-import zio.ZIO
-import zio.ZLayer
-import zio.test.results.ResultPrinter
+import kyo.*
+import kyo.Combinators.*
+import kyo.Constructors.*
+import kyo.kernel.*
+import kyo.test.ExecutionEvent
+import kyo.test.ExecutionEventConsolePrinter
+import kyo.test.ResultPrinter
+import kyo.test.TestLogger
+import kyo.test.render.ReporterEventRenderer
 
-private[test] trait ExecutionEventPrinter:
-    def print(event: ExecutionEvent): ZIO[Any, Nothing, Unit]
+trait ExecutionEventPrinter:
+    def print(event: ExecutionEvent): Unit < IO
 
-private[test] object ExecutionEventPrinter:
+object ExecutionEventPrinter:
     case class Live(console: ExecutionEventConsolePrinter, file: ResultPrinter) extends ExecutionEventPrinter:
-        override def print(event: ExecutionEvent): ZIO[Any, Nothing, Unit] =
+        override def print(event: ExecutionEvent): Unit < IO =
             console.print(event) *>
                 (event match
                     case testResult: ExecutionEvent.Test[?] => file.print(testResult)
-                    case _                                  => ZIO.unit)
+                    case _                                  => IO(()))
     end Live
 
-    def live(console: Console, eventRenderer: ReporterEventRenderer): ZLayer[Any, Nothing, ExecutionEventPrinter] =
-        ZLayer.make[ExecutionEventPrinter](
-            ResultPrinter.json,
-            ExecutionEventConsolePrinter.live(eventRenderer),
-            TestLogger.fromConsole(console),
-            ZLayer.fromFunction(Live.apply _)
-        )
+    // Constructs a layer that provides an ExecutionEventPrinter using dependencies TestLogger and ResultPrinter
+    def live(eventRenderer: ReporterEventRenderer)(using Frame): Layer[(TestLogger, ResultPrinter), ExecutionEventPrinter] =
+        for
+            console <- ExecutionEventConsolePrinter.live(eventRenderer)
+            file    <- ResultPrinter.json
+        yield Live(console, file)
 
-    def print(event: ExecutionEvent): ZIO[ExecutionEventPrinter, Nothing, Unit] =
-        ZIO.serviceWithZIO(_.print(event))
+    def print(event: ExecutionEvent): Unit < (IO & Env[ExecutionEventPrinter]) =
+        Env.get[ExecutionEventPrinter].map(_.print(event)).flatten
 end ExecutionEventPrinter

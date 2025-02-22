@@ -1,28 +1,11 @@
-/*
- * Copyright 2020-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test.laws
 
-package zio.test.laws
-
-import zio.Trace
-import zio.URIO
-import zio.ZIO
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.Gen
-import zio.test.TestResult
-import zio.test.check
+import kyo.Frame
+import kyo.URIO
+import kyo.ZIO
+import kyo.test.Gen
+import kyo.test.TestResult
+import kyo.test.check
 
 /** `ZLaws[Caps, R]` represents a set of laws that values with capabilities `Caps` are expected to satisfy. Laws can be run by providing a
   * generator of values of a type `A` with the required capabilities to return a test result. Laws can be combined using `+` to produce a
@@ -57,7 +40,7 @@ object ZLaws:
     abstract class Law1[-Caps[_]](label: String) extends ZLaws[Caps, Any]:
         self =>
         def apply[A: Caps](a1: A): TestResult
-        final def run[R, A: Caps](gen: Gen[R, A])(implicit trace: Trace): URIO[R, TestResult] =
+        final def run[R, A: Caps](gen: Gen[R, A])(implicit trace: Frame): URIO[R, TestResult] =
             check(gen)(apply(_).??(label))
     end Law1
 
@@ -77,7 +60,7 @@ object ZLaws:
     abstract class Law2[-Caps[_]](label: String) extends ZLaws[Caps, Any]:
         self =>
         def apply[A: Caps](a1: A, a2: A): TestResult
-        final def run[R, A: Caps](gen: Gen[R, A])(implicit trace: Trace): URIO[R, TestResult] =
+        final def run[R, A: Caps](gen: Gen[R, A])(implicit trace: Frame): URIO[R, TestResult] =
             check(gen, gen)(apply(_, _).label(label))
     end Law2
 
@@ -97,7 +80,7 @@ object ZLaws:
     abstract class Law3[-Caps[_]](label: String) extends ZLaws[Caps, Any]:
         self =>
         def apply[A: Caps](a1: A, a2: A, a3: A): TestResult
-        final def run[R, A: Caps](gen: Gen[R, A])(implicit trace: Trace): URIO[R, TestResult] =
+        final def run[R, A: Caps](gen: Gen[R, A])(implicit trace: Frame): URIO[R, TestResult] =
             check(gen, gen, gen)(apply(_, _, _).label(label))
     end Law3
 

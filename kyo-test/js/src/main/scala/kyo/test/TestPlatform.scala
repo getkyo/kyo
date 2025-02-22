@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-package zio.test
-
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+package kyo.test
 
 /** `TestPlatform` provides information about the platform tests are being run on to enable platform specific test configuration.
   */

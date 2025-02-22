@@ -1,9 +1,8 @@
-package zio.test
+package kyo.test
 
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
-import zio.Random
-import zio.ZIO
+import kyo.*
 
 /** @param id
   *   Level of the spec nesting that you are at. Suites get new values, test cases inherit their suite's
@@ -15,9 +14,9 @@ object SuiteId:
 
     private val counter = new AtomicInteger(1)
 
-    val newRandom: ZIO[Any, Nothing, SuiteId] =
+    val newRandom: SuiteId < Any =
         for
             // TODO  Consider counting up from 0, rather than completely random ints
-            random <- ZIO.succeed(counter.getAndIncrement())
+            random <- Kyo.pure(counter.getAndIncrement())
         yield SuiteId(random)
 end SuiteId

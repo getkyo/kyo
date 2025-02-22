@@ -1,12 +1,14 @@
-package zio.test
+package kyo.test
 
-import zio.Ref
-import zio.ZIO
+import kyo.*
+import kyo.Combinators.*
+import kyo.IO
+import kyo.Ref
 
 private[test] object TestDebugFileLock:
-    def make: ZIO[Any, Nothing, TestDebugFileLock] =
+    def make: TestDebugFileLock < IO =
         Ref.Synchronized.make[Unit](()).map(TestDebugFileLock(_))
 
 private[test] case class TestDebugFileLock(lock: Ref.Synchronized[Unit]):
-    def updateFile(action: ZIO[Any, Nothing, Unit]) =
-        lock.updateZIO(_ => action)
+    def updateFile(action: Unit < IO): Unit < IO =
+        lock.update(_ => action)

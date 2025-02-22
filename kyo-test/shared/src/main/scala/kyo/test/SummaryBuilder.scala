@@ -1,34 +1,19 @@
-/*
- * Copyright 2019-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test
 
-package zio.test
-
-import zio.Trace
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.ExecutionEvent.RuntimeFailure
-import zio.test.ExecutionEvent.SectionEnd
-import zio.test.ExecutionEvent.SectionStart
-import zio.test.ExecutionEvent.Test
-import zio.test.ExecutionEvent.TestStarted
-import zio.test.ExecutionEvent.TopLevelFlush
-import zio.test.render.ConsoleRenderer
+// Updated imports: using kyo equivalents
+import kyo.Frame
+import kyo.test.ExecutionEvent.RuntimeFailure
+import kyo.test.ExecutionEvent.SectionEnd
+import kyo.test.ExecutionEvent.SectionStart
+import kyo.test.ExecutionEvent.Test
+import kyo.test.ExecutionEvent.TestStarted
+import kyo.test.ExecutionEvent.TopLevelFlush
+import kyo.test.TestAnnotationRenderer
+import kyo.test.render.ConsoleRenderer
 
 object SummaryBuilder:
 
-    def buildSummary(reporterEvent: ExecutionEvent, oldSummary: Summary)(implicit trace: Trace): Summary =
+    def buildSummary(reporterEvent: ExecutionEvent, oldSummary: Summary)(using trace: Trace): Summary =
         val success = countTestResults(reporterEvent) {
             case Right(TestSuccess.Succeeded(_)) => true
             case _                               => false
@@ -60,7 +45,6 @@ object SummaryBuilder:
                 if pred(test) then 1 else 0
             case RuntimeFailure(_, _, _, _) =>
                 0
-
             case SectionStart(_, _, _) => 0
             case SectionEnd(_, _, _)   => 0
             case TopLevelFlush(_)      => 0

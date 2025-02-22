@@ -1,19 +1,15 @@
-package zio.test
+package kyo.test
 
-import zio.Chunk
-import zio.NonEmptyChunk
-import zio.internal.ansi.AnsiStringOps
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+import kyo.Ansi.*
+import kyo.Chunk
 
 /** PrettyPrint will attempt to render a Scala value as the syntax used to create that value. This makes it easier to copy-paste from values
   * printed to the console during tests back into runnable code.
   */
-private[zio] object PrettyPrint extends PrettyPrintVersionSpecific:
+private[kyo] object PrettyPrint extends PrettyPrintVersionSpecific:
     private val maxListLength = 10
     def apply(any: Any): String =
         any match
-            case nonEmptyChunk: NonEmptyChunk[?] =>
-                prettyPrintIterator(nonEmptyChunk.iterator, nonEmptyChunk.size, "NonEmptyChunk")
             case chunk: Chunk[?] =>
                 prettyPrintIterator(chunk.iterator, chunk.size, "Chunk")
             case array: Array[?] =>
@@ -51,8 +47,8 @@ ${indent(body.mkString(",\n"))}
                 s"""$name($spacer$indentedBody$spacer)"""
 
             case string: String =>
-                val surround = if string.split("\n").length > 1 then "\"\"\"" else "\""
-                string.replace("\"", """\"""").mkString(surround, "", surround)
+                val surround = if string.split("\n").length > 1 then """""" else "\""
+                string.replace("\"", "\\\"").mkString(surround, "", surround)
 
             case char: Char =>
                 s"'${char.toString}'"

@@ -1,7 +1,7 @@
-package zio.test.results
+package kyo.test.results
 
-import zio.*
-import zio.test.*
+import kyo.*
+import kyo.test.*
 
 trait ResultSerializer:
     def render[E](executionEvent: ExecutionEvent.Test[E]): String

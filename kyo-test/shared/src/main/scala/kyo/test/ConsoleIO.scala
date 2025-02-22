@@ -1,4 +1,4 @@
-package zio.test
+package kyo.test
 
 sealed private[test] trait ConsoleIO
 private[test] object ConsoleIO:

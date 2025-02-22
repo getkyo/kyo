@@ -1,15 +1,15 @@
-package zio.test
+package kyo.test
 
-import zio.Scope
-import zio.Trace
-import zio.ZIO
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.stm.ZSTM
+import kyo.*
+import kyo.ZIO
+import kyo.ZIOs
+import kyo.stm.ZSTM
+import scala.util.Either
 
 trait CheckConstructor[Environment, In]:
     type OutEnvironment <: Environment
     type OutError
-    def apply(input: => In)(implicit trace: Trace): ZIO[OutEnvironment, OutError, TestResult]
+    def apply(input: => In): TestResult < Env[OutEnvironment] & Abort[OutError]
 end CheckConstructor
 
 object CheckConstructor extends CheckConstructorLowPriority1:
@@ -24,8 +24,8 @@ object CheckConstructor extends CheckConstructorLowPriority1:
         new CheckConstructor[R, A]:
             type OutEnvironment = R
             type OutError       = Nothing
-            def apply(input: => A)(implicit trace: Trace): ZIO[OutEnvironment, OutError, TestResult] =
-                ZIO.succeed(input)
+            def apply(input: => A): TestResult < Env[OutEnvironment] & Abort[OutError] =
+                input.asInstanceOf[TestResult]
 end CheckConstructor
 
 trait CheckConstructorLowPriority1 extends CheckConstructorLowPriority2:
@@ -35,8 +35,8 @@ trait CheckConstructorLowPriority1 extends CheckConstructorLowPriority2:
         new CheckConstructor[R, ZIO[R1, E, A]]:
             type OutEnvironment = R with R1
             type OutError       = E
-            def apply(input: => ZIO[R1, E, A])(implicit trace: Trace): ZIO[OutEnvironment, OutError, TestResult] =
-                input
+            def apply(input: => ZIO[R1, E, A]): TestResult < Env[OutEnvironment] & Abort[OutError] =
+                ZIOs.get(input).asInstanceOf[TestResult < Env[OutEnvironment] & Abort[OutError]]
 end CheckConstructorLowPriority1
 
 trait CheckConstructorLowPriority2 extends CheckConstructorLowPriority3:
@@ -46,8 +46,8 @@ trait CheckConstructorLowPriority2 extends CheckConstructorLowPriority3:
         new CheckConstructor[R, ZSTM[R1, E, A]]:
             type OutEnvironment = R with R1
             type OutError       = E
-            def apply(input: => ZSTM[R1, E, A])(implicit trace: Trace): ZIO[OutEnvironment, OutError, TestResult] =
-                input.commit
+            def apply(input: => ZSTM[R1, E, A]): TestResult < Env[OutEnvironment] & Abort[OutError] =
+                ZIOs.get(input.commit).asInstanceOf[TestResult < Env[OutEnvironment] & Abort[OutError]]
 end CheckConstructorLowPriority2
 
 trait CheckConstructorLowPriority3:
@@ -56,6 +56,8 @@ trait CheckConstructorLowPriority3:
         new CheckConstructor[R, Either[E, A]]:
             type OutEnvironment = R
             type OutError       = E
-            def apply(input: => Either[E, A])(implicit trace: Trace): ZIO[OutEnvironment, OutError, TestResult] =
-                ZIO.fromEither(input)
+            def apply(input: => Either[E, A]): TestResult < Env[OutEnvironment] & Abort[OutError] =
+                input match
+                    case Right(a) => Kyo.pure(a)
+                    case Left(e)  => Abort.fail(e.asInstanceOf[OutError]) // Unsafe cast, but should work
 end CheckConstructorLowPriority3

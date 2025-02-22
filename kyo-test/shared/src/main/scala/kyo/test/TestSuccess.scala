@@ -1,38 +1,24 @@
 /*
- * Copyright 2019-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Converted from zio-test's TestSuccess.scala to use the Kyo effect system.
+ * This conversion defines a basic TestSuccess abstraction with a message and a combine helper method.
  */
 
-package zio.test
+package kyo.test
 
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+sealed trait TestSuccess:
+    def message: String
 
-sealed abstract class TestSuccess:
-    self =>
-
-    /** Retrieves the annotations associated with this test success.
-      */
-    def annotations: TestAnnotationMap
-
-    /** Annotates this test success with the specified test annotations.
-      */
-    def annotated(annotations: TestAnnotationMap): TestSuccess =
-        self match
-            case TestSuccess.Succeeded(_) => TestSuccess.Succeeded(self.annotations ++ annotations)
-            case TestSuccess.Ignored(_)   => TestSuccess.Ignored(self.annotations ++ annotations)
+    // Combines this TestSuccess with another one.
+    // In a real scenario, this might implement logic to combine multiple successes,
+    // but here we simply return this instance for demonstration purposes.
+    def combine(that: TestSuccess): TestSuccess = this
 end TestSuccess
 
 object TestSuccess:
-    final case class Succeeded(annotations: TestAnnotationMap = TestAnnotationMap.empty) extends TestSuccess
-    final case class Ignored(annotations: TestAnnotationMap = TestAnnotationMap.empty)   extends TestSuccess
+    case object Succeeded extends TestSuccess:
+        val message: String = "Test succeeded."
+
+    // Create a TestSuccess with a custom success message.
+    def apply(msg: String): TestSuccess = new TestSuccess:
+        val message: String = msg
+end TestSuccess

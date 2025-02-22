@@ -1,4 +1,4 @@
-package zio.test
+package kyo.test
 
 object ExecutionEvent:
 
@@ -43,6 +43,7 @@ object ExecutionEvent:
     final case class TopLevelFlush(id: SuiteId) extends ExecutionEvent:
         val labels: List[String]     = List.empty
         val ancestors: List[SuiteId] = List.empty
+    end TopLevelFlush
 
     final case class RuntimeFailure[+E](
         id: SuiteId,

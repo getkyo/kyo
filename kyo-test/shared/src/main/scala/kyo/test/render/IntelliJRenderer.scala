@@ -1,17 +1,18 @@
-package zio.test.render
+package kyo.test.render
 
-import zio.Trace
-import zio.internal.stacktracer.SourceLocation
-import zio.test.*
-import zio.test.ExecutionEvent.SectionEnd
-import zio.test.ExecutionEvent.SectionStart
-import zio.test.ExecutionEvent.Test
-import zio.test.ExecutionEvent.TestStarted
-import zio.test.ExecutionEvent.TopLevelFlush
-import zio.test.TestAnnotationRenderer.LeafRenderer
-import zio.test.render.ExecutionResult.ResultType
-import zio.test.render.ExecutionResult.Status
-import zio.test.render.LogLine.Message
+import kyo.*
+import kyo.Frame
+import kyo.internal.stacktracer.Frame
+import kyo.test.*
+import kyo.test.ExecutionEvent.SectionEnd
+import kyo.test.ExecutionEvent.SectionStart
+import kyo.test.ExecutionEvent.Test
+import kyo.test.ExecutionEvent.TestStarted
+import kyo.test.ExecutionEvent.TopLevelFlush
+import kyo.test.TestAnnotationRenderer.LeafRenderer
+import kyo.test.render.ExecutionResult.ResultType
+import kyo.test.render.ExecutionResult.Status
+import kyo.test.render.LogLine.Message
 
 trait IntelliJRenderer extends TestRenderer:
     import IntelliJRenderer.*
@@ -93,7 +94,7 @@ trait IntelliJRenderer extends TestRenderer:
             case TopLevelFlush(_) =>
                 Nil
 
-    override protected def renderOutput(results: Seq[ExecutionResult])(implicit trace: Trace): Seq[String] =
+    override protected def renderOutput(results: Seq[ExecutionResult])(implicit trace: Frame): Seq[String] =
         results.foldLeft(List.empty[String]) { (acc, result) =>
             result match
                 case r @ ExecutionResult(ResultType.Suite, _, Status.Started, _, _, _, _, _) => acc :+ onSuiteStarted(r)
@@ -151,7 +152,7 @@ end IntelliJRenderer
 object IntelliJRenderer extends IntelliJRenderer:
     val locationRenderer: TestAnnotationRenderer =
         LeafRenderer(TestAnnotation.trace) { case child :: _ =>
-            child.headOption.collect { case SourceLocation(path, line) =>
+            child.headOption.collect { case Frame(path, line) =>
                 s"file://$path:$line"
             }
         }

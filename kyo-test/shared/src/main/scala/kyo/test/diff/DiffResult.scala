@@ -1,13 +1,11 @@
-package zio.test.diff
+package kyo.test.diff
 
-import zio.internal.ansi.AnsiStringOps
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.ConsoleUtils.*
-import zio.test.PrettyPrint
+import kyo.Ansi.*
+import kyo.test.ConsoleUtils.*
+import kyo.test.PrettyPrint
 
 sealed trait DiffResult:
     self =>
-
     import DiffResult.*
 
     def noDiff: Boolean = !hasDiff
@@ -40,9 +38,8 @@ $label(
                         .mkString(",\n")
                 )}
 )
-         """.trim
-        case Different(_, _, Some(custom)) =>
-            custom
+       """.trim
+        case Different(_, _, Some(custom)) => custom
         case Different(oldValue, newValue, None) =>
             s"${PrettyPrint(oldValue).red} → ${PrettyPrint(newValue).green}"
         case Removed(oldValue) =>
@@ -51,22 +48,18 @@ $label(
             PrettyPrint(newValue).green
         case Identical(value) =>
             PrettyPrint(value)
-end DiffResult
+    end DiffResult
 
-object DiffResult:
-    case class Nested(label: String, fields: List[(Option[String], DiffResult)]) extends DiffResult
+    object DiffResult:
+        final case class Nested(label: String, fields: List[(Option[String], DiffResult)])            extends DiffResult
+        final case class Different(oldValue: Any, newValue: Any, customRender: Option[String] = None) extends DiffResult
+        final case class Removed(oldValue: Any)                                                       extends DiffResult
+        final case class Added(newValue: Any)                                                         extends DiffResult
+        final case class Identical(value: Any)                                                        extends DiffResult
 
-    case class Different(oldValue: Any, newValue: Any, customRender: Option[String] = None) extends DiffResult
-
-    case class Removed(oldValue: Any) extends DiffResult
-
-    case class Added(newValue: Any) extends DiffResult
-
-    case class Identical(value: Any) extends DiffResult
-
-    def indent(string: String, amount: Int = 2): String =
-        string.split("\n").toList match
-            case head :: tail =>
-                (head +: tail.map((" " * amount) + _)).mkString("\n")
-            case other => other.mkString("\n")
+        def indent(string: String, amount: Int = 2): String =
+            string.split("\n").toList match
+                case head :: tail => (head +: tail.map((" " * amount) + _)).mkString("\n")
+                case other        => other.mkString("\n")
+    end DiffResult
 end DiffResult

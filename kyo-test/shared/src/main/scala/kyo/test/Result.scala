@@ -1,12 +1,11 @@
-package zio.test
+package kyo.test
 
+import kyo.Ansi.*
+import kyo.Chunk
+import kyo.test.ConsoleUtils.*
+import kyo.test.TestArrow.Span
+import kyo.test.render.LogLine.Message
 import scala.annotation.tailrec
-import zio.Chunk
-import zio.internal.ansi.AnsiStringOps
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.ConsoleUtils.*
-import zio.test.TestArrow.Span
-import zio.test.render.LogLine.Message
 
 sealed trait Result[+A]:
     self =>

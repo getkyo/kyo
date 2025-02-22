@@ -1,27 +1,33 @@
-package zio.test
+/*
+ * Converted from zio-test ReporterEventRenderer.scala to Kyo
+ * Changes:
+ * - Package changed from zio.test to kyo.test
+ * - Removed implicit Trace parameter
+ * - Updated imports to refer to kyo-test equivalents
+ */
 
-import zio.Chunk
-import zio.Trace
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.render.ConsoleRenderer
-import zio.test.render.IntelliJRenderer
+package kyo.test
+
+import kyo.Chunk
+import kyo.Frame
+import kyo.test.render.ConsoleRenderer
+import kyo.test.render.IntelliJRenderer
 
 trait ReporterEventRenderer:
-    def render(event: ExecutionEvent)(implicit trace: Trace): Chunk[String]
+    def render(event: ExecutionEvent)(implicit trace: Frame): Chunk[String]
+
 object ReporterEventRenderer:
     object ConsoleEventRenderer extends ReporterEventRenderer:
-        override def render(executionEvent: ExecutionEvent)(implicit trace: Trace): Chunk[String] =
-            Chunk.fromIterable(
-                ConsoleRenderer
-                    .render(executionEvent, includeCause = true)
+        override def render(executionEvent: ExecutionEvent)(implicit trace: Frame): Chunk[String] =
+            Chunk.Indexed.from(
+                ConsoleRenderer.render(executionEvent, includeCause = true)
             )
     end ConsoleEventRenderer
 
     object IntelliJEventRenderer extends ReporterEventRenderer:
-        override def render(executionEvent: ExecutionEvent)(implicit trace: Trace): Chunk[String] =
-            Chunk.fromIterable(
-                IntelliJRenderer
-                    .render(executionEvent, includeCause = true)
+        override def render(executionEvent: ExecutionEvent)(implicit trace: Frame): Chunk[String] =
+            Chunk.Indexed.from(
+                IntelliJRenderer.render(executionEvent, includeCause = true)
             )
     end IntelliJEventRenderer
 end ReporterEventRenderer

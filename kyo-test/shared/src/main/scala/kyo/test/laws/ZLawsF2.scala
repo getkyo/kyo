@@ -1,28 +1,11 @@
-/*
- * Copyright 2020-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test.laws
 
-package zio.test.laws
-
-import zio.Trace
-import zio.URIO
-import zio.ZIO
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.Gen
-import zio.test.TestResult
-import zio.test.check
+import kyo.Frame
+import kyo.URIO
+import kyo.ZIO
+import kyo.test.Gen
+import kyo.test.TestResult
+import kyo.test.check
 
 object ZLawsF2:
 
@@ -37,7 +20,7 @@ object ZLawsF2:
         def run[R1 <: R, F[-_, +_]: CapsF, A: CapsLeft, B: CapsRight](
             genF: GenF2[R1, F],
             gen: Gen[R1, B]
-        )(implicit trace: Trace): ZIO[R1, Nothing, TestResult]
+        )(implicit trace: Frame): ZIO[R1, Nothing, TestResult]
 
         /** Combine these laws with the specified laws to produce a set of laws that require both sets of laws to be satisfied.
           */
@@ -57,7 +40,7 @@ object ZLawsF2:
             final override def run[R1 <: R, F[-_, +_]: CapsBothF, A: CapsLeft, B: CapsRight](
                 genF: GenF2[R1, F],
                 gen: Gen[R1, B]
-            )(implicit trace: Trace): ZIO[R1, Nothing, TestResult] =
+            )(implicit trace: Frame): ZIO[R1, Nothing, TestResult] =
                 val lhs: ZIO[R1, Nothing, TestResult] = left.run(genF, gen)
                 val rhs: ZIO[R1, Nothing, TestResult] = right.run(genF, gen)
                 lhs.zipWith(rhs)(_ && _)
@@ -80,7 +63,7 @@ object ZLawsF2:
                 genB: Gen[R, B],
                 genA1: Gen[R, A1],
                 genA2: Gen[R, A2]
-            )(implicit trace: Trace): URIO[R, TestResult] =
+            )(implicit trace: Frame): URIO[R, TestResult] =
                 check(
                     genF[R, A, B](genB),
                     Gen.function[R, A, A1](genA1),
@@ -98,7 +81,7 @@ object ZLawsF2:
             final def run[R, F[-_, +_]: CapsBothF, A: CapsLeft, B: CapsRight](
                 genF: GenF2[R, F],
                 gen: Gen[R, B]
-            )(implicit trace: Trace): URIO[R, TestResult] =
+            )(implicit trace: Frame): URIO[R, TestResult] =
                 check(genF[R, A, B](gen))(apply(_).label(label))
         end Law1
     end Divariant

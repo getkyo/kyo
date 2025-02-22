@@ -1,15 +1,14 @@
-package zio.test.internal
+package kyo.test.internal
 
+import kyo.*
+import kyo.Ansi.*
+import kyo.test.{ErrorMessage as M, SmartAssertionOps as _, *}
+import kyo.test.diff.Diff
+import kyo.test.diff.DiffResult
 import scala.reflect.ClassTag
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
-import zio.*
-import zio.internal.ansi.AnsiStringOps
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.{ErrorMessage as M, SmartAssertionOps as _, *}
-import zio.test.diff.Diff
-import zio.test.diff.DiffResult
 
 object SmartAssertions:
 
@@ -18,11 +17,11 @@ object SmartAssertions:
 
     def approximatelyEquals[A: Numeric](reference: A, tolerance: A): TestArrow[A, Boolean] =
         TestArrow.make[A, Boolean] { actual =>
-            val referenceType = implicitly[Numeric[A]]
-            val max           = referenceType.plus(reference, tolerance)
-            val min           = referenceType.minus(reference, tolerance)
+            val numeric = summon[Numeric[A]]
+            val max     = numeric.plus(reference, tolerance)
+            val min     = numeric.minus(reference, tolerance)
 
-            val result = referenceType.gteq(actual, min) && referenceType.lteq(actual, max)
+            val result = numeric.gteq(actual, min) && numeric.lteq(actual, max)
             TestTrace.boolean(result) {
                 M.pretty(actual) + M.did + "approximately equal" + M.pretty(reference) + "with a tolerance of" +
                     M.pretty(tolerance)
@@ -240,18 +239,18 @@ object SmartAssertions:
                     case None        => TestTrace.fail(className(as) + "was empty")
             }
 
-    def isEven[A](implicit integral: Integral[A]): TestArrow[A, Boolean] =
+    def isEven[A](using integral: Integral[A]): TestArrow[A, Boolean] =
         TestArrow
-            .make[A, Boolean] { (a: A) =>
+            .make[A, Boolean] { a =>
                 TestTrace.boolean(integral.rem(a, integral.fromInt(2)) == integral.fromInt(0)) {
                     M.pretty(a) + M.was + "even"
                 }
             }
 
-    def isOdd[A](implicit integral: Integral[A]): TestArrow[A, Boolean] =
+    def isOdd[A](using integral: Integral[A]): TestArrow[A, Boolean] =
         TestArrow
-            .make[A, Boolean] { (a: A) =>
-                TestTrace.boolean(integral.rem(a, integral.fromInt(2)) == integral.fromInt(1)) {
+            .make[A, Boolean] { a =>
+                TestTrace.boolean(integral.rem(a, integral.fromInt(2)) != integral.fromInt(0)) {
                     M.pretty(a) + M.was + "odd"
                 }
             }

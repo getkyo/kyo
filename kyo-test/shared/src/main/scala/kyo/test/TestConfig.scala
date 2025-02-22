@@ -1,60 +1,19 @@
-/*
- * Copyright 2019-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test
 
-package zio.test
+import kyo.Frame
+import kyo.Layer
+import kyo.Tag
+// Assuming necessary Kyo types such as Env and that testConfigWith and TestAspect are available
 
-import zio.Tag
-import zio.Trace
-import zio.URIO
-import zio.ZIO
-import zio.ZIOAspect
-import zio.ZLayer
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-
-/** The `TestConfig` service provides access to default configuration settings used by ZIO Test, including the number of times to repeat
-  * tests to ensure they are stable, the number of times to retry flaky tests, the sufficient number of samples to check from a random
-  * variable, and the maximum number of shrinkings to minimize large failures.
-  */
 trait TestConfig extends Serializable:
-
-    /** The number of times to repeat tests to ensure they are stable.
-      */
     def repeats: Int
-
-    /** The number of times to retry flaky tests.
-      */
     def retries: Int
-
-    /** The number of sufficient samples to check for a random variable.
-      */
     def samples: Int
-
-    /** The maximum number of shrinkings to minimize large failures
-      */
     def shrinks: Int
-
-    /** Aspect that should be applied to each check sample.
-      *
-      * NOTE: default implementation for backward compatibility. Remove in next major version.
-      */
-    def checkAspect: TestAspect.CheckAspect = ZIOAspect.identity
+    def checkAspect: TestAspect.CheckAspect = TestAspect.identity
 end TestConfig
 
 object TestConfig:
-
     val tag: Tag[TestConfig] = Tag[TestConfig]
 
     @deprecated("use TestV2", "2.1.8")
@@ -68,66 +27,37 @@ object TestConfig:
         override val checkAspect: TestAspect.CheckAspect
     ) extends TestConfig
 
-    /** Constructs a new `TestConfig` with the default settings.
-      */
-    val default: ZLayer[Any, Nothing, TestConfig] =
-        live(100, 100, 200, 1000, ZIOAspect.identity)(Trace.empty)
+    // Default test configuration layer
+    val default: Layer[TestConfig, Any] =
+        live(100, 100, 200, 1000, TestAspect.identity)
 
-    /** Constructs a new `TestConfig` service with the specified settings.
-      */
-    def live(
-        repeats: Int,
-        retries: Int,
-        samples: Int,
-        shrinks: Int
-    )(implicit
+    // Constructs a new TestConfig layer with default checkAspect
+    def live(repeats: Int, retries: Int, samples: Int, shrinks: Int)(using trace: Trace): Layer[TestConfig, Any] =
+        Layer(TestV2(repeats, retries, samples, shrinks, TestAspect.identity))
+
+    // Constructs a new TestConfig layer with an explicit checkAspect
+    def live(repeats: Int, retries: Int, samples: Int, shrinks: Int, checkAspect: TestAspect.CheckAspect)(using
         trace: Trace
-    ): ZLayer[Any, Nothing, TestConfig] =
-        ZLayer.scoped {
-            val testConfig = TestV2(repeats, retries, samples, shrinks, ZIOAspect.identity)
-            withTestConfigScoped(testConfig).as(testConfig)
-        }
+    ): Layer[TestConfig, Any] =
+        Layer(TestV2(repeats, retries, samples, shrinks, checkAspect))
 
-    /** Constructs a new `TestConfig` service with the specified settings.
-      *
-      * Note: manual overload instead of default argument for binary compatibility. Remove in next major version.
-      */
-    def live(
-        repeats: Int,
-        retries: Int,
-        samples: Int,
-        shrinks: Int,
-        checkAspect: TestAspect.CheckAspect
-    )(implicit
-        trace: Trace
-    ): ZLayer[Any, Nothing, TestConfig] =
-        ZLayer.scoped {
-            val testConfig = TestV2(repeats, retries, samples, shrinks, checkAspect)
-            withTestConfigScoped(testConfig).as(testConfig)
-        }
+    // Retrieves the repeats setting from the environment
+    def repeats(using trace: Trace): Int < Env[Any] =
+        testConfigWith(testConfig => testConfig.repeats)
 
-    /** The number of times to repeat tests to ensure they are stable.
-      */
-    def repeats(implicit trace: Trace): URIO[Any, Int] =
-        testConfigWith(testConfig => ZIO.succeed(testConfig.repeats))
+    // Retrieves the retries setting from the environment
+    def retries(using trace: Trace): Int < Env[Any] =
+        testConfigWith(testConfig => testConfig.retries)
 
-    /** The number of times to retry flaky tests.
-      */
-    def retries(implicit trace: Trace): URIO[Any, Int] =
-        testConfigWith(testConfig => ZIO.succeed(testConfig.retries))
+    // Retrieves the samples setting from the environment
+    def samples(using trace: Trace): Int < Env[Any] =
+        testConfigWith(testConfig => testConfig.samples)
 
-    /** The number of sufficient samples to check for a random variable.
-      */
-    def samples(implicit trace: Trace): URIO[Any, Int] =
-        testConfigWith(testConfig => ZIO.succeed(testConfig.samples))
+    // Retrieves the shrinks setting from the environment
+    def shrinks(using trace: Trace): Int < Env[Any] =
+        testConfigWith(testConfig => testConfig.shrinks)
 
-    /** The maximum number of shrinkings to minimize large failures
-      */
-    def shrinks(implicit trace: Trace): URIO[Any, Int] =
-        testConfigWith(testConfig => ZIO.succeed(testConfig.shrinks))
-
-    /** Action that should be performed on each check sample.
-      */
-    def checkAspect(implicit trace: Trace): URIO[Any, TestAspect.CheckAspect] =
-        testConfigWith(testConfig => ZIO.succeed(testConfig.checkAspect))
+    // Retrieves the checkAspect from the environment
+    def checkAspect(using trace: Trace): TestAspect.CheckAspect < Env[Any] =
+        testConfigWith(testConfig => testConfig.checkAspect)
 end TestConfig

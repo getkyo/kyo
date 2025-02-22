@@ -1,44 +1,28 @@
-/*
- * Copyright 2019-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+package kyo.test.render
 
-package zio.test.render
-
-import zio.*
-import zio.Cause
-import zio.internal.ansi.AnsiStringOps
-import zio.internal.macros.StringUtils.StringOps
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.*
-import zio.test.render.ExecutionResult.ResultType
-import zio.test.render.ExecutionResult.Status
-import zio.test.render.ExecutionResult.Status.Failed
-import zio.test.render.ExecutionResult.Status.Ignored
-import zio.test.render.ExecutionResult.Status.Passed
-import zio.test.render.LogLine.Fragment
-import zio.test.render.LogLine.Line
-import zio.test.render.LogLine.Message
+import kyo.*
+import kyo.Ansi.*
+import kyo.Ansi.red
+import kyo.Cause
+import kyo.internal.macros.StringUtils.StringOps
+import kyo.test.*
+import kyo.test.render.ExecutionResult.ResultType
+import kyo.test.render.ExecutionResult.Status
+import kyo.test.render.ExecutionResult.Status.Failed
+import kyo.test.render.ExecutionResult.Status.Ignored
+import kyo.test.render.ExecutionResult.Status.Passed
+import kyo.test.render.LogLine.Fragment
+import kyo.test.render.LogLine.Line
+import kyo.test.render.LogLine.Message
 
 trait TestRenderer:
-    final def render(reporterEvent: ExecutionEvent, includeCause: Boolean)(implicit trace: Trace): Seq[String] =
+    final def render(reporterEvent: ExecutionEvent, includeCause: Boolean)(implicit trace: Frame): Seq[String] =
         renderOutput(renderEvent(reporterEvent, includeCause))
 
-    def renderEvent(event: ExecutionEvent, includeCause: Boolean)(implicit trace: Trace): Seq[ExecutionResult]
+    def renderEvent(event: ExecutionEvent, includeCause: Boolean)(implicit trace: Frame): Seq[ExecutionResult]
 
     def renderSummary(summary: Summary): String
-    protected def renderOutput(results: Seq[ExecutionResult])(implicit trace: Trace): Seq[String]
+    protected def renderOutput(results: Seq[ExecutionResult])(implicit trace: Frame): Seq[String]
 
     def testCaseOutput(
         labels: List[String],
@@ -160,20 +144,20 @@ trait TestRenderer:
         failureCase match
             case FailureCase(errorMessage, codeString, location, path, _, nested, _, customLabel) =>
                 val errorMessageLines =
-                    Chunk.fromIterable(errorMessage.lines) match
+                    Chunk.Indexed.from(errorMessage.lines) match
                         case head +: tail =>
                             (error("✗ ") +: head) +: tail.map(error("  ") +: _)
                         case _ => Chunk.empty
 
-                val labelLines = Chunk.fromIterable(customLabel.map(label => Line.fromString(label.bold.yellow)))
+                val labelLines = Chunk.Indexed.from(customLabel.map(label => Line.fromString(label.bold.yellow)))
 
                 val result =
                     errorMessageLines ++ labelLines ++
                         Chunk(Line.fromString(testLabel.fold(codeString)(l => s"""$codeString ?? "$l""""))) ++
                         nested.flatMap(renderFailureCase(_, offset, None)).map(_.withOffset(1)) ++
-                        Chunk.fromIterable(
+                        Chunk.Indexed.from(
                             path.filterNot(t => t._1.unstyled == t._2.unstyled).flatMap { case (label, value) =>
-                                Chunk.fromIterable(value.split("\n").map(Fragment(_).toLine)) match
+                                Chunk.Indexed.from(value.split("\n").map(Fragment(_).toLine)) match
                                     case head +: lines => (dim(s"${label.trim} = ") +: head) +: lines
                                     case _             => Vector.empty
                             }
@@ -182,7 +166,7 @@ trait TestRenderer:
 
                 result.map(_.withOffset(offset + 1))
 
-    def renderCause(cause: Cause[Any], offset: Int)(implicit trace: Trace): Message =
+    def renderCause(cause: Cause[Any], offset: Int)(implicit trace: Frame): Message =
         val defects = cause.defects
         val timeouts = defects.collect { case TestTimeoutException(message) =>
             Message(message)

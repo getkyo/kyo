@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-package zio.test
+package kyo.test
+// [Converted] This file has been partially converted from zio-test to Kyo effect system.
+// All ZIO references have been replaced with equivalent Kyo references where applicable.
 
 import scala.quoted.*
 import scala.reflect.ClassTag
-import zio.*
-import zio.internal.stacktracer.SourceLocation
-import zio.test.diff.Diff
-import zio.test.internal.OptionalImplicit
-import zio.test.internal.SmartAssertions
+import kyo.*
+import kyo.internal.stacktracer.SourceLocation
+import kyo.test.diff.Diff
+import kyo.test.internal.OptionalImplicit
+import kyo.test.internal.SmartAssertions
 
 object SmartAssertMacros:
     def smartAssertSingle(expr: Expr[Boolean])(using Quotes): Expr[TestResult] =
@@ -159,7 +161,7 @@ object SmartAssertMacros:
                 // always make sure to set the span on an Inlined tree back to its pre-inlining position since
                 // the implicit PositionContext gets its 'start' argument from the pre-inlinining position.
                 val preMacroExpansionSpan = getSpan(tree)
-                val arrow                 = Inlined(a, b, transform(expr.asExprOf[A]).asTerm).asExprOf[zio.test.TestArrow[Any, A]]
+                val arrow                 = Inlined(a, b, transform(expr.asExprOf[A]).asTerm).asExprOf[kyo.test.TestArrow[Any, A]]
                 '{ $arrow.span($preMacroExpansionSpan) }
 
             case Unseal(Apply(Select(lhs, op @ (">" | ">=" | "<" | "<=")), List(rhs))) =>

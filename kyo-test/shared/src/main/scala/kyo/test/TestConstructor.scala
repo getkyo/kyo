@@ -1,62 +1,20 @@
-package zio.test
+package kyo.test
 
-import zio.Scope
-import zio.Trace
-import zio.ZIO
-import zio.internal.stacktracer.SourceLocation
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.stm.ZSTM
+import kyo.*
+import kyo.Abort
+import kyo.Async
+import kyo.Combinators.*
+import kyo.Env
+import kyo.IO
 
-trait TestConstructor[-Environment, In]:
-    type Out <: Spec[Environment, Any]
-    def apply(label: String)(assertion: => In)(implicit sourceLocation: SourceLocation, trace: Trace): Out
-
-object TestConstructor extends TestConstructorLowPriority1:
-    type WithOut[Environment, In, Out0] = TestConstructor[Environment, In] { type Out = Out0 }
-
-    implicit def AssertConstructor[A <: TestResult]: TestConstructor.WithOut[Any, A, Spec[Any, Nothing]] =
-        new TestConstructor[Any, A]:
-            type Out = Spec[Any, Nothing]
-            def apply(label: String)(
-                assertion: => A
-            )(implicit sourceLocation: SourceLocation, trace: Trace): Spec[Any, Nothing] =
-                test(label)(ZIO.succeed(assertion))
+object TestConstructor:
+    // Constructs a test case with a name and a test specification.
+    // The spec is a computation returning a Boolean wrapped in the Kyo effect system.
+    def test(name: String, spec: => Boolean < IO): TestCase < (Env[Any] & Abort[Throwable] & IO) =
+        for
+            result <- Kyo.attempt(spec)
+            _      <- Kyo.debugln(s"Test '$name' executed with result: $result")
+        yield TestCase(name, result)
 end TestConstructor
 
-trait TestConstructorLowPriority1 extends TestConstructorLowPriority2:
-
-    implicit def AssertZIOConstructor[R, E, A <: TestResult]: TestConstructor.WithOut[R, ZIO[R, E, A], Spec[R, E]] =
-        new TestConstructor[R, ZIO[R, E, A]]:
-            type Out = Spec[R, E]
-            def apply(
-                label: String
-            )(assertion: => ZIO[R, E, A])(implicit sourceLocation: SourceLocation, trace: Trace): Spec[R, E] =
-                Spec.labeled(
-                    label,
-                    Spec
-                        .test(ZTest(label, assertion), TestAnnotationMap.empty)
-                        .annotate(TestAnnotation.trace, sourceLocation :: Nil)
-                )
-end TestConstructorLowPriority1
-
-trait TestConstructorLowPriority2 extends TestConstructorLowPriority3:
-
-    implicit def AssertZSTMConstructor[R, E, A <: TestResult]: TestConstructor.WithOut[R, ZSTM[R, E, A], Spec[R, E]] =
-        new TestConstructor[R, ZSTM[R, E, A]]:
-            type Out = Spec[R, E]
-            def apply(label: String)(
-                assertion: => ZSTM[R, E, A]
-            )(implicit sourceLocation: SourceLocation, trace: Trace): Spec[R, E] =
-                test(label)(assertion.commit)
-end TestConstructorLowPriority2
-
-trait TestConstructorLowPriority3:
-
-    implicit def AssertEitherConstructor[E, A <: TestResult]: TestConstructor.WithOut[Any, Either[E, A], Spec[Any, E]] =
-        new TestConstructor[Any, Either[E, A]]:
-            type Out = Spec[Any, E]
-            def apply(label: String)(
-                assertion: => Either[E, A]
-            )(implicit sourceLocation: SourceLocation, trace: Trace): Spec[Any, E] =
-                test(label)(ZIO.fromEither(assertion))
-end TestConstructorLowPriority3
+case class TestCase(name: String, success: Boolean)

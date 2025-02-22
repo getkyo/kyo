@@ -14,26 +14,26 @@
  * limitations under the License.
  */
 
-package zio.test
+package kyo.test
 
-import zio.Duration
-import zio.Scheduler
-import zio.Trace
-import zio.UIO
-import zio.Unsafe
-import zio.ZIO
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+import kyo.Duration
+import kyo.Scheduler
+import kyo.Trace
+import kyo.Unsafe
+import kyo.Kyo
+import kyo.Async
+import kyo.stacktracer.TracingImplicits.disableAutoTrace
 
 private[test] trait TestClockPlatformSpecific:
     self: TestClock.Test =>
 
-    def scheduler(implicit trace: Trace): UIO[Scheduler] =
-        ZIO.runtime[Any].map { runtime =>
+    def scheduler(implicit trace: Trace): Scheduler < Async =
+        Kyo.runtime[Any].map { runtime =>
             new Scheduler:
                 def schedule(runnable: Runnable, duration: Duration)(implicit unsafe: Unsafe): Scheduler.CancelToken =
                     val fiber =
-                        runtime.unsafe.fork(sleep(duration) *> ZIO.succeed(runnable.run()))
-                    () => runtime.unsafe.run(fiber.interruptAs(zio.FiberId.None)).getOrThrowFiberFailure().isInterrupted
+                        runtime.unsafe.fork(Kyo.sleep(duration) *> Kyo.pure(runnable.run()))
+                    () => runtime.unsafe.run(fiber.interrupt).getOrThrowFiberFailure().isInterrupted
                 end schedule
         }
 end TestClockPlatformSpecific

@@ -1,14 +1,10 @@
-package zio.test
+package kyo.test
 
-import zio.*
-import zio.internal.stacktracer.Tracer
-import zio.internal.stacktracer.Tracer.instance
-import zio.internal.stacktracer.Tracer.newTrace
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+import kyo.*
+import kyo.layer.Layer
 
 abstract class ZIOSpecDefault extends ZIOSpec[TestEnvironment]:
-
-    override val bootstrap: ZLayer[Any, Any, TestEnvironment] =
+    override val bootstrap: Layer[TestEnvironment, Env[Any] & Abort[Any]] =
         testEnvironment
 
     def spec: Spec[TestEnvironment with Scope, Any]

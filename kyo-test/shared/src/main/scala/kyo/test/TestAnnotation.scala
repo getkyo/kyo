@@ -1,26 +1,9 @@
-/*
- * Copyright 2019-2024 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-package zio.test
+package kyo.test
 
 import java.util.concurrent.atomic.AtomicReference
+import kyo.*
 import scala.collection.immutable.SortedSet
-import zio.*
-import zio.internal.stacktracer.SourceLocation
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+import scala.concurrent.duration.*
 
 /** A type of annotation.
   */
@@ -28,7 +11,7 @@ final class TestAnnotation[V] private (
     val identifier: String,
     val initial: V,
     val combine: (V, V) => V,
-    private val tag: EnvironmentTag[V]
+    private val tag: Tag[V]
 ) extends Serializable:
 
     override def equals(that: Any): Boolean = (that: @unchecked) match
@@ -41,7 +24,7 @@ end TestAnnotation
 object TestAnnotation:
 
     def apply[V](identifier: String, initial: V, combine: (V, V) => V)(implicit
-        tag: EnvironmentTag[V]
+        tag: Tag[V]
     ): TestAnnotation[V] =
         new TestAnnotation(identifier, initial, combine, tag)
 
@@ -52,7 +35,7 @@ object TestAnnotation:
 
     /** An annotation which tracks output produced by a test.
       */
-    val output: TestAnnotation[Chunk[ConsoleIO]] =
+    val output: TestAnnotation[Chunk[Console]] =
         TestAnnotation("output", Chunk.empty, _ ++ _)
 
     /** An annotation which counts repeated tests.
@@ -72,15 +55,15 @@ object TestAnnotation:
 
     /** An annotation for timing.
       */
-    val timing: TestAnnotation[TestDuration] =
-        TestAnnotation("timing", TestDuration.zero, _ <> _)
+    val timing: TestAnnotation[Duration] =
+        TestAnnotation("timing", Duration.Zero, _ + _) // TODO: Used to be TestDuration and _ <> _
 
     /** An annotation for capturing the trace information, including source location (i.e. file name and line number) of the calling test.
       */
-    private[zio] val trace: TestAnnotation[List[SourceLocation]] =
+    val trace: TestAnnotation[List[Frame]] =
         TestAnnotation("trace", List.empty, _ ++ _)
 
-    val fibers: TestAnnotation[Either[Int, Chunk[AtomicReference[SortedSet[Fiber.Runtime[Any, Any]]]]]] =
+    val fibers: TestAnnotation[Either[Int, Chunk[AtomicReference[SortedSet[Fiber[Any, Any]]]]]] =
         TestAnnotation("fibers", Left(0), compose)
 
     def compose[A](left: Either[Int, Chunk[A]], right: Either[Int, Chunk[A]]): Either[Int, Chunk[A]] =

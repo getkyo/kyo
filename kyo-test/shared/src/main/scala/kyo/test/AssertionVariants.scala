@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-package zio.test
+package kyo.test
+// [Converted] This file has been partially converted from zio-test to Kyo effect system.
+// All ZIO effect types (e.g., ZIO[R, E, A]) should now be interpreted as A < Env[R] & Abort[E].
+// ZIO.test imports are replaced with kyo.test where applicable. Review remaining ZIO-specific code manually.
 
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.Assertion.Arguments.valueArgument
-import zio.test.ErrorMessage as M
+import kyo.test.Assertion.Arguments.valueArgument
+import kyo.test.ErrorMessage as M
 
 trait AssertionVariants:
     private def diffProduct[T](
