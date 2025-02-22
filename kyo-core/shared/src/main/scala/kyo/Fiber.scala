@@ -134,9 +134,9 @@ object Fiber extends FiberPlatformSpecific:
           * @param f
           *   The callback function
           */
-        def onComplete[E2 >: E, A2 >: A](f: Result[E2, A2] => Unit < IO)(using Frame): Unit < IO =
+        def onComplete[E2 >: E, A2 >: A](f: Result[E2, A2] => Any < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onComplete(r => IO.Unsafe.evalOrThrow(f(r))))
+            IO(self.onComplete(r => IO.Unsafe.evalOrThrow(f(r).unit)))
 
         /** Registers a callback to be called when the Fiber is interrupted.
           *
@@ -148,9 +148,9 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A unit value wrapped in IO, representing the registration of the callback
           */
-        def onInterrupt(f: Result.Error[E] => Unit < IO)(using Frame): Unit < IO =
+        def onInterrupt(f: Result.Error[E] => Any < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onInterrupt(r => IO.Unsafe.evalOrThrow(f(r))))
+            IO(self.onInterrupt(r => IO.Unsafe.evalOrThrow(f(r).unit)))
 
         /** Blocks until the Fiber completes or the timeout is reached.
           *
@@ -278,7 +278,7 @@ object Fiber extends FiberPlatformSpecific:
                 val pending = AtomicInt.Unsafe.init(seq.size)
                 def apply(result: Result[E, A]): Unit =
                     val last = pending.decrementAndGet() == 0
-                    result.foldError(e => if last then completeDiscard(e))(v => completeDiscard(Result.succeed(v)))
+                    result.foldError(v => completeDiscard(Result.succeed(v)), e => if last then completeDiscard(e))
                 end apply
             end State
             val state = new State
@@ -548,11 +548,14 @@ object Fiber extends FiberPlatformSpecific:
                         val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
                         val pending = AtomicInt.Unsafe.init(seq.size)
                         def apply(idx: Int, result: Result[E, A]): Unit =
-                            result.foldError(this.interruptDiscard) { value =>
-                                results(idx) = value
-                                if pending.decrementAndGet() == 0 then
-                                    this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
-                            }
+                            result.foldError(
+                                { value =>
+                                    results(idx) = value
+                                    if pending.decrementAndGet() == 0 then
+                                        this.completeDiscard(Result.succeed(Chunk.fromNoCopy(results)))
+                                },
+                                this.interruptDiscard
+                            )
                     end State
                     val state = new State
                     import state.*
@@ -617,7 +620,7 @@ object Fiber extends FiberPlatformSpecific:
 
             def flatMap[E2, B](f: A => Unsafe[E2, B])(using AllowUnsafe): Unsafe[E | E2, B] =
                 val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit):
-                    def apply(r: Result[E, A]) = r.foldError(completeDiscard)(v => becomeDiscard(f(v)))
+                    def apply(r: Result[E, A]) = r.foldError(v => becomeDiscard(f(v)), completeDiscard)
                 self.onComplete(p)
                 p
             end flatMap

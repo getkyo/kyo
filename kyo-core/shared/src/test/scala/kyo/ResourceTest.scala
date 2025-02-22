@@ -148,7 +148,7 @@ class ResourceTest extends Test:
             .pipe(Async.runAndBlock(timeout))
             .pipe(Abort.run(_))
             .map { finalizedResource =>
-                finalizedResource.foldError(_ => ???)(_.closes.get.map(i => assert(i == 1)))
+                finalizedResource.foldError(_.closes.get.map(i => assert(i == 1)), _ => ???)
             }
     }
 

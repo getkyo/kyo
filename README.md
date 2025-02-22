@@ -56,7 +56,7 @@ libraryDependencies += "io.getkyo" %% "kyo-scheduler"     % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-scheduler-zio" % "<version>"
 ```
 
-For ScalaJS (applicable only to to specific modules):
+For ScalaJS (applicable only to specific modules):
 
 ```scala 
 libraryDependencies += "io.getkyo" %%% "kyo-prelude"     % "<version>"
@@ -67,7 +67,7 @@ libraryDependencies += "io.getkyo" %%% "kyo-sttp"        % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-data"        % "<version>"
 ```
 
-For Scala Native (applicable only to to specific modules):
+For Scala Native (applicable only to specific modules):
 
 ```scala 
 libraryDependencies += "io.getkyo" %%% "kyo-prelude"   % "<version>"
@@ -81,7 +81,7 @@ Replace `<version>` with the latest version: ![Version](https://img.shields.io/m
 
 ## IDE Support
 
-Kyo utilizes features from the latest Scala 3 versions that are not yet properly supported by IntelliJ IDEA. For the best development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server for improved stability. See the Metals [instructions](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to sbt BSP.
+Kyo utilizes features from the latest Scala 3 versions that are not yet fully supported by IntelliJ IDEA. For the best development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server for improved stability. See the Metals [instructions](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to sbt BSP.
 
 ## Recommended Compiler Flags
 
@@ -103,7 +103,7 @@ scalacOptions ++= Seq(
 )
 ```
 
-These flags help catch two common issues in Kyo applications:
+These flags help catch three common issues in Kyo applications:
 
 1. **A pure expression does nothing in statement position**: Often suggests that a Kyo computation is being discarded and will never execute, though it can also occur with other pure expressions. Common fixes include using `map` to chain transformations or explicitly handling the result.
 
@@ -173,17 +173,14 @@ def example2(
 
 The `map` method automatically updates the set of pending effects. When you apply `map` to computations that have different pending effects, Kyo reconciles these into a new computation type that combines all the unique pending effects from both operands.
 
-When a computation produces a `Unit` value, Kyo also offers an `andThen` method for more fluent code:
+Kyo also offers an `andThen` method for more fluent code, combining two computations, discarding the result of the first one.
 
 ```scala
 import kyo.*
 
-// An example computation that
-// produces 'Unit'.
 val a: Unit < IO =
     IO(println("hello"))
 
-// Use 'andThen'.
 val b: String < IO =
     a.andThen("test")
 ```
@@ -275,9 +272,9 @@ Here, `example1` is designed to accept an `Int < (Options & Abort[Exception])`. 
 
 Effects follow a naming convention for common operations:
 
-- `init*`: Initializes an instance of the container type handled by the effect. For instance, `Async.run` returns a new `Fiber`.
-- `get*`: Allows the "extraction" of the value of the container type. `Async.get` returns a `T < Async` for a `Fiber[T]`.
-- `run*`: Handles the effect.
+- `init*`: Initializes an instance of the container type handled by the effect. For instance, `Promise.init` returns a new `Promise`.
+- `get*`: Allows the "extraction" of the value of the container type. `Abort.get` can turn an `Either[E, A]` into an `A < Abort[E]`.
+- `run*`: Handles a given effect, transforming the result, pending any remaining effects.
 
 Though named `run`, effect handling doesn't necessarily execute the computation immediately, as the effect handling itself can also be suspended if another effect is pending.
 
@@ -502,7 +499,7 @@ Console.printLine(s"Kyo effect: $a")
 // Ouput: Kyo effect: 23
 ```
 
-This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. In fact, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevetheless, the string representations can mislead us about the types of values we log, which can make it harder to interpret our logs. To make things clearer, Kyo provides an `Render` utility to generate clearer string representation of types:
+This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. In fact, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevertheless, the string representations can mislead us about the types of values we log. To make things clearer, Kyo provides a `Render` utility to generate clearer string representation of types:
 
 ```scala
 import kyo.*
@@ -517,7 +514,7 @@ Console.printLine(s"Kyo effect: $aStr")
 
 We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below). 
 
-Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Render` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolater, prefix your interpolated strings with `t` instead of `s`.
+Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Render` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolator, prefix your interpolated strings with `t` instead of `s`.
 
 ```scala
 import kyo.*
@@ -528,7 +525,7 @@ Console.printLine(t"Kyo effect: $a, Kyo maybe: ${Maybe(23)}")
 // Output: Kyo effect: Kyo(23), Kyo maybe: Present(23)
 ```
 
-We recommend using `txt` as the default string interpolator in Kyo applications for the best developer experience.
+We recommend using `t` as the default string interpolator in Kyo applications for the best developer experience.
 
 ## Core Effects
 
@@ -581,6 +578,8 @@ println(t"A: ${aRes.eval}, B: ${bRes.eval}")
 // Output: A: Success(1), B: Fail(failed!)
 ```
 
+Note that `Kyo` has two error channels: an explicitly typed channel represented by `Abort[E]` as well as a `Throwable` "panic" channel for unexpected errors. The `Result` generated by `Abort.run` includes both `Failure[E]` and `Panic` error cases. To handle `Failure[E]` without also handling `Panic`, you can use `Abort.runPartial`, which will produce a `Result.Partial[E, A]`, a subtype of `Result` consisting of only `Success[A] | Failure[E]` (note that if the effect panics it will throw the underlying exception). Alternatively, you can use `Abort.fold`, which is overloaded to handle either all three cases or just success and failure.
+
 > Note that the `Abort` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
 
 ### IO: Side Effects
@@ -590,11 +589,11 @@ Kyo is unlike traditional effect systems since its base type `<` does not assume
 ```scala
 import kyo.*
 
-def aSideEffect = 1 // placeholder
+def writeBytes = 1 // placeholder
 
 // 'apply' is used to suspend side effects
 val a: Int < IO =
-    IO(aSideEffect)
+    IO(writeBytes)
 ```
 
 Users shouldn't typically handle the `IO` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `KyoApp` instead.
@@ -807,21 +806,21 @@ val result: Unit < (IO & Memo) =
 
 ### Local: Scoped Values
 
-The `Local` effect operates on top of `IO` and enables the definition of scoped values. This mechanism is typically used to store contextual information of a computation. For example, in request processing, locals can be used to store information about the user who initiated the request. In a library for database access, locals can be used to propagate transactions.
+The `Local` effect operates on top of `IO` and enables the definition of scoped values. This mechanism is typically used to store contextual information of a computation. For example, in request processing, locals can be used to store information about the user who initiated the request. This provides a functionality similar to `ThreadLocal`s but with a more flexible scoping to effectful programs.
 
 ```scala
 import kyo.*
 
 // Local need to be initialized with a default value
 val myLocal: Local[Int] =
-    Local.init(42)
+    Local.init(0)
 
-// The 'get' method returns the current value of the local
+// The 'get' method returns the current value of the local (in this case, 0)
 val a: Int < IO =
     myLocal.get
 
 // The 'let' method assigns a value to a local within the
-// scope of a computation. This code produces 43 (42 + 1)
+// scope of a computation. This effect produces 43 (42 + 1)
 val b: Int < IO =
     myLocal.let(42)(a.map(_ + 1))
 ```
@@ -847,7 +846,7 @@ val db: Database < (Resource & Async) =
 
 // Use `run` to handle the effect, while also
 // closing the resources utilized by the
-// computationation
+// computation
 val b: Int < Async =
     Resource.run(db.map(_.count))
 
@@ -859,7 +858,7 @@ def withDb[T](f: Database => T < Async): T < (Resource & Async) =
     // Initializes the database ('new Database' is a placeholder)
     IO(new Database).map { db =>
         // Registers `db.close` to be finalized
-        Resource.ensure(db.close).map { _ =>
+        Resource.ensure(db.close).andThen {
             // Invokes the function
             f(db)
         }
@@ -1145,9 +1144,9 @@ For optimizing frequently called functions or computations in performance-critic
 
 ### Chunk: Efficient Sequences
 
-`Chunk` is an efficient mechanism for processing sequences of data in a purely functional manner. It offers a wide range of operations optimized for different scenarIO, ensuring high performance without compromising functional programming principles.
+`Chunk` is an efficient mechanism for processing sequences of data in a purely functional manner. It offers a wide range of operations optimized for different scenarios, ensuring high performance without compromising functional programming principles.
 
-`Chunk` is designed as a lightweight wrapper around arrays, allowing for efficient random access and transformation operations. Its internal representation is carefully crafted to minimize memory allocation and ensure stack safety. Many of its operations have an algorithmic complexity of `O(1)`, making them highly performant for a variety of use cases.
+`Chunk` is designed as a lightweight wrapper around contiguous collections (`Array`, `IndexedSeq`), allowing for efficient random access and transformation operations. Its internal representation is carefully crafted to minimize memory allocation and ensure stack safety. Many of its operations have an algorithmic complexity of `O(1)`, making them highly performant for a variety of use cases. It extends Scala's `Seq` trait, enabling direct use within other libraries or existing codebases.
 
 ```scala
 import kyo.*
@@ -1242,7 +1241,7 @@ val n: Array[Int] = a.toArray
 val o: Chunk[Int] =
     Chunk(a, b).flattenChunk
 
-// Obtain sequentially distict elements.
+// Obtain sequentially distinct elements.
 // Outputs: Chunk(1, 2, 3, 1)
 val p: Chunk[Int] =
     Chunk(1, 1, 2, 3, 3, 1, 1).changes
@@ -1290,15 +1289,15 @@ val h: Chunk[Int] < Any =
 
 // Process stream elements without collecting results
 val i: Unit < Any =
-    a.runDiscard
+    a.discard
 
 // Fold over stream elements
 val j: Int < Any =
-    a.runFold(0)(_ + _)
+    a.fold(0)(_ + _)
 
 // Process each element with side effects
 val k: Unit < (IO & Abort[IOException]) =
-    a.runForeach(Console.printLine(_))
+    a.foreach(Console.printLine(_))
 ```
 
 Streams can be combined with other effects, allowing for powerful and flexible data processing pipelines:
@@ -1340,7 +1339,7 @@ val result: Chunk[String] < (Env[Config] & Async) =
 
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
 
-Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unncecessarily lifting them to return `A < Any` will result in perfomance loss.
+Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unnecessarily lifting them to return `A < Any` will result in performance loss.
 
 ### Var: Stateful Computations
 
@@ -1635,7 +1634,7 @@ val f: Unit < (IO & Abort[IOException]) =
     Console.let(Console.live)(e)
 ```
 
-Note that `Console.printX` methods accept `Text` values. `Text` is a super-type of `String`, however, so you can just pass regular strings. You can also pass `Text` instances generated from the `txt` string interpolator ([see above](#displaying-kyo-types)).
+Note that `Console.printX` methods accept `Text` values. `Text` is a super-type of `String`, however, so you can just pass regular strings. You can also pass `Text` instances generated from the `t` string interpolator ([see above](#displaying-kyo-types)).
 
 ### Clock: Time Management and Scheduled Tasks
 
@@ -1706,7 +1705,7 @@ val b: Fiber[Nothing, Unit] < IO =
 val c: Fiber[Nothing, Unit] < IO =
     Clock.repeatWithDelay(1.minute)(a)
 
-// Schedule at a specific interval, regarless
+// Schedule at a specific interval, regardless
 // of the duration of each execution
 val d: Fiber[Nothing, Unit] < IO =
     Clock.repeatAtInterval(
@@ -1821,7 +1820,7 @@ val d: Unit < IO =
     Log.error("example", new Exception)
 ```
 
-Note that like `Console`, `Log` methods accept `Text` values. This means they can also accept regular strings as well as outputs of `txt`-interpolation ([see above](#displaying-kyo-types)).
+Note that like `Console`, `Log` methods accept `Text` values. This means they can also accept regular strings as well as outputs of `t`-interpolation ([see above](#displaying-kyo-types)).
 
 ### Stat: Observability
 
@@ -1929,7 +1928,7 @@ val lines: Stream[String, Resource & IO] =
 
 // Process the stream
 val result: Unit < (Resource & Console & Async & Abort[IOException]) =
-    lines.map(line => Console.printLine(line)).runDiscard
+    lines.map(line => Console.printLine(line)).discard
 
 // Walk a directory tree
 val tree: Stream[Path, IO] =
@@ -1937,7 +1936,7 @@ val tree: Stream[Path, IO] =
 
 // Process each file in the tree
 val processedTree: Unit < (Console & Async & Abort[IOException]) =
-    tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).runDiscard
+    tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).discard
 ```
 
 `Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
@@ -2059,7 +2058,7 @@ val a: Int < IO =
     IO(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
-// parallel computations. Paramters taken by
+// parallel computations. Parameters taken by
 // reference
 val b: (Int, String) < Async =
     Async.parallel(a, "example")
@@ -2092,7 +2091,7 @@ val a: Int < IO =
     IO(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
-// computations. Pameters taken by reference
+// computations. Parameters taken by reference
 val b: Int < Async =
     Async.race(a, a.map(_ + 1))
 
@@ -2123,7 +2122,7 @@ val b: Int < (Abort[Timeout] & Async) =
     Async.timeout(1.second)(Math.cos(42).toInt)
 ```
 
-The `fromFuture` method sprovide interoperability with Scala's `Future`.
+The `fromFuture` method provide interoperability with Scala's `Future`.
 
 ```scala
 import kyo.*
@@ -2239,12 +2238,12 @@ val unreliableComputation: Int < Abort[Exception] =
     Abort.catching[Exception](throw new Exception("Temporary failure"))
 
 // Customize retry schedule
-val shedule = 
+val schedule = 
     Schedule.exponentialBackoff(initial = 100.millis, factor = 2, maxBackoff = 5.seconds)
         .take(5)
 
 val a: Int < (Abort[Exception] & Async) =
-    Retry[Exception](shedule)(unreliableComputation)
+    Retry[Exception](schedule)(unreliableComputation)
 
 ```
 
@@ -2334,18 +2333,18 @@ val d: Unit < IO =
     c.map(_.add(42))
 ```
 
-**Concurrent access policies**
+**Concurrent Access Policies**
 
 It's also possible to specify a concurrent `Access` policy as the second parameter of the `Queue.init` methods. This configuration has an effect only on the JVM and is ignored in ScalaJS.
 
 | Policy | Full Form                              | Description                                                                                                                                                                                                          |
 | ------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mpmc   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
-| Mpsc   | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
-| Spmc   | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
-| Spsc   | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
+| MultiProducerMultiConsumer   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
+| MultiProducerSingleConsumer   | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
+| SingleProducerMultiConsumer   | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
+| SingleProducerSingleConsumer   | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
 
-Each policy is suitable for different scenarIO and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenarIO.
+Each policy is suitable for different scenario and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenario.
 
 You can specify the access policy when initializing a queue, and it is important to choose the one that aligns with your application's needs for optimal performance.
 
@@ -2427,30 +2426,30 @@ val f: Maybe[Seq[Int]] < IO =
 
 The ability to suspend fibers during `put` and `take` operations allows `Channel` to provide a more controlled form of concurrency. This is particularly beneficial for rate-sensitive or resource-intensive tasks where maintaining system balance is crucial.
 
-> Important: While a `Channel` comes with a predefined item capacity, it's crucial to understand that there is no upper limit on the number of fibers that can be suspended by it. In scenarIO where your application spawns an unrestricted number of fibers—such as an HTTP service where each incoming request initiates a new fiber—this can lead to significant memory consumption. The channel's internal queue for suspended fibers could grow indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent resource exhaustion.
+> Important: While a `Channel` comes with a predefined capacity, it's crucial to understand that there is no upper limit on the number of fibers that can be suspended by it. In scenario where your application spawns an unrestricted number of fibers—such as an HTTP service where each incoming request initiates a new fiber—this can lead to significant memory consumption. The channel's internal queue for suspended fibers could grow indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent resource exhaustion.
 
 ### Hub: Broadcasting with Backpressure
 
-`Hub` provide a broadcasting mechanism where messages are sent to multiple listeners simultaneously. They are similar to `Channel`, but they are uniquely designed for scenarIO involving multiple consumers. The key feature of `Hub` is their ability to apply backpressure automatically. This means if the `Hub` and any of its listeners' buffers are full, the `Hub` will pause both the producers and consumers to prevent overwhelming the system. Unlike `Channel`, `Hub` don't offer customization in concurrent access policy as they are inherently meant for multi-producer, multi-consumer environments.
+`Hub` provide a broadcasting mechanism where messages are sent to multiple listeners simultaneously. They are similar to `Channel`, but they are uniquely designed for scenario involving multiple consumers. The key feature of `Hub` is their ability to apply backpressure automatically. This means if the `Hub` and any of its listeners' buffers are full, the `Hub` will pause both the producers and consumers to prevent overwhelming the system. Unlike `Channel`, `Hub` don't offer customization in concurrent access policy as they are inherently meant for multi-producer, multi-consumer environments.
 
 ```scala
 import kyo.*
 import kyo.Hub.Listener
 
 // Initialize a Hub with a buffer
-val a: Hub[Int] < IO =
+val a: Hub[Int] < (IO & Resource) =
     Hub.init[Int](3)
 
 // Hub provide APIs similar to
 // channels: size, offer, isEmpty,
 // isFull, putFiber, put
-val b: Boolean < (IO & Abort[Closed]) =
+val b: Boolean < (IO & Abort[Closed] & Resource) =
     a.map(_.offer(1))
 
 // But reading from hubs can only
 // happen via listener. Listeners
 // only receive messages sent after
-// their cration. To create call
+// their creation. To create call
 // `listen`:
 val c: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen)
@@ -2487,7 +2486,7 @@ val g: Int < (Async & Abort[Closed]) =
 // only include items pending in
 // the hub's buffer. The listener
 // buffers are discarded
-val h: Maybe[Seq[Int]] < IO =
+val h: Maybe[Seq[Int]] < (IO & Resource) =
     a.map(_.close)
 ```
 
@@ -2662,7 +2661,7 @@ val i: String < IO =
 
 ### Adder: Concurrent Accumulation
 
-The `Adder` effect offers thread-safe variables for efficiently accumulating numeric values. The two primary classes, `LongAdder` and `DoubleAdder`, are optimized for high-throughput scenarIO where multiple threads update the same counter.
+The `Adder` effect offers thread-safe variables for efficiently accumulating numeric values. The two primary classes, `LongAdder` and `DoubleAdder`, are optimized for high-throughput scenario where multiple threads update the same counter.
 
 ```scala
 import kyo.*
@@ -2912,7 +2911,7 @@ val f: Int = a.getOrThrow
 val g: Int = b.getOrElse(0)
 
 // 'foldError' applies a function based on success or failure
-val h: String = a.foldError(e => "failure " + e)(_.toString)
+val h: String = a.foldError(_.toString, e => "failure " + e)
 
 // 'map' transforms the value if successful
 val i: Result[Nothing, String] = a.map(_.toString)
@@ -3120,7 +3119,7 @@ Users are free to use any JSON libraries supported by Sttp; however, [zio-json](
 
 ### Routes: HTTP Server via Tapir
 
-`Routes` integrates with the Tapir library to help set up HTTP servers. The method `Routes.add` is used for adding routes. This method requires the definition of a route, which can be an Tapir Endpoint instance or a builder function. Additionally, the method requires the implementation of the endpoint, which is provided as the second parameter group. To start the server, the `Routes` effect is handled, which initializes the HTTP server with the specified routes.
+`Routes` integrates with the Tapir library to help set up HTTP servers. The method `Routes.add` is used for adding routes. This method requires the definition of a route, which can be a Tapir Endpoint instance or a builder function. Additionally, the method requires the implementation of the endpoint, which is provided as the second parameter group. To start the server, the `Routes` effect is handled, which initializes the HTTP server with the specified routes.
 
 ```scala
 import kyo.*
@@ -3365,7 +3364,7 @@ Coming soon..
 
 ### Nested Effects
 
-In addition recursion, Kyo's unboxed representation of computations in certain scenarIO introduces a restriction where it's not possible to handle effects of computations with nested effects like `Int < IO < IO`.
+In addition recursion, Kyo's unboxed representation of computations in certain scenario introduces a restriction where it's not possible to handle effects of computations with nested effects like `Int < IO < IO`.
 
 ```scala
 import kyo.*
@@ -3420,11 +3419,11 @@ ZIO users are used to having a large menu of combinators on `ZIO` values that ca
 
 3. Factory methods are distributed among different objects
 
-Being more modular that ZIO, Kyo segregates its effect types more cleanly, placing its effect constructors in the companion objects to their corresponding types. This is not a problem given the minimal API that Kyo offers, but ZIO users will miss typing `ZIO.` and seeing a rich menu of factory methods pop up on their IDE.
+Being more modular than ZIO, Kyo separates effect constructors in the companion objects to their corresponding types. This is not a problem given the minimal API that Kyo offers, but ZIO users will miss typing `ZIO.` and seeing a rich menu of factory methods pop up on their IDE.
 
 `kyo-combinators` alleviates these frustrations by providing:
 1. Factory methods on the `Kyo` object, styled after those found on `ZIO`, for many of the core Kyo effect types.
-2. Extension methods on Kyo effects modeled on ZIO combinators.
+2. Extension methods on Kyo effects modeled similarly to ZIO's methods.
 
 Generally speaking, the names of `kyo-combinators` methods are the same as the corresponding methods in ZIO. When this is not possible or doesn't make sense, `kyo-combinators` tries to keep close to ZIO conventions.
 
@@ -3502,7 +3501,7 @@ val choiceEffect: Int < Choice = maybeEffect.absentToEmpty
 val newAbortEffect: Int < (Choice & Abort[Throwable]) = choiceEffect.emptyToThrowable
 ```
 
-To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic` and `unpanic` respectively:
+To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic`/`orThrow` and `unpanic` respectively:
 
 ```scala
 import kyo.*
@@ -3510,8 +3509,11 @@ import java.io.IOException
 
 val abortEffect: Int < Abort[String | Throwable] = 1
 
-// unsafeEffect will panic with a `PanicException(err)`
-val unsafeEffect: Int < Any = abortEffect.orPanic
+// Will panic with a `PanicException(err)` rather than fail
+val panicEffect: Int < Abort[Nothing] = abortEffect.orPanic
+
+// Will throw `PanicException(err)` when evaluated
+val unsafeEffect: Int < Any = abortEffect.orThrow
 
 // Catch any suspended throws
 val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
@@ -3519,6 +3521,8 @@ val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
 // Use orPanic after forAbort[E] to swallow only errors of type E
 val unsafeForThrowables: Int < Abort[String] = abortEffect.forAbort[Throwable].orPanic
 ```
+
+In general `orPanic` should be preferred over `orThrow`, especially when used in conjunction with `IO` or `Async`, both of which include `Abort[Nothing]`. This will avoid unnecessary catching/re-throwing.
 
 Other error-handling methods are as follows:
 
@@ -3532,13 +3536,21 @@ trait C
 val effect: Int < Abort[A | B | C] = 1
 
 val handled: Result[A | B | C, Int] < Any = effect.result
+val handledWithoutPanic: Result.Partial[A | B | C, Int] < Abort[Nothing] = effect.partialResult
+val unsafeHandled: Result.Partial[A | B | C, Int] < Any = effect.partialResultOrThrow
+val folded: String < Any = effect.foldAbort(_.toString, _.toString, _.toString)
+val foldedWithoutPanic: String < Abort[Nothing] = effect.foldAbort(_.toString, _.toString)
+val unsafeFolded: String < Any = effect.foldAbortOrThrow(_.toString, _.toString)
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
 val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
 
-// Manipulate single types from within the union
+// Select error types within the Abort union for handling
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
+val handledWithoutPanicA: Result.Partial[A, Int] < Abort[B | C] = effect.forAbort[A].partialResult
+val foldedA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString, _.toString)
+val foldedWithoutPanicA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString)
 val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
 val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
 val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap

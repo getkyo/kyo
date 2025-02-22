@@ -22,7 +22,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             _ = publisher.subscribe(subscriber)
             subscriberStream <- subscriber.stream
             (isSame, _) <- subscriberStream
-                .runFold(true -> 0) { case ((acc, expected), cur) =>
+                .fold(true -> 0) { case ((acc, expected), cur) =>
                     (acc && (expected == cur)) -> (expected + 1)
                 }
         yield assert(isSame)
@@ -44,7 +44,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             subscriber <- streamSubscriber
             _ = publisher.subscribe(subscriber)
             subscriberStream <- subscriber.stream
-            result           <- Abort.run[Throwable](subscriberStream.runDiscard)
+            result           <- Abort.run[Throwable](subscriberStream.discard)
         yield result match
             case Result.Error(e: Throwable) => assert(e == TestError)
             case _                          => assert(false)
@@ -223,7 +223,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                                 case _                       => promise.completeDiscard(Failure(TestError))
                         })))
                 }
-                _      <- Resource.run(subscriber.stream.map(_.take(10).runDiscard))
+                _      <- Resource.run(subscriber.stream.map(_.take(10).discard))
                 result <- promise.getResult
             yield assert(result == Success(()))
             end for

@@ -150,10 +150,10 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => Unit < S)(using Frame, Safepoint): Unit < S =
+    def foreachDiscard[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
         seq.knownSize match
             case 0 =>
-            case 1 => f(seq(0))
+            case 1 => f(seq(0)).unit
             case _ =>
                 seq match
                     case seq: List[A] =>

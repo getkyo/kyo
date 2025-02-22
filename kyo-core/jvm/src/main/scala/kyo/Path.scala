@@ -452,7 +452,7 @@ end Path
 extension [S](stream: Stream[Byte, S])
     def sink(path: Path)(using Frame): Unit < (Resource & IO & S) =
         Resource.acquireRelease(IO(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
-            stream.runForeachChunk(bytes =>
+            stream.foreachChunk(bytes =>
                 IO {
                     fileCh.write(ByteBuffer.wrap(bytes.toArray))
                     ()
@@ -465,7 +465,7 @@ extension [S](stream: Stream[String, S])
     @scala.annotation.targetName("stringSink")
     def sink(path: Path, charset: Codec = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Unit < (Resource & IO & S) =
         Resource.acquireRelease(IO(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
-            stream.runForeach(s =>
+            stream.foreach(s =>
                 IO {
                     fileCh.write(ByteBuffer.wrap(s.getBytes))
                     ()
@@ -478,7 +478,7 @@ extension [S](stream: Stream[String, S])
         charset: Codec = java.nio.charset.StandardCharsets.UTF_8
     )(using Frame): Unit < (Resource & IO & S) =
         Resource.acquireRelease(FileChannel.open(path.toJava, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
-            stream.runForeach(line =>
+            stream.foreach(line =>
                 IO {
                     fileCh.write(ByteBuffer.wrap(line.getBytes))
                     fileCh.write(ByteBuffer.wrap(JSystem.lineSeparator().getBytes))

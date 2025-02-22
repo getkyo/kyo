@@ -4,6 +4,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: build
@@ -29,5 +33,5 @@ jobs:
     - name: Build JS
       run: sbt '+kyoJS/testQuick'
 
-    # - name: Build Native
-    #   run: sbt '+kyoNative/testQuick'
+    - name: Build Native
+      run: sbt '+kyoNative/Test/compile' # testQuick

@@ -111,9 +111,9 @@ object Emit:
           * @return
           *   The result of the computation
           */
-        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Unit < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Any < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
             ArrowEffect.handle(tag, v)(
-                [C] => (input, cont) => f(input).map(cont)
+                [C] => (input, cont) => f(input).map(_ => cont(()))
             )
     end RunForeachOps
 

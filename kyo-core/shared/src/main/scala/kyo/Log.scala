@@ -170,12 +170,12 @@ object Log extends LogPlatformSpecific:
         end ConsoleLogger
     end Unsafe
 
-    private inline def logWhen(inline level: Level)(inline doLog: Log => Unit < IO)(using
+    private inline def logWhen(inline level: Level)(inline doLog: Log => Any < IO)(using
         inline frame: Frame
     ): Unit < IO =
         IO.Unsafe.withLocal(local) { log =>
             if level.enabled(log.level) then
-                doLog(log)
+                doLog(log).unit
             else
                 (
             )

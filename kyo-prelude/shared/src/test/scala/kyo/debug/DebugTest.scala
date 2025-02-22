@@ -74,7 +74,11 @@ class DebugTest extends Test:
 
     def parameterValuesComputation(param1: Int, param2: String) = Debug.values(param1, param2)
 
-    def testOutput(fragments: String*)(code: => Any): Assertion =
+    def internalTransformationComputation =
+        def doIt(using Frame) = Debug.trace(Env.use[Int](_ + 1).map(_ + 2))
+        doIt
+
+    inline def testOutput(fragments: String*)(code: => Any): Assertion =
         import kyo.Ansi.*
         val outContent = new ByteArrayOutputStream()
         Console.withOut(outContent)(code)
@@ -174,7 +178,7 @@ class DebugTest extends Test:
                 "undefined",
                 "DebugTest.scala:55:36",
                 "Seq(Seq(6))",
-                "DebugTest.scala:56:21",
+                "DebugTest.scala:57:10",
                 "Seq(6)"
             ) {
                 streamComputation.eval
@@ -190,6 +194,14 @@ class DebugTest extends Test:
                 "Seq(Seq(Seq(7)))"
             ) {
                 choiceComputation.eval
+            }
+
+        "hides internal frame transformations" in
+            testOutput(
+                "DebugTest.scala:79:13",
+                "8"
+            ) {
+                Env.run(5)(internalTransformationComputation).eval
             }
     }
 

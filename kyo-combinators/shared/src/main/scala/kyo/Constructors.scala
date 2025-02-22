@@ -17,7 +17,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that manages the resource lifecycle using Resource and IO effects
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Unit < Async)(using Frame): A < (S & Resource & IO) =
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < Async)(using Frame): A < (S & Resource & IO) =
         Resource.acquireRelease(acquire)(release)
 
     /** Adds a finalizer to the current effect using Resource.
@@ -27,7 +27,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that ensures the finalizer is executed when the effect is completed
       */
-    def addFinalizer(finalizer: => Unit < Async)(using Frame): Unit < (Resource & IO) =
+    def addFinalizer(finalizer: => Any < Async)(using Frame): Unit < (Resource & IO) =
         Resource.ensure(finalizer)
 
     /** Creates an asynchronous effect that can be completed by the given register function.
@@ -37,7 +37,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that can be completed by the given register function
       */
-    def async[A](register: (A < Async => Unit) => Unit < Async)(
+    def async[A](register: (A < Async => Unit) => Any < Async)(
         using
         Flat[A],
         Frame

@@ -3,13 +3,29 @@ package kyo
 class HubTest extends Test:
     val repeats = 100
 
-    "initWith" in run {
-        Hub.initWith[Int](10) { h =>
-            for
-                l <- h.listen
-                _ <- h.offer(1)
-                v <- l.take
-            yield assert(v == 1)
+    "initWith" - {
+        "listen, offer, take" in run {
+            Hub.initWith[Int](10) { h =>
+                for
+                    l <- h.listen
+                    _ <- h.offer(1)
+                    v <- l.take
+                yield assert(v == 1)
+            }
+        }
+
+        "resource" in run {
+            val effect: (Int, Hub[Int]) < (Abort[Closed] & Async) = Resource.run:
+                Hub.initWith[Int](10) { h =>
+                    for
+                        l <- h.listen
+                        _ <- h.offer(1)
+                        v <- l.take
+                    yield (v, h)
+                }
+            effect.map: (v, h) =>
+                h.closed.map: isClosed =>
+                    assert(v == 1 && isClosed)
         }
     }
 
@@ -169,7 +185,7 @@ class HubTest extends Test:
                 h <- Hub.init[Int](4)
                 l <- h.listen
                 f <- Async.run(l.stream(2).mapChunk(Chunk(_)).take(2).run)
-                _ <- Kyo.foreachDiscard(1 to 4)(h.put)
+                _ <- h.putBatch(1 to 4)
                 r <- f.get
             yield
                 assert(r.forall(_.size <= 2))
