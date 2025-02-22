@@ -103,7 +103,7 @@ scalacOptions ++= Seq(
 )
 ```
 
-These flags help catch two common issues in Kyo applications:
+These flags help catch three common issues in Kyo applications:
 
 1. **A pure expression does nothing in statement position**: Often suggests that a Kyo computation is being discarded and will never execute, though it can also occur with other pure expressions. Common fixes include using `map` to chain transformations or explicitly handling the result.
 
@@ -499,7 +499,7 @@ Console.printLine(s"Kyo effect: $a")
 // Ouput: Kyo effect: 23
 ```
 
-This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. In fact, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevetheless, the string representations can mislead us about the types of values we log. To make things clearer, Kyo provides a `Render` utility to generate clearer string representation of types:
+This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. In fact, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevertheless, the string representations can mislead us about the types of values we log. To make things clearer, Kyo provides a `Render` utility to generate clearer string representation of types:
 
 ```scala
 import kyo.*
@@ -514,7 +514,7 @@ Console.printLine(s"Kyo effect: $aStr")
 
 We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below). 
 
-Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Render` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolater, prefix your interpolated strings with `t` instead of `s`.
+Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Render` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolator, prefix your interpolated strings with `t` instead of `s`.
 
 ```scala
 import kyo.*
@@ -846,7 +846,7 @@ val db: Database < (Resource & Async) =
 
 // Use `run` to handle the effect, while also
 // closing the resources utilized by the
-// computationation
+// computation
 val b: Int < Async =
     Resource.run(db.map(_.count))
 
@@ -1146,7 +1146,7 @@ For optimizing frequently called functions or computations in performance-critic
 
 `Chunk` is an efficient mechanism for processing sequences of data in a purely functional manner. It offers a wide range of operations optimized for different scenarios, ensuring high performance without compromising functional programming principles.
 
-`Chunk` is designed as a lightweight wrapper around contigious collections (`Array`, `IndexedSeq`), allowing for efficient random access and transformation operations. Its internal representation is carefully crafted to minimize memory allocation and ensure stack safety. Many of its operations have an algorithmic complexity of `O(1)`, making them highly performant for a variety of use cases. It extends Scala's `Seq` trait, enabling direct use within other libraries or existing codebases.
+`Chunk` is designed as a lightweight wrapper around contiguous collections (`Array`, `IndexedSeq`), allowing for efficient random access and transformation operations. Its internal representation is carefully crafted to minimize memory allocation and ensure stack safety. Many of its operations have an algorithmic complexity of `O(1)`, making them highly performant for a variety of use cases. It extends Scala's `Seq` trait, enabling direct use within other libraries or existing codebases.
 
 ```scala
 import kyo.*
@@ -1241,7 +1241,7 @@ val n: Array[Int] = a.toArray
 val o: Chunk[Int] =
     Chunk(a, b).flattenChunk
 
-// Obtain sequentially distict elements.
+// Obtain sequentially distinct elements.
 // Outputs: Chunk(1, 2, 3, 1)
 val p: Chunk[Int] =
     Chunk(1, 1, 2, 3, 3, 1, 1).changes
@@ -1339,7 +1339,7 @@ val result: Chunk[String] < (Env[Config] & Async) =
 
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
 
-Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unncecessarily lifting them to return `A < Any` will result in perfomance loss.
+Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unnecessarily lifting them to return `A < Any` will result in performance loss.
 
 ### Var: Stateful Computations
 
@@ -1634,7 +1634,7 @@ val f: Unit < (IO & Abort[IOException]) =
     Console.let(Console.live)(e)
 ```
 
-Note that `Console.printX` methods accept `Text` values. `Text` is a super-type of `String`, however, so you can just pass regular strings. You can also pass `Text` instances generated from the `txt` string interpolator ([see above](#displaying-kyo-types)).
+Note that `Console.printX` methods accept `Text` values. `Text` is a super-type of `String`, however, so you can just pass regular strings. You can also pass `Text` instances generated from the `t` string interpolator ([see above](#displaying-kyo-types)).
 
 ### Clock: Time Management and Scheduled Tasks
 
@@ -1705,7 +1705,7 @@ val b: Fiber[Nothing, Unit] < IO =
 val c: Fiber[Nothing, Unit] < IO =
     Clock.repeatWithDelay(1.minute)(a)
 
-// Schedule at a specific interval, regarless
+// Schedule at a specific interval, regardless
 // of the duration of each execution
 val d: Fiber[Nothing, Unit] < IO =
     Clock.repeatAtInterval(
@@ -1820,7 +1820,7 @@ val d: Unit < IO =
     Log.error("example", new Exception)
 ```
 
-Note that like `Console`, `Log` methods accept `Text` values. This means they can also accept regular strings as well as outputs of `txt`-interpolation ([see above](#displaying-kyo-types)).
+Note that like `Console`, `Log` methods accept `Text` values. This means they can also accept regular strings as well as outputs of `t`-interpolation ([see above](#displaying-kyo-types)).
 
 ### Stat: Observability
 
@@ -2058,7 +2058,7 @@ val a: Int < IO =
     IO(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
-// parallel computations. Paramters taken by
+// parallel computations. Parameters taken by
 // reference
 val b: (Int, String) < Async =
     Async.parallel(a, "example")
@@ -2091,7 +2091,7 @@ val a: Int < IO =
     IO(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
-// computations. Pameters taken by reference
+// computations. Parameters taken by reference
 val b: Int < Async =
     Async.race(a, a.map(_ + 1))
 
@@ -2122,7 +2122,7 @@ val b: Int < (Abort[Timeout] & Async) =
     Async.timeout(1.second)(Math.cos(42).toInt)
 ```
 
-The `fromFuture` method sprovide interoperability with Scala's `Future`.
+The `fromFuture` method provide interoperability with Scala's `Future`.
 
 ```scala
 import kyo.*
@@ -2238,12 +2238,12 @@ val unreliableComputation: Int < Abort[Exception] =
     Abort.catching[Exception](throw new Exception("Temporary failure"))
 
 // Customize retry schedule
-val shedule = 
+val schedule = 
     Schedule.exponentialBackoff(initial = 100.millis, factor = 2, maxBackoff = 5.seconds)
         .take(5)
 
 val a: Int < (Abort[Exception] & Async) =
-    Retry[Exception](shedule)(unreliableComputation)
+    Retry[Exception](schedule)(unreliableComputation)
 
 ```
 
@@ -2426,7 +2426,7 @@ val f: Maybe[Seq[Int]] < IO =
 
 The ability to suspend fibers during `put` and `take` operations allows `Channel` to provide a more controlled form of concurrency. This is particularly beneficial for rate-sensitive or resource-intensive tasks where maintaining system balance is crucial.
 
-> Important: While a `Channel` comes with a predefined itemnde capacity, it's crucial to urstand that there is no upper limit on the number of fibers that can be suspended by it. In scenario where your application spawns an unrestricted number of fibers—such as an HTTP service where each incoming request initiates a new fiber—this can lead to significant memory consumption. The channel's internal queue for suspended fibers could grow indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent resource exhaustion.
+> Important: While a `Channel` comes with a predefined capacity, it's crucial to understand that there is no upper limit on the number of fibers that can be suspended by it. In scenario where your application spawns an unrestricted number of fibers—such as an HTTP service where each incoming request initiates a new fiber—this can lead to significant memory consumption. The channel's internal queue for suspended fibers could grow indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent resource exhaustion.
 
 ### Hub: Broadcasting with Backpressure
 
@@ -2449,7 +2449,7 @@ val b: Boolean < (IO & Abort[Closed] & Resource) =
 // But reading from hubs can only
 // happen via listener. Listeners
 // only receive messages sent after
-// their cration. To create call
+// their creation. To create call
 // `listen`:
 val c: Listener[Int] < (IO & Abort[Closed] & Resource) =
     a.map(_.listen)
@@ -3119,7 +3119,7 @@ Users are free to use any JSON libraries supported by Sttp; however, [zio-json](
 
 ### Routes: HTTP Server via Tapir
 
-`Routes` integrates with the Tapir library to help set up HTTP servers. The method `Routes.add` is used for adding routes. This method requires the definition of a route, which can be an Tapir Endpoint instance or a builder function. Additionally, the method requires the implementation of the endpoint, which is provided as the second parameter group. To start the server, the `Routes` effect is handled, which initializes the HTTP server with the specified routes.
+`Routes` integrates with the Tapir library to help set up HTTP servers. The method `Routes.add` is used for adding routes. This method requires the definition of a route, which can be a Tapir Endpoint instance or a builder function. Additionally, the method requires the implementation of the endpoint, which is provided as the second parameter group. To start the server, the `Routes` effect is handled, which initializes the HTTP server with the specified routes.
 
 ```scala
 import kyo.*
