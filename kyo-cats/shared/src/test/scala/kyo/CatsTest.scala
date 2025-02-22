@@ -25,7 +25,7 @@ class CatsTest extends Test:
             val a = Abort.fail(kyoFailure)
             val b = Cats.get(CatsIO.raiseError(catsFailure))
             Abort.run[Throwable](a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Failure(ex) =>
                     assert(ex == kyoFailure)
                 case _ =>
                     fail()

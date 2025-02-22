@@ -160,24 +160,23 @@ object Clock:
     def withTimeShift[A, S](factor: Double)(v: => A < S)(using Frame): A < (IO & S) =
         if factor == 1 then v
         else
-            use { clock =>
-                IO.Unsafe {
-                    val shifted =
-                        new Unsafe:
-                            val underlying  = clock.unsafe
-                            val start       = underlying.now()
-                            val sleepFactor = (1.toDouble / factor)
-                            def nowMonotonic()(using AllowUnsafe) =
-                                now().toDuration
-                            def now()(using AllowUnsafe) =
-                                val diff = underlying.now() - start
-                                start + (diff * factor)
-                            end now
-                            override def sleep(duration: Duration) =
-                                underlying.sleep(duration * sleepFactor)
-                    let(Clock(shifted))(v)
-                }
+            IO.Unsafe.withLocal(local) { clock =>
+                val shifted =
+                    new Unsafe:
+                        val underlying  = clock.unsafe
+                        val start       = underlying.now()
+                        val sleepFactor = (1.toDouble / factor)
+                        def nowMonotonic()(using AllowUnsafe) =
+                            now().toDuration
+                        def now()(using AllowUnsafe) =
+                            val diff = underlying.now() - start
+                            start + (diff * factor)
+                        end now
+                        override def sleep(duration: Duration) =
+                            underlying.sleep(duration * sleepFactor)
+                let(Clock(shifted))(v)
             }
+        end if
     end withTimeShift
 
     /** Interface for controlling time in a test environment.
@@ -274,7 +273,7 @@ object Clock:
       *   The current time
       */
     def now(using Frame): Instant < IO =
-        use(_.now)
+        IO.Unsafe.withLocal(local)(_.unsafe.now())
 
     /** Gets the current monotonic time using the local Clock instance. Unlike `now`, this is guaranteed to be strictly monotonic and
       * suitable for measuring elapsed time.
@@ -286,10 +285,10 @@ object Clock:
       *   The current monotonic time as a Duration since system start
       */
     def nowMonotonic(using Frame): Duration < IO =
-        use(_.nowMonotonic)
+        IO.Unsafe.withLocal(local)(_.unsafe.nowMonotonic())
 
     private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < IO =
-        use(_.sleep(duration))
+        IO.Unsafe.withLocal(local)(_.unsafe.sleep(duration).safe)
 
     /** Creates a new stopwatch using the local Clock instance.
       *
@@ -297,7 +296,7 @@ object Clock:
       *   A new Stopwatch instance
       */
     def stopwatch(using Frame): Stopwatch < IO =
-        use(_.stopwatch)
+        IO.Unsafe.withLocal(local)(_.unsafe.stopwatch().safe)
 
     /** Creates a new deadline with the specified duration using the local Clock instance.
       *
@@ -307,7 +306,7 @@ object Clock:
       *   A new Deadline instance
       */
     def deadline(duration: Duration)(using Frame): Deadline < IO =
-        use(_.deadline(duration))
+        IO.Unsafe.withLocal(local)(_.unsafe.deadline(duration).safe)
 
     /** Repeatedly executes a task with a fixed delay between completions.
       *
@@ -321,7 +320,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delay: Duration)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatWithDelay[E, S](delay: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
         repeatWithDelay(Duration.Zero, delay)(f)
 
     /** Repeatedly executes a task with a fixed delay between completions, starting after an initial delay.
@@ -339,9 +338,9 @@ object Clock:
         startAfter: Duration,
         delay: Duration
     )(
-        f: => Unit < (Async & Abort[E])
+        f: => Any < (Async & Abort[E])
     )(using Frame): Fiber[E, Unit] < IO =
-        repeatWithDelay(startAfter, delay, ())(_ => f)
+        repeatWithDelay(startAfter, delay, ())(_ => f.unit)
 
     /** Repeatedly executes a task with a fixed delay between completions, maintaining state between executions.
       *
@@ -376,8 +375,8 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
-        repeatWithDelay(delaySchedule, ())(_ => f)
+    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+        repeatWithDelay(delaySchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with delays determined by a custom schedule, maintaining state between executions.
       *
@@ -423,7 +422,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](interval: Duration)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatAtInterval[E, S](interval: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
         repeatAtInterval(Duration.Zero, interval)(f)
 
     /** Repeatedly executes a task at fixed time intervals, starting after an initial delay.
@@ -441,9 +440,9 @@ object Clock:
         startAfter: Duration,
         interval: Duration
     )(
-        f: => Unit < (Async & Abort[E])
+        f: => Any < (Async & Abort[E])
     )(using Frame): Fiber[E, Unit] < IO =
-        repeatAtInterval(startAfter, interval, ())(_ => f)
+        repeatAtInterval(startAfter, interval, ())(_ => f.unit)
 
     /** Repeatedly executes a task at fixed time intervals, maintaining state between executions.
       *
@@ -478,8 +477,8 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Unit < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
-        repeatAtInterval(intervalSchedule, ())(_ => f)
+    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+        repeatAtInterval(intervalSchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule, maintaining state between executions.
       *

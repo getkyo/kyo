@@ -21,15 +21,15 @@ end Log
 /** Logging utility object for Kyo applications. */
 object Log extends LogPlatformSpecific:
 
-    final case class Level private (private val priority: Int) extends AnyVal:
-        def enabled(maxLevel: Level) = maxLevel.priority <= priority
-
+    sealed abstract class Level(private val priority: Int) derives CanEqual:
+        def enabled(other: Level): Boolean = other.priority <= priority
     object Level:
-        val trace: Level = Level(10)
-        val debug: Level = Level(20)
-        val info: Level  = Level(30)
-        val warn: Level  = Level(40)
-        val error: Level = Level(50)
+        case object trace  extends Level(10)
+        case object debug  extends Level(20)
+        case object info   extends Level(30)
+        case object warn   extends Level(40)
+        case object error  extends Level(50)
+        case object silent extends Level(60)
     end Level
 
     private val local = Local.init(live)
@@ -170,12 +170,12 @@ object Log extends LogPlatformSpecific:
         end ConsoleLogger
     end Unsafe
 
-    private inline def logWhen(inline level: Level)(inline doLog: Log => Unit < IO)(using
+    private inline def logWhen(inline level: Level)(inline doLog: Log => Any < IO)(using
         inline frame: Frame
     ): Unit < IO =
-        use { log =>
+        IO.Unsafe.withLocal(local) { log =>
             if level.enabled(log.level) then
-                IO.Unsafe(doLog(log))
+                doLog(log).unit
             else
                 (
             )

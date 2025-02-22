@@ -61,9 +61,8 @@ class FiberCombinatorTest extends Test:
                         Abort.catching[Throwable](r)
                     }.map { handledEffect =>
                         assert(handledEffect match
-                            case Result.Fail(_: Timeout) => true
-                            case _                       => false
-                        )
+                            case Result.Failure(_: Timeout) => true
+                            case _                          => false)
                     }
                 }
             }

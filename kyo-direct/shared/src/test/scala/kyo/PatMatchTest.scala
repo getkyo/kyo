@@ -9,14 +9,14 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
         "without guards" - {
             "pure cases" in {
                 runLiftTest(3) {
-                    await(defer("b")) match
+                    defer("b").now match
                         case "a" => 2
                         case "b" => 3
                 }
             }
             "pure cases with val" in {
                 runLiftTest(3) {
-                    val v = await(defer("b"))
+                    val v = defer("b").now
                     v match
                         case "a" => 2
                         case "b" => 3
@@ -24,39 +24,39 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    await(defer("a")) match
-                        case "a" => await(defer(2))
+                    defer("a").now match
+                        case "a" => defer(2).now
                         case "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(3) {
-                    await(defer("b")) match
-                        case "a" => await(defer(2))
-                        case "b" => await(defer(3))
+                    defer("b").now match
+                        case "a" => defer(2).now
+                        case "b" => defer(3).now
                 }
             }
         }
         "with guards" - {
             "pure cases" in {
                 runLiftTest(3) {
-                    await(defer("b")) match
+                    defer("b").now match
                         case s if s == "a" => 2
                         case "b"           => 3
                 }
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    await(defer("a")) match
-                        case "a"           => await(defer(2))
+                    defer("a").now match
+                        case "a"           => defer(2).now
                         case s if s == "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(2) {
-                    await(defer("b")) match
-                        case s if "1".toInt == 1 => await(defer(2))
-                        case "b"                 => await(defer(3))
+                    defer("b").now match
+                        case s if "1".toInt == 1 => defer(2).now
+                        case "b"                 => defer(3).now
                 }
             }
         }
@@ -72,16 +72,16 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    await(defer("a")) match
-                        case "a" => await(defer(2))
+                    defer("a").now match
+                        case "a" => defer(2).now
                         case "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(3) {
                     ("b": String) match
-                        case "a" => await(defer(2))
-                        case "b" => await(defer(3))
+                        case "a" => defer(2).now
+                        case "b" => defer(3).now
                 }
             }
         }
@@ -95,16 +95,16 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    await(defer("a")) match
-                        case "a"           => await(defer(2))
+                    defer("a").now match
+                        case "a"           => defer(2).now
                         case s if s == "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(2) {
                     "b" match
-                        case s if "1".toInt == 1 => await(defer(2))
-                        case "b"                 => await(defer(3))
+                        case s if "1".toInt == 1 => defer(2).now
+                        case "b"                 => defer(3).now
                 }
             }
         }
@@ -112,18 +112,9 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
     "misc" - {
         "val patmatch" in {
             runLiftTest(1) {
-                val Some(a) = await(IO(Some(1)))
+                val Some(a) = IO(Some(1)).now
                 a
             }
         }
-
-        // "unlifted guard" in {
-        //   runLiftTest(2) {
-        //     "b" match {
-        //       case s if await(defer(true)) => 2
-        //       case "b"                     => await(defer(3))
-        //     }
-        //   }
-        // }
     }
 end PatMatchTest

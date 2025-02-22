@@ -4,26 +4,25 @@ import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.internal.Safepoint
 
-/** Represents an IO effect for handling side effects in a pure functional manner.
+/** Pure suspension of side effects.
   *
-  * IO allows you to encapsulate and manage side-effecting operations (such as file I/O, network calls, or mutable state modifications)
-  * within a purely functional context. This enables better reasoning about effects and helps maintain referential transparency.
+  * Unlike traditional monadic IO types that combine effect suspension and async execution, Kyo leverages algebraic effects to cleanly
+  * separate these concerns. IO focuses solely on suspending side effects, while async execution (fibers, scheduling) is handled by the
+  * Async effect.
   *
-  * Like Async includes IO, this effect includes Abort[Nothing] to represent potential panics (untracked, unexpected exceptions). IO is
-  * implemented as a type-level marker rather than a full ArrowEffect for performance. Since Effect.defer is only evaluated by the Pending
-  * type's "eval" method, which can only handle computations without pending effects, side effects are properly deferred. This ensures they
-  * can only be executed after an IO.run call, even though it is a purely type-level operation.
+  * This separation enables an important design principle in Kyo's codebase: methods that only declare IO in their pending effects are run
+  * to completion without parking or locking. This property, combined with Kyo's lock-free primitives, makes it easier to reason about
+  * performance characteristics and identify potential async operations in the code.
+  *
+  * IO is implemented as a type-level marker rather than a full ArrowEffect for performance. Since Effect.defer is only evaluated by the
+  * Pending type's "eval" method, which can only handle computations without pending effects, side effects are properly deferred. This
+  * ensures they can only be executed after an IO.run call, even though it is a purely type-level operation.
+  *
+  * Like Async includes IO, this effect includes Abort[Nothing] to represent potential panics (untracked, unexpected exceptions).
   */
 opaque type IO <: Abort[Nothing] = Abort[Nothing]
 
 object IO:
-
-    /** Creates a unit IO effect, representing a no-op side effect.
-      *
-      * @return
-      *   A unit value wrapped in an IO effect.
-      */
-    inline def unit: Unit < IO = ()
 
     /** Suspends a potentially side-effecting computation in an IO effect.
       *
@@ -42,7 +41,7 @@ object IO:
       *   The suspended computation wrapped in an IO effect.
       */
     inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (IO & S) =
-        Effect.defer(f)
+        Effect.deferInline(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
       *
@@ -62,17 +61,39 @@ object IO:
       * @return
       *   The result of the main computation, with the finalizer guaranteed to run.
       */
-    def ensure[A, S](f: => Unit < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
-        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f))(v))
+    def ensure[A, S](f: => Any < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
+        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f.unit))(v))
+
+    /** Retrieves a local value and applies a function that can perform side effects.
+      *
+      * This is the preferred way to access a local value when you need to perform side effects with it. Common use cases include accessing
+      * loggers, configuration, or request-scoped values that you need to use in computations that produce side effects.
+      *
+      * While `local.get.map(v => IO(f(v)))` would also work, this method is more direct since both IO and Local use the same underlying
+      * mechanism to handle effects. Under the hood, accessing a local value and performing IO operations both use the same type of
+      * suspension, the kernel's internal `Defer` effect. This means we can safely combine them without creating unnecessary layers of
+      * suspension.
+      *
+      * @param local
+      *   The local value to access
+      * @param f
+      *   Function that can perform side effects with the local value
+      * @return
+      *   An IO effect containing the result of applying the function
+      */
+    def withLocal[A, B, S](local: Local[A])(f: A => B < S)(using Frame): B < (S & IO) =
+        local.use(f)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
         inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
-            Effect.defer {
-                import AllowUnsafe.embrace.danger
-                f
+            Effect.deferInline {
+                f(using AllowUnsafe.embrace.danger)
             }
+
+        def withLocal[A, B, S](local: Local[A])(f: AllowUnsafe ?=> A => B < S)(using Frame): B < (S & IO) =
+            local.use(f(using AllowUnsafe.embrace.danger))
 
         /** Evaluates an IO effect that may throw exceptions, converting any thrown exceptions into the final result.
           *

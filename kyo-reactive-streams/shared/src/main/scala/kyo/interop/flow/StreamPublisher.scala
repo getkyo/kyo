@@ -2,7 +2,8 @@ package kyo.interop.flow
 
 import java.util.concurrent.Flow.*
 import kyo.*
-import kyo.interop.flow.StreamSubscription.StreamFinishState
+import kyo.interop.flow.StreamSubscription.StreamCanceled
+import kyo.interop.flow.StreamSubscription.StreamComplete
 import kyo.kernel.Boundary
 import scala.annotation.nowarn
 
@@ -19,6 +20,10 @@ abstract private[kyo] class StreamPublisher[V, Ctx](
             bind(subscriber)
     end subscribe
 
+    private[StreamPublisher] def getSubscription(subscriber: Subscriber[? >: V])(using Frame): StreamSubscription[V, Ctx] < IO =
+        IO.Unsafe(new StreamSubscription[V, Ctx](stream, subscriber))
+    end getSubscription
+
 end StreamPublisher
 
 object StreamPublisher:
@@ -28,7 +33,7 @@ object StreamPublisher:
         capacity: Int = Int.MaxValue
     )(
         using
-        Boundary[Ctx, IO],
+        Boundary[Ctx, IO & Abort[StreamCanceled]],
         Frame,
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
@@ -36,21 +41,21 @@ object StreamPublisher:
         def discardSubscriber(subscriber: Subscriber[? >: V]): Unit =
             subscriber.onSubscribe(new Subscription:
                 override def request(n: Long): Unit = ()
-                override def cancel(): Unit         = ()
-            )
+                override def cancel(): Unit         = ())
             subscriber.onComplete()
         end discardSubscriber
 
         def consumeChannel(
+            publisher: StreamPublisher[V, Ctx],
             channel: Channel[Subscriber[? >: V]],
             supervisor: Fiber.Promise[Nothing, Unit]
         ): Unit < (Async & Ctx) =
             Abort.recover[Closed](_ => supervisor.interrupt.unit)(
-                channel.stream().runForeach: subscriber =>
+                channel.stream().foreach: subscriber =>
                     for
-                        subscription <- IO.Unsafe(new StreamSubscription[V, Ctx](stream, subscriber))
+                        subscription <- publisher.getSubscription(subscriber)
                         fiber        <- subscription.subscribe.andThen(subscription.consume)
-                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupt())).unit)
+                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupt())))
                     yield ()
             )
 
@@ -68,8 +73,8 @@ object StreamPublisher:
                             case Result.Success(true) => ()
                             case _                    => discardSubscriber(subscriber)
             }
-            supervisor <- Resource.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt.unit)
-            _          <- Resource.acquireRelease(Async._run(consumeChannel(channel, supervisor)))(_.interrupt.unit)
+            supervisor <- Resource.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt)
+            _          <- Resource.acquireRelease(Async._run(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
         yield publisher
         end for
     end apply
@@ -78,7 +83,7 @@ object StreamPublisher:
         @nowarn("msg=anonymous")
         inline def apply[V, Ctx](
             stream: Stream[V, Ctx],
-            subscribeCallback: (Fiber[Nothing, StreamFinishState] < (IO & Ctx)) => Unit
+            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & Ctx)) => Unit
         )(
             using
             AllowUnsafe,

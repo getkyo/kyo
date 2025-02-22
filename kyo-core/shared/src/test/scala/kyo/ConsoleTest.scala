@@ -1,5 +1,11 @@
 package kyo
 
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.OutputStream
+import java.io.PrintStream
+import java.io.StringWriter
+
 class ConsoleTest extends Test:
 
     case class Obj(a: String)
@@ -34,15 +40,47 @@ class ConsoleTest extends Test:
         }
     }
 
+    "checkErrors on out channel" in {
+        val buffer = new PrintStream(new OutputStream:
+            override def write(b: Int): Unit = throw IOException())
+        scala.Console.withOut(buffer) {
+            import AllowUnsafe.embrace.danger
+            val (r1, r2) =
+                IO.Unsafe.evalOrThrow {
+                    for
+                        r1 <- Abort.run(Console.print("test"))
+                        r2 <- Abort.run(Console.checkErrors)
+                    yield (r1, r2)
+                }
+            assert(r1.isSuccess && r2.isSuccess)
+            assert(r2.getOrThrow)
+        }
+    }
+
+    "checkErrors on err channel" in {
+        val buffer = new PrintStream(new OutputStream:
+            override def write(b: Int): Unit = throw IOException())
+        scala.Console.withErr(buffer) {
+            import AllowUnsafe.embrace.danger
+            val (r1, r2) =
+                IO.Unsafe.evalOrThrow {
+                    for
+                        r1 <- Abort.run(Console.printErr("test"))
+                        r2 <- Abort.run(Console.checkErrors)
+                    yield (r1, r2)
+                }
+            assert(r1.isSuccess && r2.isSuccess)
+            assert(r2.getOrThrow)
+        }
+    }
+
     "live" in {
         val output = new StringBuilder
         val error  = new StringBuilder
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
-            override def write(b: Int): Unit = output.append(b.toChar)
-        )) {
+            override def write(b: Int): Unit = output.append(b.toChar))) {
             scala.Console.withErr(new java.io.PrintStream(new java.io.OutputStream:
-                override def write(b: Int): Unit = error.append(b.toChar)
-            )) {
+                override def write(b: Int): Unit = error.append(b.toChar))) {
                 import AllowUnsafe.embrace.danger
                 val (r1, r2, r3, r4) =
                     IO.Unsafe.evalOrThrow {
@@ -65,7 +103,7 @@ class ConsoleTest extends Test:
 
         "should read line correctly" in {
             val testUnsafe = new TestUnsafeConsole("test input")
-            assert(testUnsafe.readLine() == Result.success("test input"))
+            assert(testUnsafe.readLine() == Result.succeed("test input"))
         }
 
         "should print correctly" in {
@@ -92,6 +130,11 @@ class ConsoleTest extends Test:
             assert(testUnsafe.printlnErrs.head == "test error line")
         }
 
+        "should check errors correctly" in {
+            val testUnsafe = new TestUnsafeConsole(error = true)
+            assert(testUnsafe.checkErrors)
+        }
+
         "should convert to safe Console" in {
             val testUnsafe  = new TestUnsafeConsole()
             val safeConsole = testUnsafe.safe
@@ -99,7 +142,7 @@ class ConsoleTest extends Test:
         }
     }
 
-    class TestUnsafeConsole(input: String = "") extends Console.Unsafe:
+    class TestUnsafeConsole(input: String = "", error: Boolean = false) extends Console.Unsafe:
         var readlnInput = input
         var prints      = List.empty[String]
         var printErrs   = List.empty[String]
@@ -107,20 +150,21 @@ class ConsoleTest extends Test:
         var printlnErrs = List.empty[String]
 
         def readLine()(using AllowUnsafe) =
-            Result.success(readlnInput)
+            Result.succeed(readlnInput)
         def print(s: String)(using AllowUnsafe) =
             prints = s :: prints
-            Result.unit
+            ()
         def printErr(s: String)(using AllowUnsafe) =
             printErrs = s :: printErrs
-            Result.unit
+            ()
         def printLine(s: String)(using AllowUnsafe) =
             printlns = s :: printlns
-            Result.unit
+            ()
         def printLineErr(s: String)(using AllowUnsafe) =
             printlnErrs = s :: printlnErrs
-            Result.unit
-        def flush()(using AllowUnsafe) = Result.unit
+            ()
+        def checkErrors(using AllowUnsafe): Boolean = error
+        def flush()(using AllowUnsafe)              = ()
     end TestUnsafeConsole
 
 end ConsoleTest

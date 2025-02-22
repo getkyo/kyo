@@ -26,12 +26,12 @@ class MeterTest extends Test:
                 w2 <- t.pendingWaiters
                 d1 <- f1.done
                 d2 <- f2.done
-                _  <- p.complete(Result.success(1))
+                _  <- p.complete(Result.succeed(1))
                 v1 <- f1.get
                 v2 <- f2.get
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
-            yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1 == Result.success(1) && v2 == 2 && a3 == 1 && w3 == 0)
+            yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1 == Result.succeed(1) && v2 == 2 && a3 == 1 && w3 == 0)
         }
 
         "tryRun" in runNotJS {
@@ -45,9 +45,9 @@ class MeterTest extends Test:
                 w1  <- sem.pendingWaiters
                 b1  <- sem.tryRun(2)
                 b2  <- f1.done
-                _   <- p.complete(Result.success(1))
+                _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
-            yield assert(a1 == 0 && w1 == 0 && b1.isEmpty && !b2 && v1.contains(Result.success(1)))
+            yield assert(a1 == 0 && w1 == 0 && b1.isEmpty && !b2 && v1.contains(Result.succeed(1)))
         }
     }
 
@@ -80,14 +80,14 @@ class MeterTest extends Test:
                 d1 <- f1.done
                 d2 <- f2.done
                 d3 <- f3.done
-                _  <- p.complete(Result.success(1))
+                _  <- p.complete(Result.succeed(1))
                 v1 <- f1.get
                 v2 <- f2.get
                 v3 <- f3.get
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
             yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && !d3 && a2 == 0 && w2 == 1 &&
-                v1 == Result.success(1) && v2 == Result.success(1) && v3 == 2 && a3 == 2 && w3 == 0)
+                v1 == Result.succeed(1) && v2 == Result.succeed(1) && v3 == 2 && a3 == 2 && w3 == 0)
         }
 
         "tryRun" in runNotJS {
@@ -107,10 +107,10 @@ class MeterTest extends Test:
                 b3  <- sem.tryRun(2)
                 b4  <- f1.done
                 b5  <- f2.done
-                _   <- p.complete(Result.success(1))
+                _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
                 v2  <- f2.get
-            yield assert(a1 == 1 && w1 == 0 && b3.isEmpty && !b4 && !b5 && v1.contains(Result.success(1)) && v2.contains(Result.success(1)))
+            yield assert(a1 == 1 && w1 == 0 && b3.isEmpty && !b4 && !b5 && v1.contains(Result.succeed(1)) && v2.contains(Result.succeed(1)))
         }
 
         "concurrency" - {
@@ -129,7 +129,7 @@ class MeterTest extends Test:
                     count   <- counter.get
                     permits <- meter.availablePermits
                 yield
-                    assert(results.count(_.isFail) == 0)
+                    assert(results.count(_.isFailure) == 0)
                     assert(count == 100)
                     assert(permits == size)
                 )
@@ -158,7 +158,7 @@ class MeterTest extends Test:
                     assert(closed)
                     assert(completed.count(_.isSuccess) <= 100)
                     assert(count <= 100)
-                    assert(available.isFail)
+                    assert(available.isFailure)
                 )
                     .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                     .andThen(succeed)
@@ -168,14 +168,18 @@ class MeterTest extends Test:
                 (for
                     size    <- Choice.get(Seq(1, 2, 3, 50, 100))
                     meter   <- Meter.initSemaphore(size)
+                    started <- Latch.init(100)
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFibers <- Kyo.foreach(1 to 100)(_ =>
-                        Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
+                        started.release.andThen(
+                            Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
+                        )
                     )
                     interruptFiber <- Async.run(latch.await.andThen(Async.parallelUnbounded(
                         runFibers.take(50).map(_.interrupt(panic))
                     )))
+                    _           <- started.await
                     _           <- latch.release
                     interrupted <- interruptFiber.get
                     completed   <- Kyo.foreach(runFibers)(_.getResult)
@@ -248,12 +252,11 @@ class MeterTest extends Test:
 
         "tryRun" in runNotJS {
             for
-                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.second), Meter.initMutex)
+                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 100.millis), Meter.initMutex)
                 counter <- AtomicInt.init(0)
                 f1      <- Async.run(loop(meter, counter))
                 _       <- Async.sleep(5.millis)
                 _       <- untilTrue(meter.availablePermits.map(_ == 0))
-                _       <- Async.sleep(5.millis)
                 r       <- meter.tryRun(())
                 _       <- f1.interrupt(panic)
             yield assert(r.isEmpty)

@@ -40,8 +40,7 @@ class LogTest extends Test:
     "withConsoleLogger" in {
         val output = new StringBuilder
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
-            override def write(b: Int): Unit = output.append(b.toChar)
-        )) {
+            override def write(b: Int): Unit = output.append(b.toChar))) {
             import AllowUnsafe.embrace.danger
             IO.Unsafe.evalOrThrow {
                 for

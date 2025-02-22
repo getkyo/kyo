@@ -68,18 +68,16 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                 case Present(entry) =>
                     f(entry.value)
                 case Absent =>
-                    TID.useRequired { tid =>
-                        IO {
-                            val state = currentState
-                            if state.tid > tid then
-                                // Early retry if the TRef is concurrently modified
-                                STM.retry
-                            else
-                                // Append Read to the log and return value
-                                val entry = Read(state.tid, state.value)
-                                Var.setAndThen(log.put(this, entry))(f(state.value))
-                            end if
-                        }
+                    TID.useIORequired { tid =>
+                        val state = currentState
+                        if state.tid > tid then
+                            // Early retry if the TRef is concurrently modified
+                            STM.retry
+                        else
+                            // Append Read to the log and return value
+                            val entry = Read(state.tid, state.value)
+                            Var.setAndThen(log.put(this, entry))(f(state.value))
+                        end if
                     }
             end match
         }
@@ -91,18 +89,16 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                     val entry = Write(prev.tid, v)
                     Var.setDiscard(log.put(this, entry))
                 case Absent =>
-                    TID.useRequired { tid =>
-                        IO {
-                            val state = currentState
-                            if state.tid > tid then
-                                // Early retry if the TRef is concurrently modified
-                                STM.retry
-                            else
-                                // Append Write to the log
-                                val entry = Write(state.tid, v)
-                                Var.setDiscard(log.put(this, entry))
-                            end if
-                        }
+                    TID.useIORequired { tid =>
+                        val state = currentState
+                        if state.tid > tid then
+                            // Early retry if the TRef is concurrently modified
+                            STM.retry
+                        else
+                            // Append Write to the log
+                            val entry = Write(state.tid, v)
+                            Var.setDiscard(log.put(this, entry))
+                        end if
                     }
         }
 
@@ -155,46 +151,43 @@ end TRefImpl
 
 object TRef:
 
-    /** Creates a new transactional reference within an STM transaction.
+    /** Creates a new TRef with the given initial value.
       *
       * @param value
-      *   The initial value for the reference
+      *   The initial value to store in the reference
       * @return
-      *   A new transactional reference containing the value, within the STM effect
+      *   A new TRef containing the value, within the IO effect
       */
-    def init[A](value: A)(using Frame): TRef[A] < STM =
-        TID.useRequired { tid =>
-            Var.use[TRefLog] { log =>
-                IO.Unsafe {
-                    val ref = TRef.Unsafe.init(tid, value)
-                    Var.setAndThen(log.put(ref, ref.state))(ref)
-                }
-            }
-        }
+    def init[A](value: A)(using Frame): TRef[A] < IO =
+        initWith(value)(identity)
 
-    /** Creates a new transactional reference outside of any transaction.
+    /** Creates a new TRef and immediately applies a function to it.
       *
-      * WARNING: This operation:
-      *   - Cannot be rolled back
-      *   - Is not part of any transaction
-      *   - Will cause any containing transaction to retry if used within one, since it creates a reference with a newer transaction ID
-      *
-      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
+      * This is a more efficient way to initialize a TRef and perform operations on it, as it combines initialization and the first
+      * operation in a single transaction.
       *
       * @param value
-      *   The initial value for the reference
+      *   The initial value to store in the reference
+      * @param f
+      *   The function to apply to the newly created TRef
       * @return
-      *   A new transactional reference containing the value, within the IO effect
+      *   The result of applying the function to the new TRef, within combined IO and S effects
       */
-    def initNow[A](value: A)(using Frame): TRef[A] < IO =
-        IO.Unsafe(TRef.Unsafe.initNow(value))
+    inline def initWith[A, B, S](inline value: A)(inline f: TRef[A] => B < S)(using inline frame: Frame): B < (IO & S) =
+        TID.useIOUnsafe { tid =>
+            f(TRef.Unsafe.init(tid, value))
+        }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        def initNow[A](value: A)(using AllowUnsafe): TRef[A] =
+        def init[A](value: A)(using AllowUnsafe): TRef[A] =
             init(TID.next, value)
 
         private[kyo] def init[A](tid: Long, value: A)(using AllowUnsafe): TRef[A] =
-            new TRefImpl(Write(tid, value))
+            val finalTid =
+                if tid != -1 then tid
+                else TID.next
+            new TRefImpl(Write(finalTid, value))
+        end init
     end Unsafe
 end TRef

@@ -697,37 +697,28 @@ object Parse:
                         val text = acc + curr.foldLeft(Text.empty)(_ + _)
                         if text.isEmpty then
                             // If no text to parse, request more input
-                            (text, Ack.Continue())
+                            text
                         else
                             Choice.run(Var.runTuple(State(text, 0))(v)).map {
                                 case Seq() =>
                                     // No valid parse found yet - keep current text and continue
                                     // collecting more input as the parse might succeed with additional text
-                                    (text, Ack.Continue())
+                                    text
                                 case Seq((state, value)) =>
                                     if state.done then
                                         // Parser consumed all input - might need more text to complete
                                         // the next parse, so continue
-                                        (text, Ack.Continue())
+                                        text
                                     else
                                         // Successfully parsed a value with remaining text.
                                         // Emit the parsed value and continue with unconsumed text
-                                        Emit.andMap(Chunk(value)) { ack =>
-                                            (state.remaining, ack)
-                                        }
+                                        Emit.valueWith(Chunk(value))(state.remaining)
                                 case seq =>
                                     Parse.fail(seq.map(_._1), "Ambiguous parse - multiple results found")
                             }
                         end if
                 }
-            }.map { (text, ack) =>
-                // Handle any remaining text after input stream ends
-                ack match
-                    case Ack.Stop => Ack.Stop
-                    case _        =>
-                        // Try to parse any complete results from remaining text
-                        run(text)(repeat(v)).map(Emit(_))
-            }
+            }.map { (text, _) => run(text)(repeat(v)).map(Emit.value(_)) }
         }
 
     private def result[A](seq: Seq[A])(using Frame): Maybe[A] < Parse =

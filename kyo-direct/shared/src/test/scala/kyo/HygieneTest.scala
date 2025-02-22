@@ -3,189 +3,230 @@ package kyo
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
-class HygieneTest extends AnyFreeSpec with Assertions:
+class HygieneTest extends Test:
 
     "use of var" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             var willFail = 1
-            await(IO(1))
+            IO(1).now
           }
-        """)
+        """)(
+            "`var` declarations are not allowed inside a `defer` block."
+        )
     }
 
     "use of return" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             return 42
-            await(IO(1))
+            IO(1).now
           }
-        """)
+        """)(
+            "Exception occurred while executing macro expansion"
+        )
     }
 
     "nested defer block" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             defer {
-              await(IO(1))
+              IO(1).now
             }
           }
-        """)
+        """)(
+            "Effectful computations must explicitly use either .now or .later in a defer block."
+        )
     }
 
     "lazy val" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             lazy val x = 10
-            await(IO(1))
+            IO(1).now
           }
-        """)
+        """)(
+            "`lazy val` and `object` declarations are not allowed inside a `defer` block."
+        )
     }
 
     "function containing await" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
-            def foo() = await(IO(1))
+            def foo() = IO(1).now
             foo()
           }
-        """)
+        """)(
+            "Method definitions containing .now are not supported inside `defer` blocks."
+        )
     }
 
     "try/catch" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             try {
-              await(IO(1))
+              IO(1).now
             } catch {
-              case _: Exception => await(IO(2))
+              case _: Exception => IO(2).now
             }
           }
-        """)
+        """)(
+            "`try`/`catch` blocks are not supported inside `defer` blocks."
+        )
     }
 
     "class declaration" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             class A(val x: Int)
-            await(IO(1))
+            IO(1).now
           }
-        """)
+        """)(
+            "`class` and `trait` declarations are not allowed inside `defer` blocks."
+        )
     }
 
     "object declaration" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             object A
-            await(IO(1))
+            IO(1).now
           }
-        """)
+        """)(
+            "`class` and `trait` declarations are not allowed inside `defer` blocks."
+        )
     }
 
     "trait declaration" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             trait A
-            await(IO(1))
+            IO(1).now
           }
-        """)
+        """)(
+            "`class` and `trait` declarations are not allowed inside `defer` blocks."
+        )
     }
 
     "for-comprehension" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             for {
-              x <- await(IO(1))
-              y <- await(IO(2))
+              x <- IO(1).now
+              y <- IO(2).now
             } yield x + y
           }
-        """)
+        """)(
+            "value flatMap is not a member of Int"
+        )
     }
 
-    // "throw expression" in {
-    //     assertDoesNotCompile("""
-    //       defer {
-    //         throw new RuntimeException("Error!")
-    //         await(IO(1))
-    //       }
-    //     """)
-    // }
     "try without catch or finally" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             try {
-              await(IO(1))
+              IO(1).now
             }
           }
-        """)
+        """)(
+            "`try`/`catch` blocks are not supported inside `defer` blocks."
+        )
     }
 
     "try with only finally" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             try {
-              await(IO(1))
+              IO(1).now
             } finally {
               println("Cleanup")
             }
           }
-        """)
+        """)(
+            "`try`/`catch` blocks are not supported inside `defer` blocks."
+        )
     }
 
-    // "by-name parameters" in {
-    //     assertDoesNotCompile("""
-    //       defer {
-    //           def foo(x: => Int) = x + 1
-    //           foo(await(IO(1)))
-    //       }
-    //     """)
-    // }
-
     "new instance with by-name parameter" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
+          class A(x: => String)
           defer {
-            class A(x: => Int)
-            new A(await(IO(1)))
+              new A(IO("blah").now)
           }
-        """)
+        """)(
+            "Can't find AsyncShift (Found:    cps.runtime.CpsMonadSelfAsyncShift[[A] =>> A < kyo.IO"
+        )
     }
 
     "match expression without cases" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
-            await(IO(1)) match {}
+            IO(1).now match {}
           }
-        """)
+        """)(
+            "case' expected, but '}' found"
+        )
     }
 
     "for-comprehension without yield" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             for {
-              x <- await(IO(1))
-              y <- await(IO(2))
+              x <- IO(1).now
+              y <- IO(2).now
             } x + y
           }
-        """)
+        """)(
+            "value foreach is not a member of Int"
+        )
     }
 
     "nested functions" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
             def outer() = {
-              def inner() = await(IO(1))
+              def inner() = IO(1).now
               inner()
             }
             outer()
           }
-        """)
+        """)(
+            "Method definitions containing .now are not supported inside `defer` blocks"
+        )
     }
 
     "lambdas with await" in {
-        assertDoesNotCompile("""
+        typeCheckFailure("""
           defer {
-            val f = (x: Int) => await(IO(1)) + x
+            val f = (x: Int) => IO(1).now + x
             f(10)
           }
-        """)
+        """)(
+            "async lambda can't be result of expression"
+        )
+    }
+
+    "throw" in {
+        typeCheckFailure("""
+          defer {
+              if IO("foo").now == "bar" then
+                  throw new Exception
+              else
+                  2
+          }
+        """)(
+            "`throw` expressions are not allowed inside a `defer` block."
+        )
+    }
+
+    "synchronized" in {
+        typeCheckFailure("""
+          defer {
+              val x = synchronized(1)
+              IO(x).now
+          }
+        """)(
+            "`synchronized` blocks are not allowed inside a `defer` block."
+        )
     }
 end HygieneTest

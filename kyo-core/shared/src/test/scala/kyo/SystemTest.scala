@@ -150,7 +150,7 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "not_a_number")
                 for
                     result <- Abort.run(System.property[Int](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 
@@ -171,7 +171,7 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "not_a_boolean")
                 for
                     result <- Abort.run(System.property[Boolean](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 
@@ -204,7 +204,7 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "not_a_double")
                 for
                     result <- Abort.run(System.property[Double](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 
@@ -225,7 +225,7 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "not_a_long")
                 for
                     result <- Abort.run(System.property[Long](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 
@@ -240,13 +240,13 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "")
                 for
                     result <- Abort.run(System.property[Char](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
             "invalid char (multiple characters)" in run {
                 j.System.setProperty(TEST_PROP, "abc")
                 for
                     result <- Abort.run(System.property[Char](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 
@@ -261,7 +261,7 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "not_a_duration")
                 for
                     result <- Abort.run(System.property[Duration](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 
@@ -277,7 +277,7 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "not_a_uuid")
                 for
                     result <- Abort.run(System.property[java.util.UUID](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 
@@ -292,7 +292,7 @@ class SystemTest extends Test:
                 j.System.setProperty(TEST_PROP, "not_a_date")
                 for
                     result <- Abort.run(System.property[java.time.LocalDate](TEST_PROP))
-                yield assert(result.isFail)
+                yield assert(result.isFailure)
             }
         }
 

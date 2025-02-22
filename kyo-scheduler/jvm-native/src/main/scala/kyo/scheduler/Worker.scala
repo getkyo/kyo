@@ -174,7 +174,7 @@ abstract private class Worker(
         val task    = currentTask
         val start   = taskStartMs
         val stalled = (task ne null) && start > 0 && start < nowMs - timeSliceMs
-        if (stalled) {
+        if (stalled && !queue.isEmpty()) {
             task.doPreempt()
         }
         stalled

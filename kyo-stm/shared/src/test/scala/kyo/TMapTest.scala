@@ -196,7 +196,7 @@ class TMapTest extends Test:
                 }
                 snapshot <- STM.run(map.snapshot)
             yield assert(
-                result.isFail &&
+                result.isFailure &&
                     snapshot == Map("initial" -> 42)
             )
         }
@@ -219,7 +219,7 @@ class TMapTest extends Test:
                 }
                 snapshot <- STM.run(map.snapshot)
             yield assert(
-                result.isFail &&
+                result.isFailure &&
                     snapshot.isEmpty
             )
         }
@@ -239,7 +239,7 @@ class TMapTest extends Test:
                 }
                 snapshot <- STM.run(map.snapshot)
             yield assert(
-                result.isFail &&
+                result.isFailure &&
                     snapshot.isEmpty
             )
         }
@@ -334,7 +334,7 @@ class TMapTest extends Test:
                 }
                 snapshot <- STM.run(map.snapshot)
             yield assert(
-                result.isFail &&
+                result.isFailure &&
                     snapshot.isEmpty
             )
         }
@@ -356,7 +356,7 @@ class TMapTest extends Test:
                     snapshot <- STM.run(map.snapshot)
                     varValue <- Var.get[Int]
                 yield assert(
-                    result.isFail &&
+                    result.isFailure &&
                         snapshot == Map("start" -> 0) &&
                         varValue == 0
                 )

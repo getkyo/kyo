@@ -61,7 +61,11 @@ object Effect:
         end try
     end catching
 
-    private[kyo] def defer[A, S](f: Safepoint ?=> A < S)(using _frame: Frame): A < S =
+    private[kyo] def defer[A, S](f: Safepoint ?=> A < S)(using Frame): A < S =
+        deferInline(f)
+
+    @nowarn("msg=anonymous")
+    private[kyo] inline def deferInline[A, S](inline f: Safepoint ?=> A < S)(using inline _frame: Frame): A < S =
         new KyoDefer[A, S]:
             def frame = _frame
             def apply(v: Unit, context: Context)(using Safepoint) =

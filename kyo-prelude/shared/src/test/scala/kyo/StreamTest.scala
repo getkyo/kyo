@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Ack.*
-
 class StreamTest extends Test:
 
     val n = 100000
@@ -136,17 +134,14 @@ class StreamTest extends Test:
         }
 
         "emit one at a time" in {
-            def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
-                ack match
-                    case Stop => Stop: Ack < Any
-                    case Continue(maxItems) =>
-                        for
-                            n    <- Var.update[Int](_ + 1)
-                            next <- Emit.andMap(Chunk(n))(emit)
-                        yield next
+            def emit: Unit < (Emit[Chunk[Int]] & Var[Int]) =
+                for
+                    n    <- Var.update[Int](_ + 1)
+                    next <- Emit.valueWith(Chunk(n))(emit)
+                yield next
             end emit
 
-            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val stream         = Stream(Emit.valueWith(Chunk.empty[Int])(emit)).take(5).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
 
             assert(
@@ -155,23 +150,22 @@ class StreamTest extends Test:
         }
 
         "exact amount" in {
-            def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
-                ack match
-                    case Stop => Stop: Ack < Any
-                    case Continue(maxItems) =>
-                        for
-                            end <- Var.update[Int](_ + maxItems)
-                            start = end - maxItems + 1
-                            next <- Emit.andMap(Chunk.from(start to end): Chunk[Int])(emit)
-                        yield next
-                        end for
+            def emit: Unit < (Emit[Chunk[Int]] & Var[Int]) =
+                val chunkSize = 5
+                for
+                    end <- Var.update[Int](_ + chunkSize)
+                    start = end - chunkSize + 1
+                    chunk = Chunk.from(start to end)
+                    next <- Emit.valueWith(Chunk.from(start to end))(emit)
+                yield next
+                end for
             end emit
 
-            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val stream         = Stream(Emit.valueWith(Chunk.empty[Int])(emit)).take(7).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
 
             assert(
-                count == 5 && chunk == (1 to 5)
+                count == 10 && chunk == (1 to 7)
             )
         }
     }
@@ -338,6 +332,14 @@ class StreamTest extends Test:
                     n / 2
             )
         }
+
+        "with effects" in {
+            def predicate(i: Int) = Var.get[Boolean].map(b => Var.set(!b).andThen(b && !(i % 3 == 0)))
+            val result            = Var.run(false)(Stream.init(1 to n).filter(predicate).run).eval
+            assert(
+                result.size > 0 && result.forall(_ % 2 == 0) && result.forall(i => !(i % 3 == 0))
+            )
+        }
     }
 
     "changes" - {
@@ -400,7 +402,7 @@ class StreamTest extends Test:
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
             val transformed = stream.map(v => Abort.catching[NumberFormatException](v.toInt)).run
-            assert(Abort.run(transformed).eval.isFail)
+            assert(Abort.run(transformed).eval.isFailure)
         }
 
         "stack safety" in {
@@ -446,7 +448,7 @@ class StreamTest extends Test:
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
             val transformed = stream.mapChunk(c => Abort.catching[NumberFormatException](c.map(_.toInt))).run
-            assert(Abort.run(transformed).eval.isFail)
+            assert(Abort.run(transformed).eval.isFailure)
         }
 
         "stack safety" in {
@@ -556,6 +558,36 @@ class StreamTest extends Test:
         }
     }
 
+    "tap" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .init(Seq(1, 2, 3))
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (6, Seq(1, 2, 3)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tap(i => Var.update[Int](_ + i).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
+    "tapChunk" - {
+        "non-empty stream" in {
+            val stream = Stream
+                .apply(Emit.valueWith(Chunk(1, 2, 3))(Emit.value(Chunk(4, 5, 6))))
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (21, Seq(1, 2, 3, 4, 5, 6)))
+        }
+        "empty stream" in {
+            val stream = Stream
+                .empty[Int]
+                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+            assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
+        }
+    }
+
     "concat" - {
         "non-empty streams" in {
             assert(
@@ -638,11 +670,11 @@ class StreamTest extends Test:
         }
 
         "empty chunks" in {
-            def emit(n: Int): Ack < (Emit[Chunk[Int]]) =
+            def emit(n: Int): Unit < (Emit[Chunk[Int]]) =
                 n match
-                    case 0 => Stop
-                    case 5 => Emit.andMap(Chunk.empty)(_ => emit(n - 1))
-                    case _ => Emit.andMap(Chunk.fill(3)(n))(_ => emit(n - 1))
+                    case 0 => ()
+                    case 5 => Emit.valueWith(Chunk.empty)(emit(n - 1))
+                    case _ => Emit.valueWith(Chunk.fill(3)(n))(emit(n - 1))
             end emit
 
             val stream = Stream(emit(10)).rechunk(10).mapChunk(Chunk(_))
@@ -655,40 +687,40 @@ class StreamTest extends Test:
         }
     }
 
-    "runDiscard" - {
+    "discard" - {
         "non-empty stream" in {
             assert(
                 Var.run(0) {
-                    Stream.init(0 until 100).map(i => Var.update[Int](_ + i)).runDiscard.andThen(Var.get[Int])
+                    Stream.init(0 until 100).map(i => Var.update[Int](_ + i)).discard.andThen(Var.get[Int])
                 }.eval == 4950
             )
         }
 
         "empty stream" in {
             assert(
-                Stream.init(Seq.empty[Int]).runDiscard.eval == ()
+                Stream.init(Seq.empty[Int]).discard.eval == ()
             )
         }
     }
 
-    "runForeach" - {
+    "foreach" - {
         "executes the function for each element" in run {
             var sum = 0
-            Stream.init(Seq(1, 2, 3, 4, 5)).runForeach(i => sum += i).map { _ =>
+            Stream.init(Seq(1, 2, 3, 4, 5)).foreach(i => sum += i).map { _ =>
                 assert(sum == 15)
             }
         }
 
         "works with empty stream" in run {
             var executed = false
-            Stream.init(Seq.empty[Int]).runForeach(_ => executed = true).map { _ =>
+            Stream.init(Seq.empty[Int]).foreach(_ => executed = true).map { _ =>
                 assert(!executed)
             }
         }
 
         "works with effects" in run {
             var sum = 0
-            Stream.init(Seq(1, 2, 3, 4, 5)).runForeach { i =>
+            Stream.init(Seq(1, 2, 3, 4, 5)).foreach { i =>
                 Env.use[Int] { multiplier =>
                     sum += i * multiplier
                 }
@@ -700,7 +732,7 @@ class StreamTest extends Test:
         "short-circuits on abort" in run {
             var sum = 0
             val result = Abort.run[String] {
-                Stream.init(Seq(1, 2, 3, 4, 5)).runForeach { i =>
+                Stream.init(Seq(1, 2, 3, 4, 5)).foreach { i =>
                     sum += i
                     if i >= 3 then Abort.fail("Reached 3")
                     else Abort.get(Right(()))
@@ -713,10 +745,10 @@ class StreamTest extends Test:
         }
     }
 
-    "runForeachChunk" - {
+    "foreachChunk" - {
         "executes the function for each chunk" in run {
             var sum = 0
-            Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk(chunk =>
+            Stream.init(Chunk(1, 2, 3, 4, 5)).foreachChunk(chunk =>
                 sum += chunk.foldLeft(0)(_ + _)
             ).map { _ =>
                 assert(sum == 15)
@@ -725,14 +757,14 @@ class StreamTest extends Test:
 
         "works with empty stream" in run {
             var executed = false
-            Stream.init(Chunk.empty[Int]).runForeachChunk(_ => executed = true).map { _ =>
+            Stream.init(Chunk.empty[Int]).foreachChunk(_ => executed = true).map { _ =>
                 assert(!executed)
             }
         }
 
         "works with effects" in run {
             var sum = 0
-            Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk { chunk =>
+            Stream.init(Chunk(1, 2, 3, 4, 5)).foreachChunk { chunk =>
                 Env.use[Int] { multiplier =>
                     sum += chunk.foldLeft(0)(_ + _) * multiplier
                 }
@@ -742,30 +774,30 @@ class StreamTest extends Test:
         }
     }
 
-    "runFold" - {
+    "fold" - {
         "sum" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).runFold(0)(_ + _).eval == 6
+                Stream.init(Seq(1, 2, 3)).fold(0)(_ + _).eval == 6
             )
         }
 
         "concat" in {
             assert(
-                Stream.init(Seq("a", "b", "c")).runFold("")(_ + _).eval == "abc"
+                Stream.init(Seq("a", "b", "c")).fold("")(_ + _).eval == "abc"
             )
         }
 
         "early termination" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val folded = stream.runFold(0) { (acc, v) =>
+            val folded = stream.foldKyo(0) { (acc, v) =>
                 if acc < 6 then acc + v else Abort.fail(())
             }
-            assert(Abort.run[Unit](folded).eval.fold(_ => true)(_ => false))
+            assert(Abort.run[Unit](folded).eval.foldError(_ => false, _ => true))
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1)).runFold(0)(_ + _).eval == n
+                Stream.init(Seq.fill(n)(1)).fold(0)(_ + _).eval == n
             )
         }
     }

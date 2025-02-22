@@ -4,6 +4,16 @@ import java.io.EOFException
 import java.io.IOException
 
 /** Represents a console for input and output operations.
+  *
+  * The methods that print to the console output and error streams ([[print]], [[printErr]], [[printLine]], [[printLineErr]]) don't return
+  * an [[Abort]] effect because they don't throw exceptions. The behavior is the same as the standard Scala `scala.Console` methods, which
+  * don't throw exceptions either. The cause is the underlying Java `PrintStream` class implementation, which doesn't throw exceptions when
+  * writing to the console output or error streams (see
+  * [[https://stackoverflow.com/questions/297303/printwriter-and-printstream-never-throw-ioexceptions PrintWriter and PrintStream never throw IOExceptions]]
+  * for more details).
+  *
+  * To check if an error occurred in the console output or error streams, use the [[checkErrors]], which returns a boolean indicating if an
+  * error occurred.
   */
 final case class Console(unsafe: Console.Unsafe):
 
@@ -19,34 +29,41 @@ final case class Console(unsafe: Console.Unsafe):
       * @param s
       *   The string to print.
       */
-    def print(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.print(s.show)))
+    def print(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.print(s.show))
 
     /** Prints a string to the console's error stream without a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printErr(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printErr(s.show)))
+    def printErr(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.printErr(s.show))
 
     /** Prints a string to the console followed by a newline.
       *
       * @param s
       *   The string to print.
       */
-    def println(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printLine(s.show)))
+    def println(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.printLine(s.show))
 
     /** Prints a string to the console's error stream followed by a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printLineErr(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printLineErr(s.show)))
+    def printLineErr(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.printLineErr(s.show))
+
+    /** Checks if an error occurred in the console output or error streams.
+      *
+      * @return
+      *   True if an error occurred, false otherwise.
+      */
+    def checkErrors(using Frame): Boolean < IO = IO.Unsafe(unsafe.checkErrors)
 
     /** Flushes the console output streams.
       *
       * This method ensures that any buffered output is written to the console.
       */
-    def flush(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.flush()))
+    def flush(using Frame): Unit < IO = IO.Unsafe(unsafe.flush())
 end Console
 
 /** Companion object for Console, providing utility methods and a live implementation.
@@ -60,11 +77,12 @@ object Console:
             def readLine()(using AllowUnsafe) =
                 Result.catching[IOException](Maybe(scala.Console.in.readLine()))
                     .flatMap(_.toResult(Result.fail(new EOFException("Consoles.readLine failed."))))
-            def print(s: String)(using AllowUnsafe)        = Result.catching[IOException](scala.Console.out.print(s))
-            def printErr(s: String)(using AllowUnsafe)     = Result.catching[IOException](scala.Console.err.print(s))
-            def printLine(s: String)(using AllowUnsafe)    = Result.catching[IOException](scala.Console.out.println(s))
-            def printLineErr(s: String)(using AllowUnsafe) = Result.catching[IOException](scala.Console.err.println(s))
-            def flush()(using AllowUnsafe)                 = Result.catching[IOException](scala.Console.flush())
+            def print(s: String)(using AllowUnsafe)        = scala.Console.out.print(s)
+            def printErr(s: String)(using AllowUnsafe)     = scala.Console.err.print(s)
+            def printLine(s: String)(using AllowUnsafe)    = scala.Console.out.println(s)
+            def printLineErr(s: String)(using AllowUnsafe) = scala.Console.err.println(s)
+            def checkErrors(using AllowUnsafe): Boolean    = scala.Console.out.checkError() || scala.Console.err.checkError()
+            def flush()(using AllowUnsafe)                 = scala.Console.flush()
     )
 
     private val local = Local.init(live)
@@ -117,16 +135,14 @@ object Console:
       *   The result of the computation with IO effects.
       */
     def withIn[A, S](lines: Iterable[String])(v: A < S)(using Frame): A < (IO & S) =
-        use { console =>
-            IO {
-                val it = lines.iterator
-                val proxy =
-                    new Proxy(console.unsafe):
-                        override def readLine()(using AllowUnsafe) =
-                            if !it.hasNext then Result.fail(new EOFException("Consoles.readLine failed."))
-                            else Result.success(it.next())
-                let(Console(proxy))(v)
-            }
+        IO.withLocal(local) { console =>
+            val it = lines.iterator
+            val proxy =
+                new Proxy(console.unsafe):
+                    override def readLine()(using AllowUnsafe) =
+                        if !it.hasNext then Result.fail(new EOFException("Consoles.readLine failed."))
+                        else Result.succeed(it.next())
+            let(Console(proxy))(v)
         }
 
     /** Container for captured console output.
@@ -150,19 +166,25 @@ object Console:
       *   A tuple containing the captured output (Out) and the computation result.
       */
     def withOut[A, S](v: A < S)(using Frame): (Out, A) < (IO & S) =
-        use { console =>
-            IO {
-                val stdOut = new StringBuffer
-                val stdErr = new StringBuffer
-                val proxy =
-                    new Proxy(console.unsafe):
-                        override def print(s: String)(using AllowUnsafe)        = Result.success(stdOut.append(s)).unit
-                        override def printErr(s: String)(using AllowUnsafe)     = Result.success(stdErr.append(s)).unit
-                        override def printLine(s: String)(using AllowUnsafe)    = Result.success(stdOut.append(s + "\n")).unit
-                        override def printLineErr(s: String)(using AllowUnsafe) = Result.success(stdErr.append(s + "\n")).unit
-                let(Console(proxy))(v)
-                    .map(r => IO((Out(stdOut.toString(), stdErr.toString()), r)))
-            }
+        IO.withLocal(local) { console =>
+            val stdOut = new StringBuffer
+            val stdErr = new StringBuffer
+            val proxy =
+                new Proxy(console.unsafe):
+                    override def print(s: String)(using AllowUnsafe) =
+                        stdOut.append(s)
+                        ()
+                    override def printErr(s: String)(using AllowUnsafe) =
+                        stdErr.append(s)
+                        ()
+                    override def printLine(s: String)(using AllowUnsafe) =
+                        stdOut.append(s + "\n")
+                        ()
+                    override def printLineErr(s: String)(using AllowUnsafe) =
+                        stdErr.append(s + "\n")
+                        ()
+            let(Console(proxy))(v)
+                .map(r => IO((Out(stdOut.toString(), stdErr.toString()), r)))
         }
 
     /** Reads a line from the console.
@@ -171,7 +193,7 @@ object Console:
       *   A String representing the line read from the console.
       */
     def readLine(using Frame): String < (IO & Abort[IOException]) =
-        local.use(_.readLine)
+        IO.Unsafe.withLocal(local)(console => Abort.get(console.unsafe.readLine()))
 
     private def toString(v: Any)(using Frame): String =
         v match
@@ -185,41 +207,49 @@ object Console:
       * @param v
       *   The value to print.
       */
-    def print[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        local.use(_.print(toString(v)))
+    def print[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.print(toString(v)))
 
     /** Prints a value to the console's error stream without a newline.
       *
       * @param v
       *   The value to print to the error stream.
       */
-    def printErr[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        local.use(_.printErr(toString(v)))
+    def printErr[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.printErr(toString(v)))
 
     /** Prints a value to the console followed by a newline.
       *
       * @param v
       *   The value to print.
       */
-    def printLine[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        local.use(_.println(toString(v)))
+    def printLine[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.printLine(toString(v)))
 
     /** Prints a value to the console's error stream followed by a newline.
       *
       * @param v
       *   The value to print to the error stream.
       */
-    def printLineErr[A](v: A)(using Frame): Unit < (IO & Abort[IOException]) =
-        local.use(_.printLineErr(toString(v)))
+    def printLineErr[A](v: A)(using Frame): Unit < IO =
+        IO.Unsafe.withLocal(local)(console => console.unsafe.printLineErr(toString(v)))
+
+    /** Checks if an error occurred in the console output or error streams.
+      *
+      * @return
+      *   True if an error occurred, false otherwise.
+      */
+    def checkErrors(using Frame): Boolean < IO = IO.Unsafe.withLocal(local)(console => console.unsafe.checkErrors)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def readLine()(using AllowUnsafe): Result[IOException, String]
-        def print(s: String)(using AllowUnsafe): Result[IOException, Unit]
-        def printErr(s: String)(using AllowUnsafe): Result[IOException, Unit]
-        def printLine(s: String)(using AllowUnsafe): Result[IOException, Unit]
-        def printLineErr(s: String)(using AllowUnsafe): Result[IOException, Unit]
-        def flush()(using AllowUnsafe): Result[IOException, Unit]
+        def print(s: String)(using AllowUnsafe): Unit
+        def printErr(s: String)(using AllowUnsafe): Unit
+        def printLine(s: String)(using AllowUnsafe): Unit
+        def printLineErr(s: String)(using AllowUnsafe): Unit
+        def checkErrors(using AllowUnsafe): Boolean
+        def flush()(using AllowUnsafe): Unit
         def safe: Console = Console(this)
     end Unsafe
 
@@ -229,6 +259,7 @@ object Console:
         def printErr(s: String)(using AllowUnsafe)     = underlying.printErr(s)
         def printLine(s: String)(using AllowUnsafe)    = underlying.printLine(s)
         def printLineErr(s: String)(using AllowUnsafe) = underlying.printLineErr(s)
+        def checkErrors(using AllowUnsafe): Boolean    = underlying.checkErrors
         def flush()(using AllowUnsafe)                 = underlying.flush()
     end Proxy
 

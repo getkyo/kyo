@@ -48,43 +48,4 @@ class FlatTest extends Test:
         }
     }
 
-    "nok" - {
-
-        "pending type" in pendingUntilFixed {
-            typeCheckFailure("implicitly[Flat[Int < Any]]")(_ => false)
-            typeCheckFailure("implicitly[Flat[Int < Options]]")(_ => false)
-            typeCheckFailure("implicitly[Flat[Int < Nothing]]")(_ => false)
-            ()
-        }
-
-        "nested" in pendingUntilFixed {
-            typeCheckFailure("implicitly[Flat[Int < IOs < IOs]]")(_ => false)
-            typeCheckFailure("implicitly[Flat[Any < IOs < IOs]]")(_ => false)
-            ()
-        }
-
-        "nested w/ mismatch" in pendingUntilFixed {
-            typeCheckFailure("implicitly[Flat[Int < Options < IOs]]")(_ => false)
-            typeCheckFailure("implicitly[Flat[Int < IOs < Options]]")(_ => false)
-            ()
-        }
-
-        "generic" in {
-            typeCheckFailure("def f[A] = implicitly[Flat[A]]")(_.contains("No given instance of type kyo.Flat[A]"))
-            typeCheckFailure("def f[A] = implicitly[Flat[A | Int]]")(_.contains("No given instance of type kyo.Flat[A | Int]"))
-        }
-
-        "generic pending" in pendingUntilFixed {
-            typeCheckFailure("def f[A] = implicitly[Flat[A < Options]]")(_ => false)
-            typeCheckFailure("def f[A] = implicitly[Flat[A < Any]]")(_ => false)
-            ()
-        }
-
-        "any" in pendingUntilFixed {
-            typeCheckFailure("implicitly[Flat[Any]]")(_.contains("No given instance of type kyo.Flat[Any]"))
-            typeCheckFailure("implicitly[Flat[Any < IOs]]")(_ => false)
-            ()
-        }
-    }
-
 end FlatTest

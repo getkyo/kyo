@@ -262,12 +262,12 @@ object Meter:
 
         private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (IO & S) =
             if reentrant then
-                acquiredMeters.use { meters =>
+                IO.withLocal(acquiredMeters) { meters =>
                     if meters.contains(this) then reenter
-                    else IO.Unsafe(acquire)
+                    else acquire
                 }
             else
-                IO.Unsafe(acquire)
+                acquire
 
         private inline def withAcquiredMeter[A, S](inline v: => A < S) =
             if reentrant then

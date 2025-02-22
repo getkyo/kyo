@@ -38,7 +38,7 @@ object Requests:
         def withMeter(m: Meter)(using Frame): Backend =
             new Backend:
                 def send[A: Flat](r: Request[A, Any]) =
-                    Abort.run(m.run(self.send(r))).map(r => Abort.get(r.mapFail(FailedRequest(_))))
+                    Abort.run(m.run(self.send(r))).map(r => Abort.get(r.mapFailure(FailedRequest(_))))
     end Backend
 
     /** The default live backend implementation */

@@ -6,12 +6,12 @@ import kyo.*
 
 object KyoUtil:
     def nettyChannelFutureToScala(nettyFuture: ChannelFuture)(using Frame): Channel < Async =
-        Promise.init[Nothing, Channel].map { p =>
-            p.onComplete(_ => IO(nettyFuture.cancel(true)).unit).andThen {
+        Promise.initWith[Nothing, Channel] { p =>
+            p.onComplete(_ => IO(discard(nettyFuture.cancel(true)))).andThen {
                 nettyFuture.addListener((future: ChannelFuture) =>
                     discard {
                         import AllowUnsafe.embrace.danger
-                        if future.isSuccess then p.unsafe.complete(Result.success(future.channel()))
+                        if future.isSuccess then p.unsafe.complete(Result.succeed(future.channel()))
                         else p.unsafe.complete(Result.panic(future.cause()))
                     }
                 )
@@ -20,12 +20,12 @@ object KyoUtil:
         }
 
     def nettyFutureToScala[A](f: io.netty.util.concurrent.Future[A])(using Frame): A < Async =
-        Promise.init[Nothing, A].map { p =>
-            p.onComplete(_ => IO(f.cancel(true)).unit).andThen {
+        Promise.initWith[Nothing, A] { p =>
+            p.onComplete(_ => IO(discard(f.cancel(true)))).andThen {
                 f.addListener((future: io.netty.util.concurrent.Future[A]) =>
                     discard {
                         import AllowUnsafe.embrace.danger
-                        if future.isSuccess then p.unsafe.complete(Result.success(future.getNow))
+                        if future.isSuccess then p.unsafe.complete(Result.succeed(future.getNow))
                         else p.unsafe.complete(Result.panic(future.cause()))
                     }
                 )

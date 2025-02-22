@@ -214,6 +214,7 @@ object `<`:
                     case v =>
                         v.asInstanceOf[A]
             flattenLoop(v)
+    end extension
 
     extension [A](inline v: A < Any)
 

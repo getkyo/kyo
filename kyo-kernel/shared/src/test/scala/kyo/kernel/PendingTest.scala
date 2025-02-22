@@ -54,7 +54,7 @@ class PendingTest extends Test:
 
     "eval should not compile for pending effects" in {
         @nowarn("msg=unused") trait CustomEffect extends ArrowEffect[Const[Unit], Const[Unit]]
-        assertDoesNotCompile("val x: Int < CustomEffect = 5; x.eval")
+        typeCheckFailure("val x: Int < CustomEffect = 5; x.eval")("value eval is not a member of Int < CustomEffect")
     }
 
     "lift" - {
@@ -67,10 +67,10 @@ class PendingTest extends Test:
         "nested computation" - {
             "generic method effect mismatch" in {
                 @nowarn("msg=unused") def test1[A](v: A < Any) = v
-                assertDoesNotCompile("test1(effect)")
+                typeCheckFailure("test1(1: Int < TestEffect)")("Required: Any < Any")
             }
             "inference widening" in {
-                assertDoesNotCompile("val _: Int < Any < Any = (1: Int < Any)")
+                typeCheckFailure("val _: Int < Any < Any = (1: Int < Any)")("Required: Int < Any < Any")
             }
         }
 
@@ -109,18 +109,26 @@ class PendingTest extends Test:
                 val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
                 val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
                 discard(f1, f2, f3, f4)
-                assertDoesNotCompile("""
+                typeCheckFailure("""
                     val _: Int => String < Any < Any = f1
-                """)
-                assertDoesNotCompile("""
+                """)(
+                    "Required: Int => String < Any < Any"
+                )
+                typeCheckFailure("""
                     val _: (Int, Int) => String < Any < Any = f2
-                """)
-                assertDoesNotCompile("""
+                """)(
+                    "Required: (Int, Int) => String < Any < Any"
+                )
+                typeCheckFailure("""
                     val _: (Int, Int, Int) => String < Any < Any = f3
-                """)
-                assertDoesNotCompile("""
+                """)(
+                    "Required: (Int, Int, Int) => String < Any < Any"
+                )
+                typeCheckFailure("""
                     val _: (Int, Int, Int, Int) => String < Any < Any = f4
-                """)
+                """)(
+                    "Required: (Int, Int, Int, Int) => String < Any < Any"
+                )
             }
         }
     }
@@ -146,7 +154,9 @@ class PendingTest extends Test:
         }
 
         "doesn't accept nested computations" in {
-            assertDoesNotCompile("def test(x: Int < Any < Any) = x.evalNow")
+            typeCheckFailure("def test(x: Int < Any < Any) = x.evalNow")(
+                "Cannot prove 'kyo.kernel.Pending$package.<[scala.Int, scala.Any]' isn't nested"
+            )
         }
     }
 
@@ -243,14 +253,13 @@ class PendingTest extends Test:
     }
 
     "only 'flatten' is available for nested computations" in {
+        val error = "may contain a nested effect computation"
         def test[S](effect: Unit < S < S) =
-            assertDoesNotCompile("effect.map(_ => 1))")
-            assertDoesNotCompile("effect.andThen(1)")
-            assertDoesNotCompile("effect.flatMap(_ => 1)")
-            assertDoesNotCompile("effect.pipe(_ => 1)")
-            assertDoesNotCompile("effect.evalNow")
-            assertDoesNotCompile("effect.repeat(10)")
-            assertDoesNotCompile("effect.unit")
+            typeCheckFailure("effect.map(_ => 1))")(error)
+            typeCheckFailure("effect.andThen(1)")(error)
+            typeCheckFailure("effect.flatMap(_ => 1)")(error)
+            typeCheckFailure("effect.pipe(_ => 1)")(error)
+            typeCheckFailure("effect.unit")("value unit is not a member of Unit < S < S")
             effect.flatten
         end test
         def nest[T](v: T): T < Any =
@@ -260,7 +269,7 @@ class PendingTest extends Test:
 
     "show" - {
         "should display pure vals wrapped with inner types displayed using show" in {
-            val i: Result[String, Int] < Any         = Result.success(23)
+            val i: Result[String, Int] < Any         = Result.succeed(23)
             val r: Render[Result[String, Int] < Any] = Render.apply
             assert(r.asText(i).show == "Kyo(Success(23))")
             assert(t"$i".show == "Kyo(Success(23))")

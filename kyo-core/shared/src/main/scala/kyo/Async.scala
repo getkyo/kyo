@@ -9,10 +9,18 @@ import scala.concurrent.Future
 import scala.util.NotGiven
 import scala.util.control.NonFatal
 
-/** Represents an asynchronous computation effect.
+/** Asynchronous computation effect.
   *
-  * This effect provides methods for running asynchronous computations, creating and managing fibers, handling promises, and performing
-  * parallel and race operations.
+  * While IO handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
+  * and execution control. It includes IO in its effect set, making it a unified solution for both synchronous and asynchronous operations.
+  *
+  * This separation, enabled by Kyo's algebraic effect system, is reflected in the codebase's design: the presence of Async in pending
+  * effects signals that a computation may park or involve fiber scheduling, contrasting with IO-only operations that run to completion.
+  *
+  * Most application code can work exclusively with Async, with the IO/Async distinction becoming relevant primarily in library code or
+  * performance-critical sections where precise control over execution characteristics is needed.
+  *
+  * This effect includes IO in its effect set to handle both async and sync execution in a single effect.
   *
   * @see
   *   [[Async.run]] for running asynchronous computations
@@ -30,6 +38,33 @@ opaque type Async <: (IO & Async.Join) = Async.Join & IO
 object Async:
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
+
+    /** Convenience method for suspending computations in an Async effect.
+      *
+      * While IO is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
+      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes IO in its effect set, this
+      * method allows users to work with a single unified effect that handles both concerns.
+      *
+      * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use
+      * Async.run or combinators like Async.parallel instead.
+      *
+      * This is particularly useful in application code where the distinction between pure side effects and asynchronous execution is less
+      * important than having a simple, consistent way to handle effects. The underlying effects are typically managed together at the
+      * application boundary through KyoApp.
+      *
+      * @param v
+      *   The computation to suspend
+      * @param frame
+      *   Implicit frame for the computation
+      * @tparam A
+      *   The result type of the computation
+      * @tparam S
+      *   Additional effects in the computation
+      * @return
+      *   The suspended computation wrapped in an Async effect
+      */
+    inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
+        IO(v)
 
     /** Runs an asynchronous computation and returns a Fiber.
       *
@@ -119,6 +154,13 @@ object Async:
             _mask(isolate.resume(state, v)).map(isolate.restore(_, _))
         }
 
+    /** Creates a computation that never completes.
+      *
+      * @return
+      *   A computation that never completes
+      */
+    def never[E, A](using Frame): A < Async = Fiber.never[Nothing, A].get
+
     /** Delays execution of a computation by a specified duration.
       *
       * @param d
@@ -166,7 +208,7 @@ object Async:
                     IO.Unsafe {
                         val sleepFiber = clock.unsafe.sleep(after)
                         val task       = IOTask[Ctx, E | Timeout, A](v, trace, context)
-                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Fail(Timeout()))))
+                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Failure(Timeout()))))
                         task.onComplete(_ => discard(sleepFiber.interrupt()))
                         Async.get(task)
                     }
@@ -696,6 +738,54 @@ object Async:
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
+    /** Creates a memoized version of a computation.
+      *
+      * Returns a function that will cache the result of the first execution and return the cached result for subsequent calls. During
+      * initialization, only one fiber will execute the computation while others wait for the result. If the first execution fails, the
+      * cache is cleared and the computation will be retried on the next invocation. Note that successful results are cached indefinitely,
+      * so use this for stable values that won't need refreshing.
+      *
+      * Unlike `Memo`, this memoization is optimized for performance and can be safely used in hot paths. If you're memoizing global
+      * initialization code or need more control over cache isolation, consider using `Memo` instead.
+      *
+      * WARNING: If the initial computation never completes (e.g., hangs indefinitely), all subsequent calls will be permanently blocked
+      * waiting for the result. Ensure the computation can complete in a reasonable time or introduce a timeout via `Async.timeout`.
+      *
+      * @param v
+      *   The computation to memoize
+      * @return
+      *   A function that returns the memoized computation result
+      */
+    def memoize[A: Flat, S](v: A < S)(using Frame): (() => A < (S & Async)) < Async =
+        IO.Unsafe {
+            val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Nothing, A]])
+            () =>
+                @tailrec def loop(): A < (S & Async) =
+                    ref.get() match
+                        case Present(v) => v.safe.get
+                        case Absent =>
+                            val promise = Promise.Unsafe.init[Nothing, A]()
+                            if ref.compareAndSet(Absent, Present(promise)) then
+                                Abort.run(v).map { r =>
+                                    IO.Unsafe {
+                                        if !r.isSuccess then
+                                            ref.set(Absent)
+                                        promise.completeDiscard(r)
+                                        Abort.get(r)
+                                    }
+                                }.pipe(IO.ensure {
+                                    IO.Unsafe {
+                                        if !promise.done() then
+                                            ref.set(Absent)
+                                    }
+                                })
+                            else
+                                loop()
+                            end if
+                loop()
+
+        }
+
     /** Converts a Future to an asynchronous computation.
       *
       * This method allows integration of existing Future-based code with Kyo's asynchronous system. It handles successful completion and
@@ -717,7 +807,7 @@ object Async:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): B < (S & reduce.SReduced & Async) =
-        val x = useResult(v)(_.fold(Abort.error)(f))
+        val x = useResult(v)(_.fold(f, Abort.fail, Abort.panic))
         reduce(x)
     end use
 
@@ -725,6 +815,6 @@ object Async:
         ArrowEffect.suspend[A](Tag[Join], v).asInstanceOf[Result[E, A] < Async]
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
-        ArrowEffect.suspendAndMap[A](Tag[Join], v)(f)
+        ArrowEffect.suspendWith[A](Tag[Join], v)(f)
 
 end Async

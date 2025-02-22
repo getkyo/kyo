@@ -18,8 +18,9 @@ class WeakFlatTest extends Test:
     }
 
     "not compile for known Kyo types" in {
-        assertDoesNotCompile("implicitly[WeakFlat[Int < Any]]")
-        assertDoesNotCompile("implicitly[WeakFlat[String < Env[Int]]]")
+        val error = "may contain a nested effect computation"
+        typeCheckFailure("implicitly[WeakFlat[Int < Any]]")(error)
+        typeCheckFailure("implicitly[WeakFlat[String < Env[Int]]]")(error)
     }
 
     "compile for Unit and Nothing" in {
@@ -31,7 +32,7 @@ class WeakFlatTest extends Test:
     "work with type aliases" in {
         type MyAlias[A] = A
         implicitly[WeakFlat[MyAlias[Int]]]
-        assertDoesNotCompile("implicitly[WeakFlat[MyAlias[Int < Any]]]")
+        typeCheckFailure("implicitly[WeakFlat[MyAlias[Int < Any]]]")("may contain a nested effect computation")
         succeed
     }
 
@@ -54,7 +55,7 @@ class WeakFlatTest extends Test:
 
         42.weakMethod
         "hello".weakMethod
-        assertDoesNotCompile("(42: Int < Any).weakMethod")
+        typeCheckFailure("(42: Int < Any).weakMethod")("may contain a nested effect computation")
         succeed
     }
 
@@ -79,7 +80,7 @@ class WeakFlatTest extends Test:
         trait B
         type Intersection = A & B
         implicitly[WeakFlat[Intersection]]
-        assertDoesNotCompile("implicitly[WeakFlat[A & (B < Any)]]")
+        typeCheckFailure("implicitly[WeakFlat[A & (B < Any)]]")("may contain a nested effect computation.")
         succeed
     }
 end WeakFlatTest

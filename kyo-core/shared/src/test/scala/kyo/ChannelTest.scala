@@ -2,6 +2,15 @@ package kyo
 
 class ChannelTest extends Test:
 
+    "initWith" in run {
+        Channel.initWith[Int](10) { c =>
+            for
+                b <- c.offer(1)
+                v <- c.poll
+            yield assert(b && v == Maybe(1))
+        }
+    }
+
     "offer and poll" in run {
         for
             c <- Channel.init[Int](2)
@@ -74,6 +83,170 @@ class ChannelTest extends Test:
             v  <- f.get
         yield assert(!d1 && d2 && v == 1)
     }
+    "putBatch" - {
+        "non-nested" - {
+            "should put a batch" in runNotJS {
+                for
+                    c   <- Channel.init[Int](2)
+                    _   <- c.putBatch(Chunk(1, 2))
+                    res <- c.drain
+                yield assert(res == Chunk(1, 2))
+            }
+            "should put batch incrementally if exceeds channel size" in runNotJS {
+                for
+                    c   <- Channel.init[Int](2)
+                    f   <- Async.run(c.putBatch(Chunk(1, 2, 3, 4, 5, 6)))
+                    res <- c.takeExactly(6)
+                    _   <- Fiber.get(f)
+                yield assert(res == Chunk(1, 2, 3, 4, 5, 6))
+            }
+            "should put empty batch" in runNotJS {
+                for
+                    c       <- Channel.init[Int](2)
+                    _       <- c.putBatch(Chunk.empty)
+                    isEmpty <- c.empty
+                yield assert(isEmpty)
+            }
+            "should fail when non-empty and channel is closed" in runNotJS {
+                val effect =
+                    for
+                        c <- Channel.init[Int](2)
+                        _ <- c.close
+                        _ <- c.putBatch(Chunk(1, 2))
+                    yield ()
+                Abort.run[Closed](effect).map:
+                    case Result.Failure(closed: Closed) => assert(true)
+                    case other                          => fail(s"$other was not Result.Failure[Closed]")
+            }
+            "should notify waiting takers immediately" in runNotJS {
+                for
+                    c     <- Channel.init[Int](2)
+                    take1 <- c.takeFiber
+                    take2 <- c.takeFiber
+                    _     <- c.putBatch(Seq(1, 2))
+                    v1    <- take1.get
+                    v2    <- take2.get
+                yield assert(v1 == 1 && v2 == 2)
+            }
+            "should handle channel at capacity" in runNotJS {
+                for
+                    c     <- Channel.init[Int](2)
+                    _     <- c.put(1)
+                    _     <- c.put(2)
+                    take1 <- c.takeFiber
+                    fiber <- Async.run(c.putBatch(Seq(3, 4)))
+                    v1    <- take1.get
+                    done1 <- fiber.done
+                    take2 <- c.takeFiber
+                    v2    <- take2.get
+                    _     <- fiber.get
+                yield assert(v1 == 1 && v2 == 2 && !done1)
+            }
+            "should handle empty sequence" in runNotJS {
+                for
+                    c   <- Channel.init[Int](2)
+                    res <- c.putBatch(Seq())
+                yield assert(true)
+            }
+            "should fail when channel is closed" in runNotJS {
+                for
+                    c      <- Channel.init[Int](2)
+                    _      <- c.close
+                    result <- Abort.run(c.putBatch(Seq(1, 2)))
+                yield result match
+                    case Result.Failure(_: Closed) => assert(true)
+                    case other                     => fail(s"Expected Fail(Closed) but got $other")
+            }
+            "should preserve elements put before closure during partial batch put" in runNotJS {
+                for
+                    c     <- Channel.init[Int](2)
+                    fiber <- Async.run(c.putBatch(Chunk(1, 2, 3, 4, 5)))
+                    v1    <- c.take
+                    v2    <- c.take
+                    _     <- c.close
+                    res   <- fiber.getResult
+                yield assert(res.isFailure && v1 == 1 && v2 == 2)
+            }
+        }
+        "nested upper bound" - {
+            given ch[A]: CanEqual[Chunk[Any], Chunk[A]] = CanEqual.derived
+            "should put a batch" in runNotJS {
+                for
+                    c   <- Channel.init[Any](2)
+                    _   <- c.putBatch(Chunk(Chunk(1), Chunk(2)))
+                    res <- c.drain
+                yield assert(res == Chunk(Chunk(1), Chunk(2)))
+            }
+            "should put batch incrementally if exceeds channel size" in runNotJS {
+                for
+                    c   <- Channel.init[Any](2)
+                    f   <- Async.run(c.putBatch(Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6))))
+                    res <- c.takeExactly(6)
+                    _   <- Fiber.get(f)
+                yield assert(res == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6)))
+            }
+            "should put empty batch" in runNotJS {
+                for
+                    c       <- Channel.init[Any](2)
+                    _       <- c.putBatch(Chunk.empty)
+                    isEmpty <- c.empty
+                yield assert(isEmpty)
+            }
+            "should fail when non-empty and channel is closed" in runNotJS {
+                val effect =
+                    for
+                        c <- Channel.init[Any](2)
+                        _ <- c.close
+                        _ <- c.putBatch(Chunk(Chunk(1), Chunk(2)))
+                    yield ()
+                Abort.run[Closed](effect).map:
+                    case Result.Failure(closed: Closed) => assert(true)
+                    case other                          => fail(s"$other was not Result.Failure[Closed]")
+            }
+        }
+        "nested lower bound" - {
+            "should put a batch" in runNotJS {
+                for
+                    c   <- Channel.init[Chunk.Indexed[Int]](2)
+                    _   <- c.putBatch(Chunk(Chunk(1).toIndexed, Chunk(2).toIndexed))
+                    res <- c.drain
+                yield assert(res == Chunk(Chunk(1), Chunk(2)))
+            }
+            "should put batch incrementally if exceeds channel size" in runNotJS {
+                for
+                    c <- Channel.init[Chunk.Indexed[Int]](2)
+                    f <- Async.run(c.putBatch(Chunk(
+                        Chunk(1).toIndexed,
+                        Chunk(2).toIndexed,
+                        Chunk(3).toIndexed,
+                        Chunk(4).toIndexed,
+                        Chunk(5).toIndexed,
+                        Chunk(6).toIndexed
+                    )))
+                    res <- c.takeExactly(6)
+                    _   <- Fiber.get(f)
+                yield assert(res == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6)))
+            }
+            "should put empty batch" in runNotJS {
+                for
+                    c       <- Channel.init[Chunk.Indexed[Int]](2)
+                    _       <- c.putBatch(Chunk.empty)
+                    isEmpty <- c.empty
+                yield assert(isEmpty)
+            }
+            "should fail when non-empty and channel is closed" in runNotJS {
+                val effect =
+                    for
+                        c <- Channel.init[Chunk.Indexed[Int]](2)
+                        _ <- c.close
+                        _ <- c.putBatch(Chunk(Chunk(1).toIndexed, Chunk(2).toIndexed))
+                    yield ()
+                Abort.run[Closed](effect).map:
+                    case Result.Failure(closed: Closed) => assert(true)
+                    case other                          => fail(s"$other was not Result.Failure[Closed]")
+            }
+        }
+    }
     "takeExactly" - {
         "should return empty chunk if n <= 0" in runNotJS {
             for
@@ -97,7 +270,7 @@ class ChannelTest extends Test:
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
                 f  <- Async.run(c.takeExactly(5))
-                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done(()) else Loop.continue(())))
+                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done else Loop.continue(())))
                 _  <- Async.sleep(10.millis)
                 fd <- f.done
                 _  <- f.interrupt
@@ -117,7 +290,7 @@ class ChannelTest extends Test:
                 _ <- Kyo.foreach(1 to 3)(c.put(_))
                 f <- Async.run(c.takeExactly(6))
                 // Wait until channel is empty
-                _  <- Loop(false)(v => if v then Loop.done(()) else c.empty.map(Loop.continue(_)))
+                _  <- Loop(false)(v => if v then Loop.done else c.empty.map(Loop.continue(_)))
                 fd <- f.done
                 _  <- Kyo.foreach(4 to 6)(c.put(_))
                 r  <- Fiber.get(f)
@@ -139,6 +312,33 @@ class ChannelTest extends Test:
                 _ <- c.put(2)
                 r <- c.drain
             yield assert(r == Seq(1, 2))
+        }
+        "should consider pending puts" in run {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](2)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    result    <- c.drain
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            }
+        }
+        "should consider pending puts - zero capacity" in pendingUntilFixed {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](0)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    result    <- c.drain
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            }
+            ()
         }
     }
     "drainUpTo" - {
@@ -183,6 +383,35 @@ class ChannelTest extends Test:
                 s <- c.size
             yield assert(r == Seq(1, 2) && s == 2)
         }
+        "should consider pending puts" in run {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](2)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    _         <- c.putFiber(4)
+                    result    <- c.drainUpTo(3)
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 1)
+            }
+        }
+        "should consider pending puts - zero capacity" in pendingUntilFixed {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow {
+                for
+                    c         <- Channel.init[Int](0)
+                    _         <- c.putFiber(1)
+                    _         <- c.putFiber(2)
+                    _         <- c.putFiber(3)
+                    _         <- c.putFiber(4)
+                    result    <- c.drainUpTo(3)
+                    finalSize <- c.size
+                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            }
+            ()
+        }
     }
     "close" - {
         "empty" in runNotJS {
@@ -190,7 +419,7 @@ class ChannelTest extends Test:
                 c <- Channel.init[Int](2)
                 r <- c.close
                 t <- Abort.run(c.offer(1))
-            yield assert(r == Maybe(Seq()) && t.isFail)
+            yield assert(r == Maybe(Seq()) && t.isFailure)
         }
         "non-empty" in runNotJS {
             for
@@ -199,7 +428,7 @@ class ChannelTest extends Test:
                 _ <- c.put(2)
                 r <- c.close
                 t <- Abort.run(c.empty)
-            yield assert(r == Maybe(Seq(1, 2)) && t.isFail)
+            yield assert(r == Maybe(Seq(1, 2)) && t.isFailure)
         }
         "pending take" in runNotJS {
             for
@@ -208,7 +437,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.full)
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+            yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
         "pending put" in runNotJS {
             for
@@ -219,7 +448,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 e <- Abort.run(c.offer(1))
-            yield assert(r == Maybe(Seq(1, 2)) && d.isFail && e.isFail)
+            yield assert(r == Maybe(Seq(1, 2)) && d.isFailure && e.isFailure)
         }
         "no buffer w/ pending put" in runNotJS {
             for
@@ -228,7 +457,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.poll)
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+            yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
         "no buffer w/ pending take" in runNotJS {
             for
@@ -237,7 +466,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run[Throwable](c.put(1))
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+            yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
     }
     "no buffer" in runNotJS {
@@ -323,7 +552,7 @@ class ChannelTest extends Test:
                 assert(backlog.isDefined)
                 assert(offered.count(_.contains(true)) == backlog.get.size)
                 assert(closedChannel.isEmpty)
-                assert(drained.isFail)
+                assert(drained.isFailure)
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
@@ -451,6 +680,57 @@ class ChannelTest extends Test:
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
+
+        "putBatch and take" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+
+                putFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 60).grouped(3).toSeq.map(batch =>
+                        channel.putBatch(batch).andThen(batch)
+                    )))
+                )
+                takeFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 60).map(_ =>
+                        channel.take
+                    )))
+                )
+                _         <- latch.release
+                putRes    <- putFiber.get
+                takeRes   <- takeFiber.get
+                finalSize <- channel.size
+            yield assert(putRes.flatten.toSet == takeRes.toSet))
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
+        }
+
+        "putBatch and takeExactly" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+
+                putFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 60).grouped(3).toSeq.map(batch =>
+                        channel.putBatch(batch).andThen(batch)
+                    )))
+                )
+                takeFiber <- Async.run(
+                    latch.await.andThen(Async.parallelUnbounded((1 to 6).map(_ =>
+                        channel.takeExactly(10)
+                    )))
+                )
+                _         <- latch.release
+                putRes    <- putFiber.get
+                takeRes   <- takeFiber.get
+                finalSize <- channel.size
+            yield assert(putRes.flatten.toSet == takeRes.flatten.toSet))
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
+        }
+
     }
 
     "stream" - {
@@ -514,7 +794,7 @@ class ChannelTest extends Test:
             yield assert(v.flattenChunk == Chunk.from(0 until 20))
         }
 
-        "should stream concurrently with ingest, with specified chunk size" in run {
+        "should stream concurrently with ingest, never exceeding specified chunk size" in run {
             for
                 c  <- Channel.init[Int](4)
                 bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
@@ -531,9 +811,22 @@ class ChannelTest extends Test:
                 stream = c.stream().mapChunk(ch => Chunk(ch))
                 v <- Abort.run(stream.run)
             yield v match
-                case Result.Success(v)      => fail(s"Stream succeeded unexpectedly: ${v}")
-                case Result.Fail(_: Closed) => assert(true)
-                case Result.Panic(ex)       => fail(s"Stream panicked unexpectedly: ${ex}")
+                case Result.Success(v)         => fail(s"Stream succeeded unexpectedly: ${v}")
+                case Result.Failure(_: Closed) => assert(true)
+                case Result.Panic(ex)          => fail(s"Stream panicked unexpectedly: ${ex}")
+        }
+
+        "should stream concurrently with ingest via putBatch, yielding consistent chunk sizes" in run {
+            for
+                c  <- Channel.init[Int](9)
+                bg <- Async.run(Loop(0)(i => c.putBatch(Chunk(i, i + 1, i + 2)).andThen(Loop.continue(i + 3))))
+                stream = c.stream(3).take(15).mapChunk(ch => Chunk(ch))
+                res <- stream.run
+                _   <- bg.interrupt
+            yield
+                assert(res.forall(_.size <= 3))
+                assert(res.flatten == (0 to 14))
+            end for
         }
     }
 
