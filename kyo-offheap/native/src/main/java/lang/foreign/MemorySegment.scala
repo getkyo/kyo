@@ -22,66 +22,66 @@ final class MemorySegment private (private[foreign] val ptr: Ptr[Byte], val byte
       */
     def asSlice(offset: Long, newSize: Long): MemorySegment =
         if offset < 0 || newSize < 0 || offset + newSize > byteSize then
-            throw new IllegalArgumentException("Invalid slice parameters")
+            throw new IllegalArgumentException(s"Invalid slice parameters: byteSize=$byteSize, offset=$offset, newSize=$newSize")
         new MemorySegment(ptr + offset, newSize)
     end asSlice
 
     /** Reads a value from memory using the provided layout.
       */
-    def get(layout: ValueLayout.ofBoolean, offset: Long): Boolean =
+    def get(layout: ValueLayout.OfBoolean, offset: Long): Boolean =
         require(offset + unsafe.sizeOf[CBool] <= byteSize)
         !(ptr + offset).cast[Bool]
-    def get(layout: ValueLayout.ofByte, offset: Long): Byte =
+    def get(layout: ValueLayout.OfByte, offset: Long): Byte =
         require(offset + unsafe.sizeOf[Byte] <= byteSize)
         !(ptr + offset).cast[Byte]
-    def get(layout: ValueLayout.ofShort, offset: Long): Short =
+    def get(layout: ValueLayout.OfShort, offset: Long): Short =
         require(offset + unsafe.sizeOf[CShort] <= byteSize)
         !(ptr + offset).cast[Short]
-    def get(layout: ValueLayout.ofInt, offset: Long): Int =
+    def get(layout: ValueLayout.OfInt, offset: Long): Int =
         require(offset + unsafe.sizeOf[CInt] <= byteSize)
         !(ptr + offset).cast[Int]
-    def get(layout: ValueLayout.ofLong, offset: Long): Long =
+    def get(layout: ValueLayout.OfLong, offset: Long): Long =
         require(offset + unsafe.sizeOf[CLong] <= byteSize)
         !(ptr + offset).cast[Long]
-    def get(layout: ValueLayout.ofFloat, offset: Long): Float =
+    def get(layout: ValueLayout.OfFloat, offset: Long): Float =
         require(offset + unsafe.sizeOf[CFloat] <= byteSize)
         !(ptr + offset).cast[Float]
-    def get(layout: ValueLayout.ofDouble, offset: Long): Double =
+    def get(layout: ValueLayout.OfDouble, offset: Long): Double =
         require(offset + unsafe.sizeOf[CDouble] <= byteSize)
         !(ptr + offset).cast[Double]
-    def get(layout: ValueLayout.ofChar, offset: Long): Char =
+    def get(layout: ValueLayout.OfChar, offset: Long): Char =
         require(offset + unsafe.sizeOf[CChar] <= byteSize)
         !(ptr + offset).cast[Char]
     def get(layout: AddressLayout, offset: Long): MemorySegment =
         val newByteSize = byteSize - offset
         require(newByteSize >= 0)
-        new MemorySegment(!(ptr + offset).cast[Ptr[Byte]], newByteSize)
+        new MemorySegment((ptr + offset).cast[Ptr[Byte]], newByteSize)
     end get
 
     /** Writes a value to memory using the provided layout.
       */
-    def set(layout: ValueLayout.ofBoolean, offset: Long, value: Boolean): Unit =
+    def set(layout: ValueLayout.OfBoolean, offset: Long, value: Boolean): Unit =
         require(offset + unsafe.sizeOf[CBool] <= byteSize)
         !(ptr + offset).cast[Bool] = value
-    def set(layout: ValueLayout.ofByte, offset: Long, value: Byte): Unit =
+    def set(layout: ValueLayout.OfByte, offset: Long, value: Byte): Unit =
         require(offset + unsafe.sizeOf[Byte] <= byteSize)
         !(ptr + offset).cast[Byte] = value
-    def set(layout: ValueLayout.ofShort, offset: Long, value: Short): Unit =
+    def set(layout: ValueLayout.OfShort, offset: Long, value: Short): Unit =
         require(offset + unsafe.sizeOf[CShort] <= byteSize)
         !(ptr + offset).cast[Short] = value
-    def set(layout: ValueLayout.ofInt, offset: Long, value: Int): Unit =
+    def set(layout: ValueLayout.OfInt, offset: Long, value: Int): Unit =
         require(offset + unsafe.sizeOf[CInt] <= byteSize)
         !(ptr + offset).cast[Int] = value
-    def set(layout: ValueLayout.ofLong, offset: Long, value: Long): Unit =
+    def set(layout: ValueLayout.OfLong, offset: Long, value: Long): Unit =
         require(offset + unsafe.sizeOf[CLong] <= byteSize)
         !(ptr + offset).cast[Long] = value
-    def set(layout: ValueLayout.ofFloat, offset: Long, value: Float): Unit =
+    def set(layout: ValueLayout.OfFloat, offset: Long, value: Float): Unit =
         require(offset + unsafe.sizeOf[CFloat] <= byteSize)
         !(ptr + offset).cast[Float] = value
-    def set(layout: ValueLayout.ofDouble, offset: Long, value: Double): Unit =
+    def set(layout: ValueLayout.OfDouble, offset: Long, value: Double): Unit =
         require(offset + unsafe.sizeOf[CDouble] <= byteSize)
         !(ptr + offset).cast[Double] = value
-    def set(layout: ValueLayout.ofChar, offset: Long, value: Char): Unit =
+    def set(layout: ValueLayout.OfChar, offset: Long, value: Char): Unit =
         require(offset + unsafe.sizeOf[CChar] <= byteSize)
         !(ptr + offset).cast[Char] = value
     def set(layout: AddressLayout, offset: Long, value: MemorySegment): Unit =
@@ -122,23 +122,23 @@ end MemorySegment
 sealed trait ValueLayout
 
 object ValueLayout:
-    sealed trait ofBoolean extends ValueLayout
-    sealed trait ofByte    extends ValueLayout
-    sealed trait ofChar    extends ValueLayout
-    sealed trait ofShort   extends ValueLayout
-    sealed trait ofInt     extends ValueLayout
-    sealed trait ofLong    extends ValueLayout
-    sealed trait ofFloat   extends ValueLayout
-    sealed trait ofDouble  extends ValueLayout
+    sealed trait OfBoolean extends ValueLayout
+    sealed trait OfByte    extends ValueLayout
+    sealed trait OfChar    extends ValueLayout
+    sealed trait OfShort   extends ValueLayout
+    sealed trait OfInt     extends ValueLayout
+    sealed trait OfLong    extends ValueLayout
+    sealed trait OfFloat   extends ValueLayout
+    sealed trait OfDouble  extends ValueLayout
 
-    case object JAVA_BOOLEAN extends ofBoolean
-    case object JAVA_BYTE    extends ofByte
-    case object JAVA_CHAR    extends ofChar
-    case object JAVA_SHORT   extends ofShort
-    case object JAVA_INT     extends ofInt
-    case object JAVA_LONG    extends ofLong
-    case object JAVA_FLOAT   extends ofFloat
-    case object JAVA_DOUBLE  extends ofDouble
+    case object JAVA_BOOLEAN extends OfBoolean
+    case object JAVA_BYTE    extends OfByte
+    case object JAVA_CHAR    extends OfChar
+    case object JAVA_SHORT   extends OfShort
+    case object JAVA_INT     extends OfInt
+    case object JAVA_LONG    extends OfLong
+    case object JAVA_FLOAT   extends OfFloat
+    case object JAVA_DOUBLE  extends OfDouble
     case object ADDRESS      extends ValueLayout
 end ValueLayout
 sealed trait AddressLayout extends ValueLayout
