@@ -711,7 +711,7 @@ lazy val `kyo-bench` =
        .withoutSuffixFor(JVMPlatform)
        .crossType(CrossType.Pure)
        .in(file("kyo-bench"))
-       .enablePlugins(JmhPlugin)
+       .enablePlugins(JmhPlugin, LocalCodeGenPlugin)
        .dependsOn(
 	    `kyo-core`,
 	    `kyo-grpc-core`,
