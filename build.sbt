@@ -91,8 +91,7 @@ lazy val kyoJVM = project
     .in(file("."))
     .settings(
         name := "kyoJVM",
-        `kyo-settings`,
-        crossScalaVersions := Seq.empty
+        `kyo-settings`
     )
     .disablePlugins(MimaPlugin)
     .aggregate(
@@ -130,8 +129,7 @@ lazy val kyoJS = project
     .in(file("js"))
     .settings(
         name := "kyoJS",
-        `kyo-settings`,
-        crossScalaVersions := Seq.empty
+        `kyo-settings`
     )
     .disablePlugins(MimaPlugin)
     .aggregate(
@@ -179,7 +177,6 @@ lazy val `kyo-scheduler` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            Test / scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value,
             crossScalaVersions                     := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.16" % Test
         )
@@ -380,7 +377,6 @@ lazy val `kyo-stats-registry` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value,
             libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
             crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
         )
@@ -707,80 +703,80 @@ lazy val `kyo-examples` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-bench` =
-   crossProject(JVMPlatform)
-       .withoutSuffixFor(JVMPlatform)
-       .crossType(CrossType.Pure)
-       .in(file("kyo-bench"))
-       .enablePlugins(JmhPlugin, LocalCodeGenPlugin)
-       .dependsOn(
-	    `kyo-core`,
-	    `kyo-grpc-core`,
-	    `kyo-sttp`,
-	    `kyo-stm`,
-	    `kyo-scheduler-zio`,
-	    `kyo-scheduler-cats`
-	)
-       .disablePlugins(MimaPlugin)
-       .settings(
-           `kyo-settings`,
-           publish / skip := true,
-           Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
-           Compile / PB.targets := {
-               val scalapbDir = (Compile / sourceManaged).value / "scalapb"
-               Seq(
-                   scalapb.gen()                                 -> scalapbDir,
-                   scalapb.zio_grpc.ZioCodeGenerator             -> scalapbDir,
-                   genModule("kyo.grpc.compiler.CodeGenerator$") -> scalapbDir
-               )
-           },
-           codeGenClasspath          := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
-           Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value,
-           Test / testForkedParallel := true,
-           // Forks each test suite individually
-           Test / testGrouping := {
-               val javaOptionsValue = javaOptions.value.toVector
-               val envsVarsValue    = envVars.value
-               (Test / definedTests).value map { test =>
-                   Tests.Group(
-                       name = test.name,
-                       tests = Seq(test),
-                       runPolicy = Tests.SubProcess(
-                           ForkOptions(
-                               javaHome = javaHome.value,
-                               outputStrategy = outputStrategy.value,
-                               bootJars = Vector.empty,
-                               workingDirectory = Some(baseDirectory.value),
-                               runJVMOptions = javaOptionsValue,
-                               connectInput = connectInput.value,
-                               envVars = envsVarsValue
-                           )
-                       )
-                   )
-               }
-           },
-           libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "2.3.10",
-           libraryDependencies += "org.typelevel"        %% "cats-effect"         % catsVersion,
-           libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.7.0",
-           libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.7.0",
-           libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.5.0",
-           libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.5.0",
-           libraryDependencies += "io.github.timwspence" %% "cats-stm"            % "0.13.5",
-           libraryDependencies += "com.47deg"            %% "fetch"               % "3.1.2",
-           libraryDependencies += "dev.zio"              %% "zio-logging"         % "2.4.0",
-           libraryDependencies += "dev.zio"              %% "zio-logging-slf4j2"  % "2.4.0",
-           libraryDependencies += "dev.zio"              %% "zio"                 % zioVersion,
-           libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
-           libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.6",
-           libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC36",
-           libraryDependencies += "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
-           libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.11.0",
-           libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
-           libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",
-           libraryDependencies += "dev.zio"              %% "zio-http"            % "3.0.1",
-           libraryDependencies += "io.grpc"              % "grpc-netty"          % "1.65.1",
-           libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR3",
-           libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR3"
-       )
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-bench"))
+        .enablePlugins(JmhPlugin, LocalCodeGenPlugin)
+        .dependsOn(
+            `kyo-core`,
+            `kyo-grpc-core`,
+            `kyo-scheduler-cats`,
+            `kyo-scheduler-zio`,
+            `kyo-stm`,
+            `kyo-sttp`
+        )
+        .disablePlugins(MimaPlugin)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
+            Compile / PB.targets := {
+                val scalapbDir = (Compile / sourceManaged).value / "scalapb"
+                Seq(
+                    scalapb.gen()                                 -> scalapbDir,
+                    scalapb.zio_grpc.ZioCodeGenerator             -> scalapbDir,
+                    genModule("kyo.grpc.compiler.CodeGenerator$") -> scalapbDir
+                )
+            },
+            codeGenClasspath          := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
+            Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value,
+            Test / testForkedParallel := true,
+            // Forks each test suite individually
+            Test / testGrouping := {
+                val javaOptionsValue = javaOptions.value.toVector
+                val envsVarsValue    = envVars.value
+                (Test / definedTests).value map { test =>
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(
+                            ForkOptions(
+                                javaHome = javaHome.value,
+                                outputStrategy = outputStrategy.value,
+                                bootJars = Vector.empty,
+                                workingDirectory = Some(baseDirectory.value),
+                                runJVMOptions = javaOptionsValue,
+                                connectInput = connectInput.value,
+                                envVars = envsVarsValue
+                            )
+                        )
+                    )
+                }
+            },
+            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "2.3.10",
+            libraryDependencies += "org.typelevel"        %% "cats-effect"         % catsVersion,
+            libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.7.0",
+            libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.7.0",
+            libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.5.0",
+            libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.5.0",
+            libraryDependencies += "io.github.timwspence" %% "cats-stm"            % "0.13.5",
+            libraryDependencies += "com.47deg"            %% "fetch"               % "3.1.2",
+            libraryDependencies += "dev.zio"              %% "zio-logging"         % "2.4.0",
+            libraryDependencies += "dev.zio"              %% "zio-logging-slf4j2"  % "2.4.0",
+            libraryDependencies += "dev.zio"              %% "zio"                 % zioVersion,
+            libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
+            libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.6",
+            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC36",
+            libraryDependencies += "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
+            libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.11.0",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
+            libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",
+            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.0.1",
+            libraryDependencies += "io.grpc"              % "grpc-netty"          % "1.65.1",
+            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR3",
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR3"
+        )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
 
