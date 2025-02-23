@@ -22,18 +22,21 @@ class GrpcServerUnaryBench extends ArenaBench.ForkOnly(reply):
     end shutdownChannel
 
     override def catsBench() =
-        ???
+        import cats.effect.*
+        createCatsServer.use: _ =>
+            cats.effect.IO(blockingStub.sayHello(request))
+    end catsBench
 
     override def kyoBenchFiber() =
         Resource.run {
             for
-                _     <- createServer(port)
+                _     <- createKyoServer
                 reply <- IO(blockingStub.sayHello(request))
             yield reply
         }
 
     override val zioRuntimeLayer =
-        super.zioRuntimeLayer.merge(serverLayer)
+        super.zioRuntimeLayer.merge(createZioServer)
 
     override def zioBench() =
         ZIO.attempt(blockingStub.sayHello(request)).orDie

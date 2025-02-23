@@ -18,9 +18,10 @@ addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.1.4")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
 
-addSbtPlugin("com.eed3si9n" % "sbt-buildinfo"          % "0.12.0")
-addSbtPlugin("com.thesamet" % "sbt-protoc"             % "1.0.7")
-addSbtPlugin("com.thesamet" % "sbt-protoc-gen-project" % "0.1.8")
+addSbtPlugin("com.eed3si9n"  % "sbt-buildinfo"          % "0.12.0")
+addSbtPlugin("com.thesamet"  % "sbt-protoc"             % "1.0.7")
+addSbtPlugin("com.thesamet"  % "sbt-protoc-gen-project" % "0.1.8")
+addSbtPlugin("org.typelevel" % "sbt-fs2-grpc"           % "2.7.21")
 
 libraryDependencies ++= Seq(
     "com.thesamet.scalapb"          %% "compilerplugin"   % "0.11.17",

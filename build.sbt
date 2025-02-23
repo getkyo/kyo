@@ -3,6 +3,7 @@ import org.scalajs.jsenv.nodejs.*
 import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
+import protocbridge.Target
 import sbtdynver.DynVerPlugin.autoImport.*
 
 val scala3Version   = "3.6.2"
@@ -645,15 +646,11 @@ lazy val `kyo-grpc-e2e` =
             Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value
         ).jvmSettings(
             codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
-            libraryDependencies ++= Seq(
-                "io.grpc" % "grpc-netty" % "1.70.0"
-            )
+            libraryDependencies += "io.grpc" % "grpc-netty-shaded" % "1.64.0"
         ).jsSettings(
             `js-settings`,
             codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value,
-            libraryDependencies ++= Seq(
-                "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
-            )
+            libraryDependencies += "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
         )
 
 lazy val `kyo-monix` =
@@ -707,7 +704,7 @@ lazy val `kyo-bench` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Pure)
         .in(file("kyo-bench"))
-        .enablePlugins(JmhPlugin, LocalCodeGenPlugin)
+        .enablePlugins(Fs2Grpc, JmhPlugin, LocalCodeGenPlugin)
         .dependsOn(
             `kyo-core`,
             `kyo-grpc-core`,
@@ -723,8 +720,9 @@ lazy val `kyo-bench` =
             Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
             Compile / PB.targets := {
                 val scalapbDir = (Compile / sourceManaged).value / "scalapb"
-                Seq(
-                    scalapb.gen()                                 -> scalapbDir,
+                // This includes the base scalapb.gen.
+                val catsGen = Fs2GrpcPlugin.autoImport.scalapbCodeGenerators.value
+                catsGen ++ Seq[Target](
                     scalapb.zio_grpc.ZioCodeGenerator             -> scalapbDir,
                     genModule("kyo.grpc.compiler.CodeGenerator$") -> scalapbDir
                 )
@@ -773,7 +771,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.0.1",
-            libraryDependencies += "io.grpc"               % "grpc-netty"          % "1.70.0",
+            libraryDependencies += "io.grpc"               % "grpc-netty-shaded"   % "1.64.0",
             libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR3",
             libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR3"
         )
