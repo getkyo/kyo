@@ -706,6 +706,7 @@ object Fiber extends FiberPlatformSpecific:
             private[kyo] def fromIOPromise[E, A](p: IOPromise[E, A]): Unsafe[E, A] = p
 
             extension [E, A](self: Unsafe[E, A])
+                def mask()(using AllowUnsafe): Unsafe[E, A]                                        = self.mask()
                 def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)
                 def completeDiscard[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
                 def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Boolean     = self.become(other)
