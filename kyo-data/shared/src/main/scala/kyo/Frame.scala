@@ -137,7 +137,7 @@ object Frame:
                     report.errorAndAbort("Can't locate source code")
                 )
                 val marked = content.take(pos.end) + "📍" + content.drop(pos.end)
-                val lines  = marked.linesIterator.slice(pos.startLine - 1, pos.endLine + 2).filter(_.exists(_ != ' '))
+                val lines  = marked.linesIterator.slice(pos.startLine - 1, pos.endLine + 2).filter(_.exists(_ != ' ')).toSeq
                 val toDrop = lines.map(_.takeWhile(_ == ' ').length).min
                 lines.map(_.drop(toDrop)).mkString("\n")
 
