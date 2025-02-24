@@ -66,7 +66,7 @@ class ContextTest extends Test:
 
     "inherit" - {
         sealed trait NonIsolatedEffect extends ContextEffect[String]
-        sealed trait IsolatedEffect    extends ContextEffect[String] with ContextEffect.Isolated
+        sealed trait IsolatedEffect    extends ContextEffect[String] with ContextEffect.Noninheritable
 
         "should keep non-isolated effects" in {
             val context = Context.empty

@@ -344,13 +344,15 @@ class TMapTest extends Test:
                 for
                     map <- STM.run(TMap.init[String, Int]("start" -> 0))
                     result <- Abort.run {
-                        STM.run(Var.isolate.update) {
-                            for
-                                _ <- map.put("key1", 100)
-                                _ <- Var.set(1)
-                                _ <- Abort.fail(new Exception("Nested effect failure"))
-                                _ <- map.put("key2", 200)
-                            yield ()
+                        Var.isolate.update[Int].use {
+                            STM.run {
+                                for
+                                    _ <- map.put("key1", 100)
+                                    _ <- Var.set(1)
+                                    _ <- Abort.fail(new Exception("Nested effect failure"))
+                                    _ <- map.put("key2", 200)
+                                yield ()
+                            }
                         }
                     }
                     snapshot <- STM.run(map.snapshot)

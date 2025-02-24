@@ -1,12 +1,11 @@
 package kyo
 
 import kyo.*
-import kyo.kernel.Boundary
 
 class LocalTest extends Test:
 
     def withBuilder[A](f: ((=> Int) => Local[Int]) => Assertion) =
-        "isolated" in f(Local.initIsolated)
+        "noninheritable" in f(Local.initNoninheritable)
         "regular" in f(Local.init)
 
     "default" - {
@@ -112,49 +111,48 @@ class LocalTest extends Test:
         }
     }
 
-    "isolated" - {
-        "isolation and context inheritance" in {
-            val isolatedLocal    = Local.initIsolated(10)
-            val nonIsolatedLocal = Local.init("test")
+    "non-inheritable" - {
+        "context inheritance" in {
+            val noninheritableLocal = Local.initNoninheritable(10)
+            val inheritableLocal    = Local.init("test")
 
-            val boundary = Boundary.derive[Any, Any]
+            val isolate = Isolate.Contextual[Any, Any]
 
             val context =
-                isolatedLocal.let(20)(nonIsolatedLocal.let("modified")(boundary { (trace, context) => context })).eval
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(isolate.runInternal { (trace, context) => context })).eval
 
-            val nonIsolatedContext = context.get(Tag[Local.internal.State])
-            assert(!nonIsolatedContext.contains(isolatedLocal))
-            assert(nonIsolatedContext.contains(nonIsolatedLocal))
+            val inheritableContext = context.get(Tag[Local.internal.State])
+            assert(!inheritableContext.contains(noninheritableLocal))
+            assert(inheritableContext.contains(inheritableLocal))
 
-            assert(!context.contains(Tag[Local.internal.IsolatedState]))
+            assert(!context.contains(Tag[Local.internal.NoninheritableState]))
         }
 
         "nested boundaries" in {
-            val isolatedLocal    = Local.initIsolated(10)
-            val nonIsolatedLocal = Local.init("test")
+            val noninheritableLocal = Local.initNoninheritable(10)
+            val inheritableLocal    = Local.init("test")
 
-            val outerBoundary = Boundary.derive[Any, Any]
-            val innerBoundary = Boundary.derive[Any, Any]
+            val isolate = Isolate.Contextual[Any, Any]
 
             val context =
-                isolatedLocal.let(20)(
-                    nonIsolatedLocal.let("outer")(
-                        outerBoundary { (outerTrace, outerContext) =>
-                            isolatedLocal.let(30)(
-                                nonIsolatedLocal.let("inner")(
-                                    innerBoundary { (innerTrace, innerContext) => innerContext }
+                noninheritableLocal.let(20)(
+                    inheritableLocal.let("outer")(
+                        isolate.runInternal { (outerTrace, outerContext) =>
+                            noninheritableLocal.let(30)(
+                                inheritableLocal.let("inner")(
+                                    isolate.runInternal { (innerTrace, innerContext) => innerContext }
                                 )
                             )
                         }
                     )
                 ).eval
 
-            val nonIsolatedContext = context.get(Tag[Local.internal.State])
-            assert(!nonIsolatedContext.contains(isolatedLocal))
-            assert(nonIsolatedContext.contains(nonIsolatedLocal))
-            assert(nonIsolatedContext.get(nonIsolatedLocal).contains("inner"))
+            val inheritableContext = context.get(Tag[Local.internal.State])
+            assert(!inheritableContext.contains(noninheritableLocal))
+            assert(inheritableContext.contains(inheritableLocal))
+            assert(inheritableContext.get(inheritableLocal).contains("inner"))
 
-            assert(!context.contains(Tag[Local.internal.IsolatedState]))
+            assert(!context.contains(Tag[Local.internal.NoninheritableState]))
         }
 
     }

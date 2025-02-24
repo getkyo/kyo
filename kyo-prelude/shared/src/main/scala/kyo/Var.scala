@@ -167,10 +167,18 @@ object Var:
         runWith(state)(v)((state, result) => (state, result))
 
     object isolate:
-        abstract private[kyo] class Base[V](using Tag[Var[V]]) extends Isolate[Var[V]]:
+
+        abstract private[isolate] class Base[V, P](using Tag[Var[V]]) extends Isolate.Stateful[Var[V], P]:
+
             type State = V
-            def use[A, S2](f: V => A < S2)(using Frame) = Var.use(f)
-            def resume[A: Flat, S2](state: State, v: A < (Var[V] & S2))(using Frame) =
+
+            type Transform[A] = (V, A)
+
+            given flatTransform[A: Flat]: Flat[Transform[A]] = Flat.derive
+
+            def capture[A: Flat, S2](f: V => A < S2)(using Frame) = Var.use(f)
+
+            def isolate[A: Flat, S2](state: State, v: A < (Var[V] & S2))(using Frame) =
                 Var.runTuple(state)(v)
         end Base
 
@@ -183,10 +191,10 @@ object Var:
           * @return
           *   An isolate that updates the Var with its isolated value
           */
-        def update[V](using Tag[Var[V]]): Isolate[Var[V]] =
-            new Base[V]:
-                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
-                    Var.setAndThen(state)(v)
+        def update[V](using Tag[Var[V]]): Isolate.Stateful[Var[V], Any] =
+            new Base[V, Any]:
+                def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
+                    v.map(Var.setAndThen(_)(_))
 
         /** Creates an isolate that merges Var values using a combination function.
           *
@@ -200,10 +208,10 @@ object Var:
           * @return
           *   An isolate that merges Var values
           */
-        def merge[V](f: (V, V) => V)(using Tag[Var[V]]): Isolate[Var[V]] =
-            new Base[V]:
-                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
-                    Var.use[V](prev => Var.setAndThen(f(prev, state))(v))
+        def merge[V](using Tag[Var[V]])[S](f: (V, V) => V < S): Isolate.Stateful[Var[V], S] =
+            new Base[V, S]:
+                def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
+                    Var.use[V](prev => v.map((state, r) => f(prev, state).map(Var.setAndThen(_)(r))))
 
         /** Creates an isolate that keeps Var modifications local.
           *
@@ -215,10 +223,10 @@ object Var:
           * @return
           *   An isolate that discards Var modifications
           */
-        def discard[V](using Tag[Var[V]]): Isolate[Var[V]] =
-            new Base[V]:
-                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
-                    v
+        def discard[V](using Tag[Var[V]]): Isolate.Stateful[Var[V], Any] =
+            new Base[V, Any]:
+                def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
+                    v.map(_._2)
 
     end isolate
 

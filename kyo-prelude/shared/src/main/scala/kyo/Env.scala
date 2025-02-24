@@ -15,9 +15,6 @@ sealed trait Env[+R] extends ContextEffect[TypeMap[R]]
 /** Companion object for Env, providing utility methods for working with environments. */
 object Env:
 
-    given eliminateEnv: Reducible.Eliminable[Env[Any]] with {}
-    private inline def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
-
     /** Retrieves a value of type R from the environment.
       *
       * @tparam R
@@ -101,5 +98,11 @@ object Env:
 
     /** Creates a UseOps instance for a given type. */
     inline def use[R >: Nothing]: UseOps[R] = UseOps(())
+
+    private val cachedIsolate                         = Isolate.Contextual.derive[Env[Any], Any]
+    given isolate[V]: Isolate.Contextual[Env[V], Any] = cachedIsolate.asInstanceOf[Isolate.Contextual[Env[V], Any]]
+
+    given eliminateEnv: Reducible.Eliminable[Env[Any]] with {}
+    private inline def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
 
 end Env

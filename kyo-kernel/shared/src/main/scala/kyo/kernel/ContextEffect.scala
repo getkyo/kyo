@@ -15,7 +15,7 @@ import scala.annotation.nowarn
   * through the type system.
   *
   * Context effects come in two varieties. By default, values are inherited across async boundaries when computations are suspended and
-  * resumed. Effects that mix the ContextEffect.Isolated trait do not cross async boundaries, requiring fresh values when computation
+  * resumed. Effects that mix the ContextEffect.Noninheritable trait do not cross async boundaries, requiring fresh values when computation
   * resumes asynchronously. This isolation is useful for values that should remain within a single async context, like thread-local data.
   *
   * The polymorphic type parameter A defines what type of value is required:
@@ -31,7 +31,7 @@ object ContextEffect:
       * When a context effect extends this trait, its values will not be inherited by child fibers after an asynchronous operation. Instead,
       * child fibers start with fresh values, making these effects behave similarly to non-inheritable thread locals.
       */
-    trait Isolated:
+    trait Noninheritable:
         self: ContextEffect[?] =>
 
     /** Creates a suspended computation that requests a value from a context effect. This establishes a requirement for a value that must be

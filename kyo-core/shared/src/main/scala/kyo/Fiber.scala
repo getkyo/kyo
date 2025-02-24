@@ -260,19 +260,9 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with the result of the first Fiber to complete
       */
-    inline def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, A] < (IO & Ctx) =
-        _race(seq)
-
-    private[kyo] def _race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, IO & Abort[E]],
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, A] < (IO & Ctx) =
+    def race[E, A: Flat, S](
+        using isolate: Isolate.Contextual[S, IO]
+    )(seq: Seq[A < (Abort[E] & Async & S)])(using frame: Frame, safepoint: Safepoint): Fiber[E, A] < (IO & S) =
         IO.Unsafe {
             class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
                 val pending = AtomicInt.Unsafe.init(seq.size)
@@ -283,7 +273,7 @@ object Fiber extends FiberPlatformSpecific:
             end State
             val state = new State
             import state.*
-            boundary { (trace, context) =>
+            isolate.runInternal { (trace, context) =>
                 IO {
                     inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
                     foreach(seq) { (_, v) =>
@@ -310,13 +300,15 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   Fiber containing successful results as a Chunk
       */
-    inline def gather[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def gather[E, A: Flat, S](
+        using Isolate.Contextual[S, IO]
+    )(seq: Seq[A < (Abort[E] & Async & S)])(
         using
         frame: Frame,
         safepoint: Safepoint
-    ): Fiber[E, Chunk[A]] < (IO & Ctx) =
+    ): Fiber[E, Chunk[A]] < (IO & S) =
         val total = seq.size
-        _gather(total)(total, seq)
+        gather(total)(seq)
     end gather
 
     /** Concurrently executes effects and collects up to `max` successful results.
@@ -333,19 +325,14 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   Fiber containing successful results as a Chunk (size <= max)
       */
-    inline def gather[E, A: Flat, Ctx](max: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def gather[E, A: Flat, S](
+        using isolate: Isolate.Contextual[S, IO]
+    )(max: Int)(seq: Seq[A < (Abort[E] & Async & S)])(
         using
         frame: Frame,
         safepoint: Safepoint
-    ): Fiber[E, Chunk[A]] < (IO & Ctx) =
-        _gather(max)(seq.size, seq)
-
-    private[kyo] def _gather[E, A: Flat, Ctx](max: Int)(total: Int, seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, IO & Abort[E]],
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, Chunk[A]] < (IO & Ctx) =
+    ): Fiber[E, Chunk[A]] < (IO & S) =
+        val total = seq.size
         if total == 0 || max <= 0 then Fiber.success(Chunk.empty)
         else
             IO.Unsafe {
@@ -408,7 +395,7 @@ object Fiber extends FiberPlatformSpecific:
                 end State
                 val state = new State
                 import state.*
-                boundary { (trace, context) =>
+                isolate.runInternal { (trace, context) =>
                     IO {
                         inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
                         foreach(seq) { (idx, v) =>
@@ -420,6 +407,8 @@ object Fiber extends FiberPlatformSpecific:
                     }
                 }
             }
+        end if
+    end gather
 
     /** Busy waits until all results are present in the `_gather` array.
       *
@@ -494,24 +483,18 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with a sequence containing the results of all computations in their original order
       */
-    inline def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def parallel[E, A: Flat, S](
+        using Isolate.Contextual[S, IO]
+    )(parallelism: Int)(seq: Seq[A < (Abort[E] & Async & S)])(
         using
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, Seq[A]] < (IO & Ctx) =
-        _parallel(parallelism)(seq)
-
-    private[kyo] def _parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, IO & Abort[E]],
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, Seq[A]] < (IO & Ctx) =
+        Frame,
+        Safepoint
+    ): Fiber[E, Seq[A]] < (IO & S) =
         seq.size match
             case 0 => Fiber.success(Seq.empty)
             case n =>
                 val groupSize = Math.ceil(n.toDouble / Math.max(1, parallelism)).toInt
-                _parallelUnbounded(seq.grouped(groupSize).map(Kyo.collect).toSeq).map(_.map(_.flatten))
+                parallelUnbounded(seq.grouped(groupSize).map(Kyo.collect).toSeq).map(_.map(_.flatten))
 
     /** Runs multiple computations in parallel with unlimited parallelism and returns a Fiber that completes with their results.
       *
@@ -526,20 +509,13 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with a sequence containing the results of all computations in their original order
       */
-    inline def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def parallelUnbounded[E, A: Flat, S](using
+        isolate: Isolate.Contextual[S, IO]
+    )(seq: Seq[A < (Abort[E] & Async & S)])(
         using
-        boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame,
         safepoint: Safepoint
-    ): Fiber[E, Seq[A]] < (IO & Ctx) =
-        _parallelUnbounded(seq)
-
-    private[kyo] def _parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, IO & Abort[E]],
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, Seq[A]] < (IO & Ctx) =
+    ): Fiber[E, Seq[A]] < (IO & S) =
         seq.size match
             case 0 => Fiber.success(Seq.empty)
             case _ =>
@@ -559,7 +535,7 @@ object Fiber extends FiberPlatformSpecific:
                     end State
                     val state = new State
                     import state.*
-                    boundary { (trace, context) =>
+                    isolate.runInternal { (trace, context) =>
                         IO {
                             foreach(seq) { (idx, v) =>
                                 val fiber = IOTask(v, safepoint.copyTrace(trace), context)
@@ -598,10 +574,10 @@ object Fiber extends FiberPlatformSpecific:
             def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit                             = self.onComplete(f)
             def onInterrupt(f: Result.Error[E] => Unit)(using Frame): Unit                               = self.onInterrupt(f)
             def block(deadline: Clock.Deadline.Unsafe)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline)
-            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean = self.interrupt(Panic(Interrupted(frame)))
-            def interrupt(error: Panic)(using AllowUnsafe): Boolean          = self.interrupt(error)
-            def interruptDiscard(error: Panic)(using AllowUnsafe): Unit      = discard(self.interrupt(error))
-            def mask()(using AllowUnsafe): Unsafe[E, A]                      = self.mask()
+            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean      = self.interrupt(Panic(Interrupted(frame)))
+            def interrupt(error: Result.Error[E])(using AllowUnsafe): Boolean     = self.interrupt(error)
+            def interruptDiscard(error: Result.Error[E])(using AllowUnsafe): Unit = discard(self.interrupt(error))
+            def mask()(using AllowUnsafe): Unsafe[E, A]                           = self.mask()
 
             def toFuture()(using E <:< Throwable, AllowUnsafe): Future[A] =
                 val r = scala.concurrent.Promise[A]()

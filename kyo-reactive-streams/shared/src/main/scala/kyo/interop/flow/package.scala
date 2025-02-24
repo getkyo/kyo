@@ -6,7 +6,7 @@ import kyo.interop.flow.StreamSubscriber.EmitStrategy
 import scala.annotation.nowarn
 
 package object flow:
-    inline def fromPublisher[T](
+    def fromPublisher[T](
         publisher: Publisher[T],
         bufferSize: Int,
         emitStrategy: EmitStrategy = EmitStrategy.Eager
@@ -23,24 +23,28 @@ package object flow:
         yield stream
 
     @nowarn("msg=anonymous")
-    inline def subscribeToStream[T, Ctx](
-        stream: Stream[T, Ctx],
+    def subscribeToStream[T, S](
+        using Isolate.Contextual[S, IO]
+    )(
+        stream: Stream[T, S & IO],
         subscriber: Subscriber[? >: T]
     )(
         using
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Subscription < (Resource & IO & Ctx) =
+    ): Subscription < (Resource & IO & S) =
         StreamSubscription.subscribe(stream, subscriber)
 
-    inline def streamToPublisher[T, Ctx](
-        stream: Stream[T, Ctx]
+    def streamToPublisher[T, S](
+        using Isolate.Contextual[S, IO]
+    )(
+        stream: Stream[T, S & IO]
     )(
         using
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Publisher[T] < (Resource & IO & Ctx) = StreamPublisher[T, Ctx](stream)
+    ): Publisher[T] < (Resource & IO & S) = StreamPublisher[T, S](stream)
 
 end flow

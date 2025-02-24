@@ -21,7 +21,7 @@ private[kyo] object Context:
     extension (self: Context)
         def isEmpty = self eq empty
 
-        def contains[E <: (ContextEffect[?] | IsolationFlag)](tag: Tag[E]): Boolean =
+        def contains[E <: (ContextEffect[?] | NoninheritableFlag)](tag: Tag[E]): Boolean =
             self.contains(tag.erased)
 
         /** Creates a new context for crossing computational boundaries.
@@ -30,10 +30,10 @@ private[kyo] object Context:
           * isolated effects if the flag is present.
           */
         def inherit: Context =
-            if !contains(Tag[IsolationFlag]) then self
+            if !contains(Tag[NoninheritableFlag]) then self
             else
                 self.filterNot { (k, _) =>
-                    k <:< Tag[IsolationFlag] || k <:< Tag[ContextEffect.Isolated]
+                    k <:< Tag[NoninheritableFlag] || k <:< Tag[ContextEffect.Noninheritable]
                 }
 
         inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
@@ -43,11 +43,11 @@ private[kyo] object Context:
         private[kyo] def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
             getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $self"))
 
-        /** Sets a value, adding the IsolationFlag if the effect is isolated. */
+        /** Sets a value, adding the NoninheritableFlag if the effect is isolated. */
         private[kernel] def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
             val newContext = self.updated(tag.erased, value.asInstanceOf[AnyRef])
-            if tag <:< Tag[ContextEffect.Isolated] then
-                newContext.updated(Tag[IsolationFlag].erased, IsolationFlag)
+            if tag <:< Tag[ContextEffect.Noninheritable] then
+                newContext.updated(Tag[NoninheritableFlag].erased, NoninheritableFlag)
             else
                 newContext
             end if
@@ -55,6 +55,6 @@ private[kyo] object Context:
     end extension
 
     object internal:
-        class IsolationFlag
-        object IsolationFlag extends IsolationFlag
+        class NoninheritableFlag
+        object NoninheritableFlag extends NoninheritableFlag
 end Context

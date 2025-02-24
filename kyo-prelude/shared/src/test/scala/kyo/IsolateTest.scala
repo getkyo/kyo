@@ -24,12 +24,10 @@ class IsolateTest extends Test:
             }
 
             val result = Memo.run {
-                Memo.isolate.merge.run {
-                    for
-                        a <- f(1)
-                        b <- f(1)
-                    yield (a, b, count)
-                }
+                for
+                    a <- f(1)
+                    b <- f(1)
+                yield (a, b, count)
             }
             assert(result.eval == (2, 2, 1))
         }
@@ -77,7 +75,7 @@ class IsolateTest extends Test:
                 x * 2
             }
 
-            val memoIsolate = Memo.isolate.merge
+            val memoIsolate = Memo.isolate
             val varIsolate  = Var.isolate.update[Int]
 
             val combined = memoIsolate.andThen(varIsolate)
@@ -100,7 +98,7 @@ class IsolateTest extends Test:
         "composing three isolates" in run {
             val varIsolate  = Var.isolate.update[Int]
             val emitIsolate = Emit.isolate.merge[Int]
-            val memoIsolate = Memo.isolate.merge
+            val memoIsolate = Memo.isolate
 
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
@@ -180,7 +178,7 @@ class IsolateTest extends Test:
                 Abort.run {
                     for
                         a <- f(1)
-                        _ <- Memo.isolate.merge.run {
+                        _ <- Memo.isolate.run {
                             for
                                 b <- f(2)
                                 _ <- Abort.fail("Failed")
@@ -243,7 +241,7 @@ class IsolateTest extends Test:
                                 a <- f(1)
                                 _ <- Var.isolate.update[Int]
                                     .andThen(Emit.isolate.merge[String])
-                                    .andThen(Memo.isolate.merge)
+                                    .andThen(Memo.isolate)
                                     .run {
                                         for
                                             _ <- Var.set(2)

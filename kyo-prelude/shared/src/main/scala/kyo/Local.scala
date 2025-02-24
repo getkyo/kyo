@@ -76,10 +76,10 @@ object Local:
             def tag             = Tag[State]
             lazy val default: A = defaultValue
 
-    /** Creates a new isolated Local instance with the given default value.
+    /** Creates a new non-inheritable Local instance with the given default value.
       *
-      * Isolated locals are similar to non-inheritable thread locals, where child fibers always start with the default value and do not
-      * inherit from their parent fiber.
+      * It's similar to Java's non-inheritable thread locals, where child fibers always start with the default value and do not inherit from
+      * their parent fiber.
       *
       * @param defaultValue
       *   The default value for the Local
@@ -87,15 +87,15 @@ object Local:
       *   A new isolated Local instance
       */
     @nowarn("msg=anonymous")
-    inline def initIsolated[A](inline defaultValue: A): Local[A] =
-        new Base[A, IsolatedState]:
-            def tag             = Tag[IsolatedState]
+    inline def initNoninheritable[A](inline defaultValue: A): Local[A] =
+        new Base[A, NoninheritableState]:
+            def tag             = Tag[NoninheritableState]
             lazy val default: A = defaultValue
 
     object internal:
 
-        sealed private[kyo] trait State         extends ContextEffect[Map[Local[?], AnyRef]]
-        sealed private[kyo] trait IsolatedState extends ContextEffect[Map[Local[?], AnyRef]] with ContextEffect.Isolated
+        sealed private[kyo] trait State               extends ContextEffect[Map[Local[?], AnyRef]]
+        sealed private[kyo] trait NoninheritableState extends ContextEffect[Map[Local[?], AnyRef]] with ContextEffect.Noninheritable
 
         abstract class Base[A, E <: ContextEffect[Map[Local[?], AnyRef]]] extends Local[A]:
 

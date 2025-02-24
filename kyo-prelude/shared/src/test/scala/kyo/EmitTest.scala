@@ -534,7 +534,7 @@ class EmitTest extends Test:
                 }
 
                 val emitIsolate = Emit.isolate.merge[Int]
-                val memoIsolate = Memo.isolate.merge
+                val memoIsolate = Memo.isolate
 
                 val combined = emitIsolate.andThen(memoIsolate)
 
