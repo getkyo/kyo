@@ -193,7 +193,7 @@ object Isolate:
           *
           * Convenience method that composes capture, isolate and restore to handle the complete state lifecycle.
           */
-        def run[A: Flat, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
+        final def run[A: Flat, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
             capture(state => restore(isolate(state, v)))
 
         /** Phase 1: Capture Initial State
