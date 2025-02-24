@@ -232,7 +232,7 @@ object Isolate:
           * @return
           *   The result of running the computation with this isolate
           */
-        def use[A](f: this.type ?=> A): A = f(using this)
+        final def use[A](f: this.type ?=> A): A = f(using this)
 
         /** Composes this isolate with another, managing both states.
           *
