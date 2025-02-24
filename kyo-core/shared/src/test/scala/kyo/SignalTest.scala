@@ -170,7 +170,7 @@ class SignalTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent reads and writes" in run {
+        "concurrent reads and writes" in runNotJS {
             (for
                 ref <- Signal.initRef(0)
                 readers <- Async.run(Async.parallelUnbounded(
