@@ -353,7 +353,7 @@ object Isolate:
         def flatten(tpe: TypeRepr): List[TypeRepr] =
             tpe match
                 case AndType(left, right)        => flatten(left) ++ flatten(right)
-                case OrType(left, right)         => report.errorAndAbort("")
+                case OrType(left, right)         => report.errorAndAbort("Isolate: Unsupported type union in Pending Effects: ${tpe.show}\n".red")
                 case t if t =:= TypeRepr.of[Any] => Nil
                 case t                           => List(t)
 
