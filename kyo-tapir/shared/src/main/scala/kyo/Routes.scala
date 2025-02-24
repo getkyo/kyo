@@ -63,7 +63,7 @@ object Routes:
                         }
                 )
             )
-        ).unit
+        )
 
     /** Adds a new route to the collection, starting from a PublicEndpoint.
       *
@@ -89,7 +89,7 @@ object Routes:
       *   Unit wrapped in Routes effect
       */
     def collect(init: (Unit < Routes)*)(using Frame): Unit < Routes =
-        Kyo.collect(init).unit
+        Kyo.collectDiscard(init)
 
     given isolate: Isolate.Stateful[Routes, Async] =
         Emit.isolate.merge[Route].use {

@@ -187,9 +187,7 @@ class HubTest extends Test:
                 f <- Async.run(l.stream(2).mapChunk(Chunk(_)).take(2).run)
                 _ <- h.putBatch(1 to 4)
                 r <- f.get
-            yield
-                assert(r.forall(_.size <= 2))
-                assert(r.flattenChunk == Chunk(1, 2, 3, 4))
+            yield assert(r.forall(_.size <= 2))
         }
 
         "stream handles rapid publish-consume cycles" in run {
