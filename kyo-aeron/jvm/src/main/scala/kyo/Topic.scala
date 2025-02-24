@@ -34,7 +34,7 @@ import upickle.default.*
   * @see
   *   [[https://github.com/com-lihaoyi/upickle]] for documentation on serialization.
   */
-opaque type Topic <: (Async & Env[Aeron]) = Async & Env[Aeron]
+opaque type Topic <: Env[Aeron] = Env[Aeron]
 
 object Topic:
 
@@ -130,7 +130,7 @@ object Topic:
     def publish[A: ReadWriter](
         aeronUri: String,
         retrySchedule: Schedule = defaultRetrySchedule
-    )[S](stream: Stream[A, S])(using frame: Frame, tag: Tag[A]): Unit < (Topic & S & Abort[Closed | Backpressured]) =
+    )[S](stream: Stream[A, S])(using frame: Frame, tag: Tag[A]): Unit < (Topic & S & Abort[Closed | Backpressured] & Async) =
         Env.use[Aeron] { aeron =>
             IO {
                 // register the publication with Aeron using type's hash as stream ID
@@ -200,7 +200,7 @@ object Topic:
     def stream[A: ReadWriter](
         aeronUri: String,
         retrySchedule: Schedule = defaultRetrySchedule
-    )(using tag: Tag[A], frame: Frame): Stream[A, Topic & Abort[Backpressured]] =
+    )(using tag: Tag[A], frame: Frame): Stream[A, Topic & Abort[Backpressured] & Async] =
         Stream {
             Env.use[Aeron] { aeron =>
                 IO {
@@ -261,6 +261,6 @@ object Topic:
         }
     end stream
 
-    given isolate: Isolate.Contextual[Topic, Async] = Isolate.Contextual.derive[Topic, Async]
+    given isolate: Isolate.Contextual[Topic, Any] = Isolate.Contextual[Topic, Any]
 
 end Topic

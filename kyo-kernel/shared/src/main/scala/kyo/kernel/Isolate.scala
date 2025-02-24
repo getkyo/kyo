@@ -239,7 +239,7 @@ object Isolate:
           * Creates a new isolate that handles the state lifecycles of both this isolate and the next one, maintaining proper ordering and
           * effect tracking.
           */
-        final def andThen[R2, P2](next: Stateful[R2, P2]): Stateful[Retain & R2, Passthrough & P2] =
+        def andThen[R2, P2](next: Stateful[R2, P2]): Stateful[Retain & R2, Passthrough & P2] =
             new Stateful[Retain & R2, Passthrough & P2]:
                 type State        = (self.State, next.State)
                 type Transform[A] = self.Transform[next.Transform[A]]
@@ -352,8 +352,8 @@ object Isolate:
 
         def flatten(tpe: TypeRepr): List[TypeRepr] =
             tpe match
-                case AndType(left, right)        => flatten(left) ++ flatten(right)
-                case OrType(left, right)         => report.errorAndAbort("Isolate: Unsupported type union in Pending Effects: ${tpe.show}\n".red")
+                case AndType(left, right) => flatten(left) ++ flatten(right)
+                case OrType(left, right)  => report.errorAndAbort("Isolate: Unsupported type union in Pending Effects: ${tpe.show}\n".red)
                 case t if t =:= TypeRepr.of[Any] => Nil
                 case t                           => List(t)
 
