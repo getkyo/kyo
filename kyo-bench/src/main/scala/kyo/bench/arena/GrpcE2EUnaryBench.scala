@@ -7,7 +7,7 @@ import kyo.*
 import kyo.bench.arena.GrpcService.*
 import kyo.grpc.GrpcRequest
 import scalapb.zio_grpc.Server
-import zio.UIO
+import zio.ZIO
 
 class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
 
@@ -19,21 +19,23 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
     end catsBench
 
     override def kyoBenchFiber() =
-        Resource.run(
+        // TODO: This is ugly.
+        Resource.run:
             GrpcRequest.run(
                 for
                     _      <- createKyoServer
                     client <- createKyoClient
                 yield client.sayHello(request)
             ).map(_.getOrThrow)
-        )
-
-    override val zioRuntimeLayer =
-        super.zioRuntimeLayer.merge(createZioServer).merge(createZioClient)
 
     override def zioBench() =
-        ZioTestservice.GreeterClient.sayHello(request)
-            .orDie
-            .asInstanceOf[UIO[HelloReply]]
+        ZIO.scoped:
+            val run =
+                for
+                    _      <- createZioServer
+                    client <- createZioClient
+                    reply  <- client.sayHello(request)
+                yield reply
+            run.orDie
 
 end GrpcE2EUnaryBench

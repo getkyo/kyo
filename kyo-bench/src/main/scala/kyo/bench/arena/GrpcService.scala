@@ -10,8 +10,10 @@ import kgrpc.helloworld.testservice.*
 import kyo.*
 import scala.language.implicitConversions
 import scalapb.zio_grpc
+import scalapb.zio_grpc.ScopedServer
 import scalapb.zio_grpc.ServerLayer
 import scalapb.zio_grpc.ZManagedChannel
+import zio.Scope
 import zio.ZIO
 import zio.ZLayer
 
@@ -50,14 +52,12 @@ object GrpcService:
     lazy val createKyoClient: Greeter.Client < (Resource & IO) =
         kyo.grpc.Client.channel(host, port)(_.usePlaintext()).map(Greeter.client(_))
 
-    lazy val createZioServer: ZLayer[Any, Throwable, zio_grpc.Server] =
-        ServerLayer.fromService[ZioTestservice.Greeter](ServerBuilder.forPort(port), new ZIOGreeterImpl(size))
+    lazy val createZioServer: ZIO[Scope, Throwable, zio_grpc.Server] =
+        ScopedServer.fromService(ServerBuilder.forPort(port), new ZIOGreeterImpl(size))
 
-    lazy val createZioClient: ZLayer[Any, Nothing, ZioTestservice.GreeterClient] =
-        ZLayer.scoped {
-            val channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext()
-            ZioTestservice.GreeterClient.scoped(ZManagedChannel(channel)).orDie
-        }
+    lazy val createZioClient: ZIO[Scope, Throwable, ZioTestservice.GreeterClient] =
+        val channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext()
+        ZioTestservice.GreeterClient.scoped(ZManagedChannel(channel))
 
 end GrpcService
 
