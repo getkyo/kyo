@@ -239,7 +239,7 @@ object Isolate:
           * Creates a new isolate that handles the state lifecycles of both this isolate and the next one, maintaining proper ordering and
           * effect tracking.
           */
-        def andThen[R2, P2](next: Stateful[R2, P2]): Stateful[Retain & R2, Passthrough & P2] =
+        final def andThen[R2, P2](next: Stateful[R2, P2]): Stateful[Retain & R2, Passthrough & P2] =
             new Stateful[Retain & R2, Passthrough & P2]:
                 type State        = (self.State, next.State)
                 type Transform[A] = self.Transform[next.Transform[A]]
