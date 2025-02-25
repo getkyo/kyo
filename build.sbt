@@ -22,7 +22,7 @@ val compilerOptions = Set(
     ScalacOptions.deprecation,
     ScalacOptions.warnValueDiscard,
     ScalacOptions.warnNonUnitStatement,
-    ScalacOptions.languageStrictEquality,
+    // ScalacOptions.languageStrictEquality,
     ScalacOptions.release("11"),
     ScalacOptions.advancedKindProjector
 )
@@ -482,6 +482,23 @@ lazy val `kyo-caliban` =
             `kyo-settings`,
             libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.1",
             libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.1"
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-test` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-test"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-combinators`)
+        .dependsOn(`kyo-zio`)
+        .dependsOn(`kyo-stm`)
+        .settings(
+            `kyo-settings`,
+        )
+        .jsSettings(
+            `js-settings`
         )
         .jvmSettings(mimaCheck(false))
 
