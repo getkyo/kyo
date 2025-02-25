@@ -1,6 +1,9 @@
 package kyo
 
-import java.io.*
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.lang.Process as JProcess
 import java.lang.ProcessBuilder.Redirect
 import java.lang.System as JSystem

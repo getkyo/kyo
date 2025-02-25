@@ -1,26 +1,32 @@
-package zio.test
+/*
+ * Converted from zio-test ReporterEventRenderer.scala to Kyo
+ * Changes:
+ * - Package changed from zio.test to kyo.test
+ * - Removed implicit Trace parameter
+ * - Updated imports to refer to kyo-test equivalents
+ */
 
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.{Chunk, Trace}
-import zio.test.render.{ConsoleRenderer, IntelliJRenderer}
+package kyo.test
 
-trait ReporterEventRenderer {
-  def render(event: ExecutionEvent)(implicit trace: Trace): Chunk[String]
-}
-object ReporterEventRenderer {
-  object ConsoleEventRenderer extends ReporterEventRenderer {
-    override def render(executionEvent: ExecutionEvent)(implicit trace: Trace): Chunk[String] =
-      Chunk.fromIterable(
-        ConsoleRenderer
-          .render(executionEvent, includeCause = true)
-      )
-  }
+import kyo.*
+import kyo.test.render.ConsoleRenderer
+import kyo.test.render.IntelliJRenderer
 
-  object IntelliJEventRenderer extends ReporterEventRenderer {
-    override def render(executionEvent: ExecutionEvent)(implicit trace: Trace): Chunk[String] =
-      Chunk.fromIterable(
-        IntelliJRenderer
-          .render(executionEvent, includeCause = true)
-      )
-  }
-}
+trait ReporterEventRenderer:
+    def render(event: ExecutionEvent)(implicit trace: Trace): Chunk[String]
+
+object ReporterEventRenderer:
+    object ConsoleEventRenderer extends ReporterEventRenderer:
+        override def render(executionEvent: ExecutionEvent)(implicit trace: Trace): Chunk[String] =
+            Chunk.Indexed.from(
+                ConsoleRenderer.render(executionEvent, includeCause = true)
+            )
+    end ConsoleEventRenderer
+
+    object IntelliJEventRenderer extends ReporterEventRenderer:
+        override def render(executionEvent: ExecutionEvent)(implicit trace: Trace): Chunk[String] =
+            Chunk.Indexed.from(
+                IntelliJRenderer.render(executionEvent, includeCause = true)
+            )
+    end IntelliJEventRenderer
+end ReporterEventRenderer

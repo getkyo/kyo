@@ -1,22 +1,18 @@
 package kyo.test.results
 
-import zio._
-
 import java.io.IOException
+import kyo.*
 
-private[test] trait ResultFileOps {
-  def write(content: => String, append: Boolean): ZIO[Any, IOException, Unit]
-}
+private[test] trait ResultFileOps:
+    def write(content: => String, append: Boolean): Unit < (Env[Any] & Abort[IOException])
 
-private[test] object ResultFileOps {
-  val live: ZLayer[Any, Nothing, ResultFileOps] =
-    ZLayer.succeed(
-      Json()
-    )
+private[test] object ResultFileOps:
+    val live: Layer[ResultFileOps, Any] =
+        Layer(
+            Json()
+        )
 
-  private[test] case class Json() extends ResultFileOps {
-    def write(content: => String, append: Boolean): ZIO[Any, IOException, Unit] =
-      ZIO.unit
-  }
-
-}
+    private[test] case class Json() extends ResultFileOps:
+        def write(content: => String, append: Boolean): Unit < (Env[Any] & Abort[IOException]) =
+            ()
+end ResultFileOps

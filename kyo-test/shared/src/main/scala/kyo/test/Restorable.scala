@@ -1,8 +1,7 @@
 package kyo.test
 
-import zio.{UIO, Trace}
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+import kyo.*
 
-trait Restorable extends Serializable {
-  def save(implicit trace: Trace): UIO[UIO[Unit]]
-}
+trait Restorable extends Serializable:
+    // Converted: def save(implicit trace: Trace): UIO[Unit < Any] becomes a nested Kyo effect type.
+    def save(implicit trace: Trace): (Unit < Env[Any] & Abort[Nothing]) < (Env[Any] & Abort[Nothing])
