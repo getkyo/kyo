@@ -154,7 +154,33 @@ object Signal:
         @implicitNotFound(missingCanEqual)
         canEqual: CanEqual[A, A]
     ): Ref[A] < IO =
-        IO.Unsafe(new Ref(Ref.Unsafe.init(initial)))
+        initRefWith[A](initial)(identity)
+
+    /** Creates a new mutable signal reference with an initial value and applies a transformation function.
+      *
+      * This method initializes a new `Signal.Ref[A]` that can be modified over time, and immediately applies a transformation function to
+      * it. The reference starts with the provided initial value and the transformation is applied within the same atomic operation.
+      *
+      * @param initial
+      *   The starting value for the signal reference
+      * @param f
+      *   The transformation function to apply to the newly created reference
+      * @return
+      *   The result of applying the transformation function
+      * @tparam A
+      *   The type of value contained in the signal. Must have an instance of `CanEqual[A, A]`
+      * @tparam B
+      *   The return type of the transformation function
+      * @tparam S
+      *   The effect type of the transformation function
+      */
+    def initRefWith[A](initial: A)[B, S](f: Ref[A] => B < S)(
+        using
+        frame: Frame,
+        @implicitNotFound(missingCanEqual)
+        canEqual: CanEqual[A, A]
+    ): B < (S & IO) =
+        IO.Unsafe(f(new Ref(Ref.Unsafe.init(initial))))
 
     /** Creates a new immutable signal with a constant value.
       *
@@ -178,6 +204,32 @@ object Signal:
             currentWith = [B, S] => f => f(value),
             nextWith = [B, S] => f => f(value)
         )
+
+    /** Creates a new immutable signal with a constant value and applies a transformation function.
+      *
+      * This method creates a signal that always returns the same value and immediately applies a transformation function to it. Unlike
+      * `Signal.Ref`, this signal cannot be modified after creation.
+      *
+      * @param value
+      *   The constant value for the signal
+      * @param f
+      *   The transformation function to apply to the newly created signal
+      * @return
+      *   The result of applying the transformation function
+      * @tparam A
+      *   The type of value contained in the signal. Must have an instance of `CanEqual[A, A]`
+      * @tparam B
+      *   The return type of the transformation function
+      * @tparam S
+      *   The effect type of the transformation function
+      */
+    def initConstWith[A](value: A)[B, S](f: Signal[A] => B < S)(
+        using
+        frame: Frame,
+        @implicitNotFound(missingCanEqual)
+        canEqual: CanEqual[A, A]
+    ): B < S =
+        f(initConst(value))
 
     /** Creates a new signal by specifying its fundamental operations.
       *
@@ -204,6 +256,39 @@ object Signal:
         canEqual: CanEqual[A, A]
     ): Signal[A] =
         _initRaw(currentWith, nextWith)
+
+    /** Creates a new signal by specifying its fundamental operations and applies a transformation function.
+      *
+      * This is a lower-level constructor that allows direct implementation of a signal's behavior through its currentWith and nextWith
+      * operations, and immediately applies a transformation function to the created signal. It's primarily intended for implementing signal
+      * combinators and custom signal types.
+      *
+      * @param currentWith
+      *   The implementation of currentWith, handling synchronous value access and transformation
+      * @param nextWith
+      *   The implementation of nextWith, handling asynchronous value changes and transformation
+      * @param f
+      *   The transformation function to apply to the newly created signal
+      * @tparam A
+      *   The type of value contained in the signal. Must have an instance of `CanEqual[A, A]`
+      * @tparam B
+      *   The return type of the transformation function
+      * @tparam S
+      *   The effect type of the transformation function
+      * @return
+      *   The result of applying the transformation function
+      */
+    @nowarn("msg=anonymous")
+    inline def initRawWith[A](
+        inline currentWith: [B, S] => (A => B < S) => B < (S & IO),
+        inline nextWith: [B, S] => (A => B < S) => B < (S & Async)
+    )[B, S](f: Signal[A] => B < S)(
+        using
+        frame: Frame,
+        @implicitNotFound(missingCanEqual)
+        canEqual: CanEqual[A, A]
+    ): B < S =
+        f(initRaw(currentWith, nextWith))
 
     // Separated from initRaw to avoid name conflicts between parameters and Signal members
     @nowarn("msg=anonymous")
@@ -244,7 +329,19 @@ object Signal:
           * @return
           *   The current value
           */
-        def get(using Frame): A < IO = IO.Unsafe(_unsafe.get())
+        def get(using Frame): A < IO = use(identity)
+
+        /** Retrieves and transforms the current value of the reference.
+          *
+          * This is a convenience method that provides synchronous access to the reference's current value while applying a transformation
+          * function. It's equivalent to `currentWith` but with a more familiar name for reference types.
+          *
+          * @param f
+          *   The transformation function to apply to the current value
+          * @return
+          *   The transformed value wrapped in combined effects S & IO
+          */
+        inline def use[B, S](inline f: A => B < S)(using Frame): B < (S & IO) = IO.Unsafe(f(_unsafe.get()))
 
         /** Sets the reference to a new value.
           *

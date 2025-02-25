@@ -4,67 +4,137 @@ import kyo.debug.Debug
 
 class SignalTest extends Test:
 
-    "initRef" - {
-        "ok" in run {
-            for
-                ref <- Signal.initRef(42)
-                v   <- ref.current
-            yield assert(v == 42)
+    "init" - {
+        "initRef" - {
+            "ok" in run {
+                for
+                    ref <- Signal.initRef(42)
+                    v   <- ref.current
+                yield assert(v == 42)
+            }
+            "missing CanEqual" in {
+                typeCheckFailure(
+                    "Signal.initRef(Thread.currentThread())"
+                )(
+                    "Cannot create Signal"
+                )
+            }
         }
-        "missing CanEqual" in {
-            typeCheckFailure(
-                "Signal.initRef(Thread.currentThread())"
-            )(
-                "Cannot create Signal"
-            )
-        }
-    }
 
-    "initConst" - {
-        "ok" in run {
-            val sig = Signal.initConst(42)
-            for
-                v1 <- sig.current
-                v2 <- sig.next
-            yield assert(v1 == 42 && v2 == 42)
-            end for
+        "initConst" - {
+            "ok" in run {
+                val sig = Signal.initConst(42)
+                for
+                    v1 <- sig.current
+                    v2 <- sig.next
+                yield assert(v1 == 42 && v2 == 42)
+                end for
+            }
+            "missing CanEqual" in {
+                typeCheckFailure(
+                    "Signal.initConst(Thread.currentThread())"
+                )(
+                    "Cannot create Signal"
+                )
+            }
         }
-        "missing CanEqual" in {
-            typeCheckFailure(
-                "Signal.initConst(Thread.currentThread())"
-            )(
-                "Cannot create Signal"
-            )
-        }
-    }
 
-    "initRaw" - {
-        "ok" in run {
-            val sig = Signal.initRaw[Int](
-                currentWith = [B, S] => f => f(1),
-                nextWith = [B, S] => f => f(2)
-            )
-            for
-                v1 <- sig.current
-                v2 <- sig.next
-            yield assert(v1 == 1 && v2 == 2)
-            end for
-        }
-        "missing CanEqual" in {
-            typeCheckFailure(
-                """
+        "initRaw" - {
+            "ok" in run {
+                val sig = Signal.initRaw[Int](
+                    currentWith = [B, S] => f => f(1),
+                    nextWith = [B, S] => f => f(2)
+                )
+                for
+                    v1 <- sig.current
+                    v2 <- sig.next
+                yield assert(v1 == 1 && v2 == 2)
+                end for
+            }
+            "missing CanEqual" in {
+                typeCheckFailure(
+                    """
                 Signal.initRaw[Thread](
                     currentWith = [B, S] => f => f(Thread.currentThread),
                     nextWith = [B, S] => f => f(Thread.currentThread)
                 )
                 """
-            )(
-                "Cannot create Signal"
-            )
+                )(
+                    "Cannot create Signal"
+                )
+            }
+        }
+
+        "initRefWith" - {
+            "ok" in run {
+                for
+                    v <- Signal.initRefWith(42) { ref =>
+                        for
+                            _ <- ref.set(43)
+                            v <- ref.current
+                        yield v
+                    }
+                yield assert(v == 43)
+            }
+            "missing CanEqual" in {
+                typeCheckFailure(
+                    "Signal.initRefWith(Thread.currentThread())(identity)"
+                )(
+                    "Cannot create Signal"
+                )
+            }
+        }
+
+        "initConstWith" - {
+            "ok" in run {
+                for
+                    v <- Signal.initConstWith(42) { sig =>
+                        for
+                            v1 <- sig.current
+                            v2 <- sig.next
+                        yield (v1, v2)
+                    }
+                yield assert(v == (42, 42))
+            }
+            "missing CanEqual" in {
+                typeCheckFailure(
+                    "Signal.initConstWith(Thread.currentThread())(identity)"
+                )(
+                    "Cannot create Signal"
+                )
+            }
+        }
+
+        "initRawWith" - {
+            "ok" in run {
+                for
+                    v <- Signal.initRawWith[Int](
+                        currentWith = [B, S] => f => f(1),
+                        nextWith = [B, S] => f => f(2)
+                    ) { sig =>
+                        for
+                            v1 <- sig.current
+                            v2 <- sig.next
+                        yield (v1, v2)
+                    }
+                yield assert(v == (1, 2))
+            }
+            "missing CanEqual" in {
+                typeCheckFailure(
+                    """
+                Signal.initRawWith[Thread](
+                    currentWith = [B, S] => f => f(Thread.currentThread),
+                    nextWith = [B, S] => f => f(Thread.currentThread)
+                )(identity)
+                """
+                )(
+                    "Cannot create Signal"
+                )
+            }
         }
     }
 
-    "Ref operations" - {
+    "Signal.Ref" - {
         "get and set" in run {
             for
                 ref <- Signal.initRef(1)
@@ -105,6 +175,15 @@ class SignalTest extends Test:
                 v1  <- ref.updateAndGet(_ + 1)
                 v2  <- ref.get
             yield assert(v1 == 2 && v2 == 2)
+        }
+
+        "use" in run {
+            for
+                ref <- Signal.initRef(1)
+                v1  <- ref.use(_ * 2)
+                _   <- ref.set(2)
+                v2  <- ref.use(_ * 2)
+            yield assert(v1 == 2 && v2 == 4)
         }
     }
 
