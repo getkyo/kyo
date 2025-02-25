@@ -1,12 +1,12 @@
-package zio.test.results
+package kyo.test.results
 
-import zio.{ZIO, ZLayer}
-import zio.test.ExecutionEvent
+import kyo.*
+import kyo.test.ExecutionEvent
+import kyo.test.Trace
+import kyo.test.results.ResultPrinterJson
 
-trait ResultPrinter {
-  def print[E](event: ExecutionEvent.Test[E]): ZIO[Any, Nothing, Unit]
-}
+trait ResultPrinter:
+    def print[E](event: ExecutionEvent.Test[E])(using Trace): Unit < IO
 
-object ResultPrinter {
-  val json: ZLayer[Any, Nothing, ResultPrinter] = ResultPrinterJson.live
-}
+object ResultPrinter:
+    val json: Layer[ResultPrinter, Any] = ResultPrinterJson.live

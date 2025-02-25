@@ -567,6 +567,17 @@ object Stream:
                     }
                 }
 
+    /** Creates a stream by unfolding a seed value as long as f returns Some value. */
+    def unfold[V, T, S](z: T)(f: T => Option[(V, T)])(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+        f(z) match
+            case Some((v, next)) =>
+                Stream {
+                    Emit.valueWith(Chunk.from(Seq(v))) {
+                        unfold(next)(f).emit
+                    }
+                }
+            case None => Stream.empty
+
     /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
       */
     sealed class Dummy

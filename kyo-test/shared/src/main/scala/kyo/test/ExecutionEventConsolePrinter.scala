@@ -1,30 +1,27 @@
-package zio.test
+package kyo.test
 
-import zio._
+import kyo.*
+import kyo.kernel.*
+import kyo.test.ExecutionEvent
+import kyo.test.ReporterEventRenderer
+import kyo.test.TestLogger
 
-private[test] trait ExecutionEventConsolePrinter {
-  def print(event: ExecutionEvent): ZIO[Any, Nothing, Unit]
-}
+trait ExecutionEventConsolePrinter:
+    def print(event: ExecutionEvent)(using Trace): Unit < IO
 
-private[test] object ExecutionEventConsolePrinter {
-  def live(renderer: ReporterEventRenderer): ZLayer[TestLogger, Nothing, ExecutionEventConsolePrinter] =
-    ZLayer {
-      for {
-        testLogger <- ZIO.service[TestLogger]
-      } yield Live(testLogger, renderer)
-    }
+object ExecutionEventConsolePrinter:
+    def live(renderer: ReporterEventRenderer)(using Frame): Layer[ExecutionEventConsolePrinter, Env[TestLogger]] =
+        Layer.from[TestLogger, ExecutionEventConsolePrinter, Any](logger => Live(logger, renderer))
 
-  case class Live(logger: TestLogger, eventRenderer: ReporterEventRenderer) extends ExecutionEventConsolePrinter {
-    override def print(event: ExecutionEvent): ZIO[Any, Nothing, Unit] = {
-      val rendered = eventRenderer.render(event)
-      ZIO
-        .when(rendered.nonEmpty)(
-          logger.logLine(
-            rendered.mkString("\n")
-          )
-        )
-        .unit
-    }
-  }
-
-}
+    case class Live(logger: TestLogger, eventRenderer: ReporterEventRenderer) extends ExecutionEventConsolePrinter:
+        override def print(event: ExecutionEvent)(using Trace): Unit < IO =
+            val rendered = eventRenderer.render(event)
+            if rendered.nonEmpty then
+                logger.logLine(rendered.mkString("\n"))
+            else
+                (
+            )
+            end if
+        end print
+    end Live
+end ExecutionEventConsolePrinter

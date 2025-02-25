@@ -1,178 +1,119 @@
 package kyo.test
 
-import zio.Clock.ClockLive
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.test.render.ConsoleRenderer
-import zio._
+import kyo.*
+import kyo.io.*
+import kyo.test.render.ConsoleRenderer
 
-/**
- * A `TestExecutor[R, E]` is capable of executing specs that require an
- * environment `R` and may fail with an `E`.
- */
-abstract class TestExecutor[+R, E] {
-  def run(fullyQualifiedName: String, spec: Spec[R, E], defExec: ExecutionStrategy)(implicit trace: Trace): UIO[Summary]
-}
-object TestExecutor {
+/** A `TestExecutor[R, E]` is capable of executing specs that require an environment `R` and may fail with an `E`.
+  */
+abstract class TestExecutor[+R, E]:
+    def run(fullyQualifiedName: String, spec: Spec[R, E], defExec: ExecutionStrategy)(using trace: Trace): Summary < IO
 
-  // Used to override the default shutdown for a suite so we don't have to wait 60 seconds in some tests.
-  // Might be useful to make public at some point
-  private[zio] val overrideShutdownTimeout: FiberRef[Option[Duration]] =
-    FiberRef.unsafe.make[Option[Duration]](None)(Unsafe)
+object TestExecutor:
 
-  def default[R, E](
-    sharedSpecLayer: ZLayer[Any, E, R],
-    freshLayerPerSpec: ZLayer[Any, Nothing, TestEnvironment with Scope],
-    sinkLayer: Layer[Nothing, ExecutionEventSink],
-    eventHandlerZ: ZTestEventHandler
-  ): TestExecutor[R with TestEnvironment with Scope, E] =
-    new TestExecutor[R with TestEnvironment with Scope, E] {
-      def run(fullyQualifiedName: String, spec: Spec[R with TestEnvironment with Scope, E], defExec: ExecutionStrategy)(
-        implicit trace: Trace
-      ): UIO[Summary] =
-        (for {
-          sink     <- ZIO.service[ExecutionEventSink]
-          topParent = SuiteId.global
-          _ <- {
-            def processEvent(event: ExecutionEvent) =
-              sink.process(event) *> eventHandlerZ.handle(event)
+    // Override shutdown timeout to avoid long waits in tests
+    private[test] val overrideShutdownTimeout: Local[Option[Duration]] =
+        Local.unsafeMake[Option[Duration]](None)
 
-            def loop(
-              labels: List[String],
-              spec: Spec[Scope, E],
-              exec: ExecutionStrategy,
-              ancestors: List[SuiteId],
-              sectionId: SuiteId
-            ): ZIO[Scope, Nothing, Unit] =
-              spec.caseValue match {
-                case Spec.ExecCase(exec, spec) =>
-                  loop(labels, spec, exec, ancestors, sectionId)
-
-                case Spec.LabeledCase(label, spec) =>
-                  loop(label :: labels, spec, exec, ancestors, sectionId)
-
-                case Spec.ScopedCase(managed) =>
-                  Scope.make.flatMap { scope =>
-                    scope
-                      .extend(managed.flatMap(loop(labels, _, exec, ancestors, sectionId)))
-                      .onExit { exit =>
-                        for {
-                          timeout <- overrideShutdownTimeout.get.map(_.getOrElse(60.seconds))
-                          warning <-
-                            ZIO
-                              .logWarning({
-                                "Warning: ZIO Test is attempting to close the scope of suite " +
-                                  s"${labels.reverse.mkString(" - ")} in $fullyQualifiedName, " +
-                                  s"but closing the scope has taken more than ${timeout.toSeconds} seconds to " +
-                                  "complete. This may indicate a resource leak."
-                              })
-                              .delay(timeout)
-                              .withClock(ClockLive)
-                              .interruptible
-                              .forkDaemon
-                          finalizer <- scope.close(exit).ensuring(warning.interrupt).forkDaemon
-                          exit      <- warning.await
-                          _         <- finalizer.join.when(exit.isInterrupted)
-                        } yield ()
-                      }
-                  }.catchAllCause { e =>
-                    val event =
-                      ExecutionEvent.RuntimeFailure(sectionId, labels, TestFailure.Runtime(e), ancestors)
-
-                    processEvent(event)
-                  }
-
-                case Spec.MultipleCase(specs) =>
-                  ZIO.uninterruptibleMask(restore =>
-                    for {
-                      newMultiSectionId <- SuiteId.newRandom
-                      newAncestors       = sectionId :: ancestors
-                      start              = ExecutionEvent.SectionStart(labels, newMultiSectionId, newAncestors)
-                      _                 <- processEvent(start)
-                      end                = ExecutionEvent.SectionEnd(labels, newMultiSectionId, newAncestors)
-                      _ <-
-                        restore(
-                          ZIO.foreachExec(specs)(exec)(spec =>
-                            loop(labels, spec, exec, newAncestors, newMultiSectionId)
-                          )
-                        )
-                          .ensuring(
-                            processEvent(end)
-                          )
-                    } yield ()
-                  )
-                case Spec.TestCase(
-                      test,
-                      staticAnnotations: TestAnnotationMap
-                    ) => {
-                  val testResultZ = (for {
+    def default[R, E](
+        sharedSpecLayer: Layer[R, E],
+        freshLayerPerSpec: Layer[TestEnvironment with Scope, Nothing],
+        sinkLayer: Layer[Nothing, ExecutionEventSink],
+        eventHandler: TestEventHandler
+    ): TestExecutor[R with TestEnvironment with Scope, E] =
+        new TestExecutor[R with TestEnvironment with Scope, E]:
+            def run(fullyQualifiedName: String, spec: Spec[R with TestEnvironment with Scope, E], defExec: ExecutionStrategy)(using
+                trace: Trace
+            ): Summary < IO =
+                for
+                    sink <- Env.service[ExecutionEventSink]
+                    topParent    = SuiteId.global
+                    processEvent = (event: ExecutionEvent) => sink.process(event) *> eventHandler.handle(event)
                     _ <-
-                      processEvent(
-                        ExecutionEvent.TestStarted(
-                          labels,
-                          staticAnnotations,
-                          ancestors,
-                          sectionId,
-                          fullyQualifiedName
-                        )
-                      )
-                    result  <- Live.withLive(test)(_.timed).either
-                    duration = result.map(_._1.toMillis).fold(_ => 1L, identity)
-                    event =
-                      ExecutionEvent
-                        .Test(
-                          labels,
-                          result.map(_._2),
-                          staticAnnotations ++ extractAnnotations(result.map(_._2)),
-                          ancestors,
-                          duration,
-                          sectionId,
-                          fullyQualifiedName
-                        )
-                  } yield event).catchAllCause { e =>
-                    val event = ExecutionEvent.RuntimeFailure(sectionId, labels, TestFailure.Runtime(e), ancestors)
-                    ConsoleRenderer.render(e, labels).foreach(cr => println("CR: " + cr))
-                    ZIO.succeed(event)
-                  }
-                  for {
-                    testResult <- testResultZ
-                    _          <- processEvent(testResult)
-                  } yield ()
-                }
-              }
-
-            val scopedSpec =
-              (spec @@ TestAspect.aroundTest(
-                ZTestLogger.default.build.as((x: TestSuccess) => ZIO.succeed(x))
-              )).annotated
-                .provideSomeLayer[R](freshLayerPerSpec)
-                .provideLayerShared(sharedSpecLayer.tapErrorCause { e =>
-                  processEvent(
-                    ExecutionEvent.RuntimeFailure(
-                      SuiteId(-1),
-                      List("Top level layer construction failure. No tests will execute."),
-                      TestFailure.Runtime(e),
-                      List.empty
-                    )
-                  )
-                })
-
-            val topLevelFlush = ExecutionEvent.TopLevelFlush(
-              topParent
-            )
-
-            ZIO.scoped(loop(List.empty, scopedSpec, defExec, List.empty, topParent)) *>
-              processEvent(topLevelFlush) *>
-              TestDebug.deleteIfEmpty(fullyQualifiedName)
-
-          }
-          summary <- sink.getSummary
-        } yield summary).provideLayer(sinkLayer)
-
-      private def extractAnnotations(result: Either[TestFailure[E], TestSuccess]) =
-        result match {
-          case Left(testFailure)  => testFailure.annotations
-          case Right(testSuccess) => testSuccess.annotations
-        }
-
-    }
-}
+                        def loop(
+                            labels: List[String],
+                            spec: Spec[Scope, E],
+                            exec: ExecutionStrategy,
+                            ancestors: List[SuiteId],
+                            sectionId: SuiteId
+                        ): Unit < IO =
+                            spec.caseValue match
+                                case Spec.ExecCase(exec0, spec0) =>
+                                    loop(labels, spec0, exec0, ancestors, sectionId)
+                                case Spec.LabeledCase(label, spec0) =>
+                                    loop(label :: labels, spec0, exec, ancestors, sectionId)
+                                case Spec.ScopedCase(managed) =>
+                                    Scope.make.flatMap { scope =>
+                                        scope.extend(managed.flatMap(s => loop(labels, s, exec, ancestors, sectionId)))
+                                            .onExit { exit =>
+                                                for
+                                                    timeout <- overrideShutdownTimeout.get.map(_.getOrElse(Duration.seconds(60)))
+                                                    warning <- IO.delay(timeout)
+                                                        .flatMap(_ => IO.logWarning("Warning: Kyo Test scope closing delay detected."))
+                                                        .fork
+                                                    finalizer <- scope.close(exit).ensuring(warning.interrupt).fork
+                                                    _         <- warning.await
+                                                    _         <- finalizer.join.when(exit.isInterrupted)
+                                                yield ()
+                                            }
+                                    }.catchAll { e =>
+                                        val event = ExecutionEvent.RuntimeFailure(sectionId, labels, TestFailure.Runtime(e), ancestors)
+                                        processEvent(event)
+                                    }
+                                case Spec.MultipleCase(specs) =>
+                                    uninterruptibleMask { restore =>
+                                        for
+                                            newSectionId <- SuiteId.newRandom
+                                            newAncestors = sectionId :: ancestors
+                                            start        = ExecutionEvent.SectionStart(labels, newSectionId, newAncestors)
+                                            _ <- processEvent(start)
+                                            end = ExecutionEvent.SectionEnd(labels, newSectionId, newAncestors)
+                                            _ <- restore(specs.traverseExec(exec)(s => loop(labels, s, exec, newAncestors, newSectionId)))
+                                                .ensuring(processEvent(end))
+                                        yield ()
+                                    }
+                                case Spec.TestCase(test, staticAnnotations) =>
+                                    val testResult = (for
+                                        _ <- processEvent(ExecutionEvent.TestStarted(
+                                            labels,
+                                            staticAnnotations,
+                                            ancestors,
+                                            sectionId,
+                                            fullyQualifiedName
+                                        ))
+                                        result <- Live.withLive(test)(_.timed).either
+                                        duration = result.map(_._1.toMillis).fold(_ => 1L, identity)
+                                        event = ExecutionEvent.Test(
+                                            labels,
+                                            result.map(_._2),
+                                            staticAnnotations ++ extractAnnotations(result.map(_._2)),
+                                            ancestors,
+                                            duration,
+                                            sectionId,
+                                            fullyQualifiedName
+                                        )
+                                    yield event).catchAll { e =>
+                                        val event = ExecutionEvent.RuntimeFailure(sectionId, labels, TestFailure.Runtime(e), ancestors)
+                                        ConsoleRenderer.render(e, labels).foreach(cr => println("CR: " + cr))
+                                        IO.succeed(event)
+                                    }
+                                    for
+                                        testEvent <- testResult
+                                        _         <- processEvent(testEvent)
+                                    yield ()
+                                    end for
+                        val scopedSpec = spec.annotated
+                            .provideSomeLayer(freshLayerPerSpec)
+                            .provideLayerShared(sharedSpecLayer.tapErrorCause { e =>
+                                processEvent(
+                                    ExecutionEvent.RuntimeFailure(
+                                        SuiteId(-1),
+                                        List("Top level layer construction failure. No tests will execute."),
+                                        TestFailure.Runtime(e),
+                                        List.empty
+                                    )
+                                )
+                            })
+                        loop(Nil, scopedSpec, defExec, Nil, SuiteId.global)
+                yield Summary.empty
+end TestExecutor

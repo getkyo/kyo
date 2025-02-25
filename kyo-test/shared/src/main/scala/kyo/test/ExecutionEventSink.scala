@@ -1,69 +1,62 @@
-package zio.test
+package kyo.test
 
-import zio.{Console, Ref, UIO, ULayer, ZIO, ZLayer}
+import kyo.*
+import kyo.test.ExecutionEvent
+import kyo.test.ExecutionEventPrinter
+import kyo.test.ReporterEventRenderer
+// These are assumed to be defined in the kyo-test project:
+import kyo.test.Summary
+import kyo.test.TestOutput
 
-trait ExecutionEventSink {
-  def getSummary: UIO[Summary]
+trait ExecutionEventSink:
+    def getSummary: Summary < IO
+    def process(event: ExecutionEvent): Unit < IO
+end ExecutionEventSink
 
-  def process(
-    event: ExecutionEvent
-  ): ZIO[Any, Nothing, Unit]
-}
+object ExecutionEventSink:
+    def getSummary: Summary < (Env[ExecutionEventSink] & IO) =
+        Env.get[ExecutionEventSink].flatMap(_.getSummary)
 
-object ExecutionEventSink {
-  def getSummary: ZIO[ExecutionEventSink, Nothing, Summary] =
-    ZIO.serviceWithZIO[ExecutionEventSink](_.getSummary)
+    def process(event: ExecutionEvent): Unit < (Env[ExecutionEventSink] & IO) =
+        Env.get[ExecutionEventSink].flatMap(_.process(event))
 
-  def process(
-    event: ExecutionEvent
-  ): ZIO[ExecutionEventSink, Nothing, Unit] =
-    ZIO.serviceWithZIO[ExecutionEventSink](_.process(event))
+    def ExecutionEventSinkLive(testOutput: TestOutput): ExecutionEventSink < IO =
+        // TODO: val summary = Var.set[Summary](Summary.empty)
+        new ExecutionEventSink:
+            override def process(event: ExecutionEvent): Unit < IO =
+                Var.update[Summary](_.add(event)) *> testOutput.print(event)
+            override def getSummary: Summary < Var[Summary] = Var.get[Summary]
 
-  def ExecutionEventSinkLive(testOutput: TestOutput): ZIO[Any, Nothing, ExecutionEventSink] =
-    for {
-      summary <- Ref.make[Summary](Summary.empty)
-    } yield new ExecutionEventSink {
+    def live(console: Console, eventRenderer: ReporterEventRenderer): Layer[ExecutionEventSink, IO] =
+        Layer.init[ExecutionEventSink](
+            ExecutionEventPrinter.live(console, eventRenderer),
+            TestOutput.live,
+            Layer(
+                for
+                    testOutput <- Env.get[TestOutput]
+                    sink       <- ExecutionEventSinkLive(testOutput)
+                yield sink
+            )
+        )
 
-      override def process(
-        event: ExecutionEvent
-      ): ZIO[Any, Nothing, Unit] =
-        summary.update(
-          _.add(event)
-        ) *>
-          testOutput.print(
-            event
-          )
+    val live: Layer[ExecutionEventSink, Env[TestOutput]] =
+        Layer.init[ExecutionEventSink](
+            Layer.from[TestLogger, ReporterEventRenderer, ExecutionEventConsolePrinter, Any]((logger, renderer) =>
+                ExecutionEventPrinter.Live(logger, renderer)
+            ),
+            TestOutput.live,
+            Layer(
+                for
+                    testOutput <- Env.get[TestOutput]
+                    sink       <- ExecutionEventSinkLive(testOutput)
+                yield sink
+            )
+        )
 
-      override def getSummary: UIO[Summary] = summary.get
-
-    }
-
-  def live(console: Console, eventRenderer: ReporterEventRenderer): ZLayer[Any, Nothing, ExecutionEventSink] =
-    ZLayer.make[ExecutionEventSink](
-      ExecutionEventPrinter.live(console, eventRenderer),
-      TestOutput.live,
-      ZLayer.fromZIO(
-        for {
-          testOutput <- ZIO.service[TestOutput]
-          sink       <- ExecutionEventSinkLive(testOutput)
-        } yield sink
-      )
-    )
-
-  val live: ZLayer[TestOutput, Nothing, ExecutionEventSink] =
-    ZLayer {
-      for {
-        testOutput <- ZIO.service[TestOutput]
-        sink       <- ExecutionEventSinkLive(testOutput)
-      } yield sink
-    }
-
-  val silent: ULayer[ExecutionEventSink] =
-    ZLayer.succeed(
-      new ExecutionEventSink {
-        override def getSummary: UIO[Summary] = ZIO.succeed(Summary.empty)
-
-        override def process(event: ExecutionEvent): ZIO[Any, Nothing, Unit] = ZIO.unit
-      }
-    )
-}
+    val silent: Layer[ExecutionEventSink, Any] =
+        Layer(
+            new ExecutionEventSink:
+                override def getSummary: Summary < IO                  = Kyo.suspend(Summary.empty)
+                override def process(event: ExecutionEvent): Unit < IO = Kyo.suspend(())
+        )
+end ExecutionEventSink

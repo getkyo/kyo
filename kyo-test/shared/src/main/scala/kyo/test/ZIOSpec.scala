@@ -1,31 +1,36 @@
 package kyo.test
 
-import zio._
-import zio.internal.stacktracer.SourceLocation
-import zio.stacktracer.TracingImplicits.disableAutoTrace
+import kyo.*
 
-abstract class ZIOSpec[R: EnvironmentTag] extends ZIOSpecAbstract with ZIOSpecVersionSpecific[R] { self =>
-  type Environment = R
+/** Converted from Kyo test's KyoSpec.scala to Kyo.
+  */
+abstract class KyoSpec[R: Tag] extends KyoSpecAbstract with KyoSpecVersionSpecific[R]:
+    self =>
+    type Environment = R
 
-  final val environmentTag: EnvironmentTag[R] = EnvironmentTag[R]
+    final val Tag: Tag[R] = kyo.Tag[R]
 
-  /**
-   * Builds a spec with a single test.
-   */
-  def test[In](label: String)(
-    assertion: => In
-  )(implicit
-    testConstructor: TestConstructor[Nothing, In],
-    sourceLocation: SourceLocation,
-    trace: Trace
-  ): testConstructor.Out =
-    zio.test.test(label)(assertion)
+    /** Builds a spec with a single test. */
+    def test[In](label: String)(assertion: => In)(implicit
+        testConstructor: TestConstructor[Nothing, In],
+        frame: Frame,
+        trace: Trace
+    ): testConstructor.Out =
+        // Delegates to Kyo test constructor
+        kyo.test.test(label)(assertion)
 
-  def suite[In](label: String)(specs: In*)(implicit
-    suiteConstructor: SuiteConstructor[In],
-    sourceLocation: SourceLocation,
-    trace: Trace
-  ): Spec[suiteConstructor.OutEnvironment, suiteConstructor.OutError] =
-    zio.test.suite(label)(specs: _*)
+    def suite[In](label: String)(specs: In*)(implicit
+        suiteConstructor: SuiteConstructor[In],
+        frame: Frame,
+        trace: Trace
+    ): Spec[suiteConstructor.OutEnvironment, suiteConstructor.OutError] =
+        // Delegates to Kyo suite constructor
+        kyo.test.suite(label)(specs*)
 
-}
+    // Runs the spec, handling environment and abort effects
+    def runSpec(): Unit < (IO & Async) =
+        spec.pipe(
+            Abort.run,  // handle abort effects
+            Env.run(()) // provide an empty/default environment
+        ).eval
+end KyoSpec

@@ -1,13 +1,11 @@
-package zio.test
+package kyo.test
 
-import zio.{Ref, ZIO}
+import kyo.*
 
-private[test] object TestDebugFileLock {
-  def make: ZIO[Any, Nothing, TestDebugFileLock] =
-    Ref.Synchronized.make[Unit](()).map(TestDebugFileLock(_))
-}
+private[test] object TestDebugFileLock:
+    def make: TestDebugFileLock < IO =
+        AtomicRef.init[Unit](()).map(TestDebugFileLock(_))
 
-private[test] case class TestDebugFileLock(lock: Ref.Synchronized[Unit]) {
-  def updateFile(action: ZIO[Any, Nothing, Unit]) =
-    lock.updateZIO(_ => action)
-}
+private[test] case class TestDebugFileLock(lock: Var[Unit]):
+    def updateFile(action: Unit < IO): Unit < IO =
+        lock.update(_ => action)

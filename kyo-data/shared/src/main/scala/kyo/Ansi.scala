@@ -5,6 +5,26 @@ import scala.util.control.NonFatal
 /** Provides ANSI color and formatting utilities for strings.
   */
 object Ansi:
+    sealed abstract class AnsiCode(val code: String)
+    sealed abstract class Color(code: String) extends AnsiCode(code)
+
+    object Color:
+        case object Blue    extends Color("\u001b[34m")
+        case object Cyan    extends Color("\u001b[36m")
+        case object Green   extends Color("\u001b[32m")
+        case object Magenta extends Color("\u001b[35m")
+        case object Red     extends Color("\u001b[31m")
+        case object Yellow  extends Color("\u001b[33m")
+    end Color
+
+    sealed abstract class Style(code: String) extends AnsiCode(code)
+
+    object Style:
+        case object Bold       extends Style("\u001b[1m")
+        case object Faint      extends Style("\u001b[2m")
+        case object Underlined extends Style("\u001b[4m")
+        case object Reversed   extends Style("\u001b[7m")
+    end Style
 
     extension (str: String)
         /** Applies black color to the string. */
@@ -45,9 +65,13 @@ object Ansi:
 
         /** Applies underline formatting to the string. */
         def underline: String = s"\u001b[4m$str\u001b[0m"
+        def faint: String     = withAnsi(Style.Faint)
+        def inverted: String  = withAnsi(Style.Reversed)
 
         /** Removes all ANSI escape sequences from the string. */
         def stripAnsi: String = str.replaceAll("\u001b\\[[0-9;]*[a-zA-Z]", "")
+
+        def withAnsi(code: AnsiCode): String = s"${code.code}$str\u001b[0m"
     end extension
 
     object highlight:

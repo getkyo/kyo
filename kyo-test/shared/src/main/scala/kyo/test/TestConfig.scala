@@ -1,132 +1,59 @@
 package kyo.test
 
-import zio.{Tag, URIO, ZIO, ZLayer}
-import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.Trace
-import zio.ZIOAspect
+import kyo.*
+// Assuming necessary Kyo types such as Env and that testConfigWith and TestAspect are available
 
-/**
- * The `TestConfig` service provides access to default configuration settings
- * used by ZIO Test, including the number of times to repeat tests to ensure
- * they are stable, the number of times to retry flaky tests, the sufficient
- * number of samples to check from a random variable, and the maximum number of
- * shrinkings to minimize large failures.
- */
-trait TestConfig extends Serializable {
+trait TestConfig extends Serializable:
+    def repeats: Int
+    def retries: Int
+    def samples: Int
+    def shrinks: Int
+    def checkAspect: TestAspect.CheckAspect = TestAspect.identity
+end TestConfig
 
-  /**
-   * The number of times to repeat tests to ensure they are stable.
-   */
-  def repeats: Int
+object TestConfig:
+    val tag: Tag[TestConfig] = Tag[TestConfig]
 
-  /**
-   * The number of times to retry flaky tests.
-   */
-  def retries: Int
+    @deprecated("use TestV2", "2.1.8")
+    final case class Test(repeats: Int, retries: Int, samples: Int, shrinks: Int) extends TestConfig
 
-  /**
-   * The number of sufficient samples to check for a random variable.
-   */
-  def samples: Int
+    final case class TestV2(
+        repeats: Int,
+        retries: Int,
+        samples: Int,
+        shrinks: Int,
+        override val checkAspect: TestAspect.CheckAspect
+    ) extends TestConfig
 
-  /**
-   * The maximum number of shrinkings to minimize large failures
-   */
-  def shrinks: Int
+    // Default test configuration layer
+    val default: Layer[TestConfig, Any] =
+        live(100, 100, 200, 1000, TestAspect.identity)
 
-  /**
-   * Aspect that should be applied to each check sample.
-   *
-   * NOTE: default implementation for backward compatibility. Remove in next
-   * major version.
-   */
-  def checkAspect: TestAspect.CheckAspect = ZIOAspect.identity
-}
+    // Constructs a new TestConfig layer with default checkAspect
+    def live(repeats: Int, retries: Int, samples: Int, shrinks: Int): Layer[TestConfig, Any] =
+        Layer(TestV2(repeats, retries, samples, shrinks, TestAspect.identity))
 
-object TestConfig {
+    // Constructs a new TestConfig layer with an explicit checkAspect
+    def live(repeats: Int, retries: Int, samples: Int, shrinks: Int, checkAspect: TestAspect.CheckAspect): Layer[TestConfig, Any] =
+        Layer(TestV2(repeats, retries, samples, shrinks, checkAspect))
 
-  val tag: Tag[TestConfig] = Tag[TestConfig]
+    // Retrieves the repeats setting from the environment
+    def repeats(using trace: Trace): Int < Any =
+        testConfigWith(testConfig => testConfig.repeats)
 
-  @deprecated("use TestV2", "2.1.8")
-  final case class Test(repeats: Int, retries: Int, samples: Int, shrinks: Int) extends TestConfig
+    // Retrieves the retries setting from the environment
+    def retries(using trace: Trace): Int < Any =
+        testConfigWith(testConfig => testConfig.retries)
 
-  final case class TestV2(
-    repeats: Int,
-    retries: Int,
-    samples: Int,
-    shrinks: Int,
-    override val checkAspect: TestAspect.CheckAspect
-  ) extends TestConfig
+    // Retrieves the samples setting from the environment
+    def samples(using trace: Trace): Int < Any =
+        testConfigWith(testConfig => testConfig.samples)
 
-  /**
-   * Constructs a new `TestConfig` with the default settings.
-   */
-  val default: ZLayer[Any, Nothing, TestConfig] =
-    live(100, 100, 200, 1000, ZIOAspect.identity)(Trace.empty)
+    // Retrieves the shrinks setting from the environment
+    def shrinks(using trace: Trace): Int < Any =
+        testConfigWith(testConfig => testConfig.shrinks)
 
-  /**
-   * Constructs a new `TestConfig` service with the specified settings.
-   */
-  def live(
-    repeats: Int,
-    retries: Int,
-    samples: Int,
-    shrinks: Int
-  )(implicit
-    trace: Trace
-  ): ZLayer[Any, Nothing, TestConfig] =
-    ZLayer.scoped {
-      val testConfig = TestV2(repeats, retries, samples, shrinks, ZIOAspect.identity)
-      withTestConfigScoped(testConfig).as(testConfig)
-    }
-
-  /**
-   * Constructs a new `TestConfig` service with the specified settings.
-   *
-   * Note: manual overload instead of default argument for binary compatibility.
-   * Remove in next major version.
-   */
-  def live(
-    repeats: Int,
-    retries: Int,
-    samples: Int,
-    shrinks: Int,
-    checkAspect: TestAspect.CheckAspect
-  )(implicit
-    trace: Trace
-  ): ZLayer[Any, Nothing, TestConfig] =
-    ZLayer.scoped {
-      val testConfig = TestV2(repeats, retries, samples, shrinks, checkAspect)
-      withTestConfigScoped(testConfig).as(testConfig)
-    }
-
-  /**
-   * The number of times to repeat tests to ensure they are stable.
-   */
-  def repeats(implicit trace: Trace): URIO[Any, Int] =
-    testConfigWith(testConfig => ZIO.succeed(testConfig.repeats))
-
-  /**
-   * The number of times to retry flaky tests.
-   */
-  def retries(implicit trace: Trace): URIO[Any, Int] =
-    testConfigWith(testConfig => ZIO.succeed(testConfig.retries))
-
-  /**
-   * The number of sufficient samples to check for a random variable.
-   */
-  def samples(implicit trace: Trace): URIO[Any, Int] =
-    testConfigWith(testConfig => ZIO.succeed(testConfig.samples))
-
-  /**
-   * The maximum number of shrinkings to minimize large failures
-   */
-  def shrinks(implicit trace: Trace): URIO[Any, Int] =
-    testConfigWith(testConfig => ZIO.succeed(testConfig.shrinks))
-
-  /**
-   * Action that should be performed on each check sample.
-   */
-  def checkAspect(implicit trace: Trace): URIO[Any, TestAspect.CheckAspect] =
-    testConfigWith(testConfig => ZIO.succeed(testConfig.checkAspect))
-}
+    // Retrieves the checkAspect from the environment
+    def checkAspect(using trace: Trace): TestAspect.CheckAspect < Any =
+        testConfigWith(testConfig => testConfig.checkAspect)
+end TestConfig

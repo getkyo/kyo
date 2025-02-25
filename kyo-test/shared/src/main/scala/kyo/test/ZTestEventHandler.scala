@@ -1,10 +1,12 @@
-package zio.test
+package kyo.test
 
-import zio.{UIO, ZIO}
+import kyo.*
+import kyo.debugln
 
-trait ZTestEventHandler {
-  def handle(event: ExecutionEvent): UIO[Unit]
-}
-object ZTestEventHandler {
-  val silent: ZTestEventHandler = _ => ZIO.unit
-}
+// Assuming ExecutionEvent is defined elsewhere in the test framework
+trait ZTestEventHandler:
+    def handle(event: ExecutionEvent): Unit < (Env[Any] & IO & Abort[Nothing])
+
+object ZTestEventHandler:
+    val silent: ZTestEventHandler = new ZTestEventHandler:
+        def handle(event: ExecutionEvent): Unit < (Env[Any] & IO & Abort[Nothing]) = ()
