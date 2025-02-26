@@ -225,14 +225,12 @@ class SignalTest extends Test:
                 _      <- Async.sleep(2.millis)
                 _      <- ref.set(2)
                 _      <- Async.sleep(2.millis)
+                _      <- ref.set(2) // Should be ignored
+                _      <- Async.sleep(2.millis)
                 _      <- ref.set(3)
                 _      <- Async.sleep(2.millis)
-                _      <- ref.set(3) // Should be ignored
-                _      <- Async.sleep(2.millis)
-                _      <- ref.set(4)
-                _      <- Async.sleep(2.millis)
                 values <- f.get
-            yield assert(values == Chunk(2, 3, 4))
+            yield assert(values == Chunk(1, 2, 3))
         }
     }
 

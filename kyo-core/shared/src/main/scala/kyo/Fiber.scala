@@ -703,10 +703,13 @@ object Fiber extends FiberPlatformSpecific:
 
             def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
 
+            def initMasked[E, A]()(using AllowUnsafe): Unsafe[E, A] =
+                new IOPromise[E, A]:
+                    override def interrupt[E2 >: E](error: Result.Error[E2]): Boolean = false
+
             private[kyo] def fromIOPromise[E, A](p: IOPromise[E, A]): Unsafe[E, A] = p
 
             extension [E, A](self: Unsafe[E, A])
-                def mask()(using AllowUnsafe): Unsafe[E, A]                                        = self.mask()
                 def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)
                 def completeDiscard[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
                 def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Boolean     = self.become(other)

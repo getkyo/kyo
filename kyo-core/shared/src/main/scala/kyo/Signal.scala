@@ -117,7 +117,7 @@ abstract class Signal[A](using CanEqual[A, A]):
         Stream(
             Loop(Maybe.empty[A]) { last =>
                 currentWith { curr =>
-                    if last.exists(_ != curr) then
+                    if last.forall(_ != curr) then
                         Emit.valueWith(Chunk(curr))(Loop.continue(Present(curr)))
                     else
                         nextWith { a =>
@@ -472,7 +472,7 @@ object Signal:
                 nextPromise.get()
 
             private def onUpdate(value: A)(using AllowUnsafe): Unit =
-                nextPromise.getAndSet(Promise.Unsafe.init().mask())
+                nextPromise.getAndSet(Promise.Unsafe.initMasked())
                     .completeDiscard(Result.succeed(value))
 
             def safe: Ref[A] = Ref(this)
