@@ -25,7 +25,7 @@ PB.targets in Compile := Seq(
 # Development and testing
 
 Code structure:
-- [`core`](./code/): The runtime library for this plugin
+- [`core`](./core/): The runtime library for this plugin
 - [`code-gen`](./code-gen): The protoc plugin (code generator)
 - [`e2e`](./e2e): Integration tests for the plugin
 - [`examples`](./examples): Example projects
