@@ -4,6 +4,8 @@ A Protoc plugin that generates...
 
 # Using the plugin
 
+<!-- TODO: This should use some kind of doc test against the example project. -->
+
 To add the plugin to another project:
 
 ```
@@ -23,9 +25,10 @@ PB.targets in Compile := Seq(
 # Development and testing
 
 Code structure:
-- `core`: contains the runtime library for this plugin
-- `code-gen`: contains the protoc plugin (code generator)
-- `e2e`: an integration test for the plugin
+- [`core`](): The runtime library for this plugin
+- [`code-gen`](): The protoc plugin (code generator)
+- [`e2e`](): Integration tests for the plugin
+- [`example`](): Standalone example
 
 To test the plugin, within SBT:
 
@@ -38,4 +41,3 @@ or
 ```
 > e2eJVM2_12/test
 ```
-
