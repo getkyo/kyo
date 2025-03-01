@@ -25,10 +25,10 @@ PB.targets in Compile := Seq(
 # Development and testing
 
 Code structure:
-- [`core`](): The runtime library for this plugin
-- [`code-gen`](): The protoc plugin (code generator)
-- [`e2e`](): Integration tests for the plugin
-- [`example`](): Standalone example
+- [`core`](./code/): The runtime library for this plugin
+- [`code-gen`](./code-gen): The protoc plugin (code generator)
+- [`e2e`](./e2e): Integration tests for the plugin
+- [`examples`](./examples): Example projects
 
 To test the plugin, within SBT:
 
