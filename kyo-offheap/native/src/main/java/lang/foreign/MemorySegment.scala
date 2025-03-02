@@ -26,22 +26,74 @@ final class MemorySegment private (private[foreign] val ptr: Ptr[Byte], val byte
         else
             MemorySegment(ptr + offset, newSize)
 
-    /** Reads a value from memory using the provided layout. */
-    def get[T](layout: ValueLayout, offset: Long)(using tag: Tag[T]): T =
+    /** Reads a value from memory using the provided layout.
+      */
+    def get(layout: ValueLayout.OfBoolean, offset: Long): Boolean =
         require(offset + layout.byteSize <= byteSize)
-        !(ptr + offset).asInstanceOf[Ptr[T]]
-
-    /** Writes a value to memory using the provided layout. */
-    def set[T](layout: ValueLayout, offset: Long, value: T)(using tag: Tag[T]): Unit =
+        !(ptr + offset).asInstanceOf[Ptr[CBool]]
+    def get(layout: ValueLayout.OfByte, offset: Long): Byte =
         require(offset + layout.byteSize <= byteSize)
-        !((ptr + offset).asInstanceOf[Ptr[T]]) = value
+        !(ptr + offset).asInstanceOf[Ptr[Byte]]
+    def get(layout: ValueLayout.OfShort, offset: Long): Short =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Short]]
+    def get(layout: ValueLayout.OfInt, offset: Long): Int =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Int]]
+    def get(layout: ValueLayout.OfLong, offset: Long): Long =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Long]]
+    def get(layout: ValueLayout.OfFloat, offset: Long): Float =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Float]]
+    def get(layout: ValueLayout.OfDouble, offset: Long): Double =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Double]]
+    def get(layout: ValueLayout.OfChar, offset: Long): Char =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Char]]
+    def get(layout: AddressLayout, offset: Long): MemorySegment =
+        val newByteSize = byteSize - offset
+        require(newByteSize >= 0)
+        new MemorySegment((ptr + offset).asInstanceOf[Ptr[Byte]], newByteSize)
+    end get
 
+    /** Writes a value to memory using the provided layout.
+      */
+    def set(layout: ValueLayout.OfBoolean, offset: Long, value: Boolean): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[CBool]] = value
+    def set(layout: ValueLayout.OfByte, offset: Long, value: Byte): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Byte]] = value
+    def set(layout: ValueLayout.OfShort, offset: Long, value: Short): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Short]] = value
+    def set(layout: ValueLayout.OfInt, offset: Long, value: Int): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Int]] = value
+    def set(layout: ValueLayout.OfLong, offset: Long, value: Long): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Long]] = value
+    def set(layout: ValueLayout.OfFloat, offset: Long, value: Float): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Float]] = value
+    def set(layout: ValueLayout.OfDouble, offset: Long, value: Double): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Double]] = value
+    def set(layout: ValueLayout.OfChar, offset: Long, value: Char): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        !(ptr + offset).asInstanceOf[Ptr[Char]] = value
+    def set(layout: AddressLayout, offset: Long, value: MemorySegment): Unit =
+        require(offset + layout.byteSize <= byteSize)
+        val _ = memcpy((ptr + offset).asInstanceOf[Ptr[Byte]], value.ptr, value.byteSize.toCSize)
+    end set
 end MemorySegment
 
 object MemorySegment:
 
     /** Allocates a new MemorySegment of the given byte size. */
-    def allocate(byteSize: Long): MemorySegment =
+    private[foreign] def allocate(byteSize: Long): MemorySegment =
         val ptr = malloc(byteSize).asInstanceOf[Ptr[Byte]]
         if ptr == null then throw new RuntimeException("malloc returned null")
         new MemorySegment(ptr, byteSize)
@@ -70,26 +122,35 @@ object MemorySegment:
 end MemorySegment
 
 sealed trait ValueLayout:
-    val byteSize: Long
+    def byteSize: Long
 
 object ValueLayout:
-    case object JAVA_BOOLEAN extends ValueLayout:
+    trait OfBoolean extends ValueLayout
+    trait OfByte    extends ValueLayout
+    trait OfChar    extends ValueLayout
+    trait OfShort   extends ValueLayout
+    trait OfInt     extends ValueLayout
+    trait OfLong    extends ValueLayout
+    trait OfFloat   extends ValueLayout
+    trait OfDouble  extends ValueLayout
+
+    case object JAVA_BOOLEAN extends OfBoolean:
         val byteSize = sizeOf[CBool]
-    case object JAVA_BYTE extends ValueLayout:
+    case object JAVA_BYTE extends OfByte:
         val byteSize = sizeOf[Byte]
-    case object JAVA_CHAR extends ValueLayout:
+    case object JAVA_CHAR extends OfChar:
         val byteSize = sizeOf[CChar]
-    case object JAVA_SHORT extends ValueLayout:
+    case object JAVA_SHORT extends OfShort:
         val byteSize = sizeOf[CShort]
-    case object JAVA_INT extends ValueLayout:
+    case object JAVA_INT extends OfInt:
         val byteSize = sizeOf[CInt]
-    case object JAVA_LONG extends ValueLayout:
+    case object JAVA_LONG extends OfLong:
         val byteSize = sizeOf[CLong]
-    case object JAVA_FLOAT extends ValueLayout:
+    case object JAVA_FLOAT extends OfFloat:
         val byteSize = sizeOf[CFloat]
-    case object JAVA_DOUBLE extends ValueLayout:
+    case object JAVA_DOUBLE extends OfDouble:
         val byteSize = sizeOf[CDouble]
-    case object ADDRESS extends ValueLayout:
+    case object ADDRESS extends AddressLayout:
         val byteSize = sizeOf[Ptr[Byte]]
 end ValueLayout
 

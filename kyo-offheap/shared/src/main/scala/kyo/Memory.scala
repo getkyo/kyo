@@ -62,7 +62,7 @@ object Memory:
       * @return
       *   The result of applying f to the new memory segment
       */
-    inline def initWith[A: Layout as l](size: Int)[B, S](inline f: Memory[A] => B < S)(using inline frame: Frame): B < (Arena & S) =
+    def initWith[A: Layout as l](size: Int)[B, S](f: Memory[A] => B < S)(using frame: Frame): B < (Arena & S) =
         Arena.use { arena =>
             IO.Unsafe(f(arena.allocate(l.size * size)))
         }
@@ -76,7 +76,7 @@ object Memory:
           * @return
           *   The element at the specified index
           */
-        inline def get(index: Int)(using inline frame: Frame): A < Arena =
+        def get(index: Int)(using Frame): A < Arena =
             IO.Unsafe {
                 // TODO inference issue without the val
                 val x = Unsafe.get(self)(index)
@@ -91,7 +91,7 @@ object Memory:
           * @param value
           *   The value to write
           */
-        inline def set(index: Int, value: A)(using inline frame: Frame): Unit < Arena =
+        def set(index: Int, value: A)(using Frame): Unit < Arena =
             IO.Unsafe(Unsafe.set(self)(index, value))
 
         /** Fills the entire memory segment with the specified value.
@@ -99,7 +99,7 @@ object Memory:
           * @param value
           *   The value to fill with
           */
-        inline def fill(value: A)(using inline frame: Frame): Unit < Arena =
+        def fill(value: A)(using frame: Frame): Unit < Arena =
             IO.Unsafe(Unsafe.fill(self)(value))
 
         /** Folds over all elements in the memory segment.
@@ -111,7 +111,7 @@ object Memory:
           * @return
           *   The final accumulated value
           */
-        inline def fold[B](zero: B)(f: (B, A) => B)(using inline frame: Frame): B < Arena =
+        def fold[B](zero: B)(f: (B, A) => B)(using Frame): B < Arena =
             IO.Unsafe(Unsafe.fold(self)(zero)(f))
 
         /** Finds the index of the first element satisfying the predicate.
@@ -121,7 +121,7 @@ object Memory:
           * @return
           *   The index wrapped in Maybe, or Absent if not found
           */
-        inline def findIndex(p: A => Boolean)(using inline frame: Frame): Maybe[Int] < Arena =
+        def findIndex(p: A => Boolean)(using Frame): Maybe[Int] < Arena =
             IO.Unsafe(Unsafe.findIndex(self)(p))
 
         /** Checks if any element satisfies the predicate.
@@ -131,7 +131,7 @@ object Memory:
           * @return
           *   true if any element satisfies the predicate
           */
-        inline def exists(p: A => Boolean)(using inline frame: Frame): Boolean < Arena =
+        def exists(p: A => Boolean)(using Frame): Boolean < Arena =
             IO.Unsafe(Unsafe.exists(self)(p))
 
         /** Creates a view of a portion of this memory segment.
@@ -211,13 +211,13 @@ object Memory:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         extension [A: Layout as l](self: Unsafe[A])
-            inline def get(index: Int)(using AllowUnsafe): A =
+            def get(index: Int)(using AllowUnsafe): A =
                 l.get(self, index * l.size)
 
-            inline def set(index: Int, value: A)(using AllowUnsafe): Unit =
+            def set(index: Int, value: A)(using AllowUnsafe): Unit =
                 l.set(self, index * l.size, value)
 
-            inline def fill(value: A)(using AllowUnsafe): Unit =
+            def fill(value: A)(using AllowUnsafe): Unit =
                 val len = size
                 @tailrec def loop(i: Int): Unit =
                     if i < len then
@@ -226,7 +226,7 @@ object Memory:
                 loop(0)
             end fill
 
-            inline def fold[B](z: B)(inline f: (B, A) => B)(using AllowUnsafe): B =
+            def fold[B](z: B)(f: (B, A) => B)(using AllowUnsafe): B =
                 val len = size
                 @tailrec def loop(i: Int, acc: B): B =
                     if i < len then
@@ -235,7 +235,7 @@ object Memory:
                 loop(0, z)
             end fold
 
-            inline def findIndex(inline f: A => Boolean)(using AllowUnsafe): Maybe[Int] =
+            def findIndex(f: A => Boolean)(using AllowUnsafe): Maybe[Int] =
                 val len = size
                 @tailrec def loop(i: Int): Maybe[Int] =
                     if i < len then
@@ -245,7 +245,7 @@ object Memory:
                 loop(0)
             end findIndex
 
-            inline def exists(inline f: A => Boolean)(using AllowUnsafe): Boolean =
+            def exists(f: A => Boolean)(using AllowUnsafe): Boolean =
                 findIndex(f) match
                     case Present(_) => true
                     case Absent     => false
@@ -271,8 +271,8 @@ object Memory:
 
     /** Defines how values of type A are laid out in memory. */
     abstract class Layout[A]:
-        inline def get(memory: Unsafe[A], offset: Long)(using AllowUnsafe): A
-        inline def set(memory: Unsafe[A], offset: Long, value: A)(using AllowUnsafe): Unit
+        def get(memory: Unsafe[A], offset: Long)(using AllowUnsafe): A
+        def set(memory: Unsafe[A], offset: Long, value: A)(using AllowUnsafe): Unit
         def size: Long
     end Layout
 
@@ -281,49 +281,49 @@ object Memory:
         import ValueLayout.*
 
         given Layout[Byte] with
-            inline def get(memory: Unsafe[Byte], offset: Long)(using AllowUnsafe): Byte =
+            def get(memory: Unsafe[Byte], offset: Long)(using AllowUnsafe): Byte =
                 memory.get(JAVA_BYTE, offset)
-            inline def set(memory: Unsafe[Byte], offset: Long, value: Byte)(using AllowUnsafe): Unit =
+            def set(memory: Unsafe[Byte], offset: Long, value: Byte)(using AllowUnsafe): Unit =
                 memory.set(JAVA_BYTE, offset, value)
             def size = JAVA_BYTE.byteSize
         end given
 
         given Layout[Short] with
-            inline def get(memory: Unsafe[Short], offset: Long)(using AllowUnsafe): Short =
+            def get(memory: Unsafe[Short], offset: Long)(using AllowUnsafe): Short =
                 memory.get(JAVA_SHORT, offset)
-            inline def set(memory: Unsafe[Short], offset: Long, value: Short)(using AllowUnsafe): Unit =
+            def set(memory: Unsafe[Short], offset: Long, value: Short)(using AllowUnsafe): Unit =
                 memory.set(JAVA_SHORT, offset, value)
             def size = JAVA_SHORT.byteSize
         end given
 
         given Layout[Int] with
-            inline def get(memory: Unsafe[Int], offset: Long)(using AllowUnsafe): Int =
+            def get(memory: Unsafe[Int], offset: Long)(using AllowUnsafe): Int =
                 memory.get(JAVA_INT, offset)
-            inline def set(memory: Unsafe[Int], offset: Long, value: Int)(using AllowUnsafe): Unit =
+            def set(memory: Unsafe[Int], offset: Long, value: Int)(using AllowUnsafe): Unit =
                 memory.set(JAVA_INT, offset, value)
             def size = JAVA_INT.byteSize
         end given
 
         given Layout[Long] with
-            inline def get(memory: Unsafe[Long], offset: Long)(using AllowUnsafe): Long =
+            def get(memory: Unsafe[Long], offset: Long)(using AllowUnsafe): Long =
                 memory.get(JAVA_LONG, offset)
-            inline def set(memory: Unsafe[Long], offset: Long, value: Long)(using AllowUnsafe): Unit =
+            def set(memory: Unsafe[Long], offset: Long, value: Long)(using AllowUnsafe): Unit =
                 memory.set(JAVA_LONG, offset, value)
             def size = JAVA_LONG.byteSize
         end given
 
         given Layout[Float] with
-            inline def get(memory: Unsafe[Float], offset: Long)(using AllowUnsafe): Float =
+            def get(memory: Unsafe[Float], offset: Long)(using AllowUnsafe): Float =
                 memory.get(JAVA_FLOAT, offset)
-            inline def set(memory: Unsafe[Float], offset: Long, value: Float)(using AllowUnsafe): Unit =
+            def set(memory: Unsafe[Float], offset: Long, value: Float)(using AllowUnsafe): Unit =
                 memory.set(JAVA_FLOAT, offset, value)
             def size = JAVA_FLOAT.byteSize
         end given
 
         given Layout[Double] with
-            inline def get(memory: Unsafe[Double], offset: Long)(using AllowUnsafe): Double =
+            def get(memory: Unsafe[Double], offset: Long)(using AllowUnsafe): Double =
                 memory.get(JAVA_DOUBLE, offset)
-            inline def set(memory: Unsafe[Double], offset: Long, value: Double)(using AllowUnsafe): Unit =
+            def set(memory: Unsafe[Double], offset: Long, value: Double)(using AllowUnsafe): Unit =
                 memory.set(JAVA_DOUBLE, offset, value)
             def size = JAVA_DOUBLE.byteSize
         end given
