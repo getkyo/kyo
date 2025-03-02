@@ -5,7 +5,7 @@ private[kyo] object TID:
     // Unique transaction ID generation
     private val nextTid = AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
-    private val tidLocal = Local.initIsolated[java.lang.Long](-1L)
+    private val tidLocal = Local.initNoninheritable[java.lang.Long](-1L)
 
     def next(using AllowUnsafe): Long = nextTid.incrementAndGet()
 
