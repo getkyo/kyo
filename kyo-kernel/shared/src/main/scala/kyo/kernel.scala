@@ -6,6 +6,8 @@ type <[+A, -S] = kernel.<[A, S]
 
 val Loop = kernel.Loop
 
+export kernel.Isolate
+
 /** Identity type constructor.
   *
   * Id is a simple type alias that returns its input type unchanged. It is commonly used with [[ArrowEffect]] when an effect needs to

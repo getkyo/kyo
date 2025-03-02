@@ -277,146 +277,52 @@ class MemoTest extends Test:
     }
 
     "isolate" - {
-        "merge" - {
-            "combines caches from isolated and outer scopes" in run {
-                var count = 0
-                val f = Memo[Int, Int, Any] { x =>
-                    count += 1
-                    x * 2
-                }
-
-                val result = Memo.run {
-                    for
-                        a <- f(5)
-                        b <- Memo.isolate.merge.run {
-                            for
-                                c <- f(6)
-                                d <- f(5)
-                            yield (c, d)
-                        }
-                        c <- f(6)
-                        d <- f(7)
-                    yield (count, a, b, c, d)
-                }
-                assert(result.eval == (3, 10, (12, 10), 12, 14))
-                assert(count == 3)
+        "combines caches from isolated and outer scopes" in run {
+            var count = 0
+            val f = Memo[Int, Int, Any] { x =>
+                count += 1
+                x * 2
             }
 
-            "proper state restoration after nested isolations" in run {
-                var count = 0
-                val f = Memo[Int, Int, Any] { x =>
-                    count += 1
-                    x * 2
-                }
-
-                val result = Memo.run {
-                    for
-                        start <- f(1)
-                        v1 <- Memo.isolate.merge.run {
-                            f(2)
-                        }
-                        middle <- f(3)
-                        v2 <- Memo.isolate.merge.run {
-                            f(4)
-                        }
-                        end <- f(5)
-                    yield (count, start, v1, middle, v2, end)
-                }
-                assert(result.eval == (5, 2, 4, 6, 8, 10))
-                assert(count == 5)
+            val result = Memo.run {
+                for
+                    a <- f(5)
+                    b <- Isolate.Stateful[Memo, Any].run {
+                        for
+                            c <- f(6)
+                            d <- f(5)
+                        yield (c, d)
+                    }
+                    c <- f(6)
+                    d <- f(7)
+                yield (count, a, b, c, d)
             }
+            assert(result.eval == (3, 10, (12, 10), 12, 14))
+            assert(count == 3)
         }
 
-        "update" - {
-            "replaces outer cache with inner cache" in run {
-                var count = 0
-                val f = Memo[Int, Int, Any] { x =>
-                    count += 1
-                    x * 2
-                }
-
-                val result = Memo.run {
-                    for
-                        before <- f(1)
-                        _ <- Memo.isolate.update.run {
-                            f(2)
-                        }
-                        after <- f(2)
-                    yield (count, before, after)
-                }
-                assert(result.eval == (2, 2, 4))
-                assert(count == 2)
+        "proper state restoration after nested isolations" in run {
+            var count = 0
+            val f = Memo[Int, Int, Any] { x =>
+                count += 1
+                x * 2
             }
 
-            "nested updates apply in order" in run {
-                var count = 0
-                val f = Memo[Int, Int, Any] { x =>
-                    count += 1
-                    x * 2
-                }
-
-                val result = Memo.run {
-                    for
-                        start <- f(1)
-                        _ <- Memo.isolate.update.run {
-                            f(2).andThen {
-                                Memo.isolate.update.run {
-                                    f(3)
-                                }
-                            }
-                        }
-                        end <- f(3)
-                    yield (count, start, end)
-                }
-                assert(result.eval == (3, 2, 6))
-                assert(count == 3)
+            val result = Memo.run {
+                for
+                    start <- f(1)
+                    v1 <- Isolate.Stateful[Memo, Any].run {
+                        f(2)
+                    }
+                    middle <- f(3)
+                    v2 <- Isolate.Stateful[Memo, Any].run {
+                        f(4)
+                    }
+                    end <- f(5)
+                yield (count, start, v1, middle, v2, end)
             }
-        }
-
-        "discard" - {
-            "inner modifications don't affect outer scope" in run {
-                var count = 0
-                val f = Memo[Int, Int, Any] { x =>
-                    count += 1
-                    x * 2
-                }
-
-                val result = Memo.run {
-                    for
-                        before <- f(1)
-                        _ <- Memo.isolate.discard.run {
-                            f(2)
-                        }
-                        after <- f(1)
-                    yield (count, before, after)
-                }
-                assert(result.eval == (2, 2, 2))
-                assert(count == 2)
-            }
-
-            "nested discards maintain isolation" in run {
-                var count = 0
-                val f = Memo[Int, Int, Any] { x =>
-                    count += 1
-                    x * 2
-                }
-
-                val result = Memo.run {
-                    for
-                        start <- f(1)
-                        _ <- Memo.isolate.discard.run {
-                            f(2).andThen {
-                                Memo.isolate.discard.run {
-                                    f(3)
-                                }
-                            }
-                        }
-                        end <- f(1)
-                    yield (count, start, end)
-                }
-                assert(result.eval == (3, 2, 2))
-                assert(count == 3)
-            }
+            assert(result.eval == (5, 2, 4, 6, 8, 10))
+            assert(count == 5)
         }
 
         "composition" - {
@@ -427,14 +333,11 @@ class MemoTest extends Test:
                     x * 2
                 }
 
-                val i1 = Memo.isolate.merge
-                val i2 = Emit.isolate.merge[Int]
-
-                val combined = i1.andThen(i2)
+                val isolate = Isolate.Stateful[Memo, Any].andThen(Emit.isolate.merge[Int])
 
                 val result = Memo.run {
                     Emit.run {
-                        combined.run {
+                        isolate.run {
                             for
                                 a <- f(1)
                                 _ <- Emit.value(a)
@@ -455,7 +358,7 @@ class MemoTest extends Test:
                     x * 2
                 }
 
-                val i1 = Memo.isolate.discard
+                val i1 = Isolate.Stateful[Memo, Any]
                 val i2 = Emit.isolate.merge[Int]
 
                 val result = Memo.run {
@@ -479,8 +382,8 @@ class MemoTest extends Test:
                         yield (count, a, c, e)
                     }
                 }
-                assert(result.eval == (Chunk(4, 6), (4, 2, 4, 6)))
-                assert(count == 4)
+                assert(result.eval == (Chunk(4, 6), (3, 2, 4, 6)))
+                assert(count == 3)
             }
         }
     }

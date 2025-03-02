@@ -38,7 +38,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     final private def eval(startMillis: Long, clock: InternalClock)(using Safepoint) =
         try
-            curr = Boundary.restoring(trace, this) {
+            curr = Isolate.restoring(trace, this) {
                 ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
                     stop =
                         shouldPreempt(),
