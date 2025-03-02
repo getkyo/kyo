@@ -97,7 +97,7 @@ final case class AtomicInt private (unsafe: AtomicInt.Unsafe):
       * @return
       *   The previous value
       */
-    inline def getAndUpdate(inline f: Int => Int)(using inline frame: Frame): Int < IO = IO.Unsafe(unsafe.getAndUpdate(f(_)))
+    inline def getAndUpdate(inline f: Int => Int)(using inline frame: Frame): Int < IO = IO.Unsafe(unsafe.getAndUpdate(f))
 
     /** Atomically updates the current value using the given function and returns the updated value.
       * @param f
@@ -105,7 +105,7 @@ final case class AtomicInt private (unsafe: AtomicInt.Unsafe):
       * @return
       *   The updated value
       */
-    inline def updateAndGet(inline f: Int => Int)(using inline frame: Frame): Int < IO = IO.Unsafe(unsafe.updateAndGet(f(_)))
+    inline def updateAndGet(inline f: Int => Int)(using inline frame: Frame): Int < IO = IO.Unsafe(unsafe.updateAndGet(f))
 
     /** Returns a string representation of the current value.
       * @return

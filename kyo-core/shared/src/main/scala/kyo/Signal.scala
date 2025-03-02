@@ -28,7 +28,7 @@ import scala.annotation.tailrec
   * @tparam A
   *   The type of value contained in the signal. Must have an instance of `CanEqual[A, A]`
   */
-abstract class Signal[A](using CanEqual[A, A]):
+sealed abstract class Signal[A](using CanEqual[A, A]):
     self =>
 
     /** Retrieves the current value of the signal.
