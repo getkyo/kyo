@@ -61,38 +61,21 @@ object STM:
       */
     def retryIf(cond: Boolean)(using Frame): Unit < STM = Abort.when(cond)(FailedTransaction())
 
-    /** Executes a transactional computation with explicit state isolation. This version of run supports additional effects beyond Abort and
-      * Async through the provided isolate, which ensures proper state management during transaction retries and rollbacks.
+    /** Executes a transactional computation with state isolation and the default retry schedule.
       *
       * @param isolate
       *   The isolation scope for the transaction
-      * @param retrySchedule
-      *   The schedule for retrying failed transactions
       * @param v
       *   The transactional computation to run
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A: Flat, S](isolate: Isolate[S], retrySchedule: Schedule = defaultRetrySchedule)(v: A < (STM & Abort[E] & Async & S))(
-        using frame: Frame
-    ): A < (S & Async & Abort[E | FailedTransaction]) =
-        isolate.use { st =>
-            run(retrySchedule)(isolate.resume(st, v)).map(isolate.restore(_, _))
-        }
-
-    /** Executes a transactional computation with default retry behavior. This version only supports Abort and Async effects within the
-      * transaction, but provides a simpler interface when additional effect isolation is not needed.
-      *
-      * @param v
-      *   The transactional computation to run
-      * @return
-      *   The result of the computation if successful
-      */
-    def run[E, A: Flat](v: A < (STM & Abort[E] & Async))(using frame: Frame): A < (Async & Abort[E | FailedTransaction]) =
+    def run[E, A: Flat, S](
+        using Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
+    )(v: A < (STM & Abort[E] & Async & S))(using frame: Frame): A < (S & Async & Abort[E | FailedTransaction]) =
         run(defaultRetrySchedule)(v)
 
-    /** Executes a transactional computation with custom retry behavior. Like the version above, this only supports Abort and Async effects
-      * but allows configuring how transaction conflicts are retried.
+    /** Executes a transactional computation with state isolation and the a custom retry schedule.
       *
       * @param retrySchedule
       *   The schedule for retrying failed transactions
@@ -101,7 +84,18 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(using Frame): A < (Async & Abort[E | FailedTransaction]) =
+    def run[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
+    )(retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async & S))(
+        using frame: Frame
+    ): A < (S & Async & Abort[E | FailedTransaction]) =
+        isolate.capture { st =>
+            isolate.restore(run(retrySchedule)(isolate.isolate(st, v)))
+        }
+
+    private def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
+        using Frame
+    ): A < (Async & Abort[E | FailedTransaction]) =
         TID.useIO {
             case -1L =>
                 // New transaction without a parent, use regular commit flow
