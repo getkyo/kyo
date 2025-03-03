@@ -9,7 +9,8 @@ import scala.scalanative.unsafe.*
   * An Arena is used to track off-heap allocations so that they can be automatically deallocated when the scope ends.
   */
 final class Arena extends AutoCloseable:
-    private val allocations = new ConcurrentLinkedQueue[Ptr[Byte]]()
+    private val allocations                  = new ConcurrentLinkedQueue[MemorySegment]()
+    @volatile private var _isClosed: Boolean = false
 
     /** Allocates a block of off-heap memory of the given size (in bytes).
       *
@@ -19,19 +20,24 @@ final class Arena extends AutoCloseable:
       *   A MemorySegment representing the allocated block.
       */
     def allocate(byteSize: Long): MemorySegment =
-        val segment = MemorySegment.allocate(byteSize)
-        allocations.add(segment.ptr)
+        if _isClosed then
+            throw new IllegalStateException("Arena is closed")
+        val segment = MemorySegment.allocate(byteSize, this)
+        allocations.add(segment)
         segment
     end allocate
 
     /** Frees all memory that was allocated through this Arena.
       */
     override def close(): Unit =
-        var ptr = allocations.poll()
-        while ptr != null do
-            free(ptr)
-            ptr = allocations.poll()
+        _isClosed = true
+        var seg = allocations.poll()
+        while seg != null do
+            free(seg.ptr)
+            seg = allocations.poll()
     end close
+
+    def isClosed: Boolean = _isClosed
 end Arena
 
 object Arena:
