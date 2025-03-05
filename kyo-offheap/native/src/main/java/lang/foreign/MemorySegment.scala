@@ -10,8 +10,8 @@ import scala.scalanative.unsigned.*
   * This implementation wraps a pointer along with the allocated size in bytes. It also provides basic support for slicing and for
   * reading/writing primitive values, which are used by the Layout instances in the shared code.
   */
-final class MemorySegment private (private[foreign] val ptr: Ptr[Byte], val byteSize: Long, private val arena: Arena):
-    private def checkOpen(): Unit =
+final class MemorySegment private (private[foreign] val ptr: Ptr[Byte], val byteSize: Long, arena: Arena):
+    private[MemorySegment] def checkOpen(): Unit =
         if arena.isClosed then
             throw new IllegalStateException("MemorySegment accessed after Arena was closed")
 
@@ -154,6 +154,8 @@ object MemorySegment:
       *   The number of bytes to copy.
       */
     def copy(srcSegment: MemorySegment, srcOffset: Long, dstSegment: MemorySegment, dstOffset: Long, bytes: Long): Unit =
+        srcSegment.checkOpen()
+        dstSegment.checkOpen()
         require(srcOffset + bytes <= srcSegment.byteSize)
         require(dstOffset + bytes <= dstSegment.byteSize)
         val _ = memcpy(dstSegment.ptr + dstOffset, srcSegment.ptr + srcOffset, bytes.toCSize)

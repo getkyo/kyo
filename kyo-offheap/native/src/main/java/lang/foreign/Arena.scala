@@ -11,6 +11,7 @@ import scala.scalanative.unsafe.*
 final class Arena extends AutoCloseable:
     private val allocations                  = new ConcurrentLinkedQueue[MemorySegment]()
     @volatile private var _isClosed: Boolean = false
+    def isClosed: Boolean                    = _isClosed
 
     /** Allocates a block of off-heap memory of the given size (in bytes).
       *
@@ -36,8 +37,6 @@ final class Arena extends AutoCloseable:
             free(seg.ptr)
             seg = allocations.poll()
     end close
-
-    def isClosed: Boolean = _isClosed
 end Arena
 
 object Arena:
