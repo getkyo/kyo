@@ -440,6 +440,6 @@ object Maybe:
                     new PresentAbsent(depth)
         end PresentAbsent
 
-        def constAbsent(ignored: Any): Absent = Absent
+        private val constAbsent: Any => Absent = _ => Absent
     end internal
 end Maybe
