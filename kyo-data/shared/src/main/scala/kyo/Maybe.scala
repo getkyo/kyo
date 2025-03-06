@@ -324,14 +324,8 @@ object Maybe:
           *   a new Maybe containing the result of the partial function if defined and applicable, or Absent otherwise
           */
         inline def collect[B](pf: PartialFunction[A, B]): Maybe[B] =
-            if !isEmpty then
-                val value = get
-                if pf.isDefinedAt(value) then
-                    pf(value)
-                else
-                    Absent
-                end if
-            else Absent
+            if isEmpty then Absent
+            else pf.applyOrElse(get, constAbsent)
 
         /** Returns this Maybe if defined, or an alternative Maybe if empty.
           *
@@ -445,5 +439,7 @@ object Maybe:
                 else
                     new PresentAbsent(depth)
         end PresentAbsent
+
+        val constAbsent: Any => Absent = _ => Absent
     end internal
 end Maybe
