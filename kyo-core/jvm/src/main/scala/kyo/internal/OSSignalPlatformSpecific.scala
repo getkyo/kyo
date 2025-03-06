@@ -1,6 +1,6 @@
 package kyo.internal
 
-import Signal.Handler
+import OSSignal.Handler
 import java.lang.invoke.MethodHandle
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
@@ -13,7 +13,7 @@ import kyo.Result
 /** This class provides a jvm-specific implementation of signal handling. It uses reflection to install signal handlers as they may not be
   * available on all implementations of the JVM.
   */
-private[internal] class SignalPlatformSpecific:
+private[internal] class OSSignalPlatformSpecific:
     private val logger = Logger.getLogger("kyo.internal.Signal")
     val handle: Handler = {
         for
@@ -47,7 +47,7 @@ private[internal] class SignalPlatformSpecific:
                         this
 
             val proxy = Proxy.newProxyInstance(
-                Signal.getClass.getClassLoader,
+                OSSignal.getClass.getClassLoader,
                 Array(signalHandlerClass),
                 invocationHandler
             )
@@ -89,4 +89,4 @@ private[internal] class SignalPlatformSpecific:
             )
         }
     end initHandleStaticMethodHandle
-end SignalPlatformSpecific
+end OSSignalPlatformSpecific

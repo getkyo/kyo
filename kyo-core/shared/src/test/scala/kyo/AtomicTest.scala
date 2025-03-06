@@ -97,6 +97,21 @@ class AtomicTest extends Test:
                 v <- AtomicInt.initWith(5)(ref => ref.incrementAndGet)
             yield assert(v == 6)
         }
+        "should get and update the value" in run {
+            for
+                ref <- AtomicInt.init(5)
+                v   <- ref.getAndUpdate(_ + 1)
+                r   <- ref.get
+            yield
+                assert(v == 5)
+                assert(r == 6)
+        }
+        "should update and get the value" in run {
+            for
+                ref <- AtomicInt.init(5)
+                v   <- ref.updateAndGet(_ + 1)
+            yield assert(v == 6)
+        }
     }
 
     "long" - {
@@ -192,6 +207,21 @@ class AtomicTest extends Test:
         "should use new atomic with initial value" in run {
             for
                 v <- AtomicLong.initWith(5L)(ref => ref.incrementAndGet)
+            yield assert(v == 6L)
+        }
+        "should get and update the value" in run {
+            for
+                ref <- AtomicLong.init(5L)
+                v   <- ref.getAndUpdate(_ + 1)
+                r   <- ref.get
+            yield
+                assert(v == 5L)
+                assert(r == 6L)
+        }
+        "should update and get the value" in run {
+            for
+                ref <- AtomicLong.init(5L)
+                v   <- ref.updateAndGet(_ + 1)
             yield assert(v == 6L)
         }
     }
@@ -316,6 +346,21 @@ class AtomicTest extends Test:
                 v <- AtomicRef.initWith("hello")(ref => ref.get)
             yield assert(v == "hello")
         }
+        "should get and update the value" in run {
+            for
+                ref <- AtomicRef.init("hello")
+                v   <- ref.getAndUpdate(_.toUpperCase)
+                r   <- ref.get
+            yield
+                assert(v == "hello")
+                assert(r == "HELLO")
+        }
+        "should update and get the value" in run {
+            for
+                ref <- AtomicRef.init("hello")
+                v   <- ref.updateAndGet(_.toUpperCase)
+            yield assert(v == "HELLO")
+        }
     }
 
     "unsafe" - {
@@ -385,6 +430,17 @@ class AtomicTest extends Test:
                 assert(v == 5)
                 assert(ref.get() == 10)
             }
+            "should get and update the value" in {
+                val ref = AtomicInt.Unsafe.init(5)
+                val v   = ref.getAndUpdate(_ + 1)
+                assert(v == 5)
+                assert(ref.get() == 6)
+            }
+            "should update and get the value" in {
+                val ref = AtomicInt.Unsafe.init(5)
+                val v   = ref.updateAndGet(_ + 1)
+                assert(v == 6)
+            }
         }
 
         "long" - {
@@ -450,6 +506,17 @@ class AtomicTest extends Test:
                 val v   = ref.getAndSet(10L)
                 assert(v == 5L)
                 assert(ref.get() == 10L)
+            }
+            "should get and update the value" in {
+                val ref = AtomicLong.Unsafe.init(5L)
+                val v   = ref.getAndUpdate(_ + 1)
+                assert(v == 5L)
+                assert(ref.get() == 6L)
+            }
+            "should update and get the value" in {
+                val ref = AtomicLong.Unsafe.init(5L)
+                val v   = ref.updateAndGet(_ + 1)
+                assert(v == 6L)
             }
         }
     }

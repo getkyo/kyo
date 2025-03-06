@@ -4,12 +4,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kyo.Test
 
-class SignalTest extends Test:
+class OSSignalTest extends Test:
 
     "handles on signal" in {
         val wasHandled = new CountDownLatch(1)
 
-        Signal.handle("USR2", wasHandled.countDown())
+        OSSignal.handle("USR2", wasHandled.countDown())
 
         val signal = new sun.misc.Signal("USR2")
         sun.misc.Signal.raise(signal)
@@ -19,7 +19,7 @@ class SignalTest extends Test:
 
     "lazy" in {
         var wasHandled = false
-        Signal.handle("USR2", { wasHandled = true })
+        OSSignal.handle("USR2", { wasHandled = true })
         assert(!wasHandled)
     }
-end SignalTest
+end OSSignalTest
