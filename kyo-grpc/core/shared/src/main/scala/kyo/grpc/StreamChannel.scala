@@ -5,10 +5,12 @@ import kyo.kernel.Loop.Outcome
 
 object StreamChannel:
 
+    final private[kyo] val Capacity = 42
+
     // TODO: Set the capacity to something else that matches how we backpressure.
     // TODO: Double check the access pattern here.
     def init[A, E](using Frame): Channel[Result[E, A]] < IO =
-        Channel.init[Result[E, A]](capacity = 42, access = Access.SingleProducerSingleConsumer)
+        Channel.init[Result[E, A]](capacity = Capacity, access = Access.SingleProducerSingleConsumer)
 
     def stream[A: Tag, E, S](channel: Channel[Result[E, A]] < S, complete: AtomicBoolean < S)(using
         Frame

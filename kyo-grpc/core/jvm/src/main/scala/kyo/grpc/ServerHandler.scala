@@ -36,6 +36,8 @@ object ServerHandler:
         ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
             val completed = StreamNotifier.notifyObserver(Stream.embed(f(request)), responseObserver)
             KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
+            // TODO: Remove this.
+            println("ServerHandler.serverStreaming Done")
         }
 
     def bidiStreaming[

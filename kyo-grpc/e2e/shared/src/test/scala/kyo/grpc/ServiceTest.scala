@@ -15,91 +15,91 @@ import scala.util.chaining.scalaUtilChainingOps
 
 class ServiceTest extends Test:
 
-    // "unary" - {
-    //     "echo" in run {
-    //         for
-    //             client <- createClientAndServer
-    //             message = "Hello"
-    //             request = Say(message)
-    //             response <- client.oneToOne(request)
-    //         yield assert(response == Echo(message))
-    //     }
+    "unary" - {
+        "echo" in run {
+            for
+                client <- createClientAndServer
+                message = "Hello"
+                request = Say(message)
+                response <- client.oneToOne(request)
+            yield assert(response == Echo(message))
+        }
 
-    //     "abort" in {
-    //         forEvery(notOKStatusCodes) { code =>
-    //             run {
-    //                 val status = code.toStatus
-    //                 // TODO: No StatusRuntimeExceptions
-    //                 val expected = status.asRuntimeException(trailers)
-    //                 Abort.run[StatusRuntimeException] {
-    //                     for
-    //                         client <- createClientAndServer
-    //                         request = Cancel(status.getCode.value)
-    //                         _ <- client.oneToOne(request)
-    //                     yield ()
-    //                 }.map(assertStatusRuntimeException(_, expected))
-    //             }
-    //         }
-    //     }
+        "cancel" in {
+            forEvery(notOKStatusCodes) { code =>
+                run {
+                    val status = code.toStatus
+                    // TODO: No StatusRuntimeExceptions
+                    val expected = status.asRuntimeException(trailers)
+                    Abort.run[StatusRuntimeException] {
+                        for
+                            client <- createClientAndServer
+                            request = Cancel(status.getCode.value)
+                            _ <- client.oneToOne(request)
+                        yield ()
+                    }.map(assertStatusRuntimeException(_, expected))
+                }
+            }
+        }
 
-    //     "fail" in run {
-    //         val message = "Oh no!"
-    //         // TODO: No StatusRuntimeExceptions
-    //         val expected = Status.INTERNAL.withDescription(message).asRuntimeException(trailers)
-    //         Abort.run[StatusRuntimeException] {
-    //             for
-    //                 client <- createClientAndServer
-    //                 request = Fail(message)
-    //                 _ <- client.oneToOne(request)
-    //             yield ()
-    //         }.map(assertStatusRuntimeException(_, expected))
-    //     }
-    // }
+        "fail" in run {
+            val message = "Oh no!"
+            // TODO: No StatusRuntimeExceptions
+            val expected = Status.INTERNAL.withDescription(message).asRuntimeException(trailers)
+            Abort.run[StatusRuntimeException] {
+                for
+                    client <- createClientAndServer
+                    request = Fail(message)
+                    _ <- client.oneToOne(request)
+                yield ()
+            }.map(assertStatusRuntimeException(_, expected))
+        }
+    }
 
     "server streaming" - {
-        // "echo" in run {
-        //     for
-        //         client <- createClientAndServer
-        //         message = "Hello"
-        //         request = Say(message, count = 5)
-        //         responses <- client.oneToMany(request).run
-        //     yield assert(responses == Chunk.from((1 to 5).map(n => Echo(s"$message $n"))))
-        // }
+        "echo" in run {
+            for
+                client <- createClientAndServer
+                message = "Hello"
+                request = Say(message, count = 5)
+                responses <- client.oneToMany(request).run
+            yield assert(responses == Chunk.from((1 to 5).map(n => Echo(s"$message $n"))))
+        }
 
         "cancel" - {
-            // "producing stream" in {
-            //     forEvery(notOKStatusCodes) { code =>
-            //         run {
-            //             val status = code.toStatus
-            //             // TODO: Why no trailers here?
-            //             val expected = status.asException // (trailers)
-            //             Abort.run[StatusException] {
-            //                 for
-            //                     client <- createClientAndServer
-            //                     request = Cancel(status.getCode.value, outside = true)
-            //                     _ <- client.oneToMany(request).run
-            //                 yield ()
-            //             }.map(assertStatusException(_, expected))
-            //         }
-            //     }
-            // }
+            "producing stream" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status = code.toStatus
+                        // TODO: Why no trailers here?
+                        val expected = status.asException // (trailers)
+                        Abort.run[StatusException] {
+                            for
+                                client <- createClientAndServer
+                                request = Cancel(status.getCode.value, outside = true)
+                                _ <- client.oneToMany(request).run
+                            yield ()
+                        }.map(assertStatusException(_, expected))
+                    }
+                }
+            }
 
-            // "first element" in {
-            //     forEvery(notOKStatusCodes) { code =>
-            //         run {
-            //             val status = code.toStatus
-            //             // TODO: Why no trailers here?
-            //             val expected = status.asException // (trailers)
-            //             Abort.run[StatusException] {
-            //                 for
-            //                     client <- createClientAndServer
-            //                     request = Cancel(status.getCode.value)
-            //                     _ <- client.oneToMany(request).take(1).run
-            //                 yield ()
-            //             }.map(assertStatusException(_, expected))
-            //         }
-            //     }
-            // }
+            "first element" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status = code.toStatus
+                        // TODO: Why no trailers here?
+                        val expected = status.asException // (trailers)
+                        Abort.run[StatusException] {
+                            for
+                                client <- createClientAndServer
+                                request = Cancel(status.getCode.value)
+                                _ <- client.oneToMany(request).take(1).run
+                            yield ()
+                        }.map(assertStatusException(_, expected))
+                    }
+                }
+            }
 
             "after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
@@ -124,43 +124,43 @@ class ServiceTest extends Test:
             }
         }
 
-        // "fail" - {
-        //     "producing stream" in run {
-        //         val message  = "Oh no!"
-        //         val expected = Status.INTERNAL.withDescription(message).asException
-        //         Abort.run[StatusException] {
-        //             for
-        //                 client <- createClientAndServer
-        //                 request = Fail(message)
-        //                 _ <- client.oneToMany(request).runDiscard
-        //             yield ()
-        //         }.map(assertStatusException(_, expected))
-        //     }
+        "fail" - {
+            "producing stream" in run {
+                val message  = "Oh no!"
+                val expected = Status.INTERNAL.withDescription(message).asException
+                Abort.run[StatusException] {
+                    for
+                        client <- createClientAndServer
+                        request = Fail(message)
+                        _ <- client.oneToMany(request).run
+                    yield ()
+                }.map(assertStatusException(_, expected))
+            }
 
-        //     "first element" in run {
-        //         val message  = "Oh no!"
-        //         val expected = Status.INTERNAL.withDescription(message).asException
-        //         Abort.run[StatusException] {
-        //             for
-        //                 client <- createClientAndServer
-        //                 request = Fail(message)
-        //                 _ <- client.oneToMany(request).runDiscard
-        //             yield ()
-        //         }.map(assertStatusException(_, expected))
-        //     }
+            "first element" in run {
+                val message  = "Oh no!"
+                val expected = Status.INTERNAL.withDescription(message).asException
+                Abort.run[StatusException] {
+                    for
+                        client <- createClientAndServer
+                        request = Fail(message)
+                        _ <- client.oneToMany(request).run
+                    yield ()
+                }.map(assertStatusException(_, expected))
+            }
 
-        //     "after some elements" in run {
-        //         val message  = "Oh no!"
-        //         val expected = Status.INTERNAL.withDescription(message).asException
-        //         Abort.run[StatusException] {
-        //             for
-        //                 client <- createClientAndServer
-        //                 request = Fail(message)
-        //                 _ <- client.oneToMany(request).runDiscard
-        //             yield ()
-        //         }.map(assertStatusException(_, expected))
-        //     }
-        // }
+            "after some elements" in run {
+                val message  = "Oh no!"
+                val expected = Status.INTERNAL.withDescription(message).asException
+                Abort.run[StatusException] {
+                    for
+                        client <- createClientAndServer
+                        request = Fail(message)
+                        _ <- client.oneToMany(request).run
+                    yield ()
+                }.map(assertStatusException(_, expected))
+            }
+        }
     }
 
     // TODO: For client streaming test sending nothing.
