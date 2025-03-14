@@ -1,7 +1,6 @@
 package kyo.interop.flow
 
 import kyo.*
-import kyo.Duration
 import kyo.Result.Failure
 import kyo.Result.Success
 import kyo.interop.flow.StreamSubscriber.EmitStrategy

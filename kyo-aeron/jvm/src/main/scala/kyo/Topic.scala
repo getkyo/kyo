@@ -7,9 +7,6 @@ import io.aeron.driver.MediaDriver
 import io.aeron.logbuffer.BufferClaim
 import io.aeron.logbuffer.Header
 import org.agrona.DirectBuffer
-import scala.annotation.implicitNotFound
-import scala.annotation.targetName
-import scala.compiletime.*
 import upickle.default.*
 
 /** High-performance publish-subscribe messaging for local and distributed systems.

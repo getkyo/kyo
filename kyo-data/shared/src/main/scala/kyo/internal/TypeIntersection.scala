@@ -1,9 +1,6 @@
 package kyo.internal
 
 import TypeIntersection.*
-import scala.annotation.implicitNotFound
-import scala.compiletime.erasedValue
-import scala.compiletime.summonAll
 import scala.compiletime.summonInline
 import scala.quoted.*
 

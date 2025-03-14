@@ -1,6 +1,5 @@
 package kyo
 
-import scala.annotation.nowarn
 import scala.language.implicitConversions
 
 /** Provides Text representation of a type. Needed for customizing how to display opaque types as alternative to toString

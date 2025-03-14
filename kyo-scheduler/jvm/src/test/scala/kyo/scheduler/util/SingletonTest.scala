@@ -4,12 +4,10 @@ import java.net.URL
 import java.net.URLClassLoader
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
-import scala.util.Random
 
 class TestInstance(val value: Int)
 class TestSingleton extends Singleton[TestInstance] {

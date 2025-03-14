@@ -1,7 +1,6 @@
 package kyo.scheduler
 
 import IOPromise.*
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.*
 import kyo.Result.Error

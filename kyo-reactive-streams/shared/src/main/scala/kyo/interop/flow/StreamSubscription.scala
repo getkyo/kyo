@@ -4,8 +4,6 @@ import StreamSubscription.*
 import java.util.concurrent.Flow.*
 import kyo.*
 import kyo.kernel.ArrowEffect
-import kyo.scheduler.IOPromise
-import kyo.scheduler.IOTask
 
 final private[kyo] class StreamSubscription[V, S](
     private val stream: Stream[V, S & IO],

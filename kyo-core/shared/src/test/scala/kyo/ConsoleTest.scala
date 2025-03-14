@@ -1,10 +1,8 @@
 package kyo
 
-import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.io.PrintStream
-import java.io.StringWriter
 
 class ConsoleTest extends Test:
 
