@@ -1,8 +1,5 @@
 package kyo
 
-import scala.concurrent.Future
-import scala.util.Try
-
 class EmitCombinatorTest extends Test:
 
     given ce[A, B]: CanEqual[A, B] = CanEqual.canEqualAny

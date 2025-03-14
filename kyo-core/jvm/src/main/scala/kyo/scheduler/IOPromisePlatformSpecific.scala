@@ -1,7 +1,6 @@
 package kyo.scheduler
 
 import java.lang.invoke.MethodHandles
-import java.lang.invoke.VarHandle
 import kyo.Present
 import kyo.scheduler.IOPromise.State
 

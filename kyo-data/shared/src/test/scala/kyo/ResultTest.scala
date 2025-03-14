@@ -1,6 +1,5 @@
 package kyo
 
-import java.io.IOException
 import kyo.Result
 import kyo.Result.*
 import scala.util.Try

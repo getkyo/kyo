@@ -1,10 +1,7 @@
 package kyo
 
 import java.lang.foreign.{Arena as JArena, *}
-import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
-import scala.deriving.Mirror
-import scala.math.Numeric.Implicits.infixNumericOps
 
 /** Memory provides a safe, effect-tracked interface for off-heap memory management.
   *

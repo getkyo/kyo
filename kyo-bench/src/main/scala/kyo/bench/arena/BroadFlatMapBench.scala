@@ -1,7 +1,5 @@
 package kyo.bench.arena
 
-import org.openjdk.jmh.annotations.*
-
 class BroadFlatMapBench extends ArenaBench.SyncAndFork(BigInt(610)):
 
     val depth = 15

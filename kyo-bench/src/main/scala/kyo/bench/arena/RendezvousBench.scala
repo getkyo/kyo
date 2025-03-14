@@ -1,7 +1,5 @@
 package kyo.bench.arena
 
-import org.openjdk.jmh.annotations.*
-
 class RendezvousBench extends ArenaBench.ForkOnly(10000 * (10000 + 1) / 2):
 
     given canEqualNull[A]: CanEqual[A, A | Null] = CanEqual.derived

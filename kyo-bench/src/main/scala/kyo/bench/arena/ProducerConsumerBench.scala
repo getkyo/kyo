@@ -1,7 +1,5 @@
 package kyo.bench.arena
 
-import org.openjdk.jmh.annotations.Benchmark
-
 class ProducerConsumerBench extends ArenaBench.ForkOnly(()):
 
     val depth = 10000

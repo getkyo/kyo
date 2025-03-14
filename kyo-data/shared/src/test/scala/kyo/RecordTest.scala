@@ -1,7 +1,6 @@
 package kyo
 
 import Record.Field
-import kyo.Record.AsRecord.FieldsOf
 import kyo.internal.TypeIntersection
 
 class RecordTest extends Test:
@@ -609,25 +608,23 @@ class RecordTest extends Test:
         }
 
         "AsFields behavior" - {
-            import Record.AsFields
-
             val error = "No given instance of type kyo.AsFieldsInternal.HasAsField"
 
             "summoning AsFields instance" in {
                 typeCheckFailure("""
-                    summon[AsFields[Int & "name" ~ String & "age" ~ Int]]
+                    summon[Record.AsFields[Int & "name" ~ String & "age" ~ Int]]
                 """)(error)
             }
 
             "AsFields with multiple raw types" in {
                 typeCheckFailure("""
-                    AsFields[Int & Boolean & "value" ~ String & String]
+                    Record.AsFields[Int & Boolean & "value" ~ String & String]
                 """)(error)
             }
 
             "AsFields with duplicate field names" in {
                 typeCheckFailure("""
-                   AsFields[Int & "value" ~ String & "value" ~ Int]
+                   Record.AsFields[Int & "value" ~ String & "value" ~ Int]
                 """)(error)
             }
 

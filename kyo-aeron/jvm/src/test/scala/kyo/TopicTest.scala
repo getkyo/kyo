@@ -2,7 +2,6 @@ package kyo
 
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
-import kyo.debug.Debug
 
 class TopicTest extends Test:
 

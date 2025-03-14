@@ -1,8 +1,5 @@
 package kyo
 
-import org.scalatest.Assertions
-import org.scalatest.freespec.AnyFreeSpec
-
 class HygieneTest extends Test:
 
     "use of var" in {
