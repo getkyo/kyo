@@ -81,6 +81,19 @@ class PathTest extends Test:
             succeed
         }
 
+        "readAll" in run {
+            val first  = "first.txt"
+            val second = "second.txt"
+            val text   = "text content"
+            val root   = Path()
+            for
+                _ <- useFile(first, text)
+                _ <- useFile(second, text)
+                v <- root.readAll("txt")
+            yield assert(v == List(first -> text, second -> text))
+            end for
+        }
+
         "append to file from string" in run {
             val name = "read-file-string.txt"
             val text = "some text"

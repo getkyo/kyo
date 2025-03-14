@@ -1,6 +1,6 @@
 package kyo
 
-import java.io.*
+import java.io.{IO as _, *}
 import java.lang.Process as JProcess
 import java.lang.ProcessBuilder.Redirect
 import java.lang.System as JSystem
