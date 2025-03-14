@@ -492,7 +492,7 @@ class ChannelTest extends Test:
 
         "no buffer" in runNotJS {
             for
-                c  <- Channel.init[Int](10)
+                c  <- Channel.init[Int](0)
                 f1 <- Async.run(Async.repeat(1000, 1000)(c.put(1)))
                 f2 <- Async.run(Async.repeat(1000, 1000)(c.take))
                 _  <- f1.get
