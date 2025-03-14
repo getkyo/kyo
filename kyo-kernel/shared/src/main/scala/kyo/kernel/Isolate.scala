@@ -1,12 +1,8 @@
 package kyo.kernel
 
 import kyo.Ansi.*
-import kyo.Const
 import kyo.Flat
 import kyo.Frame
-import kyo.Maybe
-import kyo.Tag
-import kyo.internal.TypeIntersection
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.quoted.*

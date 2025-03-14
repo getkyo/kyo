@@ -18,7 +18,6 @@ import kyo.scheduler.top.Reporter
 import kyo.scheduler.top.Status
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
-import kyo.scheduler.util.Singleton
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn

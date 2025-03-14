@@ -13,7 +13,6 @@ import java.io.PrintStream
 import java.io.PrintWriter
 import java.net.HttpURLConnection
 import java.net.URL
-import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 import scala.util.control.NonFatal

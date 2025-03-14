@@ -2,7 +2,6 @@ package kyo
 
 import Result.*
 import scala.annotation.implicitNotFound
-import scala.annotation.targetName
 import scala.util.Try
 import scala.util.control.NonFatal
 

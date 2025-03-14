@@ -1,7 +1,5 @@
 package kyo.bench.arena
 
-import org.openjdk.jmh.annotations.*
-
 class ForkSpawnBench extends ArenaBench.ForkOnly(()):
 
     val depth = 5

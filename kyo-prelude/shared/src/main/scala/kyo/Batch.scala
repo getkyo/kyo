@@ -1,6 +1,8 @@
 package kyo
 
 import Batch.internal.*
+import Batch.internal.Pending.Expanded
+import Batch.internal.Pending.ToExpand
 import kyo.Tag
 import kyo.kernel.*
 
@@ -102,18 +104,10 @@ object Batch:
       *   A sequence of results from executing the batched operations
       */
     def run[A: Flat, S](v: A < (Batch & S))(using Frame): Chunk[A] < S =
-
-        type SourceAny = Source[Any, Any, S]
-        type ContAny   = Any < (Batch & S) => (ToExpand | Expanded | A) < (Batch & S)
-
-        abstract class Pending
-        case class ToExpand(op: Seq[Any], cont: ContAny)                  extends Pending
-        case class Expanded(value: Any, source: SourceAny, cont: ContAny) extends Pending
-
         // An item can be a final value (`A`),
         // a sequence from `Batch.eval` (`ToExpand`),
         // or a call to a source (`Expanded`).
-        type Item = A | ToExpand | Expanded
+        type Item = A | ToExpand[A, S] | Expanded[A, S]
 
         // Transforms effect suspensions into an item.
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
@@ -121,9 +115,9 @@ object Batch:
             ArrowEffect.handle(Tag[Batch], v) {
                 [C] =>
                     (input, cont) =>
-                        val contAny = cont.asInstanceOf[ContAny]
+                        val contAny = cont.asInstanceOf[ContAny[A, S]]
                         input match
-                            case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny], contAny)
+                            case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny[S]], contAny)
                             case Eval(v)         => ToExpand(v, contAny)
             }
 
@@ -131,7 +125,7 @@ object Batch:
         // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
         def expand(items: Chunk[Item]): Chunk[Chunk[Item]] < S =
             Kyo.foreach(items) {
-                case ToExpand(seq: Seq[Any], cont) =>
+                case ToExpand[A @unchecked, S @unchecked](seq: Seq[Any], cont) =>
                     Kyo.foreach(seq)(v => capture(cont(v)))
                 case item => Chunk(item)
             }
@@ -139,17 +133,17 @@ object Batch:
         // Groups all source calls (`Expanded`), calls their source functions, and reassembles the results.
         // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
         def flush(items: Chunk[Item]): Chunk[Chunk[Item]] < S =
-            val pending: Map[SourceAny | Unit, Seq[Item]] =
+            val pending: Map[SourceAny[S] | Unit, Seq[Item]] =
                 items.groupBy {
-                    case Expanded(_, source, _) => source
-                    case _                      => () // Used as a placeholder for items that aren't source calls
+                    case (Expanded[A @unchecked, S @unchecked](_, source, _)) => source
+                    case _ => () // Used as a placeholder for items that aren't source calls
                 }
             Kyo.foreach(pending.toSeq) { tuple =>
                 (tuple: @unchecked) match
                     case (_: Unit, items) =>
                         // No need for flushing
                         Chunk.from(items)
-                    case (source: SourceAny, items: Seq[Expanded] @unchecked) =>
+                    case (source: SourceAny[S], items: Seq[Expanded[A, S]] @unchecked) =>
                         // Only request distinct items from the source
                         source(items.map(_.value).distinct).map { results =>
                             // Reassemble the results by iterating on the original collection
@@ -163,13 +157,13 @@ object Batch:
 
         // The main evaluation loop that expands and flushes items until all values are final.
         def loop(items: Chunk[Item]): Chunk[A] < S =
-            if !items.exists((_: @unchecked).isInstanceOf[Pending]) then
+            if !items.exists((_: @unchecked).isInstanceOf[Pending[A, S]]) then
                 // All values are final, done
                 items.asInstanceOf[Chunk[A]]
             else
                 // The code repetition in the branches is a performance optimization to reduce
                 // `map` calls.
-                if items.exists((_: @unchecked).isInstanceOf[ToExpand]) then
+                if items.exists((_: @unchecked).isInstanceOf[ToExpand[A, S]]) then
                     // Expand `Batch.eval` calls if present
                     expand(items).map { expanded =>
                         flush(expanded.flattenChunk)
@@ -185,10 +179,16 @@ object Batch:
 
     object internal:
         type Source[A, B, S] = Seq[A] => (A => B < S) < S
+        type SourceAny[S]    = Source[Any, Any, S]
 
         sealed trait Op[A]
         case class Eval[A](seq: Seq[A])                         extends Op[A]
         case class Call[A, B, S](v: A, source: Source[A, B, S]) extends Op[B < (Batch & S)]
-    end internal
 
+        enum Pending[A, S]:
+            case ToExpand(op: Seq[Any], cont: ContAny[A, S])
+            case Expanded(value: Any, source: SourceAny[S], cont: ContAny[A, S])
+
+        type ContAny[A, S] = Any < (Batch & S) => (ToExpand[A, S] | Expanded[A, S] | A) < (Batch & S)
+    end internal
 end Batch

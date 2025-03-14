@@ -177,23 +177,23 @@ object ValueLayout:
     trait OfFloat   extends ValueLayout
     trait OfDouble  extends ValueLayout
 
-    case object JAVA_BOOLEAN extends OfBoolean:
+    val JAVA_BOOLEAN = new OfBoolean:
         val byteSize = sizeOf[CBool]
-    case object JAVA_BYTE extends OfByte:
+    val JAVA_BYTE = new OfByte:
         val byteSize = sizeOf[Byte]
-    case object JAVA_CHAR extends OfChar:
+    val JAVA_CHAR = new OfChar:
         val byteSize = sizeOf[CChar]
-    case object JAVA_SHORT extends OfShort:
+    val JAVA_SHORT = new OfShort:
         val byteSize = sizeOf[CShort]
-    case object JAVA_INT extends OfInt:
+    val JAVA_INT = new OfInt:
         val byteSize = sizeOf[CInt]
-    case object JAVA_LONG extends OfLong:
+    val JAVA_LONG = new OfLong:
         val byteSize = sizeOf[CLong]
-    case object JAVA_FLOAT extends OfFloat:
+    val JAVA_FLOAT = new OfFloat:
         val byteSize = sizeOf[CFloat]
-    case object JAVA_DOUBLE extends OfDouble:
+    val JAVA_DOUBLE = new OfDouble:
         val byteSize = sizeOf[CDouble]
-    case object ADDRESS extends AddressLayout:
+    val ADDRESS = new AddressLayout:
         val byteSize = sizeOf[Ptr[Byte]]
 end ValueLayout
 

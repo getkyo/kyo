@@ -1,8 +1,6 @@
 package kyo
 
-import kyo.Emit.valueWith
 import kyo.Memory.Unsafe
-import kyo.internal.LayerMacros.Validated.succeed
 
 class MemoryTest extends Test:
 

@@ -10,7 +10,6 @@ import scala.compiletime.summonInline
 import scala.deriving.Mirror
 import scala.language.dynamics
 import scala.language.implicitConversions
-import scala.util.NotGiven
 
 /** A type-safe, immutable record structure that maps field names to values. Records solve the common need to work with flexible key-value
   * structures while maintaining type safety at compile time. Unlike traditional maps or case classes, Records allow dynamic field
@@ -294,10 +293,12 @@ object Record:
 end Record
 
 object AsFieldsInternal:
-    private type HasAsField[Field] =
+    private type HasAsField[Field] <: AsField[?, ?] =
         Field match
             case name ~ value => AsField[name, value]
 
     inline def summonAsField[Fields](using ev: TypeIntersection[Fields]): Set[Field[?, ?]] =
-        TypeIntersection.summonAll[Fields, HasAsField].map(Record.AsField.toField).toSet
+        TypeIntersection.summonAll[Fields, HasAsField].map {
+            case a: AsField[?, ?] => Record.AsField.toField(a)
+        }.toSet
 end AsFieldsInternal
