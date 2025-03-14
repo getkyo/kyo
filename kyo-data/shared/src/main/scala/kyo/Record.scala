@@ -293,10 +293,12 @@ object Record:
 end Record
 
 object AsFieldsInternal:
-    private type HasAsField[Field] =
+    private type HasAsField[Field] <: AsField[?, ?] =
         Field match
             case name ~ value => AsField[name, value]
 
     inline def summonAsField[Fields](using ev: TypeIntersection[Fields]): Set[Field[?, ?]] =
-        TypeIntersection.summonAll[Fields, HasAsField].map(Record.AsField.toField).toSet
+        TypeIntersection.summonAll[Fields, HasAsField].map {
+            case a: AsField[?, ?] => Record.AsField.toField(a)
+        }.toSet
 end AsFieldsInternal
