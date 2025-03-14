@@ -64,19 +64,35 @@ object Kyo:
 
     /** Zips six effects into a tuple.
       */
-    def zip[A1, A2, A3, A4, A5, A6, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S)(using Frame): (A1, A2, A3, A4, A5, A6) < S =
+    def zip[A1, A2, A3, A4, A5, A6, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S)(using
+        Frame
+    ): (A1, A2, A3, A4, A5, A6) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => (t1, t2, t3, t4, t5, t6)))))))
 
-    /** Zips seven effects into a tuple.
-      *   A new effect that produces a tuple of the results
+    /** Zips seven effects into a tuple. A new effect that produces a tuple of the results
       */
-    def zip[A1, A2, A3, A4, A5, A6, A7, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S, v7: A7 < S)(using Frame): (A1, A2, A3, A4, A5, A6, A7) < S =
+    def zip[A1, A2, A3, A4, A5, A6, A7, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S, v7: A7 < S)(using
+        Frame
+    ): (A1, A2, A3, A4, A5, A6, A7) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => v7.map(t7 => (t1, t2, t3, t4, t5, t6, t7))))))))
 
     /** Zips eight effects into a tuple.
       */
-    def zip[A1, A2, A3, A4, A5, A6, A7, A8, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S, v7: A7 < S, v8: A8 < S)(using Frame): (A1, A2, A3, A4, A5, A6, A7, A8) < S =
-        v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => v7.map(t7 => v8.map(t8 => (t1, t2, t3, t4, t5, t6, t7, t8)))))))))
+    def zip[A1, A2, A3, A4, A5, A6, A7, A8, S](
+        v1: A1 < S,
+        v2: A2 < S,
+        v3: A3 < S,
+        v4: A4 < S,
+        v5: A5 < S,
+        v6: A6 < S,
+        v7: A7 < S,
+        v8: A8 < S
+    )(using Frame): (A1, A2, A3, A4, A5, A6, A7, A8) < S =
+        v1.map(t1 =>
+            v2.map(t2 =>
+                v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => v7.map(t7 => v8.map(t8 => (t1, t2, t3, t4, t5, t6, t7, t8)))))))
+            )
+        )
 
     /** Applies an effect-producing function to each element of a sequence.
       *
