@@ -2,7 +2,7 @@ package kyo.internal
 
 /** This class provides a platform-specific implementation of signal handling.
   */
-private[kyo] object OSSignal extends OSSignalPlatformSpecific:
+private[kyo] object OsSignal extends OsSignalPlatformSpecific:
     /** A handler for signals. */
     abstract class Handler:
         def apply(signal: String, handle: => Unit): Unit
@@ -15,4 +15,4 @@ private[kyo] object OSSignal extends OSSignalPlatformSpecific:
             override def toString = s"Signal.Handler.Noop"
         end Noop
     end Handler
-end OSSignal
+end OsSignal

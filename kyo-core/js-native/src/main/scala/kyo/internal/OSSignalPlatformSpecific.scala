@@ -1,4 +1,4 @@
 package kyo.internal
 
-private[internal] class OSSignalPlatformSpecific:
-    val handle: OSSignal.Handler = OSSignal.Handler.Noop
+private[internal] class OsSignalPlatformSpecific:
+    val handle: OsSignal.Handler = OsSignal.Handler.Noop

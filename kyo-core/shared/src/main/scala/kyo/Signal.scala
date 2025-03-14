@@ -131,6 +131,8 @@ sealed abstract class Signal[A](using CanEqual[A, A]):
 
 end Signal
 
+export Signal.SignalRef
+
 object Signal:
 
     private inline val missingCanEqual =
@@ -153,7 +155,7 @@ object Signal:
         frame: Frame,
         @implicitNotFound(missingCanEqual)
         canEqual: CanEqual[A, A]
-    ): Ref[A] < IO =
+    ): SignalRef[A] < IO =
         initRefWith[A](initial)(identity)
 
     /** Creates a new mutable signal reference with an initial value and applies a transformation function.
@@ -174,13 +176,13 @@ object Signal:
       * @tparam S
       *   The effect type of the transformation function
       */
-    def initRefWith[A](initial: A)[B, S](f: Ref[A] => B < S)(
+    def initRefWith[A](initial: A)[B, S](f: SignalRef[A] => B < S)(
         using
         frame: Frame,
         @implicitNotFound(missingCanEqual)
         canEqual: CanEqual[A, A]
     ): B < (S & IO) =
-        IO.Unsafe(f(new Ref(Ref.Unsafe.init(initial))))
+        IO.Unsafe(f(new SignalRef(SignalRef.Unsafe.init(initial))))
 
     /** Creates a new immutable signal with a constant value.
       *
@@ -316,7 +318,7 @@ object Signal:
       * @tparam A
       *   The type of value contained in the reference. Must have an instance of `CanEqual[A, A]`
       */
-    final class Ref[A] private[Signal] (_unsafe: Ref.Unsafe[A])(using CanEqual[A, A]) extends Signal[A]:
+    final class SignalRef[A] private[Signal] (_unsafe: SignalRef.Unsafe[A])(using CanEqual[A, A]) extends Signal[A]:
 
         def currentWith[B, S](f: A => B < S)(using Frame) = IO.Unsafe(f(unsafe.get()))
 
@@ -394,10 +396,10 @@ object Signal:
         def updateAndGet(f: A => A)(using Frame): A < IO =
             IO.Unsafe(_unsafe.updateAndGet(f))
 
-        def unsafe: Ref.Unsafe[A] = _unsafe
-    end Ref
+        def unsafe: SignalRef.Unsafe[A] = _unsafe
+    end SignalRef
 
-    object Ref:
+    object SignalRef:
 
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details.
           *
@@ -475,7 +477,7 @@ object Signal:
                 nextPromise.getAndSet(Promise.Unsafe.initMasked())
                     .completeDiscard(Result.succeed(value))
 
-            def safe: Ref[A] = Ref(this)
+            def safe: SignalRef[A] = SignalRef(this)
 
         end Unsafe
 
@@ -490,5 +492,5 @@ object Signal:
                 )
         end Unsafe
 
-    end Ref
+    end SignalRef
 end Signal
