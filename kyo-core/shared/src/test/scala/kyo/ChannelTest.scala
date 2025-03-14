@@ -482,8 +482,8 @@ class ChannelTest extends Test:
         "with buffer" in runNotJS {
             for
                 c  <- Channel.init[Int](10)
-                f1 <- Fiber.parallelUnbounded(List.fill(1000)(c.put(1)))
-                f2 <- Fiber.parallelUnbounded(List.fill(1000)(c.take))
+                f1 <- Async.run(Async.repeat(1000, 1000)(c.put(1)))
+                f2 <- Async.run(Async.repeat(1000, 1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.empty
@@ -492,9 +492,9 @@ class ChannelTest extends Test:
 
         "no buffer" in runNotJS {
             for
-                c  <- Channel.init[Int](10)
-                f1 <- Fiber.parallelUnbounded(List.fill(1000)(c.put(1)))
-                f2 <- Fiber.parallelUnbounded(List.fill(1000)(c.take))
+                c  <- Channel.init[Int](0)
+                f1 <- Async.run(Async.repeat(1000, 1000)(c.put(1)))
+                f2 <- Async.run(Async.repeat(1000, 1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.empty
@@ -539,7 +539,7 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
                 closeFiber    <- Async.run(latch.await.andThen(channel.close))
                 _             <- latch.release
@@ -565,10 +565,10 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => Abort.run(channel.poll))))
+                    latch.await.andThen(Async.repeat(100, 100)(Abort.run(channel.poll)))
                 )
                 _           <- latch.release
                 offered     <- offerFiber.get
@@ -585,10 +585,10 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 putFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(channel.put(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.put(i))))
                 )
                 takeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => Abort.run(channel.take))))
+                    latch.await.andThen(Async.repeat(100, 100)(Abort.run(channel.take)))
                 )
                 _     <- latch.release
                 puts  <- putFiber.get
@@ -605,7 +605,7 @@ class ChannelTest extends Test:
                 _       <- Kyo.foreach(1 to size)(i => channel.offer(i))
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
                 closeFiber <- Async.run(latch.await.andThen(channel.close))
                 _          <- latch.release
@@ -627,10 +627,10 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
                 closeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => channel.close)))
+                    latch.await.andThen(Async.repeat(100, 100)(channel.close))
                 )
                 _        <- latch.release
                 offered  <- offerFiber.get
@@ -651,16 +651,16 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 50).map(i => Abort.run(channel.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 50, 50)(i => Abort.run(channel.offer(i))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 50).map(_ => Abort.run(channel.poll))))
+                    latch.await.andThen(Async.repeat(50, 50)(Abort.run(channel.poll)))
                 )
                 putFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((51 to 100).map(i => Abort.run(channel.put(i)))))
+                    latch.await.andThen(Async.foreach(51 to 100, 50)(i => Abort.run(channel.put(i))))
                 )
                 takeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 50).map(_ => Abort.run(channel.take))))
+                    latch.await.andThen(Async.repeat(50, 50)(Abort.run(channel.take)))
                 )
                 closeFiber <- Async.run(latch.await.andThen(channel.close))
                 _          <- latch.release
@@ -688,14 +688,12 @@ class ChannelTest extends Test:
                 latch   <- Latch.init(1)
 
                 putFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 60).grouped(3).toSeq.map(batch =>
+                    latch.await.andThen(Async.foreach((1 to 60).grouped(3).toSeq, 60)(batch =>
                         channel.putBatch(batch).andThen(batch)
-                    )))
+                    ))
                 )
                 takeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 60).map(_ =>
-                        channel.take
-                    )))
+                    latch.await.andThen(Async.repeat(60, 60)(channel.take))
                 )
                 _         <- latch.release
                 putRes    <- putFiber.get
@@ -713,14 +711,14 @@ class ChannelTest extends Test:
                 latch   <- Latch.init(1)
 
                 putFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 60).grouped(3).toSeq.map(batch =>
+                    latch.await.andThen(Async.foreach((1 to 60).grouped(3).toSeq, 60)(batch =>
                         channel.putBatch(batch).andThen(batch)
-                    )))
+                    ))
                 )
                 takeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 6).map(_ =>
+                    latch.await.andThen(Async.repeat(6, 6)(
                         channel.takeExactly(10)
-                    )))
+                    ))
                 )
                 _         <- latch.release
                 putRes    <- putFiber.get

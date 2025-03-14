@@ -167,7 +167,7 @@ class MonixTest extends AsyncFreeSpec:
                     def parallelEffect =
                         val monix = Monix.get(monixLoop(started, done))
                         val kyo   = kyoLoop(started, done)
-                        Async.parallel(monix, kyo)
+                        Async.zip(monix, kyo)
                     end parallelEffect
                     for
                         f <- Async.run(parallelEffect)

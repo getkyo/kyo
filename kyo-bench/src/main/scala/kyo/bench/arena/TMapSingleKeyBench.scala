@@ -31,16 +31,15 @@ class TMapSingleKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(paralleli
 
         for
             map <- TMap.init[Int, Int]
-            _ <- Async.parallelUnbounded(
-                Seq.fill(parallelism)(
+            _ <-
+                Async.repeat(parallelism, parallelism) {
                     STM.run {
                         for
                             current <- map.get(0)
                             _       <- map.put(0, current.getOrElse(0) + 1)
                         yield ()
                     }
-                )
-            )
+                }
             result <- STM.run(map.get(0))
         yield result.getOrElse(0)
         end for

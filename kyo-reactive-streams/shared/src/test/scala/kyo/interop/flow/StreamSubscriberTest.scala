@@ -71,7 +71,7 @@ final class StreamSubscriberTest extends Test:
             subStream2  <- subscriber2.stream
             _ = publisher.subscribe(subscriber1)
             _ = publisher.subscribe(subscriber2)
-            results <- Async.parallelUnbounded(List(
+            results <- Async.collectAll(List(
                 subStream1.take(StreamLength >> 1).fold(0)(_ + _),
                 subStream2.take(StreamLength >> 1).fold(0)(_ + _)
             ))

@@ -186,14 +186,17 @@ class KyoTest extends Test:
 
     "seq" - {
         "collect" in {
-            assert(Kyo.collect(Seq.empty).eval == Chunk.empty)
-            assert(TestEffect1.run(Kyo.collect(Seq(TestEffect1(1))).map(_.head)).eval == 2)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collect(Seq(TestEffect1(1), TestEffect1(2))).map(c => (c(0), c(1))))).eval == (2, 3))
-            assert(TestEffect1.run(Kyo.collect(Seq.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collect(List(TestEffect1(1), TestEffect1(2), TestEffect1(3))).map(c =>
+            assert(Kyo.collectAll(Seq.empty).eval == Chunk.empty)
+            assert(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1))).map(_.head)).eval == 2)
+            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1), TestEffect1(2))).map(c => (c(0), c(1))))).eval == (
+                2,
+                3
+            ))
+            assert(TestEffect1.run(Kyo.collectAll(Seq.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
+            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(List(TestEffect1(1), TestEffect1(2), TestEffect1(3))).map(c =>
                 (c(0), c(1), c(2))
             ))).eval == (2, 3, 4))
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collect(Vector(TestEffect1(1), TestEffect1(2), TestEffect1(3))).map(c =>
+            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Vector(TestEffect1(1), TestEffect1(2), TestEffect1(3))).map(c =>
                 (c(0), c(1), c(2))
             ))).eval == (2, 3, 4))
         }
@@ -201,13 +204,13 @@ class KyoTest extends Test:
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)
-            TestEffect1.run(Kyo.collectDiscard(Seq.empty)).eval
+            TestEffect1.run(Kyo.collectAllDiscard(Seq.empty)).eval
             assert(count == 0)
-            TestEffect1.run(Kyo.collectDiscard(Seq(io))).eval
+            TestEffect1.run(Kyo.collectAllDiscard(Seq(io))).eval
             assert(count == 1)
-            TestEffect1.run(Kyo.collectDiscard(List.fill(42)(io))).eval
+            TestEffect1.run(Kyo.collectAllDiscard(List.fill(42)(io))).eval
             assert(count == 43)
-            TestEffect1.run(Kyo.collectDiscard(Vector.fill(10)(io))).eval
+            TestEffect1.run(Kyo.collectAllDiscard(Vector.fill(10)(io))).eval
             assert(count == 53)
         }
 
@@ -238,23 +241,23 @@ class KyoTest extends Test:
         }
 
         "fill" in {
-            assert(TestEffect1.run(Kyo.fill(0)(TestEffect1(1))).eval == Chunk.empty)
-            assert(TestEffect1.run(Kyo.fill(1)(TestEffect1(1))).map(_.head).eval == 2)
-            assert(TestEffect1.run(Kyo.fill(3)(TestEffect1(1))).map(c => (c(0), c(1), c(2))).eval == (2, 2, 2))
-            assert(TestEffect1.run(Kyo.fill(100)(TestEffect1(1))).map(_.size).eval == 100)
+            assert(TestEffect1.run(Kyo.repeat(0)(TestEffect1(1))).eval == Chunk.empty)
+            assert(TestEffect1.run(Kyo.repeat(1)(TestEffect1(1))).map(_.head).eval == 2)
+            assert(TestEffect1.run(Kyo.repeat(3)(TestEffect1(1))).map(c => (c(0), c(1), c(2))).eval == (2, 2, 2))
+            assert(TestEffect1.run(Kyo.repeat(100)(TestEffect1(1))).map(_.size).eval == 100)
         }
 
         "stack safety" - {
             val n = 1000
 
             "collect" in {
-                assert(TestEffect1.run(Kyo.collect(Seq.fill(n)(TestEffect1(1)))).map(_.size).eval == n)
+                assert(TestEffect1.run(Kyo.collectAll(Seq.fill(n)(TestEffect1(1)))).map(_.size).eval == n)
             }
 
             "collectDiscard" in {
                 var count = 0
                 val io    = TestEffect1(1).map(_ => count += 1)
-                TestEffect1.run(Kyo.collectDiscard(Seq.fill(n)(io))).eval
+                TestEffect1.run(Kyo.collectAllDiscard(Seq.fill(n)(io))).eval
                 assert(count == n)
             }
 
@@ -273,7 +276,7 @@ class KyoTest extends Test:
             }
 
             "fill" in {
-                assert(TestEffect1.run(Kyo.fill(n)(TestEffect1(1))).map(_.size).eval == n)
+                assert(TestEffect1.run(Kyo.repeat(n)(TestEffect1(1))).map(_.size).eval == n)
             }
         }
 
@@ -288,22 +291,67 @@ class KyoTest extends Test:
             val largeSeq = Seq.tabulate(100)(identity)
             assert(Kyo.foreachIndexed(largeSeq)((idx, v) => idx == v).eval == Chunk.fill(100)(true))
         }
+
+        "collect" - {
+            "empty sequence" in {
+                assert(Kyo.collect(Seq.empty[Int])(v => Maybe(v)).eval == Chunk.empty)
+            }
+
+            "single element - present" in {
+                assert(Kyo.collect(Seq(1))(v => Maybe(v)).eval == Chunk(1))
+            }
+
+            "single element - absent" in {
+                assert(Kyo.collect(Seq(1))(v => Maybe.empty).eval == Chunk.empty)
+            }
+
+            "multiple elements - all present" in {
+                assert(Kyo.collect(Seq(1, 2, 3))(v => Maybe(v)).eval == Chunk(1, 2, 3))
+            }
+
+            "multiple elements - some absent" in {
+                assert(Kyo.collect(Seq(1, 2, 3))(v => if v % 2 == 0 then Maybe(v) else Maybe.empty).eval == Chunk(2))
+            }
+
+            "works with effects" in {
+                val result = TestEffect1.run(
+                    Kyo.collect(Seq(1, 2, 3)) { v =>
+                        TestEffect1(v).map(r => Maybe.when(r % 2 == 0)(r))
+                    }
+                ).eval
+                assert(result == Chunk(2, 4))
+            }
+
+            "works with different sequence types" in {
+                val f = (v: Int) => if v % 2 == 0 then Maybe(v) else Maybe.empty
+                assert(Kyo.collect(List(1, 2, 3))(f).eval == Chunk(2))
+                assert(Kyo.collect(Vector(1, 2, 3))(f).eval == Chunk(2))
+                assert(Kyo.collect(Chunk(1, 2, 3))(f).eval == Chunk(2))
+            }
+
+            "stack safety" in {
+                val n      = 1000
+                val result = Kyo.collect(Seq.range(0, n))(v => Maybe(v)).eval
+                assert(result.size == n)
+                assert(result == Chunk.from(0 until n))
+            }
+        }
     }
 
-    "pure" - {
+    "lift" - {
         "should create a pure effect" in {
-            val effect = Kyo.pure[Int, Any](42)
+            val effect = Kyo.lift[Int, Any](42)
             assert(effect.eval == 42)
         }
 
         "should work with different types" in {
-            assert(Kyo.pure[String, Any]("hello").eval == "hello")
-            assert(Kyo.pure[Boolean, Any](true).eval == true)
-            assert(Kyo.pure[List[Int], Any](List(1, 2, 3)).eval == List(1, 2, 3))
+            assert(Kyo.lift[String, Any]("hello").eval == "hello")
+            assert(Kyo.lift[Boolean, Any](true).eval == true)
+            assert(Kyo.lift[List[Int], Any](List(1, 2, 3)).eval == List(1, 2, 3))
         }
 
         "should work with effects" in {
-            val effect = Kyo.pure[Int < TestEffect1, Any](TestEffect1(1))
+            val effect = Kyo.lift[Int < TestEffect1, Any](TestEffect1(1))
             val result = TestEffect1.run(effect.flatten)
             assert(result.eval == 2)
         }

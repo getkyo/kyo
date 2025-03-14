@@ -82,12 +82,12 @@ abstract private class PublisherToSubscriberTest extends Test:
                 _ = publisher.subscribe(subscriber2)
                 _ = publisher.subscribe(subscriber3)
                 _ = publisher.subscribe(subscriber4)
-                values <- Fiber.parallelUnbounded[Nothing, Chunk[Int], Any](List(
+                values <- Async.collectAll[Nothing, Chunk[Int], Any](List(
                     subStream1.run,
                     subStream2.run,
                     subStream3.run,
                     subStream4.run
-                )).map(_.get)
+                ))
             yield
                 assert(values.size == 4)
                 assert(values(0).size + values(1).size + values(2).size + values(3).size == MaxStreamLength)

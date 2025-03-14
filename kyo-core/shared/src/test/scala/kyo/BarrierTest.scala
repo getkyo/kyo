@@ -25,7 +25,7 @@ class BarrierTest extends Test:
     "await(2)" in run {
         for
             barrier <- Barrier.init(2)
-            _       <- Async.parallel(barrier.await, barrier.await)
+            _       <- Async.zip(barrier.await, barrier.await)
         yield succeed
     }
 
@@ -40,14 +40,14 @@ class BarrierTest extends Test:
     "await(2) + fibers" in runNotJS {
         for
             barrier <- Barrier.init(2)
-            _       <- Async.parallel(barrier.await, barrier.await)
+            _       <- Async.zip(barrier.await, barrier.await)
         yield succeed
     }
 
     "contention" in runNotJS {
         for
             barrier <- Barrier.init(1000)
-            _       <- Async.parallelUnbounded(List.fill(1000)(barrier.await))
+            _       <- Async.repeat(1000, 1000)(barrier.await)
         yield succeed
     }
 
@@ -55,7 +55,7 @@ class BarrierTest extends Test:
         for
             barrier <- Barrier.init(2)
             count1  <- barrier.pending
-            _       <- Async.parallel(barrier.await, barrier.await)
+            _       <- Async.zip(barrier.await, barrier.await)
             count2  <- barrier.pending
         yield
             assert(count1 == 2)

@@ -205,7 +205,7 @@ object Meter:
       *   A Meter effect that represents the pipeline of all input Meters.
       */
     def pipeline[S](meters: Seq[Meter < (IO & S)])(using Frame): Meter < (IO & S) =
-        Kyo.collect(meters).map { seq =>
+        Kyo.collectAll(meters).map { seq =>
             val meters = seq.toIndexedSeq
             new Meter:
                 def availablePermits(using Frame) =

@@ -25,7 +25,7 @@ class TRefSingleBench(parallelism: Int) extends ArenaBench.ForkOnly(parallelism)
 
         for
             ref    <- TRef.init(0)
-            _      <- Async.parallelUnbounded(Seq.fill(parallelism)(STM.run(ref.update(_ + 1))))
+            _      <- Async.repeat(parallelism, parallelism)(STM.run(ref.update(_ + 1)))
             result <- STM.run(ref.get)
         yield result
         end for

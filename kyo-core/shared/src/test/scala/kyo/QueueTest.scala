@@ -238,7 +238,7 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
                 closeFiber  <- Async.run(latch.await.andThen(queue.close))
                 _           <- latch.release
@@ -264,10 +264,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => Abort.run(queue.poll))))
+                    latch.await.andThen(Async.repeat(100, 100)(Abort.run(queue.poll)))
                 )
                 _       <- latch.release
                 offered <- offerFiber.get
@@ -285,7 +285,7 @@ class QueueTest extends Test:
                 _     <- Kyo.foreach(1 to size)(i => queue.offer(i))
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100)(i => Abort.run(queue.offer(i))))
                 )
                 closeFiber <- Async.run(latch.await.andThen(queue.close))
                 _          <- latch.release
@@ -307,10 +307,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
                 closeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => queue.close)))
+                    latch.await.andThen(Async.repeat(100, 100)(queue.close))
                 )
                 _        <- latch.release
                 offered  <- offerFiber.get
@@ -331,10 +331,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => Abort.run(queue.poll))))
+                    latch.await.andThen(Async.repeat(100, 100)(Abort.run(queue.poll)))
                 )
                 closeFiber <- Async.run(latch.await.andThen(queue.close))
                 _          <- latch.release

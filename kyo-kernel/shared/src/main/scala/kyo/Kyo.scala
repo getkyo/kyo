@@ -4,10 +4,15 @@ import kernel.Loop
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
 
-/** Object containing utility functions for working with Kyo effects. */
+/** Object containing utility functions for working with Kyo effects.
+  *
+  * Provides sequential operations for working with collections and effects. For concurrent/parallel variants of these operations, see the
+  * Async effect. Use the Kyo companion object methods when sequential processing is sufficient and Async when concurrent processing would
+  * be beneficial.
+  */
 object Kyo:
 
-    /** Explicitly creates a pure effect that produces the given value.
+    /** Explicitly lifts a pure plain value to a Kyo computation.
       *
       * While pure values are automatically lifted into Kyo computations in most cases, this method can be useful in specific scenarios,
       * such as in if/else expressions, to help with type inference.
@@ -23,7 +28,7 @@ object Kyo:
       * @return
       *   A computation that directly produces the given value without suspension
       */
-    inline def pure[A, S](inline v: A): A < S = v
+    inline def lift[A, S](inline v: A): A < S = v
 
     /** Returns a pure effect that produces Unit.
       *
@@ -88,7 +93,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreach[A, B, S, S2](seq: Seq[A])(f: Safepoint ?=> A => B < S2)(using Frame, Safepoint): Chunk[B] < (S & S2) =
+    def foreach[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Chunk[B] < S =
         seq.knownSize match
             case 0 => Chunk.empty
             case 1 => f(seq(0)).map(Chunk(_))
@@ -180,7 +185,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of filtered elements
       */
-    def filter[A, S, S2](seq: Seq[A])(f: Safepoint ?=> A => Boolean < S2)(using Frame, Safepoint): Chunk[A] < (S & S2) =
+    def filter[A, S](seq: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
         seq.knownSize match
             case 0 => Chunk.empty
             case _ =>
@@ -242,6 +247,51 @@ object Kyo:
         end match
     end foldLeft
 
+    /** Collects and transforms elements from a sequence using an effect-producing function that returns Maybe values.
+      *
+      * This method applies the given function to each element in the sequence and collects only the Present values into a Chunk. It's
+      * similar to a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing function that returns Maybe values
+      * @return
+      *   A new effect that produces a Chunk containing only the Present values after transformation
+      */
+    def collect[A, B, S](seq: Seq[A])(f: A => Maybe[B] < S)(using Frame, Safepoint): Chunk[B] < S =
+        seq.knownSize match
+            case 0 => Chunk.empty
+            case 1 =>
+                f(seq(0)).map {
+                    case Absent     => Chunk.empty
+                    case Present(v) => Chunk(v)
+                }
+            case _ =>
+                seq match
+                    case seq: List[A] =>
+                        Loop(seq, Chunk.empty[B]) { (seq, acc) =>
+                            seq match
+                                case Nil => Loop.done(acc)
+                                case head :: tail =>
+                                    f(head).map {
+                                        case Absent     => Loop.continue(tail, acc)
+                                        case Present(v) => Loop.continue(tail, acc.append(v))
+                                    }
+                        }
+                    case seq =>
+                        val indexed = toIndexed(seq)
+                        val size    = indexed.size
+                        Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
+                            if idx == size then Loop.done(acc)
+                            else
+                                f(indexed(idx)).map {
+                                    case Absent     => Loop.continue(acc)
+                                    case Present(v) => Loop.continue(acc.append(v))
+                                }
+                        }
+                end match
+
     /** Collects the results of a sequence of effects into a single effect.
       *
       * @param seq
@@ -249,7 +299,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collect[A, S](seq: Seq[A < S])(using Frame, Safepoint): Chunk[A] < S =
+    def collectAll[A, S](seq: Seq[A < S])(using Frame, Safepoint): Chunk[A] < S =
         seq.knownSize match
             case 0 => Chunk.empty
             case 1 => seq(0).map(Chunk(_))
@@ -269,7 +319,7 @@ object Kyo:
                             else indexed(idx).map(u => Loop.continue(acc.append(u)))
                         }
                 end match
-    end collect
+    end collectAll
 
     /** Collects the results of a sequence of effects, discarding the results.
       *
@@ -278,7 +328,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectDiscard[A, S](seq: Seq[A < S])(using Frame, Safepoint): Unit < S =
+    def collectAllDiscard[A, S](seq: Seq[A < S])(using Frame, Safepoint): Unit < S =
         seq.knownSize match
             case 0 =>
             case 1 => seq(0).unit
@@ -297,7 +347,7 @@ object Kyo:
                             else indexed(idx).map(_ => Loop.continue)
                         }
                 end match
-    end collectDiscard
+    end collectAllDiscard
 
     /** Finds the first element in a sequence that satisfies a predicate.
       *
@@ -422,7 +472,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of repeated values
       */
-    def fill[A, S](n: Int)(v: Safepoint ?=> A < S)(using Frame, Safepoint): Chunk[A] < S =
+    def repeat[A, S](n: Int)(v: Safepoint ?=> A < S)(using Frame, Safepoint): Chunk[A] < S =
         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
             if idx == n then Loop.done(acc)
             else v.map(t => Loop.continue(acc.append(t)))

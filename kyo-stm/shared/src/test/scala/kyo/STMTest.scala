@@ -8,7 +8,7 @@ class STMTest extends Test:
         "concurrent modifications" in run {
             for
                 ref    <- TRef.init(0)
-                fibers <- Async.parallelUnbounded(List.fill(100)(STM.run(ref.update(_ + 1))))
+                fibers <- Async.repeat(100, 100)(STM.run(ref.update(_ + 1)))
                 value  <- STM.run(ref.get)
             yield assert(value == 100)
         }
@@ -500,7 +500,7 @@ class STMTest extends Test:
             (for
                 size  <- Choice.get(sizes)
                 ref   <- TRef.init(0)
-                _     <- Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.update(_ + 1))))
+                _     <- Async.repeat(size, size)(STM.run(ref.update(_ + 1)))
                 value <- STM.run(ref.get)
             yield assert(value == size))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
@@ -513,10 +513,10 @@ class STMTest extends Test:
                 ref   <- TRef.init(0)
                 latch <- Latch.init(1)
                 writeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.update(_ + 1)))))
+                    latch.await.andThen(Async.repeat(size, size)(STM.run(ref.update(_ + 1))))
                 )
                 readFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.get))))
+                    latch.await.andThen(Async.repeat(size, size)(STM.run(ref.get)))
                 )
                 _     <- latch.release
                 _     <- writeFiber.get
@@ -531,7 +531,7 @@ class STMTest extends Test:
             (for
                 size <- Choice.get(sizes)
                 ref  <- TRef.init(0)
-                _ <- Async.parallelUnbounded((1 to size).map { _ =>
+                _ <- Async.repeat(size, size) {
                     STM.run {
                         for
                             _ <- ref.update(_ + 1)
@@ -543,7 +543,7 @@ class STMTest extends Test:
                             }
                         yield ()
                     }
-                })
+                }
                 value <- STM.run(ref.get)
             yield assert(value == size * 2))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
@@ -553,30 +553,28 @@ class STMTest extends Test:
         "dining philosophers" in run {
             val philosophers = 5
             (for
-                forks <- Kyo.fill(philosophers)(TRef.init(true))
-                _ <- Async.parallelUnbounded(
-                    (0 until philosophers).map { i =>
-                        val leftFork  = forks(i)
-                        val rightFork = forks((i + 1) % philosophers)
-                        Async.parallelUnbounded((1 to 10).map { _ =>
-                            STM.run {
-                                for
-                                    leftAvailable <- leftFork.get
-                                    _             <- STM.retryIf(!leftAvailable)
-                                    _             <- leftFork.set(false)
+                forks <- Kyo.repeat(philosophers)(TRef.init(true))
+                _ <- Async.foreach(0 until philosophers, philosophers) { i =>
+                    val leftFork  = forks(i)
+                    val rightFork = forks((i + 1) % philosophers)
+                    Async.collectAll((1 to 10).map { _ =>
+                        STM.run {
+                            for
+                                leftAvailable <- leftFork.get
+                                _             <- STM.retryIf(!leftAvailable)
+                                _             <- leftFork.set(false)
 
-                                    rightAvailable <- rightFork.get
-                                    _              <- STM.retryIf(!rightAvailable)
-                                    _              <- rightFork.set(false)
+                                rightAvailable <- rightFork.get
+                                _              <- STM.retryIf(!rightAvailable)
+                                _              <- rightFork.set(false)
 
-                                    _ <- leftFork.set(true)
-                                    _ <- rightFork.set(true)
-                                yield ()
-                            }
-                        })
-                    }
-                )
-                finalStates <- Kyo.collect(forks.map(fork => STM.run(fork.get)))
+                                _ <- leftFork.set(true)
+                                _ <- rightFork.set(true)
+                            yield ()
+                        }
+                    })
+                }
+                finalStates <- Kyo.collectAll(forks.map(fork => STM.run(fork.get)))
             yield assert(finalStates.forall(identity)))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
@@ -618,7 +616,7 @@ class STMTest extends Test:
                     }
                 )
 
-                _      <- Async.parallelUnbounded(transfers)
+                _      <- Async.collectAll(transfers, transfers.size)
                 final1 <- STM.run(account1.get)
                 final2 <- STM.run(account2.get)
                 final3 <- STM.run(account3.get)
@@ -670,7 +668,7 @@ class STMTest extends Test:
                     )
                 )
 
-                _      <- Async.parallelUnbounded(circularTransfers)
+                _      <- Async.collectAll(circularTransfers, circularTransfers.size)
                 final1 <- STM.run(account1.get)
                 final2 <- STM.run(account2.get)
                 final3 <- STM.run(account3.get)
