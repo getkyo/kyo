@@ -57,7 +57,7 @@ class LatchTest extends Test:
     "contention" in runNotJS {
         for
             latch <- Latch.init(1000)
-            _     <- Async.repeat(1000, 1000)(latch.release)
+            _     <- Async.fill(1000, 1000)(latch.release)
             _     <- latch.await
         yield succeed
     }

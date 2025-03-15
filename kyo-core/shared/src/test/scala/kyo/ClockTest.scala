@@ -267,7 +267,7 @@ class ClockTest extends Test:
             for
                 clock     <- Clock.get
                 stopwatch <- Clock.stopwatch
-                fibers    <- Kyo.repeat(100)(clock.sleep(5.millis))
+                fibers    <- Kyo.fill(100)(clock.sleep(5.millis))
                 _         <- Kyo.foreachDiscard(fibers)(_.get)
                 elapsed   <- stopwatch.elapsed
             yield assert(elapsed >= 3.millis && elapsed < 100.millis)
@@ -322,7 +322,7 @@ class ClockTest extends Test:
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatAtInterval(5.millis)(Clock.now.map(channel.put))
-                instants <- Kyo.repeat(10)(channel.take)
+                instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
@@ -332,7 +332,7 @@ class ClockTest extends Test:
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
-                instants <- Kyo.repeat(10)(channel.take)
+                instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
                 _        <- Async.sleep(2.millis)
                 _        <- untilTrue(channel.poll.map(_.isEmpty))
@@ -358,7 +358,7 @@ class ClockTest extends Test:
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatAtInterval(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
-                instants <- Kyo.repeat(10)(channel.take)
+                instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
@@ -368,7 +368,7 @@ class ClockTest extends Test:
             for
                 channel <- Channel.init[Int](10)
                 task    <- Clock.repeatAtInterval(Schedule.fixed(1.millis), 0)(st => channel.put(st).andThen(st + 1))
-                numbers <- Kyo.repeat(10)(channel.take)
+                numbers <- Kyo.fill(10)(channel.take)
                 _       <- task.interrupt
             yield assert(numbers.toSeq == (0 until 10))
         }
@@ -387,7 +387,7 @@ class ClockTest extends Test:
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatWithDelay(5.millis)(Clock.now.map(channel.put))
-                instants <- Kyo.repeat(10)(channel.take)
+                instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
@@ -398,7 +398,7 @@ class ClockTest extends Test:
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
-                instants <- Kyo.repeat(10)(channel.take)
+                instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
                 _        <- untilTrue(channel.poll.map(_.isEmpty))
             yield succeed
@@ -426,7 +426,7 @@ class ClockTest extends Test:
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatWithDelay(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
-                instants <- Kyo.repeat(10)(channel.take)
+                instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
@@ -439,7 +439,7 @@ class ClockTest extends Test:
                 task <- Clock.repeatWithDelay(Schedule.fixed(1.millis), 0) { state =>
                     channel.put(state).andThen(state + 1)
                 }
-                numbers <- Kyo.repeat(10)(channel.take)
+                numbers <- Kyo.fill(10)(channel.take)
                 _       <- task.interrupt
             yield assert(numbers.toSeq == (0 until 10))
             end for

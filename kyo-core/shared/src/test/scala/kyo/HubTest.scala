@@ -216,17 +216,17 @@ class HubTest extends Test:
                 )
                 sub1Fiber <- Async.run(
                     latch.await.andThen(
-                        Async.repeat(10, 10)(Abort.run(l1.take))
+                        Async.fill(10, 10)(Abort.run(l1.take))
                     )
                 )
                 sub2Fiber <- Async.run(
                     latch.await.andThen(
-                        Async.repeat(10, 10)(Abort.run(l2.take))
+                        Async.fill(10, 10)(Abort.run(l2.take))
                     )
                 )
                 sub3Fiber <- Async.run(
                     latch.await.andThen(
-                        Async.repeat(10, 10)(Abort.run(l3.take))
+                        Async.fill(10, 10)(Abort.run(l3.take))
                     )
                 )
                 _      <- latch.release
@@ -252,7 +252,7 @@ class HubTest extends Test:
                 latch <- Latch.init(1)
                 listenerFiber <- Async.run(
                     latch.await.andThen(
-                        Async.repeat(20, 20)(Abort.run(hub.listen))
+                        Async.fill(20, 20)(Abort.run(hub.listen))
                     )
                 )
                 closeFiber <- Async.run(latch.await.andThen(hub.close))

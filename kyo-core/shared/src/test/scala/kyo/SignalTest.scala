@@ -240,7 +240,7 @@ class SignalTest extends Test:
         "parallel updates" in run {
             (for
                 ref <- Signal.initRef(0)
-                _   <- Async.parallelUnbounded((1 to 10).map(_ => ref.updateAndGet(_ + 1)))
+                _   <- Async.fill(10, 10)(ref.updateAndGet(_ + 1))
                 v   <- ref.get
             yield assert(v == 10))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
@@ -250,11 +250,12 @@ class SignalTest extends Test:
         "concurrent reads and writes" in runNotJS {
             (for
                 ref <- Signal.initRef(0)
-                readers <- Async.run(Async.parallelUnbounded(
-                    (1 to 10).map(_ => Loop(0)(_ => ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v))))
-                ))
-                writers <- Async.run(Async.parallelUnbounded(
-                    (1 to 10).map(_ =>
+                readers <-
+                    Async.run(Async.fill(10, 10)(
+                        Loop(0)(_ => ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v)))
+                    ))
+                writers <-
+                    Async.run(Async.fill(10, 10)(
                         Loop(()) { _ =>
                             ref.get.map { v =>
                                 if v < 10 then
@@ -264,8 +265,7 @@ class SignalTest extends Test:
                                 end if
                             }
                         }
-                    )
-                ))
+                    ))
                 readResults  <- readers.get
                 writeResults <- writers.get
                 finalValue   <- ref.get

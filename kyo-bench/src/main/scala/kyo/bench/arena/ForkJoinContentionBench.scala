@@ -25,7 +25,7 @@ class ForkJoinContentionBench extends ArenaBench.ForkOnly(()):
         val forkAllFibers     = Kyo.foreach(range)(_ => forkFiber)
         val forkJoinAllFibers = forkAllFibers.flatMap(fibers => Kyo.foreach(fibers)(_.get).unit)
 
-        Async.repeat(parallism, parallism)(forkJoinAllFibers).unit
+        Async.fill(parallism, parallism)(forkJoinAllFibers).unit
     end kyoBenchFiber
 
     def zioBench() =

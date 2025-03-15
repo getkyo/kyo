@@ -208,7 +208,7 @@ class TChunkTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
-                _ <- Async.repeat(5, 5)(
+                _ <- Async.fill(5, 5)(
                     STM.run(chunk.filter(_ % 2 == 0))
                 )
                 snapshot <- STM.run(chunk.snapshot)
@@ -227,7 +227,7 @@ class TChunkTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
-                _ <- Async.repeat(5, 5)(
+                _ <- Async.fill(5, 5)(
                     STM.run {
                         for
                             midpoint <- chunk.size.map(_ / 2)
@@ -251,7 +251,7 @@ class TChunkTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
-                _ <- Async.repeat(5, 5)(
+                _ <- Async.fill(5, 5)(
                     STM.run(chunk.compact)
                 )
                 snapshot <- STM.run(chunk.snapshot)

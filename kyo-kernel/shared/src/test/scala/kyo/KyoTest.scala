@@ -241,10 +241,10 @@ class KyoTest extends Test:
         }
 
         "fill" in {
-            assert(TestEffect1.run(Kyo.repeat(0)(TestEffect1(1))).eval == Chunk.empty)
-            assert(TestEffect1.run(Kyo.repeat(1)(TestEffect1(1))).map(_.head).eval == 2)
-            assert(TestEffect1.run(Kyo.repeat(3)(TestEffect1(1))).map(c => (c(0), c(1), c(2))).eval == (2, 2, 2))
-            assert(TestEffect1.run(Kyo.repeat(100)(TestEffect1(1))).map(_.size).eval == 100)
+            assert(TestEffect1.run(Kyo.fill(0)(TestEffect1(1))).eval == Chunk.empty)
+            assert(TestEffect1.run(Kyo.fill(1)(TestEffect1(1))).map(_.head).eval == 2)
+            assert(TestEffect1.run(Kyo.fill(3)(TestEffect1(1))).map(c => (c(0), c(1), c(2))).eval == (2, 2, 2))
+            assert(TestEffect1.run(Kyo.fill(100)(TestEffect1(1))).map(_.size).eval == 100)
         }
 
         "stack safety" - {
@@ -276,7 +276,7 @@ class KyoTest extends Test:
             }
 
             "fill" in {
-                assert(TestEffect1.run(Kyo.repeat(n)(TestEffect1(1))).map(_.size).eval == n)
+                assert(TestEffect1.run(Kyo.fill(n)(TestEffect1(1))).map(_.size).eval == n)
             }
         }
 

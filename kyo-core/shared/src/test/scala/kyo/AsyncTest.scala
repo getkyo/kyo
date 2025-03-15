@@ -90,7 +90,7 @@ class AsyncTest extends Test:
         }
 
         "multiple fibers timeout" in runNotJS {
-            Kyo.repeat(100)(Async.sleep(1.milli)).andThen(1)
+            Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
@@ -814,7 +814,7 @@ class AsyncTest extends Test:
         "concurrently repeats computation n times" in run {
             for
                 counter <- AtomicInt.init(0)
-                results <- Async.repeat(3) {
+                results <- Async.fill(3) {
                     counter.incrementAndGet
                 }
                 count <- counter.get

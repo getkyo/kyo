@@ -482,7 +482,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of repeated values
       */
-    def repeat[A, S](n: Int)(v: Safepoint ?=> A < S)(using Frame, Safepoint): Chunk[A] < S =
+    def fill[A, S](n: Int)(v: Safepoint ?=> A < S)(using Frame, Safepoint): Chunk[A] < S =
         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
             if idx == n then Loop.done(acc)
             else v.map(t => Loop.continue(acc.append(t)))

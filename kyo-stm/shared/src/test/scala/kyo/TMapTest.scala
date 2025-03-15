@@ -425,7 +425,7 @@ class TMapTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
                 }
-                _ <- Async.repeat(10, 10)(
+                _ <- Async.fill(10, 10)(
                     STM.run {
                         Kyo.foreachDiscard((1 to size)) { i =>
                             map.updateWith(i)(v => Maybe(v.getOrElse(0) + 1))
@@ -465,11 +465,11 @@ class TMapTest extends Test:
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))
                 }
 
-                filterOps = Async.repeat(5, 5)(
+                filterOps = Async.fill(5, 5)(
                     STM.run(map.filter((k, v) => v % 2 == 0))
                 )
 
-                foldOps = Async.repeat(5, 5)(
+                foldOps = Async.fill(5, 5)(
                     STM.run(map.fold(0)((acc, _, v) => acc + v))
                 )
 

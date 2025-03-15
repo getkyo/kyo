@@ -144,7 +144,7 @@ class MeterTest extends Test:
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFiber <- Async.run(
-                        latch.await.andThen(Async.repeat(100, 100)(
+                        latch.await.andThen(Async.fill(100, 100)(
                             Abort.run(meter.run(counter.incrementAndGet))
                         ))
                     )

@@ -267,7 +267,7 @@ class QueueTest extends Test:
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.repeat(100, 100)(Abort.run(queue.poll)))
+                    latch.await.andThen(Async.fill(100, 100)(Abort.run(queue.poll)))
                 )
                 _       <- latch.release
                 offered <- offerFiber.get
@@ -310,7 +310,7 @@ class QueueTest extends Test:
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
                 closeFiber <- Async.run(
-                    latch.await.andThen(Async.repeat(100, 100)(queue.close))
+                    latch.await.andThen(Async.fill(100, 100)(queue.close))
                 )
                 _        <- latch.release
                 offered  <- offerFiber.get
@@ -334,7 +334,7 @@ class QueueTest extends Test:
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.repeat(100, 100)(Abort.run(queue.poll)))
+                    latch.await.andThen(Async.fill(100, 100)(Abort.run(queue.poll)))
                 )
                 closeFiber <- Async.run(latch.await.andThen(queue.close))
                 _          <- latch.release

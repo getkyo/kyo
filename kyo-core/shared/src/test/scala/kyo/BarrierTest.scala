@@ -47,7 +47,7 @@ class BarrierTest extends Test:
     "contention" in runNotJS {
         for
             barrier <- Barrier.init(1000)
-            _       <- Async.repeat(1000, 1000)(barrier.await)
+            _       <- Async.fill(1000, 1000)(barrier.await)
         yield succeed
     }
 

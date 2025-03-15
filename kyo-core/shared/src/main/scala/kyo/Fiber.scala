@@ -283,7 +283,7 @@ object Fiber extends FiberPlatformSpecific:
       */
     private[kyo] def race[E, A: Flat, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(seq: Seq[A < (Abort[E] & Async & S)])(using frame: Frame, safepoint: Safepoint): Fiber[E, A] < (IO & S) =
+    )(seq: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame, safepoint: Safepoint): Fiber[E, A] < (IO & S) =
         IO.Unsafe {
             class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
                 val pending = AtomicInt.Unsafe.init(seq.size)
@@ -323,7 +323,7 @@ object Fiber extends FiberPlatformSpecific:
       */
     private[kyo] def gather[E, A: Flat, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(max: Int)(seq: Seq[A < (Abort[E] & Async & S)])(
+    )(max: Int)(seq: Iterable[A < (Abort[E] & Async & S)])(
         using
         frame: Frame,
         safepoint: Safepoint
@@ -468,7 +468,7 @@ object Fiber extends FiberPlatformSpecific:
 
     private[kyo] def foreachIndexed[A, B: Flat, E, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(seq: Seq[A])(f: (Int, A) => B < (Abort[E] & Async & S))(
+    )(seq: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async & S))(
         using
         frame: Frame,
         safepoint: Safepoint
@@ -650,9 +650,9 @@ object Fiber extends FiberPlatformSpecific:
         end Unsafe
     end Promise
 
-    private inline def foreach[A](l: Seq[A])(inline f: (Int, A) => Unit): Unit =
+    private inline def foreach[A](l: Iterable[A])(inline f: (Int, A) => Unit): Unit =
         l match
-            case l: IndexedSeq[?] =>
+            case l: IndexedSeq[A] =>
                 val s = l.size
                 @tailrec def loop(i: Int): Unit =
                     if i < s then
