@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.debug.Debug
-
 class SignalTest extends Test:
 
     "init" - {
