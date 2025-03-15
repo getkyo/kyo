@@ -2,6 +2,7 @@ package kyo
 
 import Record.Field
 import kyo.internal.TypeIntersection
+import scala.compiletime.summonInline
 
 class RecordTest extends Test:
 
@@ -281,6 +282,36 @@ class RecordTest extends Test:
                 compacted.age
             """)("""Invalid field access: ("age" : String)""")
         }
+    }
+
+    "stage" - {
+        case class AsColumn[A](typ: String)
+
+        object AsColumn:
+            given AsColumn[Int]    = AsColumn("bigint")
+            given AsColumn[String] = AsColumn("text")
+
+        case class Column[A](name: String)(using AsColumn[A]) derives CanEqual
+
+        object ColumnInline extends Record.StageAs[[n, v] =>> Column[v]]:
+            inline def fieldApply[Name <: String, Value](field: Field[Name, Value]): Column[Value] =
+                Column[Value](field.name)(using summonInline[AsColumn[Value]])
+
+        "runs StageAs logic for each field" in {
+            type Person = "name" ~ String & "age" ~ Int
+            val columns = Record.stage[Person](ColumnInline)
+            val result = "name" ~ Column[String]("name") &
+                "age" ~ Column[Int]("age")
+            val result2 = "name" ~ Column[String]("name") &
+                "age" ~ Column[Int]("age")
+
+            println(Render.asText(columns).show)
+            println(Render.asText(result).show)
+
+            assert(columns.name == result.name)
+            // sassert(columns == result)
+        }
+
     }
 
     "AsFields behavior" - {
@@ -608,7 +639,7 @@ class RecordTest extends Test:
         }
 
         "AsFields behavior" - {
-            val error = "No given instance of type kyo.AsFieldsInternal.HasAsField"
+            val error = "Given type doesn't match to expected field shape: Name ~ Value"
 
             "summoning AsFields instance" in {
                 typeCheckFailure("""

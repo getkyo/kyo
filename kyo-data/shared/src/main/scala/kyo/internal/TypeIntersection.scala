@@ -62,24 +62,28 @@ object TypeIntersection:
       * @return
       *   a List of type class instances
       */
-    transparent inline def summonAll[A: TypeIntersection, F[_]]: List[F[Any]] =
-        inlineAll[A, F[Any]](new SummonInliner[F])
+    transparent inline def summonAll[A: TypeIntersection, F[_]]: List[ForSome[F]] =
+        inlineAll[A](new SummonInliner[F])
 
-    class SummonInliner[F[_]] extends Inliner[F[Any]]:
-        inline def apply[T]: F[Any] =
-            summonInline[F[T]].asInstanceOf[F[Any]]
+    class SummonInliner[F[_]] extends Inliner[ForSome[F]]:
+        inline def apply[T]: ForSome[F] =
+            ForSome(summonInline[F[T]])
 
-    /** Runs Inliner logic for each component type in A.
-      *
-      * @tparam A
-      *   the intersection type to decompose
-      * @tparam R
-      *   the result type of inline logic
-      * @return
-      *   a List of type class instances
-      */
-    inline def inlineAll[A: TypeIntersection as ts, R](inliner: Inliner[R]): List[R] =
-        Inliner.inlineAllLoop[R, ts.AsTuple](inliner)
+    inline def inlineAll[A]: InlineAllOps[A] = new InlineAllOps[A](())
+
+    class InlineAllOps[A](dummy: Unit):
+        /** Runs Inliner logic for each component type in A.
+          *
+          * @tparam A
+          *   the intersection type to decompose
+          * @tparam R
+          *   the result type of inline logic
+          * @return
+          *   a List of type class instances
+          */
+        inline def apply[R](inliner: Inliner[R])(using ts: TypeIntersection[A]): List[R] =
+            Inliner.inlineAllLoop[R, ts.AsTuple](inliner)
+    end InlineAllOps
 
     /** Type alias for TypeIntersection with a specific tuple type.
       *
