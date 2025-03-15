@@ -32,16 +32,14 @@ class TMapMultiKeyBench(parallelism: Int) extends ArenaBench.ForkOnly(parallelis
         for
             map <- TMap.init[Int, Int]
             _ <-
-                Async.parallelUnbounded(
-                    (0 until parallelism).map { i =>
-                        STM.run {
-                            for
-                                current <- map.get(i)
-                                _       <- map.put(i, current.getOrElse(0) + 1)
-                            yield ()
-                        }
+                Async.foreach(0 until parallelism, parallelism) { i =>
+                    STM.run {
+                        for
+                            current <- map.get(i)
+                            _       <- map.put(i, current.getOrElse(0) + 1)
+                        yield ()
                     }
-                )
+                }
             results <- STM.run(map.snapshot)
         yield results.values.sum
         end for

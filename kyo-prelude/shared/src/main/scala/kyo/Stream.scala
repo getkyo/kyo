@@ -210,7 +210,7 @@ sealed abstract class Stream[V, -S]:
                         val c   = input.take(state)
                         val nst = state - c.size
                         Emit.valueWith(c)(
-                            (nst, if nst <= 0 then Kyo.pure[Unit, S & Emit[Chunk[V]]](()) else cont(()))
+                            (nst, if nst <= 0 then Kyo.lift[Unit, S & Emit[Chunk[V]]](()) else cont(()))
                     )
             ))
         end if
@@ -252,7 +252,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
                 (input, state, cont) =>
-                    if !state then (false, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
+                    if !state then (false, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
                     else if input.isEmpty then (state, cont(()))
                     else
                         val c = input.takeWhile(f)
@@ -271,7 +271,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V, S & S2](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
                 (input, state, cont) =>
-                    if !state then (false, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
+                    if !state then (false, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
                     else
                         Kyo.takeWhile(input)(f).map { c =>
                             Emit.valueWith(c)((c.size == input.size, cont(())))

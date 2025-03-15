@@ -2048,7 +2048,7 @@ val b: Int < Async =
     a.map(_.get)
 ```
 
-The `parallel` methods fork multiple computations in parallel, join the fibers, and return their results.
+The `zip` and `collectAll` methods fork multiple computations concurrently, join the fibers, and return their results.
 
 ```scala
 import kyo.*
@@ -2061,25 +2061,20 @@ val a: Int < IO =
 // parallel computations. Parameters taken by
 // reference
 val b: (Int, String) < Async =
-    Async.parallel(a, "example")
+    Async.zip(a, "example")
 
 // Run with unlimited concurrency - starts all
 // computations immediately
 val c: Seq[Int] < Async =
-    Async.parallelUnbounded(Seq(a, a.map(_ + 1)))
+    Async.collectAll(Seq(a, a.map(_ + 1)))
 
 // Run with controlled concurrency (max 2 tasks)
 val d: Seq[Int] < Async =
-    Async.parallel(2)(Seq(a, a.map(_ + 1)))
+    Async.collectAll(Seq(a, a.map(_ + 1)), concurrency = 2)
 
-// The 'Fiber.parallel' method is similar but
-// it doesn't automatically join the fibers and
-// produces a 'Fiber[Seq[T]]'
-val e: Fiber[Nothing, Seq[Int]] < IO =
-    Fiber.parallel(2)(Seq(a, a.map(_ + 1)))
 ```
 
-For better resource management, prefer `Async.parallel(n)(seq)` to control the maximum number of concurrent computations. If any computation fails or is interrupted, all other computations are automatically interrupted.
+If any computation fails or is interrupted, all other computations are automatically interrupted.
 
 The `race` methods are similar to `parallel` but they return the first computation to complete with either a successful result or a failure. Once the first result is produced, the other computations are automatically interrupted.
 
@@ -2099,11 +2094,6 @@ val b: Int < Async =
 // of computations
 val c: Int < Async =
     Async.race(Seq(a, a.map(_ + 1)))
-
-// 'Fiber.race' produces a 'Fiber' without
-// joining it
-val d: Fiber[Nothing, Int] < IO =
-    Fiber.race(Seq(a, a.map(_ + 1)))
 ```
 
 The `sleep` and `timeout` methods pause a computation or time it out after a duration.
@@ -2598,7 +2588,7 @@ val c: Int < IO =
 val d: Unit < Async =
     for
         barrier <- Barrier.init(3)
-        _       <- Async.parallel(
+        _       <- Async.zip(
                      barrier.await,
                      barrier.await,
                      barrier.await
@@ -2611,7 +2601,7 @@ val e: Unit < Async =
         barrier <- Barrier.init(3)
         fiber1  <- Async.run(Async.sleep(1.second))
         fiber2  <- Async.run(Async.sleep(2.seconds))
-        _       <- Async.parallel(
+        _       <- Async.zip(
                      fiber1.get.map(_ => barrier.await),
                      fiber2.get.map(_ => barrier.await),
                      Async.run(barrier.await).map(_.get)

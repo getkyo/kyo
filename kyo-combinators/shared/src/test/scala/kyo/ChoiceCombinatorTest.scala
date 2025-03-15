@@ -40,8 +40,8 @@ class ChoiceCombinatorTest extends Test:
 
             "should iterate using collect" in run {
                 var state = 0
-                val effect = Kyo.collect(1 to 10) {
-                    case i if i % 2 == 0 => IO { state += i; i * 2 }
+                val effect = Kyo.collect(1 to 10) { i =>
+                    IO(Maybe.when(i % 2 == 0) { { state += i; i * 2 } })
                 }
                 assert(state == 0)
                 effect.map { result =>

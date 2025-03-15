@@ -1039,7 +1039,7 @@ class AbortTest extends Test:
                 val computation: Int < (Abort[CustomError] & Env[String]) =
                     for
                         env    <- Env.get[String]
-                        result <- if env == "fail" then Abort.fail(CustomError("Failed")) else Kyo.pure(env.length)
+                        result <- if env == "fail" then Abort.fail(CustomError("Failed")) else Kyo.lift(env.length)
                     yield result
 
                 val recovered = Abort.recover[CustomError](_ => -1)(computation)
@@ -1054,7 +1054,7 @@ class AbortTest extends Test:
                 val computation: Int < (Abort[CustomError] & Var[Int]) =
                     for
                         value  <- Var.get[Int]
-                        result <- if value > 10 then Abort.fail(CustomError("Too large")) else Kyo.pure(value)
+                        result <- if value > 10 then Abort.fail(CustomError("Too large")) else Kyo.lift(value)
                     yield result
 
                 val recovered = Abort.recover[CustomError](_ => -1)(computation)

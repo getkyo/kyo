@@ -122,7 +122,7 @@ class ChoiceTest extends Test:
                         if b then str.toUpperCase else str
                     )
                 }
-            val result = Choice.run(Kyo.collect(effects)).eval
+            val result = Choice.run(Kyo.collectAll(effects)).eval
 
             assert(result.contains(Chunk("X", "Y")))
             assert(result.contains(Chunk("X", "y")))

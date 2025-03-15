@@ -4,10 +4,15 @@ import kernel.Loop
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
 
-/** Object containing utility functions for working with Kyo effects. */
+/** Object containing utility functions for working with Kyo effects.
+  *
+  * Provides sequential operations for working with collections and effects. For concurrent/parallel variants of these operations, see the
+  * Async effect. Use the Kyo companion object methods when sequential processing is sufficient and Async when concurrent processing would
+  * be beneficial.
+  */
 object Kyo:
 
-    /** Explicitly creates a pure effect that produces the given value.
+    /** Explicitly lifts a pure plain value to a Kyo computation.
       *
       * While pure values are automatically lifted into Kyo computations in most cases, this method can be useful in specific scenarios,
       * such as in if/else expressions, to help with type inference.
@@ -23,7 +28,7 @@ object Kyo:
       * @return
       *   A computation that directly produces the given value without suspension
       */
-    inline def pure[A, S](inline v: A): A < S = v
+    inline def lift[A, S](inline v: A): A < S = v
 
     /** Returns a pure effect that produces Unit.
       *
@@ -38,46 +43,56 @@ object Kyo:
     inline def unit[S]: Unit < S = ()
 
     /** Zips two effects into a tuple.
-      *
-      * @param v1
-      *   The first effect
-      * @param v2
-      *   The second effect
-      * @return
-      *   A new effect that produces a tuple of the results
       */
     def zip[A1, A2, S](v1: A1 < S, v2: A2 < S)(using Frame): (A1, A2) < S =
         v1.map(t1 => v2.map(t2 => (t1, t2)))
 
     /** Zips three effects into a tuple.
-      *
-      * @param v1
-      *   The first effect
-      * @param v2
-      *   The second effect
-      * @param v3
-      *   The third effect
-      * @return
-      *   A new effect that produces a tuple of the results
       */
     def zip[A1, A2, A3, S](v1: A1 < S, v2: A2 < S, v3: A3 < S)(using Frame): (A1, A2, A3) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => (t1, t2, t3))))
 
     /** Zips four effects into a tuple.
-      *
-      * @param v1
-      *   The first effect
-      * @param v2
-      *   The second effect
-      * @param v3
-      *   The third effect
-      * @param v4
-      *   The fourth effect
-      * @return
-      *   A new effect that produces a tuple of the results
       */
     def zip[A1, A2, A3, A4, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S)(using Frame): (A1, A2, A3, A4) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
+
+    /** Zips five effects into a tuple.
+      */
+    def zip[A1, A2, A3, A4, A5, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S)(using Frame): (A1, A2, A3, A4, A5) < S =
+        v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => (t1, t2, t3, t4, t5))))))
+
+    /** Zips six effects into a tuple.
+      */
+    def zip[A1, A2, A3, A4, A5, A6, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S)(using
+        Frame
+    ): (A1, A2, A3, A4, A5, A6) < S =
+        v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => (t1, t2, t3, t4, t5, t6)))))))
+
+    /** Zips seven effects into a tuple. A new effect that produces a tuple of the results
+      */
+    def zip[A1, A2, A3, A4, A5, A6, A7, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S, v5: A5 < S, v6: A6 < S, v7: A7 < S)(using
+        Frame
+    ): (A1, A2, A3, A4, A5, A6, A7) < S =
+        v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => v7.map(t7 => (t1, t2, t3, t4, t5, t6, t7))))))))
+
+    /** Zips eight effects into a tuple.
+      */
+    def zip[A1, A2, A3, A4, A5, A6, A7, A8, S](
+        v1: A1 < S,
+        v2: A2 < S,
+        v3: A3 < S,
+        v4: A4 < S,
+        v5: A5 < S,
+        v6: A6 < S,
+        v7: A7 < S,
+        v8: A8 < S
+    )(using Frame): (A1, A2, A3, A4, A5, A6, A7, A8) < S =
+        v1.map(t1 =>
+            v2.map(t2 =>
+                v3.map(t3 => v4.map(t4 => v5.map(t5 => v6.map(t6 => v7.map(t7 => v8.map(t8 => (t1, t2, t3, t4, t5, t6, t7, t8)))))))
+            )
+        )
 
     /** Applies an effect-producing function to each element of a sequence.
       *
@@ -88,7 +103,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreach[A, B, S, S2](seq: Seq[A])(f: Safepoint ?=> A => B < S2)(using Frame, Safepoint): Chunk[B] < (S & S2) =
+    def foreach[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Chunk[B] < S =
         seq.knownSize match
             case 0 => Chunk.empty
             case 1 => f(seq(0)).map(Chunk(_))
@@ -180,7 +195,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of filtered elements
       */
-    def filter[A, S, S2](seq: Seq[A])(f: Safepoint ?=> A => Boolean < S2)(using Frame, Safepoint): Chunk[A] < (S & S2) =
+    def filter[A, S](seq: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
         seq.knownSize match
             case 0 => Chunk.empty
             case _ =>
@@ -242,6 +257,51 @@ object Kyo:
         end match
     end foldLeft
 
+    /** Collects and transforms elements from a sequence using an effect-producing function that returns Maybe values.
+      *
+      * This method applies the given function to each element in the sequence and collects only the Present values into a Chunk. It's
+      * similar to a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing function that returns Maybe values
+      * @return
+      *   A new effect that produces a Chunk containing only the Present values after transformation
+      */
+    def collect[A, B, S](seq: Seq[A])(f: A => Maybe[B] < S)(using Frame, Safepoint): Chunk[B] < S =
+        seq.knownSize match
+            case 0 => Chunk.empty
+            case 1 =>
+                f(seq(0)).map {
+                    case Absent     => Chunk.empty
+                    case Present(v) => Chunk(v)
+                }
+            case _ =>
+                seq match
+                    case seq: List[A] =>
+                        Loop(seq, Chunk.empty[B]) { (seq, acc) =>
+                            seq match
+                                case Nil => Loop.done(acc)
+                                case head :: tail =>
+                                    f(head).map {
+                                        case Absent     => Loop.continue(tail, acc)
+                                        case Present(v) => Loop.continue(tail, acc.append(v))
+                                    }
+                        }
+                    case seq =>
+                        val indexed = toIndexed(seq)
+                        val size    = indexed.size
+                        Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
+                            if idx == size then Loop.done(acc)
+                            else
+                                f(indexed(idx)).map {
+                                    case Absent     => Loop.continue(acc)
+                                    case Present(v) => Loop.continue(acc.append(v))
+                                }
+                        }
+                end match
+
     /** Collects the results of a sequence of effects into a single effect.
       *
       * @param seq
@@ -249,7 +309,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collect[A, S](seq: Seq[A < S])(using Frame, Safepoint): Chunk[A] < S =
+    def collectAll[A, S](seq: Seq[A < S])(using Frame, Safepoint): Chunk[A] < S =
         seq.knownSize match
             case 0 => Chunk.empty
             case 1 => seq(0).map(Chunk(_))
@@ -269,7 +329,7 @@ object Kyo:
                             else indexed(idx).map(u => Loop.continue(acc.append(u)))
                         }
                 end match
-    end collect
+    end collectAll
 
     /** Collects the results of a sequence of effects, discarding the results.
       *
@@ -278,7 +338,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectDiscard[A, S](seq: Seq[A < S])(using Frame, Safepoint): Unit < S =
+    def collectAllDiscard[A, S](seq: Seq[A < S])(using Frame, Safepoint): Unit < S =
         seq.knownSize match
             case 0 =>
             case 1 => seq(0).unit
@@ -297,7 +357,7 @@ object Kyo:
                             else indexed(idx).map(_ => Loop.continue)
                         }
                 end match
-    end collectDiscard
+    end collectAllDiscard
 
     /** Finds the first element in a sequence that satisfies a predicate.
       *

@@ -115,12 +115,12 @@ class ZIOsTest extends Test:
             def zioTask(i: Int): Int < (Abort[Throwable] & Async) = ZIOs.get(ZIO.succeed(i + 1))
 
             for
-                (v1, v2) <- Async.parallel(kyoTask(1), zioTask(2))
+                (v1, v2) <- Async.zip(kyoTask(1), zioTask(2))
                 (v3, v4) <- Async.race(
-                    Async.parallel[Throwable, Int, Int, Any](kyoTask(v1), zioTask(v2)),
+                    Async.zip[Throwable, Int, Int, Any](kyoTask(v1), zioTask(v2)),
                     ZIOs.get(ZIO.succeed((v1, v2)))
                 )
-                (v5, v6) <- Async.parallel(
+                (v5, v6) <- Async.zip(
                     kyoTask(v3 + v4),
                     Async.race[Throwable, Int, Any](zioTask(v1), kyoTask(v2))
                 )
@@ -196,7 +196,7 @@ class ZIOsTest extends Test:
                         ZIOs.run {
                             val loop1 = ZIOs.get(zioLoop(started, done))
                             val loop2 = kyoLoop(started, done)
-                            Async.parallel[Throwable, Unit, Unit, Any](loop1, loop2)
+                            Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
                         }
                     for
                         f <- parallelEffect.fork
@@ -267,7 +267,7 @@ class ZIOsTest extends Test:
                     def parallelEffect =
                         val loop1 = ZIOs.get(zioLoop(started, done))
                         val loop2 = kyoLoop(started, done)
-                        Async.parallel[Throwable, Unit, Unit, Any](loop1, loop2)
+                        Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
                     end parallelEffect
                     for
                         f <- Async.run(parallelEffect)

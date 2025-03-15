@@ -23,7 +23,7 @@ class TRefMultiBench(parallelism: Int) extends ArenaBench.ForkOnly(parallelism):
 
         for
             refs   <- Kyo.fill(parallelism)(TRef.init(0))
-            _      <- Async.parallelUnbounded(refs.map(ref => STM.run(ref.update(_ + 1))))
+            _      <- Async.foreach(refs, parallelism)(ref => STM.run(ref.update(_ + 1)))
             result <- STM.run(Kyo.foreach(refs)(_.get).map(_.sum))
         yield result
         end for
