@@ -221,12 +221,12 @@ object Async:
       */
     def race[E, A: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A < (Abort[E] & Async & S)])(
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
-        require(seq.nonEmpty, "Can't race an empty collection.")
+        require(iterable.nonEmpty, "Can't race an empty collection.")
         isolate.capture { state =>
-            Fiber.race(seq.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
+            Fiber.race(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
         }
     end race
 
@@ -307,10 +307,10 @@ object Async:
       */
     def gather[E, A: Flat, S](
         using Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A < (Abort[E] & Async & S)])(
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): Chunk[A] < (Abort[E] & Async & S) =
-        gather(seq.size)(seq)
+        gather(iterable.size)(iterable)
 
     /** Concurrently executes computations and collects up to `max` successful results.
       *
@@ -328,11 +328,11 @@ object Async:
       */
     def gather[E, A: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(max: Int)(seq: Iterable[A < (Abort[E] & Async & S)])(
+    )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): Chunk[A] < (Abort[E] & Async & S) =
         isolate.capture { state =>
-            Fiber.gather(max)(seq.map(isolate.isolate(state, _)))
+            Fiber.gather(max)(iterable.map(isolate.isolate(state, _)))
                 .map(_.use(chunk => Kyo.collectAll(chunk.map(isolate.restore))))
         }
 
@@ -349,24 +349,24 @@ object Async:
       */
     def foreachIndexed[E, A, B: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A], concurrency: Int = defaultConcurrency)(f: (Int, A) => B < (Abort[E] & Async & S))(using
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(f: (Int, A) => B < (Abort[E] & Async & S))(using
         Frame
     ): Chunk[B] < (Abort[E] & Async & S) =
         if concurrency <= 1 then
-            Kyo.foreachIndexed(seq.toSeq)(f)
+            Kyo.foreachIndexed(iterable.toSeq)(f)
         else
-            seq.size match
+            iterable.size match
                 case 0 => Chunk.empty
-                case 1 => f(0, seq.head).map(Chunk(_))
+                case 1 => f(0, iterable.head).map(Chunk(_))
                 case size if size <= concurrency =>
                     isolate.capture { state =>
-                        Fiber.foreachIndexed(seq)((idx, v) => isolate.isolate(state, f(idx, v)))
+                        Fiber.foreachIndexed(iterable)((idx, v) => isolate.isolate(state, f(idx, v)))
                             .map(_.use(r => Kyo.foreach(r)(isolate.restore)))
                     }
                 case size =>
                     isolate.capture { state =>
                         val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
-                        Fiber.foreachIndexed(seq.grouped(groupSize).toSeq)((idx, group) =>
+                        Fiber.foreachIndexed(iterable.grouped(groupSize).toSeq)((idx, group) =>
                             Kyo.foreachIndexed(group.toSeq)((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
                         ).map(_.use(r => Kyo.foreach(r.flattenChunk)(isolate.restore)))
                     }
@@ -384,10 +384,10 @@ object Async:
       */
     def foreach[E, A, B: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A], concurrency: Int = defaultConcurrency)(
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
     )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
-        foreachIndexed(seq, concurrency)((_, v) => f(v))
+        foreachIndexed(iterable, concurrency)((_, v) => f(v))
 
     /** Executes a sequence of computations in parallel, discarding the results.
       *
@@ -400,10 +400,10 @@ object Async:
       */
     def foreachDiscard[E, A, B: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A], concurrency: Int = defaultConcurrency)(
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
     )(using Frame): Unit < (Abort[E] & Async & S) =
-        foreach(seq, concurrency)(f).unit
+        foreach(iterable, concurrency)(f).unit
 
     /** Filters elements from a sequence using bounded concurrency.
       *
@@ -418,10 +418,10 @@ object Async:
       */
     def filter[E, A: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A], concurrency: Int = defaultConcurrency)(
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Boolean < (Abort[E] & Async & S)
     )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
-        collect(seq, concurrency)(v => f(v).map(Maybe.when(_)(v)))
+        collect(iterable, concurrency)(v => f(v).map(Maybe.when(_)(v)))
 
     /** Transforms and filters elements from a sequence using bounded concurrency.
       *
@@ -436,10 +436,10 @@ object Async:
       */
     def collect[E, A, B: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A], concurrency: Int = defaultConcurrency)(
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Maybe[B] < (Abort[E] & Async & S)
     )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
-        foreach(seq, concurrency)(f).map(_.flatten)
+        foreach(iterable, concurrency)(f).map(_.flatten)
 
     /** Executes a sequence of computations using bounded concurrency.
       *
@@ -452,8 +452,10 @@ object Async:
       */
     def collectAll[E, A: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using Frame): Chunk[A] < (Abort[E] & Async & S) =
-        foreach(seq, concurrency)(identity)
+    )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using
+        Frame
+    ): Chunk[A] < (Abort[E] & Async & S) =
+        foreach(iterable, concurrency)(identity)
 
     /** Executes a sequence of computations in parallel, discarding their results.
       *
@@ -464,8 +466,8 @@ object Async:
       */
     def collectAllDiscard[E, A: Flat, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(seq: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using Frame): Unit < (Abort[E] & Async & S) =
-        foreachDiscard(seq, concurrency)(identity)
+    )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using Frame): Unit < (Abort[E] & Async & S) =
+        foreachDiscard(iterable, concurrency)(identity)
 
     /** Repeats a computation n times in parallel.
       *
