@@ -809,6 +809,22 @@ class StreamTest extends Test:
         succeed
     }
 
+    "splitAt" - {
+        "split under length" in run {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAt(4).map: (chunk, restStream) =>
+                assert(chunk == Chunk(0, 1, 2, 3))
+                assert(restStream.run.eval == Seq(4, 5, 6, 7, 8, 9))
+        }
+
+        "split over length" in run {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAt(12).map: (chunk, restStream) =>
+                assert(chunk == Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+                assert(restStream.run.eval == Seq())
+        }
+    }
+
     "edge cases" - {
 
         "flatMap with nested aborts" in {
