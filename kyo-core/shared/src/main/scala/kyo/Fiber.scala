@@ -15,6 +15,27 @@ import scala.util.NotGiven
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
+/** A low-level primitive for asynchronous computation control.
+  *
+  * Fiber is the underlying mechanism that powers Kyo's concurrent execution model. It provides fine-grained control over asynchronous
+  * computations, including lifecycle management, interruption handling, and completion callbacks.
+  *
+  * WARNING: This is a low-level API primarily intended for library authors and system integrations. For application-level concurrent
+  * programming, use the [[Async]] effect instead, which provides a safer, more structured interface.
+  *
+  * Key capabilities:
+  *   - Lifecycle control (completion, interruption)
+  *   - Callback registration for completion and interruption
+  *   - Result transformation and composition
+  *   - Integration with external async systems (e.g., Future)
+  *
+  * @see
+  *   [[Async]] for the high-level, structured concurrency API
+  * @see
+  *   [[Promise]] for creating and completing Fibers manually
+  * @see
+  *   [[Fiber.Unsafe]] for low-level operations requiring [[AllowUnsafe]]
+  */
 opaque type Fiber[+E, +A] = IOPromise[E, A]
 
 object Fiber extends FiberPlatformSpecific:
@@ -260,12 +281,12 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with the result of the first Fiber to complete
       */
-    def race[E, A: Flat, S](
+    private[kyo] def race[E, A: Flat, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(seq: Seq[A < (Abort[E] & Async & S)])(using frame: Frame, safepoint: Safepoint): Fiber[E, A] < (IO & S) =
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame, safepoint: Safepoint): Fiber[E, A] < (IO & S) =
         IO.Unsafe {
             class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
-                val pending = AtomicInt.Unsafe.init(seq.size)
+                val pending = AtomicInt.Unsafe.init(iterable.size)
                 def apply(result: Result[E, A]): Unit =
                     val last = pending.decrementAndGet() == 0
                     result.foldError(v => completeDiscard(Result.succeed(v)), e => if last then completeDiscard(e))
@@ -276,7 +297,7 @@ object Fiber extends FiberPlatformSpecific:
             isolate.runInternal { (trace, context) =>
                 IO {
                     inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
-                    foreach(seq) { (_, v) =>
+                    foreach(iterable) { (_, v) =>
                         val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                         state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
                         fiber.onComplete(state)
@@ -285,31 +306,6 @@ object Fiber extends FiberPlatformSpecific:
                 }
             }
         }
-
-    /** Concurrently executes effects and collects their successful results.
-      *
-      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
-      *
-      * Executes all effects concurrently and returns successful results in completion order. If all computations fail, the last encountered
-      * error is propagated. The operation completes when all effects have either succeeded or failed.
-      *
-      * @tparam Ctx
-      *   Context requirements
-      * @param seq
-      *   Sequence of effects to execute
-      * @return
-      *   Fiber containing successful results as a Chunk
-      */
-    def gather[E, A: Flat, S](
-        using Isolate.Contextual[S, IO]
-    )(seq: Seq[A < (Abort[E] & Async & S)])(
-        using
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, Chunk[A]] < (IO & S) =
-        val total = seq.size
-        gather(total)(seq)
-    end gather
 
     /** Concurrently executes effects and collects up to `max` successful results.
       *
@@ -325,14 +321,14 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   Fiber containing successful results as a Chunk (size <= max)
       */
-    def gather[E, A: Flat, S](
+    private[kyo] def gather[E, A: Flat, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(max: Int)(seq: Seq[A < (Abort[E] & Async & S)])(
+    )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using
         frame: Frame,
         safepoint: Safepoint
     ): Fiber[E, Chunk[A]] < (IO & S) =
-        val total = seq.size
+        val total = iterable.size
         if total == 0 || max <= 0 then Fiber.success(Chunk.empty)
         else
             IO.Unsafe {
@@ -398,7 +394,7 @@ object Fiber extends FiberPlatformSpecific:
                 isolate.runInternal { (trace, context) =>
                     IO {
                         inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
-                        foreach(seq) { (idx, v) =>
+                        foreach(iterable) { (idx, v) =>
                             val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                             state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
                             fiber.onComplete(state(idx, _))
@@ -470,60 +466,21 @@ object Fiber extends FiberPlatformSpecific:
             loop(0, items - 1)
     end quickSort
 
-    /** Runs multiple computations in parallel with a specified level of parallelism and returns a Fiber that completes with their results.
-      *
-      * This method allows you to execute a sequence of computations with controlled parallelism by grouping them into batches. If any
-      * computation fails or is interrupted, all other computations are interrupted.
-      *
-      * @param parallelism
-      *   The maximum number of computations to run concurrently. The input sequence will be divided into groups of size ceil(n/parallelism)
-      *   where n is the total number of computations.
-      * @param seq
-      *   The sequence of computations to run in parallel
-      * @return
-      *   A Fiber that completes with a sequence containing the results of all computations in their original order
-      */
-    def parallel[E, A: Flat, S](
-        using Isolate.Contextual[S, IO]
-    )(parallelism: Int)(seq: Seq[A < (Abort[E] & Async & S)])(
-        using
-        Frame,
-        Safepoint
-    ): Fiber[E, Seq[A]] < (IO & S) =
-        seq.size match
-            case 0 => Fiber.success(Seq.empty)
-            case n =>
-                val groupSize = Math.ceil(n.toDouble / Math.max(1, parallelism)).toInt
-                parallelUnbounded(seq.grouped(groupSize).map(Kyo.collect).toSeq).map(_.map(_.flatten))
-
-    /** Runs multiple computations in parallel with unlimited parallelism and returns a Fiber that completes with their results.
-      *
-      * Unlike [[parallel]], this method starts all computations immediately without any concurrency control. This can lead to resource
-      * exhaustion if the input sequence is large. Consider using [[parallel]] instead, which allows you to control the level of
-      * concurrency.
-      *
-      * If any computation fails or is interrupted, all other computations are interrupted.
-      *
-      * @param seq
-      *   The sequence of computations to run in parallel
-      * @return
-      *   A Fiber that completes with a sequence containing the results of all computations in their original order
-      */
-    def parallelUnbounded[E, A: Flat, S](using
-        isolate: Isolate.Contextual[S, IO]
-    )(seq: Seq[A < (Abort[E] & Async & S)])(
+    private[kyo] def foreachIndexed[A, B: Flat, E, S](
+        using isolate: Isolate.Contextual[S, IO]
+    )(iterable: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async & S))(
         using
         frame: Frame,
         safepoint: Safepoint
-    ): Fiber[E, Seq[A]] < (IO & S) =
-        seq.size match
-            case 0 => Fiber.success(Seq.empty)
-            case _ =>
+    ): Fiber[E, Chunk[B]] < (IO & S) =
+        iterable.size match
+            case 0 => Fiber.success(Chunk.empty)
+            case size =>
                 IO.Unsafe {
-                    class State extends IOPromise[E, Seq[A]] with ((Int, Result[E, A]) => Unit):
-                        val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
-                        val pending = AtomicInt.Unsafe.init(seq.size)
-                        def apply(idx: Int, result: Result[E, A]): Unit =
+                    class State extends IOPromise[E, Chunk[B]] with ((Int, Result[E, B]) => Unit):
+                        val results = (new Array[Any](size)).asInstanceOf[Array[B]]
+                        val pending = AtomicInt.Unsafe.init(size)
+                        def apply(idx: Int, result: Result[E, B]): Unit =
                             result.foldError(
                                 { value =>
                                     results(idx) = value
@@ -536,14 +493,12 @@ object Fiber extends FiberPlatformSpecific:
                     val state = new State
                     import state.*
                     isolate.runInternal { (trace, context) =>
-                        IO {
-                            foreach(seq) { (idx, v) =>
-                                val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                                state.interrupts(fiber)
-                                fiber.onComplete(state(idx, _))
-                            }
-                            state
+                        foreach(iterable) { (idx, v) =>
+                            val fiber = IOTask(IO(f(idx, v)), safepoint.copyTrace(trace), context)
+                            state.interrupts(fiber)
+                            fiber.onComplete(state(idx, _))
                         }
+                        state
                     }
                 }
 
@@ -695,9 +650,9 @@ object Fiber extends FiberPlatformSpecific:
         end Unsafe
     end Promise
 
-    private inline def foreach[A](l: Seq[A])(inline f: (Int, A) => Unit): Unit =
+    private inline def foreach[A](l: Iterable[A])(inline f: (Int, A) => Unit): Unit =
         l match
-            case l: IndexedSeq[?] =>
+            case l: IndexedSeq[A] =>
                 val s = l.size
                 @tailrec def loop(i: Int): Unit =
                     if i < s then

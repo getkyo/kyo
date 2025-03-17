@@ -58,7 +58,7 @@ object TestHttpServer:
     def start(concurrency: Int): String =
         val javaBin   = System.getProperty("java.home") + "/bin/java"
         val classpath = System.getProperty("java.class.path")
-        val command   = List(javaBin, "-cp", classpath, "kyo.bench.TestHttpServer", concurrency.toString)
+        val command   = List(javaBin, "-cp", classpath, "kyo.bench.arena.TestHttpServer", concurrency.toString)
         val builder   = new ProcessBuilder(command*)
         try
             log(port, "forking")

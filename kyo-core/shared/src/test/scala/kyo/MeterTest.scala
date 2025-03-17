@@ -123,9 +123,9 @@ class MeterTest extends Test:
                     meter   <- Meter.initSemaphore(size)
                     counter <- AtomicInt.init(0)
                     results <-
-                        Async.parallelUnbounded((1 to 100).map(_ =>
+                        Async.foreach(1 to 100, 100)(_ =>
                             Abort.run(meter.run(counter.incrementAndGet))
-                        ))
+                        )
                     count   <- counter.get
                     permits <- meter.availablePermits
                 yield
@@ -144,9 +144,9 @@ class MeterTest extends Test:
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFiber <- Async.run(
-                        latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ =>
+                        latch.await.andThen(Async.fill(100, 100)(
                             Abort.run(meter.run(counter.incrementAndGet))
-                        )))
+                        ))
                     )
                     closeFiber <- Async.run(latch.await.andThen(meter.close))
                     _          <- latch.release
@@ -176,9 +176,9 @@ class MeterTest extends Test:
                             Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
                         )
                     )
-                    interruptFiber <- Async.run(latch.await.andThen(Async.parallelUnbounded(
-                        runFibers.take(50).map(_.interrupt(panic))
-                    )))
+                    interruptFiber <- Async.run(latch.await.andThen(
+                        Async.foreach(runFibers.take(50), 50)(_.interrupt(panic))
+                    ))
                     _           <- started.await
                     _           <- latch.release
                     interrupted <- interruptFiber.get

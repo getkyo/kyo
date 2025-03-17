@@ -89,7 +89,7 @@ object Routes:
       *   Unit wrapped in Routes effect
       */
     def collect(init: (Unit < Routes)*)(using Frame): Unit < Routes =
-        Kyo.collectDiscard(init)
+        Kyo.collectAllDiscard(init)
 
     given isolate: Isolate.Stateful[Routes, Async] =
         Emit.isolate.merge[Route].use {

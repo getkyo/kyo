@@ -345,20 +345,20 @@ object Result:
 
         /** Folds a Result into a value, with separate handling for errors and successes.
           *
-          * @param ifError
+          * @param onError
           *   Function to apply if the Result is an Error (either Failure or Panic)
           * @param onSuccess
           *   Function to apply if the Result is a Success
           * @return
           *   The result of applying the appropriate function
           */
-        inline def foldError[B](inline onSuccess: A => B, ifError: Error[E] => B): B =
+        inline def foldError[B](inline onSuccess: A => B, onError: Error[E] => B): B =
             try
                 self match
-                    case error: Error[E] @unchecked => ifError(error)
+                    case error: Error[E] @unchecked => onError(error)
                     case _                          => onSuccess(self.asInstanceOf[Result[Nothing, A]].getOrThrow)
             catch
-                case ex => ifError(Panic(ex))
+                case ex => onError(Panic(ex))
 
         /** Folds a Result into a value, with separate handling for successes, failures, and panics.
           *

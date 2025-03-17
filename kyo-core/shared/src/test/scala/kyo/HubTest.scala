@@ -211,22 +211,22 @@ class HubTest extends Test:
                 latch <- Latch.init(1)
                 pubFiber <- Async.run(
                     latch.await.andThen(
-                        Async.parallelUnbounded((1 to 10).map(i => Abort.run(hub.put(i))))
+                        Async.foreach(1 to 10, 10)(i => Abort.run(hub.put(i)))
                     )
                 )
                 sub1Fiber <- Async.run(
                     latch.await.andThen(
-                        Async.parallelUnbounded((1 to 10).map(_ => Abort.run(l1.take)))
+                        Async.fill(10, 10)(Abort.run(l1.take))
                     )
                 )
                 sub2Fiber <- Async.run(
                     latch.await.andThen(
-                        Async.parallelUnbounded((1 to 10).map(_ => Abort.run(l2.take)))
+                        Async.fill(10, 10)(Abort.run(l2.take))
                     )
                 )
                 sub3Fiber <- Async.run(
                     latch.await.andThen(
-                        Async.parallelUnbounded((1 to 10).map(_ => Abort.run(l3.take)))
+                        Async.fill(10, 10)(Abort.run(l3.take))
                     )
                 )
                 _      <- latch.release
@@ -252,9 +252,7 @@ class HubTest extends Test:
                 latch <- Latch.init(1)
                 listenerFiber <- Async.run(
                     latch.await.andThen(
-                        Async.parallelUnbounded(
-                            List.fill(20)(Abort.run(hub.listen))
-                        )
+                        Async.fill(20, 20)(Abort.run(hub.listen))
                     )
                 )
                 closeFiber <- Async.run(latch.await.andThen(hub.close))
@@ -272,8 +270,8 @@ class HubTest extends Test:
                 l1    <- hub.listen
                 l2    <- hub.listen
                 latch <- Latch.init(1)
-                pubFibers <- Async.parallel(4)(
-                    (0 until 4).map(n =>
+                pubFibers <-
+                    Async.foreach(0 until 4, 4) { n =>
                         Async.run(
                             latch.await.andThen(
                                 Kyo.foreachDiscard(
@@ -281,8 +279,7 @@ class HubTest extends Test:
                                 )(hub.put)
                             )
                         )
-                    )
-                )
+                    }
                 collector1 <- Async.run(
                     latch.await.andThen(
                         l1.stream().take(1000).run
@@ -335,17 +332,15 @@ class HubTest extends Test:
             for
                 hub   <- Hub.init[Int](100)
                 latch <- Latch.init(1)
-                listeners <- Async.parallelUnbounded(
-                    (0 until 10).map { n =>
-                        hub.listen(_ % 10 == n)
-                    }
-                )
+                listeners <- Async.foreach(0 until 10, 10) { n =>
+                    hub.listen(_ % 10 == n)
+                }
                 publisher <- Async.run(
                     latch.await.andThen(
                         Kyo.foreachDiscard(1 to 1000)(hub.put)
                     )
                 )
-                collectors <- Async.parallelUnbounded(
+                collectors <- Async.collectAll(
                     listeners.map(l =>
                         Async.run(
                             latch.await.andThen(
@@ -356,7 +351,7 @@ class HubTest extends Test:
                 )
                 _       <- latch.release
                 _       <- publisher.get
-                results <- Async.parallelUnbounded(collectors.map(_.get))
+                results <- Async.collectAll(collectors.map(_.get))
             yield assert(
                 results.forall(_.size == 100) &&
                     results.zipWithIndex.forall { case (nums, idx) =>
