@@ -297,21 +297,26 @@ class RecordTest extends Test:
             inline def fieldApply[Name <: String, Value](field: Field[Name, Value]): Column[Value] =
                 Column[Value](field.name)(using summonInline[AsColumn[Value]])
 
-        "runs StageAs logic for each field" in {
+        "build record if all inlined" in {
             type Person = "name" ~ String & "age" ~ Int
+
             val columns = Record.stage[Person](ColumnInline)
             val result = "name" ~ Column[String]("name") &
                 "age" ~ Column[Int]("age")
-            val result2 = "name" ~ Column[String]("name") &
-                "age" ~ Column[Int]("age")
 
-            println(Render.asText(columns).show)
-            println(Render.asText(result).show)
-
-            assert(columns.name == result.name)
-            // sassert(columns == result)
+            assert(columns.name == Column[String]("name"))
+            assert(columns.age == Column[Int]("age"))
+            assert(columns == result)
         }
 
+        "compile error when inlining failed" in {
+            class Role()
+            type Person = "name" ~ String & "age" ~ Int & "role" ~ Role
+
+            typeCheckFailure("""
+                Record.stage[Person](ColumnInline)
+            """)("""No given instance of type AsColumn[Role] was found""")
+        }
     }
 
     "AsFields behavior" - {

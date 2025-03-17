@@ -126,11 +126,14 @@ object Record:
       */
     val empty: Record[Any] = Record[Any](Map())
 
-    def unsafeFrom[Fields: AsFields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
+    private def unsafeFrom[Fields: AsFields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
 
     inline def stage[Fields]: StageOps[Fields] = new StageOps[Fields](())
 
     class StageOps[Fields](dummy: Unit) extends AnyVal:
+        /** Applies `StageAs` logic to each field. Called on a record type `n1 ~ v1 & ... & nk ~ vk`, returns a new record of type
+          * `n1 ~ F[n1, v1] & ... & nk ~ F[nk, vk]`.
+          */
         inline def apply[F[_, _]](as: StageAs[F])(using
             asFields: AsFields[Fields],
             ev: TypeIntersection[Fields]
@@ -139,13 +142,6 @@ object Record:
                 case (f, g) => (f.unwrap: Field[?, ?], g.unwrap)
             }.toMap)
     end StageOps
-
-    def map[F[_]](
-        f: [Value] => Value => F[Value]
-    )[Fields](record: Record[Fields])(using ev: TypeIntersection[Fields]): Record[ev.Map[~.MapValue[F]]] =
-        Record(
-            record.toMap.map { case (field: Field[?, value], v) => (field, f[value](v.asInstanceOf[value])) }
-        )
 
     given [Fields]: Flat[Record[Fields]] = Flat.unsafe.bypass
 
@@ -329,10 +325,13 @@ object Record:
         override inline def apply[T]: (ForSome2[AsFieldAny], ForSome2[F]) =
             inline erasedValue[T] match
                 case _: (n ~ v) =>
-                    val field = Field(constValue[n], summonInline[Tag[v]])
+                    val name    = constValue[n]
+                    val prevTag = summonInline[Tag[v]]
+                    val nextTag = summonInline[Tag[F[n, v]]]
+
                     (
-                        ForSome2.of[AsFieldAny](field),
-                        ForSome2(fieldApply[n, v](field))
+                        ForSome2.of[AsFieldAny](Field(name, nextTag)),
+                        ForSome2(fieldApply[n, v](Field(name, prevTag)))
                     )
         end apply
     end StageAs
