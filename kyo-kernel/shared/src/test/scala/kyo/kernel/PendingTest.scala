@@ -250,6 +250,64 @@ class PendingTest extends Test:
             )
             assert(result.eval == "Yes")
         }
+
+        "works with seven functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase)
+            )
+            assert(result.eval == "yes")
+        }
+
+        "works with eight functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length)
+            )
+            assert(result.eval == 3)
+        }
+
+        "works with nine functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2)
+            )
+            assert(result.eval == 6)
+        }
+
+        "works with ten functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2),
+                _.map(_ > 5)
+            )
+            assert(result.eval == true)
+        }
     }
 
     "only 'flatten' is available for nested computations" in {
