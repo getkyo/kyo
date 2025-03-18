@@ -283,7 +283,7 @@ object Fiber extends FiberPlatformSpecific:
       */
     private[kyo] def race[E, A: Flat, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame, safepoint: Safepoint): Fiber[E, A] < (IO & S) =
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): Fiber[E, A] < (IO & S) =
         IO.Unsafe {
             class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
                 val pending = AtomicInt.Unsafe.init(iterable.size)
@@ -295,15 +295,14 @@ object Fiber extends FiberPlatformSpecific:
             val state = new State
             import state.*
             isolate.runInternal { (trace, context) =>
-                IO {
-                    inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
-                    foreach(iterable) { (_, v) =>
-                        val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                        state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
-                        fiber.onComplete(state)
-                    }
-                    state
+                val safepoint             = Safepoint.get
+                inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
+                foreach(iterable) { (_, v) =>
+                    val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                    state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
+                    fiber.onComplete(state)
                 }
+                state
             }
         }
 
@@ -324,9 +323,7 @@ object Fiber extends FiberPlatformSpecific:
     private[kyo] def gather[E, A: Flat, S](
         using isolate: Isolate.Contextual[S, IO]
     )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
-        using
-        frame: Frame,
-        safepoint: Safepoint
+        using frame: Frame
     ): Fiber[E, Chunk[A]] < (IO & S) =
         val total = iterable.size
         if total == 0 || max <= 0 then Fiber.success(Chunk.empty)
@@ -392,15 +389,14 @@ object Fiber extends FiberPlatformSpecific:
                 val state = new State
                 import state.*
                 isolate.runInternal { (trace, context) =>
-                    IO {
-                        inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
-                        foreach(iterable) { (idx, v) =>
-                            val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                            state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
-                            fiber.onComplete(state(idx, _))
-                        }
-                        state
+                    val safepoint             = Safepoint.get
+                    inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
+                    foreach(iterable) { (idx, v) =>
+                        val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                        state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
+                        fiber.onComplete(state(idx, _))
                     }
+                    state
                 }
             }
         end if
@@ -469,9 +465,7 @@ object Fiber extends FiberPlatformSpecific:
     private[kyo] def foreachIndexed[A, B: Flat, E, S](
         using isolate: Isolate.Contextual[S, IO]
     )(iterable: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async & S))(
-        using
-        frame: Frame,
-        safepoint: Safepoint
+        using frame: Frame
     ): Fiber[E, Chunk[B]] < (IO & S) =
         iterable.size match
             case 0 => Fiber.success(Chunk.empty)
@@ -492,6 +486,7 @@ object Fiber extends FiberPlatformSpecific:
                     end State
                     val state = new State
                     import state.*
+                    val safepoint = Safepoint.get
                     isolate.runInternal { (trace, context) =>
                         foreach(iterable) { (idx, v) =>
                             val fiber = IOTask(IO(f(idx, v)), safepoint.copyTrace(trace), context)
