@@ -235,7 +235,7 @@ object TMap:
           */
         def values(using Frame): Iterable[V] < STM =
             self.use { map =>
-                Kyo.collect(map.values.toSeq.map(_.get))
+                Kyo.collectAll(map.values.toSeq.map(_.get))
             }
 
         /** Returns an iterable of all key-value pairs in the map.
@@ -245,7 +245,7 @@ object TMap:
           */
         def entries(using Frame): Iterable[(K, V)] < STM =
             self.use { map =>
-                Kyo.collect(
+                Kyo.collectAll(
                     map.toSeq.map { case (k, ref) =>
                         ref.get.map((k, _))
                     }
