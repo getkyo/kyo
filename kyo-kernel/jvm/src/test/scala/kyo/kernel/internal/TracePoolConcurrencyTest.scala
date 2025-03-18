@@ -1,11 +1,7 @@
 package kyo.kernel.internal
 
 import java.util.concurrent.Executors
-import kyo.Frame
-import kyo.Tagged.*
 import kyo.Test
-import kyo.discard
-import scala.concurrent.Future
 
 class TracePoolConcurrencyTest extends Test:
 

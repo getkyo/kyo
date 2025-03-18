@@ -1,5 +1,6 @@
 package kyo.internal
 
+import kyo.Chunk
 import kyo.SafeClassTag
 import kyo.SafeClassTag.*
 import scala.quoted.*
@@ -36,17 +37,17 @@ private[kyo] object SafeClassTagMacro:
         def create(tpe: TypeRepr): Expr[SafeClassTag[Any]] =
             tpe match
                 case OrType(_, _) =>
-                    def flatten(tpe: TypeRepr): Seq[TypeRepr] =
+                    def flatten(tpe: TypeRepr): Chunk[TypeRepr] =
                         tpe match
-                            case OrType(a, b) => flatten(a) ++ flatten(b)
-                            case _            => Seq(tpe)
+                            case OrType(a, b) => flatten(a).concat(flatten(b))
+                            case _            => Chunk(tpe)
                     val exprs = flatten(tpe).map(create)
                     '{ Union(Set(${ Varargs(exprs) }*)) }
                 case AndType(_, _) =>
-                    def flatten(tpe: TypeRepr): Seq[TypeRepr] =
+                    def flatten(tpe: TypeRepr): Chunk[TypeRepr] =
                         tpe match
-                            case AndType(a, b) => flatten(a) ++ flatten(b)
-                            case _             => Seq(tpe)
+                            case AndType(a, b) => flatten(a).concat(flatten(b))
+                            case _             => Chunk(tpe)
                     val exprs = flatten(tpe).map(create)
                     '{ Intersection(Set(${ Varargs(exprs) }*)) }
                 case _ => createSingle(tpe)

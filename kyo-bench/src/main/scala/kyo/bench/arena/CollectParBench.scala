@@ -10,7 +10,7 @@ class CollectParBench extends ArenaBench.ForkOnly(Seq.fill(1000)(1)):
     override def kyoBenchFiber() =
         import kyo.*
 
-        Async.parallelUnbounded(kyoTasks)
+        Async.collectAll(kyoTasks, count)
     end kyoBenchFiber
 
     def catsBench() =

@@ -159,4 +159,7 @@ object Resolvers:
                         }
         )
 
+    given isolate: Isolate.Contextual[Resolvers, Abort[CalibanError] & Async] =
+        Isolate.Contextual.derive[Resolvers, Abort[CalibanError] & Async]
+
 end Resolvers

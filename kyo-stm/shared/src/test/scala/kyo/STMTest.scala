@@ -8,7 +8,7 @@ class STMTest extends Test:
         "concurrent modifications" in run {
             for
                 ref    <- TRef.init(0)
-                fibers <- Async.parallelUnbounded(List.fill(100)(STM.run(ref.update(_ + 1))))
+                fibers <- Async.fill(100, 100)(STM.run(ref.update(_ + 1)))
                 value  <- STM.run(ref.get)
             yield assert(value == 100)
         }
@@ -92,14 +92,17 @@ class STMTest extends Test:
             Var.run(42) {
                 for
                     ref <- TRef.init(0)
-                    result <- STM.run(Var.isolate.update) {
-                        for
-                            _  <- ref.set(1)
-                            _  <- Var.set(100)
-                            v1 <- ref.get
-                            v2 <- Var.get[Int]
-                        yield (v1, v2)
-                    }
+                    result <-
+                        Var.isolate.update[Int].use {
+                            STM.run {
+                                for
+                                    _  <- ref.set(1)
+                                    _  <- Var.set(100)
+                                    v1 <- ref.get
+                                    v2 <- Var.get[Int]
+                                yield (v1, v2)
+                            }
+                        }
                     finalRef <- STM.run(ref.get)
                     finalVar <- Var.get[Int]
                 yield assert(result == (1, 100) && finalRef == 1 && finalVar == 100)
@@ -110,13 +113,15 @@ class STMTest extends Test:
             for
                 ref <- TRef.init(0)
                 result <- Emit.run {
-                    STM.run(Emit.isolate.merge[Int]) {
-                        for
-                            _ <- ref.set(1)
-                            _ <- Emit.value(42)
-                            v <- ref.get
-                            _ <- Emit.value(v)
-                        yield v
+                    Emit.isolate.merge[Int].use {
+                        STM.run {
+                            for
+                                _ <- ref.set(1)
+                                _ <- Emit.value(42)
+                                v <- ref.get
+                                _ <- Emit.value(v)
+                            yield v
+                        }
                     }
                 }
                 finalValue <- STM.run(ref.get)
@@ -130,13 +135,15 @@ class STMTest extends Test:
                 result <-
                     Emit.run {
                         Abort.run {
-                            STM.run(Emit.isolate.merge[Int]) {
-                                for
-                                    _ <- ref.set(42)
-                                    _ <- Emit.value(1)
-                                    _ <- Abort.fail(ex)
-                                    _ <- Emit.value(2)
-                                yield "unreachable"
+                            Emit.isolate.merge[Int].use {
+                                STM.run {
+                                    for
+                                        _ <- ref.set(42)
+                                        _ <- Emit.value(1)
+                                        _ <- Abort.fail(ex)
+                                        _ <- Emit.value(2)
+                                    yield "unreachable"
+                                }
                             }
                         }
                     }
@@ -149,22 +156,28 @@ class STMTest extends Test:
             Var.run(0) {
                 for
                     ref <- TRef.init(1)
-                    result <- STM.run(Var.isolate.update) {
-                        for
-                            _ <- ref.set(2)
-                            _ <- Var.set(1)
-                            innerResult <- TRefLog.isolate.run {
+                    result <-
+                        Var.isolate.update[Int].use {
+                            STM.run {
                                 for
-                                    _  <- ref.set(3)
-                                    _  <- Var.set(2)
-                                    v1 <- ref.get
-                                    v2 <- Var.get[Int]
-                                yield (v1, v2)
+                                    _ <- ref.set(2)
+                                    _ <- Var.set(1)
+                                    innerResult <-
+                                        Var.isolate.update[Int].use {
+                                            STM.run {
+                                                for
+                                                    _  <- ref.set(3)
+                                                    _  <- Var.set(2)
+                                                    v1 <- ref.get
+                                                    v2 <- Var.get[Int]
+                                                yield (v1, v2)
+                                            }
+                                        }
+                                    outerVar <- Var.get[Int]
+                                    finalRef <- ref.get
+                                yield (innerResult, outerVar, finalRef)
                             }
-                            outerVar <- Var.get[Int]
-                            finalRef <- ref.get
-                        yield (innerResult, outerVar, finalRef)
-                    }
+                        }
                     finalVar <- Var.get[Int]
                 yield assert(result == ((3, 2), 2, 3) && finalVar == 2)
             }
@@ -180,7 +193,7 @@ class STMTest extends Test:
             Memo.run {
                 for
                     ref <- TRef.init(1)
-                    result <- STM.run(Memo.isolate.merge) {
+                    result <- STM.run {
                         for
                             _      <- ref.set(2)
                             v1     <- f(2)
@@ -202,16 +215,18 @@ class STMTest extends Test:
                     ref <- TRef.init(0)
                     result <- Emit.run {
                         Abort.run {
-                            STM.run(Emit.isolate.merge[Int].andThen(Var.isolate.update)) {
-                                for
-                                    _ <- ref.set(1)
-                                    _ <- Emit.value(1)
-                                    _ <- Var.set(1)
-                                    _ <- Abort.fail(ex)
-                                    _ <- ref.set(2)
-                                    _ <- Emit.value(2)
-                                    _ <- Var.set(2)
-                                yield "unreachable"
+                            Emit.isolate.merge[Int].andThen(Var.isolate.update[Int]).use {
+                                STM.run {
+                                    for
+                                        _ <- ref.set(1)
+                                        _ <- Emit.value(1)
+                                        _ <- Var.set(1)
+                                        _ <- Abort.fail(ex)
+                                        _ <- ref.set(2)
+                                        _ <- Emit.value(2)
+                                        _ <- Var.set(2)
+                                    yield "unreachable"
+                                }
                             }
                         }
                     }
@@ -485,7 +500,7 @@ class STMTest extends Test:
             (for
                 size  <- Choice.get(sizes)
                 ref   <- TRef.init(0)
-                _     <- Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.update(_ + 1))))
+                _     <- Async.fill(size, size)(STM.run(ref.update(_ + 1)))
                 value <- STM.run(ref.get)
             yield assert(value == size))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
@@ -498,10 +513,10 @@ class STMTest extends Test:
                 ref   <- TRef.init(0)
                 latch <- Latch.init(1)
                 writeFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.update(_ + 1)))))
+                    latch.await.andThen(Async.fill(size, size)(STM.run(ref.update(_ + 1))))
                 )
                 readFiber <- Async.run(
-                    latch.await.andThen(Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.get))))
+                    latch.await.andThen(Async.fill(size, size)(STM.run(ref.get)))
                 )
                 _     <- latch.release
                 _     <- writeFiber.get
@@ -516,7 +531,7 @@ class STMTest extends Test:
             (for
                 size <- Choice.get(sizes)
                 ref  <- TRef.init(0)
-                _ <- Async.parallelUnbounded((1 to size).map { _ =>
+                _ <- Async.fill(size, size) {
                     STM.run {
                         for
                             _ <- ref.update(_ + 1)
@@ -528,7 +543,7 @@ class STMTest extends Test:
                             }
                         yield ()
                     }
-                })
+                }
                 value <- STM.run(ref.get)
             yield assert(value == size * 2))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
@@ -539,29 +554,27 @@ class STMTest extends Test:
             val philosophers = 5
             (for
                 forks <- Kyo.fill(philosophers)(TRef.init(true))
-                _ <- Async.parallelUnbounded(
-                    (0 until philosophers).map { i =>
-                        val leftFork  = forks(i)
-                        val rightFork = forks((i + 1) % philosophers)
-                        Async.parallelUnbounded((1 to 10).map { _ =>
-                            STM.run {
-                                for
-                                    leftAvailable <- leftFork.get
-                                    _             <- STM.retryIf(!leftAvailable)
-                                    _             <- leftFork.set(false)
+                _ <- Async.foreach(0 until philosophers, philosophers) { i =>
+                    val leftFork  = forks(i)
+                    val rightFork = forks((i + 1) % philosophers)
+                    Async.collectAll((1 to 10).map { _ =>
+                        STM.run {
+                            for
+                                leftAvailable <- leftFork.get
+                                _             <- STM.retryIf(!leftAvailable)
+                                _             <- leftFork.set(false)
 
-                                    rightAvailable <- rightFork.get
-                                    _              <- STM.retryIf(!rightAvailable)
-                                    _              <- rightFork.set(false)
+                                rightAvailable <- rightFork.get
+                                _              <- STM.retryIf(!rightAvailable)
+                                _              <- rightFork.set(false)
 
-                                    _ <- leftFork.set(true)
-                                    _ <- rightFork.set(true)
-                                yield ()
-                            }
-                        })
-                    }
-                )
-                finalStates <- Kyo.collect(forks.map(fork => STM.run(fork.get)))
+                                _ <- leftFork.set(true)
+                                _ <- rightFork.set(true)
+                            yield ()
+                        }
+                    })
+                }
+                finalStates <- Kyo.collectAll(forks.map(fork => STM.run(fork.get)))
             yield assert(finalStates.forall(identity)))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
@@ -603,7 +616,7 @@ class STMTest extends Test:
                     }
                 )
 
-                _      <- Async.parallelUnbounded(transfers)
+                _      <- Async.collectAll(transfers, transfers.size)
                 final1 <- STM.run(account1.get)
                 final2 <- STM.run(account2.get)
                 final3 <- STM.run(account3.get)
@@ -655,7 +668,7 @@ class STMTest extends Test:
                     )
                 )
 
-                _      <- Async.parallelUnbounded(circularTransfers)
+                _      <- Async.collectAll(circularTransfers, circularTransfers.size)
                 final1 <- STM.run(account1.get)
                 final2 <- STM.run(account2.get)
                 final3 <- STM.run(account3.get)

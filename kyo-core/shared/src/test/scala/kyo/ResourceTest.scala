@@ -259,7 +259,7 @@ class ResourceTest extends Test:
                 def makeResource(id: Int) =
                     Resource.acquireRelease(IO(id))(_ => latch.release)
 
-                val resources = Kyo.collect((1 to 3).map(makeResource))
+                val resources = Kyo.foreach(1 to 3)(makeResource)
 
                 for
                     close <- Async.run(resources.pipe(Resource.run(3)))
@@ -283,7 +283,7 @@ class ResourceTest extends Test:
                             ()
                     }
 
-                val resources = Kyo.collect((1 to 10).map(makeResource))
+                val resources = Kyo.foreach(1 to 10)(makeResource)
 
                 for
                     close <- Async.run(resources.pipe(Resource.run(3)))

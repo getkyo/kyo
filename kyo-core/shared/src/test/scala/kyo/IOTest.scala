@@ -239,7 +239,6 @@ class IOTest extends Test:
     }
 
     "Unsafe.withLocal" - {
-        import AllowUnsafe.embrace.danger
 
         def unsafeOperation(value: Int)(using unsafe: AllowUnsafe): Int =
             value * 2

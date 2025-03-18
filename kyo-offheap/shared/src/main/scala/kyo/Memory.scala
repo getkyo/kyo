@@ -1,10 +1,7 @@
 package kyo
 
 import java.lang.foreign.{Arena as JArena, *}
-import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
-import scala.deriving.Mirror
-import scala.math.Numeric.Implicits.infixNumericOps
 
 /** Memory provides a safe, effect-tracked interface for off-heap memory management.
   *
@@ -62,7 +59,7 @@ object Memory:
       * @return
       *   The result of applying f to the new memory segment
       */
-    inline def initWith[A: Layout as l](size: Int)[B, S](inline f: Memory[A] => B < S)(using inline frame: Frame): B < (Arena & S) =
+    def initWith[A: Layout as l](size: Int)[B, S](f: Memory[A] => B < S)(using Frame): B < (Arena & S) =
         Arena.use { arena =>
             IO.Unsafe(f(arena.allocate(l.size * size)))
         }
@@ -198,6 +195,8 @@ object Memory:
                 val arena = JArena.ofShared()
                 IO.ensure(IO(arena.close))(Env.run(arena)(f))
             }
+
+        given isolate: Isolate.Contextual[Arena, IO] = Isolate.Contextual.derive[Arena, IO]
 
         private[kyo] def use[A, S](f: JArena => A < S)(using Frame): A < (S & Arena) =
             Env.use[State](f)

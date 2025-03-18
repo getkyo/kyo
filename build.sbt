@@ -5,7 +5,7 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version   = "3.6.2"
+val scala3Version   = "3.6.4"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
@@ -161,6 +161,7 @@ lazy val kyoNative = project
         `kyo-stats-registry`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
+        `kyo-offheap`.native,
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-sttp`.native
@@ -334,13 +335,14 @@ lazy val `kyo-core` =
         )
 
 lazy val `kyo-offheap` =
-    crossProject(JVMPlatform)
+    crossProject(JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)

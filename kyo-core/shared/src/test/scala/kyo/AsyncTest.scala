@@ -21,9 +21,9 @@ class AsyncTest extends Test:
         "multiple" in run {
             for
                 v0               <- Async.run(0).map(_.get)
-                (v1, v2)         <- Async.parallel(1, 2)
-                (v3, v4, v5)     <- Async.parallel(3, 4, 5)
-                (v6, v7, v8, v9) <- Async.parallel(6, 7, 8, 9)
+                (v1, v2)         <- Async.zip(1, 2)
+                (v3, v4, v5)     <- Async.zip(3, 4, 5)
+                (v6, v7, v8, v9) <- Async.zip(6, 7, 8, 9)
             yield assert(v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 == 45)
         }
         "nested" in runNotJS {
@@ -43,7 +43,7 @@ class AsyncTest extends Test:
         }
         "non IO-based effect" in run {
             typeCheckFailure("Async.run(Var.get[Int])")(
-                "The computation you're trying to fork with Async has pending effects"
+                "This operation requires Contextual isolation for effects"
             )
         }
     }
@@ -197,14 +197,14 @@ class AsyncTest extends Test:
         }
     }
 
-    "parallelUnbounded" - {
+    "collectAll" - {
         "zero" in run {
-            Async.parallelUnbounded(Seq()).map { r =>
+            Async.collectAll(Seq()).map { r =>
                 assert(r == Seq())
             }
         }
         "one" in run {
-            Async.parallelUnbounded(Seq(1)).map { r =>
+            Async.collectAll(Seq(1)).map { r =>
                 assert(r == Seq(1))
             }
         }
@@ -220,7 +220,7 @@ class AsyncTest extends Test:
                     else
                         s
                 }
-            Async.parallelUnbounded(List(loop(1, "a"), loop(5, "b"))).map { r =>
+            Async.collectAll(List(loop(1, "a"), loop(5, "b"))).map { r =>
                 assert(r == List("a", "b"))
                 assert(ac.get() == 1)
                 assert(bc.get() == 5)
@@ -228,12 +228,12 @@ class AsyncTest extends Test:
         }
         "three arguments" in run {
             for
-                (v1, v2, v3) <- Async.parallel(IO(1), IO(2), IO(3))
+                (v1, v2, v3) <- Async.zip(IO(1), IO(2), IO(3))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3)
         }
         "four arguments" in run {
             for
-                (v1, v2, v3, v4) <- Async.parallel(IO(1), IO(2), IO(3), IO(4))
+                (v1, v2, v3, v4) <- Async.zip(IO(1), IO(2), IO(3), IO(4))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3 && v4 == 4)
         }
     }
@@ -241,8 +241,8 @@ class AsyncTest extends Test:
     "transform" in run {
         for
             v1       <- Async.run(1).map(_.get)
-            (v2, v3) <- Async.parallel(2, 3)
-            l        <- Async.parallelUnbounded(List[Int < Any](4, 5))
+            (v2, v3) <- Async.zip(2, 3)
+            l        <- Async.collectAll(List[Int < Any](4, 5))
         yield assert(v1 + v2 + v3 + l.sum == 15)
     }
 
@@ -296,7 +296,7 @@ class AsyncTest extends Test:
         "multiple" in run {
             val resource1 = new TestResource
             val resource2 = new TestResource
-            Async.parallel(
+            Async.zip(
                 Resource.run(Resource.acquire(resource1).map(_.incrementAndGet())),
                 Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
             ).map { r =>
@@ -343,10 +343,10 @@ class AsyncTest extends Test:
         }
         "collect" - {
             "default" in run {
-                Async.parallelUnbounded(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
+                Async.collectAll(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
             }
             "let" in run {
-                l.let(20)(Async.parallelUnbounded(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
+                l.let(20)(Async.collectAll(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
             }
         }
     }
@@ -415,10 +415,10 @@ class AsyncTest extends Test:
             val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.race(Seq(v))
             val _: Int < (Abort[Int] & Async)                  = Async.race(v, v)
-            val _: Seq[Int] < (Abort[Int] & Async)             = Async.parallelUnbounded(Seq(v))
-            val _: (Int, Int) < (Abort[Int] & Async)           = Async.parallel(v, v)
-            val _: (Int, Int, Int) < (Abort[Int] & Async)      = Async.parallel(v, v, v)
-            val _: (Int, Int, Int, Int) < (Abort[Int] & Async) = Async.parallel(v, v, v, v)
+            val _: Seq[Int] < (Abort[Int] & Async)             = Async.collectAll(Seq(v))
+            val _: (Int, Int) < (Abort[Int] & Async)           = Async.zip(v, v)
+            val _: (Int, Int, Int) < (Abort[Int] & Async)      = Async.zip(v, v, v)
+            val _: (Int, Int, Int, Int) < (Abort[Int] & Async) = Async.zip(v, v, v, v)
             succeed
         }
         "additional failure" in {
@@ -429,10 +429,10 @@ class AsyncTest extends Test:
             val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(Seq(v))
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(v, v)
-            val _: Seq[Int] < (Abort[Int | String] & Async)             = Async.parallelUnbounded(Seq(v))
-            val _: (Int, Int) < (Abort[Int | String] & Async)           = Async.parallel(v, v)
-            val _: (Int, Int, Int) < (Abort[Int | String] & Async)      = Async.parallel(v, v, v)
-            val _: (Int, Int, Int, Int) < (Abort[Int | String] & Async) = Async.parallel(v, v, v, v)
+            val _: Seq[Int] < (Abort[Int | String] & Async)             = Async.collectAll(Seq(v))
+            val _: (Int, Int) < (Abort[Int | String] & Async)           = Async.zip(v, v)
+            val _: (Int, Int, Int) < (Abort[Int | String] & Async)      = Async.zip(v, v, v)
+            val _: (Int, Int, Int, Int) < (Abort[Int | String] & Async) = Async.zip(v, v, v, v)
             succeed
         }
         "nested" - {
@@ -445,23 +445,23 @@ class AsyncTest extends Test:
                 val _: Fiber[Int | Timeout, Int] < IO        = Async.run(Async.timeout(1.second)(v))
                 val _: Fiber[Int, Int] < IO                  = Async.run(Async.race(Seq(v)))
                 val _: Fiber[Int, Int] < IO                  = Async.run(Async.race(v, v))
-                val x: Fiber[Int, Seq[Int]] < IO             = Async.run(Async.parallel(10)(Seq(v)))
-                val _: Fiber[Int, (Int, Int)] < IO           = Async.run(Async.parallel(v, v))
-                val _: Fiber[Int, (Int, Int, Int)] < IO      = Async.run(Async.parallel(v, v, v))
-                val _: Fiber[Int, (Int, Int, Int, Int)] < IO = Async.run(Async.parallel(v, v, v, v))
+                val x: Fiber[Int, Seq[Int]] < IO             = Async.run(Async.collectAll(Seq(v)))
+                val _: Fiber[Int, (Int, Int)] < IO           = Async.run(Async.zip(v, v))
+                val _: Fiber[Int, (Int, Int, Int)] < IO      = Async.run(Async.zip(v, v, v))
+                val _: Fiber[Int, (Int, Int, Int, Int)] < IO = Async.run(Async.zip(v, v, v, v))
                 succeed
             }
 
-            "parallel" in run {
+            "zip" in run {
                 val v: Int < Abort[Int] = 1
 
-                val _: (Fiber[Int, Int], Fiber[Int, Int]) < Async = Async.parallel(Async.run(v), Async.run(v))
+                val _: (Fiber[Int, Int], Fiber[Int, Int]) < Async = Async.zip(Async.run(v), Async.run(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async) =
-                    Async.parallel(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
-                val _: (Int, Int) < (Abort[Int] & Async)           = Async.parallel(Async.mask(v), Async.mask(v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Async) = Async.parallel(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
-                val _: (Int, Int) < (Abort[Int] & Async)           = Async.parallel(Async.race(v, v), Async.race(v, v))
-                val _: ((Int, Int), (Int, Int)) < (Abort[Int] & Async) = Async.parallel(Async.parallel(v, v), Async.parallel(v, v))
+                    Async.zip(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
+                val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.mask(v), Async.mask(v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async)     = Async.zip(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
+                val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.race(v, v), Async.race(v, v))
+                val _: ((Int, Int), (Int, Int)) < (Abort[Int] & Async) = Async.zip(Async.zip(v, v), Async.zip(v, v))
                 succeed
             }
 
@@ -473,7 +473,7 @@ class AsyncTest extends Test:
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.mask(v), Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.race(v, v), Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int] & Async)    = Async.race(Async.parallel(v, v), Async.parallel(v, v))
+                val _: (Int, Int) < (Abort[Int] & Async)    = Async.race(Async.zip(v, v), Async.zip(v, v))
                 succeed
             }
 
@@ -485,7 +485,7 @@ class AsyncTest extends Test:
                 val _: Int < (Abort[Int] & Async)           = Async.mask(Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.mask(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int] & Async)    = Async.mask(Async.parallel(v, v))
+                val _: (Int, Int) < (Abort[Int] & Async)    = Async.mask(Async.zip(v, v))
                 succeed
             }
 
@@ -497,7 +497,7 @@ class AsyncTest extends Test:
                 val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Async) = Async.timeout(1.second)(Async.parallel(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async) = Async.timeout(1.second)(Async.zip(v, v))
                 succeed
             }
 
@@ -509,7 +509,7 @@ class AsyncTest extends Test:
                 val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & IO) = Async.runAndBlock(1.second)(Async.parallel(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & IO) = Async.runAndBlock(1.second)(Async.zip(v, v))
                 succeed
             }
         }
@@ -555,8 +555,8 @@ class AsyncTest extends Test:
     }
 
     "isolated locals inheritance" - {
-        val isolatedInt    = Local.initIsolated(10)
-        val isolatedString = Local.initIsolated("initial")
+        val isolatedInt    = Local.initNoninheritable(10)
+        val isolatedString = Local.initNoninheritable("initial")
         val regularLocal   = Local.init("regular")
 
         "run" in run {
@@ -582,7 +582,7 @@ class AsyncTest extends Test:
                 (i, s, r) <- isolatedInt.let(30) {
                     isolatedString.let("parallel") {
                         regularLocal.let("parallel") {
-                            Async.parallel(
+                            Async.zip(
                                 Async.run(isolatedInt.get).map(_.get),
                                 Async.run(isolatedString.get).map(_.get),
                                 Async.run(regularLocal.get).map(_.get)
@@ -602,7 +602,7 @@ class AsyncTest extends Test:
                                 isolatedInt.let(60) {
                                     isolatedString.let("inner") {
                                         regularLocal.let("inner") {
-                                            Async.parallel(
+                                            Async.zip(
                                                 Async.run(isolatedInt.get).map(_.get),
                                                 Async.run(isolatedString.get).map(_.get),
                                                 Async.run(regularLocal.get).map(_.get)
@@ -624,15 +624,15 @@ class AsyncTest extends Test:
         succeed
     }
 
-    "parallel" - {
+    "collectAll concurrency" - {
         "empty sequence" in run {
-            Async.parallel(2)(Seq()).map { r =>
+            Async.collectAll(Seq(), 2).map { r =>
                 assert(r == Seq())
             }
         }
 
         "sequence smaller than parallelism" in run {
-            Async.parallel(5)(Seq(1, 2, 3)).map { r =>
+            Async.collectAll(Seq(1, 2, 3), 5).map { r =>
                 assert(r == Seq(1, 2, 3))
             }
         }
@@ -648,7 +648,7 @@ class AsyncTest extends Test:
                         assert(current < 2)
                         i
 
-                Async.parallel(2)((1 to 20).map(task)).map { r =>
+                Async.collectAll((1 to 20).map(task), 2).map { r =>
                     counter.get.map { counter =>
                         assert(r == (1 to 20))
                         assert(counter == 0)
@@ -668,7 +668,7 @@ class AsyncTest extends Test:
                         assert(current == 0)
                         i
 
-                Async.parallel(1)((1 to 5).map(task)).map { r =>
+                Async.collectAll((1 to 5).map(task), 1).map { r =>
                     counter.get.map { counter =>
                         assert(r == (1 to 5))
                         assert(counter == 0)
@@ -680,18 +680,19 @@ class AsyncTest extends Test:
 
     "with isolates" - {
         "mask with isolate" in run {
-            val varIsolate = Var.isolate.update[Int]
-
             Var.runTuple(1) {
                 for
                     start <- Var.get[Int]
-                    _ <- Async.mask(varIsolate) {
-                        for
-                            _ <- Var.set(2)
-                            _ <- Async.sleep(1.millis)
-                            _ <- Var.set(3)
-                        yield ()
-                    }
+                    _ <-
+                        Var.isolate.update[Int].use {
+                            Async.mask {
+                                for
+                                    _ <- Var.set(2)
+                                    _ <- Async.sleep(1.millis)
+                                    _ <- Var.set(3)
+                                yield ()
+                            }
+                        }
                     end <- Var.get[Int]
                 yield (start, end)
             }.map { result =>
@@ -700,15 +701,16 @@ class AsyncTest extends Test:
         }
 
         "timeout with isolate" in run {
-            val emitIsolate = Emit.isolate.merge[Int]
 
             Emit.run {
-                Async.timeout(1.hour, emitIsolate) {
-                    for
-                        _ <- Emit.value(1)
-                        _ <- Async.sleep(1.millis)
-                        _ <- Emit.value(2)
-                    yield "done"
+                Emit.isolate.merge[Int].use {
+                    Async.timeout(1.hour) {
+                        for
+                            _ <- Emit.value(1)
+                            _ <- Async.sleep(1.millis)
+                            _ <- Emit.value(2)
+                        yield "done"
+                    }
                 }
             }.map { result =>
                 assert(result == (Chunk(1, 2), "done"))
@@ -716,31 +718,31 @@ class AsyncTest extends Test:
         }
 
         "race with isolate" in run {
-            val varIsolate = Var.isolate.update[Int]
 
             Var.runTuple(0) {
-                Async.race(varIsolate)(
-                    Seq(
-                        for
-                            _ <- Var.set(1)
-                            _ <- Async.sleep(1.millis)
-                            v <- Var.get[Int]
-                        yield v,
-                        for
-                            _ <- Var.set(2)
-                            _ <- Async.sleep(50.millis)
-                            v <- Var.get[Int]
-                        yield v
+                Var.isolate.update[Int].use {
+                    Async.race(
+                        Seq(
+                            for
+                                _ <- Var.set(1)
+                                _ <- Async.sleep(1.millis)
+                                v <- Var.get[Int]
+                            yield v,
+                            for
+                                _ <- Var.set(2)
+                                _ <- Async.sleep(50.millis)
+                                v <- Var.get[Int]
+                            yield v
+                        )
                     )
-                )
+                }
             }.map { result =>
                 assert(result == (1, 1))
             }
         }
 
-        "parallel with isolate" in run {
-            val memoIsolate = Memo.isolate.merge
-            var count       = 0
+        "collectAll with concurrency limit + isolate" in run {
+            var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
@@ -748,12 +750,13 @@ class AsyncTest extends Test:
 
             Memo.run {
                 Kyo.zip(
-                    Async.parallel(2, memoIsolate)(
+                    Async.collectAll(
                         Seq(
                             f(1),
                             f(1),
                             f(1)
-                        )
+                        ),
+                        2
                     ),
                     f(1)
                 )
@@ -763,29 +766,89 @@ class AsyncTest extends Test:
             }
         }
 
-        "parallelUnbounded with isolate" in run {
-            val emitIsolate = Emit.isolate.merge[String]
+        "collectAll with isolate" in run {
 
             Emit.run {
-                Async.parallelUnbounded(
-                    emitIsolate,
-                    Seq(
-                        for
-                            _ <- Emit.value("a1")
-                            _ <- Async.sleep(2.millis)
-                            _ <- Emit.value("a2")
-                        yield 1,
-                        for
-                            _ <- Emit.value("b1")
-                            _ <- Async.sleep(1.millis)
-                            _ <- Emit.value("b2")
-                        yield 2
+                Emit.isolate.merge[String].use {
+                    Async.collectAll(
+                        Seq(
+                            for
+                                _ <- Emit.value("a1")
+                                _ <- Async.sleep(2.millis)
+                                _ <- Emit.value("a2")
+                            yield 1,
+                            for
+                                _ <- Emit.value("b1")
+                                _ <- Async.sleep(1.millis)
+                                _ <- Emit.value("b2")
+                            yield 2
+                        )
                     )
-                )
+                }
             }.map { result =>
                 assert(result._1.size == 4)
                 assert(result._2 == Seq(1, 2))
             }
+        }
+    }
+
+    "filter" - {
+        "filters elements" in run {
+            Async.filter(1 to 10)(_ % 2 == 0).map { r =>
+                assert(r == Chunk(2, 4, 6, 8, 10))
+            }
+        }
+    }
+
+    "collect" - {
+        "transforms and filters elements" in run {
+            Async.collect(1 to 5) { i =>
+                Maybe.when(i % 2 == 0)(i * 2)
+            }.map { r =>
+                assert(r == Chunk(4, 8))
+            }
+        }
+    }
+
+    "repeat" - {
+        "concurrently repeats computation n times" in run {
+            for
+                counter <- AtomicInt.init(0)
+                results <- Async.fill(3) {
+                    counter.incrementAndGet
+                }
+                count <- counter.get
+            yield
+                assert(results.toSet == Set(1, 2, 3))
+                assert(count == 3)
+        }
+    }
+
+    "foreachDiscard" - {
+        "executes side effects" in run {
+            for
+                counter <- AtomicInt.init(0)
+                _ <- Async.foreachDiscard(1 to 3) { _ =>
+                    counter.incrementAndGet
+                }
+                count <- counter.get
+            yield assert(count == 3)
+        }
+    }
+
+    "collectAllDiscard" - {
+        "executes all effects" in run {
+            for
+                counter <- AtomicInt.init(0)
+                _ <- Async.collectAllDiscard(
+                    List(
+                        counter.incrementAndGet,
+                        counter.incrementAndGet,
+                        counter.incrementAndGet
+                    )
+                )
+                count <- counter.get
+            yield assert(count == 3)
         }
     }
 
@@ -824,11 +887,60 @@ class AsyncTest extends Test:
 
         "with isolate" - {
             "sequence-based" in run {
-                val emitIsolate = Emit.isolate.merge[String]
 
                 Emit.run {
-                    Async.gather(emitIsolate)(
-                        Seq(
+                    Emit.isolate.merge[String].use {
+                        Async.gather(
+                            Seq(
+                                for
+                                    _ <- Emit.value("a1")
+                                    _ <- Async.sleep(2.millis)
+                                    _ <- Emit.value("a2")
+                                yield 1,
+                                for
+                                    _ <- Emit.value("b1")
+                                    _ <- Async.sleep(1.millis)
+                                    _ <- Emit.value("b2")
+                                yield 2
+                            )
+                        )
+                    }
+                }.map { result =>
+                    assert(result._1.size == 4)
+                    assert(result._2 == Chunk(1, 2))
+                }
+            }
+
+            "sequence-based with max" in run {
+
+                Emit.run {
+                    Emit.isolate.merge[String].use {
+                        Async.gather(1)(
+                            Seq(
+                                for
+                                    _ <- Emit.value("a1")
+                                    _ <- Async.sleep(50.millis)
+                                    _ <- Emit.value("a2")
+                                yield 1,
+                                for
+                                    _ <- Emit.value("b1")
+                                    _ <- Async.sleep(1.millis)
+                                    _ <- Emit.value("b2")
+                                yield 2
+                            )
+                        )
+                    }
+                }.map { result =>
+                    assert(result._1.size == 2)
+                    assert(result._2.size == 1)
+                    assert(result._2.head == 2)
+                }
+            }
+
+            "varargs-based" in run {
+                Emit.run {
+                    Emit.isolate.merge[String].use {
+                        Async.gather(
                             for
                                 _ <- Emit.value("a1")
                                 _ <- Async.sleep(2.millis)
@@ -840,19 +952,17 @@ class AsyncTest extends Test:
                                 _ <- Emit.value("b2")
                             yield 2
                         )
-                    )
+                    }
                 }.map { result =>
                     assert(result._1.size == 4)
                     assert(result._2 == Chunk(1, 2))
                 }
             }
 
-            "sequence-based with max" in run {
-                val emitIsolate = Emit.isolate.merge[String]
-
+            "varargs-based with max" in run {
                 Emit.run {
-                    Async.gather(1, emitIsolate)(
-                        Seq(
+                    Emit.isolate.merge[String].use {
+                        Async.gather(1)(
                             for
                                 _ <- Emit.value("a1")
                                 _ <- Async.sleep(50.millis)
@@ -864,52 +974,7 @@ class AsyncTest extends Test:
                                 _ <- Emit.value("b2")
                             yield 2
                         )
-                    )
-                }.map { result =>
-                    assert(result._1.size == 2)
-                    assert(result._2.size == 1)
-                    assert(result._2.head == 2)
-                }
-            }
-
-            "varargs-based" in run {
-                val emitIsolate = Emit.isolate.merge[String]
-
-                Emit.run {
-                    Async.gather(emitIsolate)(
-                        for
-                            _ <- Emit.value("a1")
-                            _ <- Async.sleep(2.millis)
-                            _ <- Emit.value("a2")
-                        yield 1,
-                        for
-                            _ <- Emit.value("b1")
-                            _ <- Async.sleep(1.millis)
-                            _ <- Emit.value("b2")
-                        yield 2
-                    )
-                }.map { result =>
-                    assert(result._1.size == 4)
-                    assert(result._2 == Chunk(1, 2))
-                }
-            }
-
-            "varargs-based with max" in run {
-                val emitIsolate = Emit.isolate.merge[String]
-
-                Emit.run {
-                    Async.gather(1, emitIsolate)(
-                        for
-                            _ <- Emit.value("a1")
-                            _ <- Async.sleep(50.millis)
-                            _ <- Emit.value("a2")
-                        yield 1,
-                        for
-                            _ <- Emit.value("b1")
-                            _ <- Async.sleep(1.millis)
-                            _ <- Emit.value("b2")
-                        yield 2
-                    )
+                    }
                 }.map { result =>
                     assert(result._1.size == 2)
                     assert(result._2.size == 1)
@@ -918,23 +983,24 @@ class AsyncTest extends Test:
             }
 
             "handles failures" in run {
-                val emitIsolate = Emit.isolate.merge[String]
-                val error       = new RuntimeException("test error")
+                val error = new RuntimeException("test error")
 
                 Emit.run {
                     Abort.run {
-                        Async.gather(emitIsolate)(
-                            for
-                                _ <- Emit.value("a1")
-                                _ <- Abort.fail(error)
-                                _ <- Emit.value("a2")
-                            yield 1,
-                            for
-                                _ <- Emit.value("b1")
-                                _ <- Async.sleep(1.millis)
-                                _ <- Emit.value("b2")
-                            yield 2
-                        )
+                        Emit.isolate.merge[String].use {
+                            Async.gather(
+                                for
+                                    _ <- Emit.value("a1")
+                                    _ <- Abort.fail(error)
+                                    _ <- Emit.value("a2")
+                                yield 1,
+                                for
+                                    _ <- Emit.value("b1")
+                                    _ <- Async.sleep(1.millis)
+                                    _ <- Emit.value("b2")
+                                yield 2
+                            )
+                        }
                     }
                 }.map { case (emitted, result) =>
                     assert(emitted == Seq("b1", "b2"))
@@ -943,27 +1009,28 @@ class AsyncTest extends Test:
             }
 
             "handles multiple failures" in run {
-                val emitIsolate = Emit.isolate.merge[String]
-                val error1      = new RuntimeException("error 1")
-                val error2      = new RuntimeException("error 2")
+                val error1 = new RuntimeException("error 1")
+                val error2 = new RuntimeException("error 2")
 
                 Emit.run {
                     Abort.run {
-                        Async.gather(emitIsolate)(
-                            for
-                                _ <- Emit.value("a1")
-                                _ <- Abort.fail(error1)
-                            yield 1,
-                            for
-                                _ <- Emit.value("b1")
-                                _ <- Abort.fail(error2)
-                            yield 2,
-                            for
-                                _ <- Emit.value("c1")
-                                _ <- Async.sleep(1.millis)
-                                _ <- Emit.value("c2")
-                            yield 3
-                        )
+                        Emit.isolate.merge[String].use {
+                            Async.gather(
+                                for
+                                    _ <- Emit.value("a1")
+                                    _ <- Abort.fail(error1)
+                                yield 1,
+                                for
+                                    _ <- Emit.value("b1")
+                                    _ <- Abort.fail(error2)
+                                yield 2,
+                                for
+                                    _ <- Emit.value("c1")
+                                    _ <- Async.sleep(1.millis)
+                                    _ <- Emit.value("c2")
+                                yield 3
+                            )
+                        }
                     }
                 }.map { case (emitted, result) =>
                     assert(emitted == Chunk("c1", "c2"))
@@ -972,26 +1039,27 @@ class AsyncTest extends Test:
             }
 
             "with max limit handles partial failures" in run {
-                val emitIsolate = Emit.isolate.merge[String]
-                val error       = new RuntimeException("test error")
+                val error = new RuntimeException("test error")
 
                 Emit.run {
-                    Async.gather(2, emitIsolate)(
-                        for
-                            _ <- Emit.value("a1")
-                            _ <- Abort.fail(error)
-                        yield 1,
-                        for
-                            _ <- Emit.value("b1")
-                            _ <- Async.sleep(2.millis)
-                            _ <- Emit.value("b2")
-                        yield 2,
-                        for
-                            _ <- Emit.value("c1")
-                            _ <- Async.sleep(1.millis)
-                            _ <- Emit.value("c2")
-                        yield 3
-                    )
+                    Emit.isolate.merge[String].use {
+                        Async.gather(2)(
+                            for
+                                _ <- Emit.value("a1")
+                                _ <- Abort.fail(error)
+                            yield 1,
+                            for
+                                _ <- Emit.value("b1")
+                                _ <- Async.sleep(2.millis)
+                                _ <- Emit.value("b2")
+                            yield 2,
+                            for
+                                _ <- Emit.value("c1")
+                                _ <- Async.sleep(1.millis)
+                                _ <- Emit.value("c2")
+                            yield 3
+                        )
+                    }
                 }.map { case (emitted, results) =>
                     assert(emitted == Chunk("b1", "b2", "c1", "c2"))
                     assert(results == Chunk(2, 3))
@@ -999,21 +1067,22 @@ class AsyncTest extends Test:
             }
 
             "preserves state isolation during failures" in run {
-                val varIsolate = Var.isolate.update[Int]
-                val error      = new RuntimeException("test error")
+                val error = new RuntimeException("test error")
 
                 Var.runTuple(21) {
                     Abort.run {
-                        Async.gather(varIsolate)(
-                            for
-                                _ <- Var.update[Int](_ + 2)
-                                _ <- Abort.fail(error)
-                            yield "a",
-                            for
-                                _ <- Var.update[Int](_ * 2)
-                                _ <- Async.sleep(1.millis)
-                            yield "b"
-                        )
+                        Var.isolate.update[Int].use {
+                            Async.gather(
+                                for
+                                    _ <- Var.update[Int](_ + 2)
+                                    _ <- Abort.fail(error)
+                                yield "a",
+                                for
+                                    _ <- Var.update[Int](_ * 2)
+                                    _ <- Async.sleep(1.millis)
+                                yield "b"
+                            )
+                        }
                     }
                 }.map { case (finalState, result) =>
                     assert(finalState == 42)
@@ -1145,7 +1214,7 @@ class AsyncTest extends Test:
                         count <- counter.incrementAndGet
                     yield count
                 }
-                results <- Async.parallel(
+                results <- Async.zip(
                     memoized(),
                     memoized(),
                     memoized()

@@ -4,8 +4,6 @@ import izumi.reflect.Tag as ITag
 import kyo.*
 import kyo.Tag.Intersection
 import kyo.Tag.Union
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.freespec.AsyncFreeSpec
 import scala.annotation.nowarn
 
 class TagTest extends Test:

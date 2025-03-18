@@ -107,14 +107,12 @@ object Resource:
                         case Absent =>
                             bug("Resource finalizer queue already closed.")
                         case Present(tasks) =>
-                            Async.parallel(closeParallelism) {
-                                tasks.map { task =>
-                                    Abort.run[Throwable](task)
-                                        .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
-                                }
+                            Async.foreach(tasks, closeParallelism) { task =>
+                                Abort.run[Throwable](task)
+                                    .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                             }
                                 .unit
-                                .pipe(Async.run)
+                                .pipe(Async.run[Nothing, Unit, Any])
                                 .map(p.becomeDiscard)
                     }
                 ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
@@ -122,5 +120,7 @@ object Resource:
                     .map(result => p.get.andThen(result))
             }
         }
+
+    given Isolate.Contextual[Resource, Any] = Isolate.Contextual.derive[Resource, Any]
 
 end Resource

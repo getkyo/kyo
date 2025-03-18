@@ -82,12 +82,12 @@ class CatsTest extends Test:
             def catsTask(i: Int): Int < (Abort[Nothing] & Async) = Cats.get(CatsIO.pure(i + 1))
 
             for
-                (v1, v2) <- Async.parallel(kyoTask(1), catsTask(2))
+                (v1, v2) <- Async.zip(kyoTask(1), catsTask(2))
                 (v3, v4) <- Async.race(
-                    Async.parallel[Nothing, Int, Int, Any](kyoTask(v1), catsTask(v2)),
+                    Async.zip[Nothing, Int, Int, Any](kyoTask(v1), catsTask(v2)),
                     Cats.get(CatsIO.pure((v1, v2)))
                 )
-                (v5, v6) <- Async.parallel(
+                (v5, v6) <- Async.zip(
                     kyoTask(v3 + v4),
                     Async.race[Nothing, Int, Any](catsTask(v1), kyoTask(v2))
                 )
@@ -163,7 +163,7 @@ class CatsTest extends Test:
                         Cats.run {
                             val loop1 = Cats.get(catsLoop(started, done))
                             val loop2 = kyoLoop(started, done)
-                            Async.parallel[Throwable, Unit, Unit, Any](loop1, loop2)
+                            Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
                         }
                     for
                         f <- parallelEffect.start
@@ -234,7 +234,7 @@ class CatsTest extends Test:
                     def parallelEffect =
                         val loop1 = Cats.get(catsLoop(started, done))
                         val loop2 = kyoLoop(started, done)
-                        Async.parallel[Throwable, Unit, Unit, Any](loop1, loop2)
+                        Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
                     end parallelEffect
                     for
                         f <- Async.run(parallelEffect)

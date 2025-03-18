@@ -5,7 +5,6 @@ import kyo.*
 import kyo.kernel.Platform
 import scala.annotation.targetName
 import scala.concurrent.Future
-import scala.util.Try
 
 private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
 

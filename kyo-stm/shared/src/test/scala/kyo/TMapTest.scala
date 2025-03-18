@@ -344,13 +344,15 @@ class TMapTest extends Test:
                 for
                     map <- STM.run(TMap.init[String, Int]("start" -> 0))
                     result <- Abort.run {
-                        STM.run(Var.isolate.update) {
-                            for
-                                _ <- map.put("key1", 100)
-                                _ <- Var.set(1)
-                                _ <- Abort.fail(new Exception("Nested effect failure"))
-                                _ <- map.put("key2", 200)
-                            yield ()
+                        Var.isolate.update[Int].use {
+                            STM.run {
+                                for
+                                    _ <- map.put("key1", 100)
+                                    _ <- Var.set(1)
+                                    _ <- Abort.fail(new Exception("Nested effect failure"))
+                                    _ <- map.put("key2", 200)
+                                yield ()
+                            }
                         }
                     }
                     snapshot <- STM.run(map.snapshot)
@@ -371,7 +373,7 @@ class TMapTest extends Test:
             (for
                 size     <- Choice.get(Seq(1, 10, 100))
                 map      <- STM.run(TMap.init[Int, Int]())
-                _        <- Async.parallelUnbounded((1 to size).map(i => STM.run(map.put(i, i))))
+                _        <- Async.foreach(1 to size, size)(i => STM.run(map.put(i, i)))
                 snapshot <- STM.run(map.snapshot)
             yield assert(
                 snapshot.size == size &&
@@ -389,20 +391,16 @@ class TMapTest extends Test:
 
                 writeFiber <- Async.run(
                     latch.await.andThen(
-                        Async.parallelUnbounded(
-                            (1 to size).map(i =>
-                                STM.run(map.put(i, i * 2))
-                            )
+                        Async.foreach(1 to size, size)(i =>
+                            STM.run(map.put(i, i * 2))
                         )
                     )
                 )
 
                 readFiber <- Async.run(
                     latch.await.andThen(
-                        Async.parallelUnbounded(
-                            (1 to size).map(i =>
-                                STM.run(map.get(i))
-                            )
+                        Async.foreach(1 to size, size)(i =>
+                            STM.run(map.get(i))
                         )
                     )
                 )
@@ -427,14 +425,12 @@ class TMapTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
                 }
-                _ <- Async.parallelUnbounded(
-                    (1 to 10).map(_ =>
-                        STM.run {
-                            Kyo.foreachDiscard((1 to size)) { i =>
-                                map.updateWith(i)(v => Maybe(v.getOrElse(0) + 1))
-                            }
+                _ <- Async.fill(10, 10)(
+                    STM.run {
+                        Kyo.foreachDiscard((1 to size)) { i =>
+                            map.updateWith(i)(v => Maybe(v.getOrElse(0) + 1))
                         }
-                    )
+                    }
                 )
                 snapshot <- STM.run(map.snapshot)
             yield assert(
@@ -452,10 +448,8 @@ class TMapTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))
                 }
-                _ <- Async.parallelUnbounded(
-                    (1 to size).map(i =>
-                        STM.run(map.removeDiscard(i))
-                    )
+                _ <- Async.foreach(1 to size, size)(i =>
+                    STM.run(map.removeDiscard(i))
                 )
                 snapshot <- STM.run(map.snapshot)
             yield assert(snapshot.isEmpty))
@@ -471,16 +465,12 @@ class TMapTest extends Test:
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))
                 }
 
-                filterOps = Async.parallelUnbounded(
-                    (1 to 5).map(_ =>
-                        STM.run(map.filter((k, v) => v % 2 == 0))
-                    )
+                filterOps = Async.fill(5, 5)(
+                    STM.run(map.filter((k, v) => v % 2 == 0))
                 )
 
-                foldOps = Async.parallelUnbounded(
-                    (1 to 5).map(_ =>
-                        STM.run(map.fold(0)((acc, _, v) => acc + v))
-                    )
+                foldOps = Async.fill(5, 5)(
+                    STM.run(map.fold(0)((acc, _, v) => acc + v))
                 )
 
                 _        <- filterOps

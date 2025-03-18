@@ -6,7 +6,6 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.Tag
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
 
 abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest {
 

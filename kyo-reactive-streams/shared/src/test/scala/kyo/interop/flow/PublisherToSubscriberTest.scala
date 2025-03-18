@@ -1,7 +1,6 @@
 package kyo.interop.flow
 
 import kyo.*
-import kyo.Duration
 import kyo.Result.Failure
 import kyo.Result.Success
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
@@ -82,12 +81,12 @@ abstract private class PublisherToSubscriberTest extends Test:
                 _ = publisher.subscribe(subscriber2)
                 _ = publisher.subscribe(subscriber3)
                 _ = publisher.subscribe(subscriber4)
-                values <- Fiber.parallelUnbounded[Nothing, Chunk[Int], Any](List(
+                values <- Async.collectAll[Nothing, Chunk[Int], Any](List(
                     subStream1.run,
                     subStream2.run,
                     subStream3.run,
                     subStream4.run
-                )).map(_.get)
+                ))
             yield
                 assert(values.size == 4)
                 assert(values(0).size + values(1).size + values(2).size + values(3).size == MaxStreamLength)
@@ -179,12 +178,12 @@ abstract private class PublisherToSubscriberTest extends Test:
                 subStream3  <- subscriber3.stream
                 subscriber4 <- streamSubscriber
                 subStream4  <- subscriber4.stream
-                latch       <- Latch.init(5)
+                latch       <- Latch.init(6)
                 fiber1      <- Async.run(latch.release.andThen(subStream1.run.unit))
                 fiber2      <- Async.run(latch.release.andThen(subStream2.run.unit))
                 fiber3      <- Async.run(latch.release.andThen(subStream3.run.unit))
                 fiber4      <- Async.run(latch.release.andThen(subStream4.run.unit))
-                publisherFiber <- Async.run(Resource.run(
+                publisherFiber <- Async.run(latch.release.andThen(Resource.run(
                     Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                         .toPublisher
                         .map { publisher =>
@@ -194,7 +193,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                             publisher.subscribe(subscriber4)
                         }
                         .andThen(latch.release.andThen(Async.sleep(1.seconds)))
-                ))
+                )))
                 _ <- latch.await.andThen(publisherFiber.interrupt.unit)
                 _ <- fiber1.getResult
                 _ <- fiber2.getResult

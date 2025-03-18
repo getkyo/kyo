@@ -1,7 +1,5 @@
 package kyo.bench.arena
 
-import org.openjdk.jmh.annotations.*
-
 class SemaphoreContentionBench extends ArenaBench.ForkOnly(()):
 
     val permits   = 10

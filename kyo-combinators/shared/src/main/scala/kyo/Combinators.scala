@@ -2,7 +2,6 @@ package kyo
 
 import kyo.debug.Debug
 import kyo.kernel.ArrowEffect
-import kyo.kernel.Boundary
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
@@ -989,7 +988,7 @@ extension [A, E, S](fiber: Fiber[E, A] < S)
         fiber.map(_.getResult.unit)
 end extension
 
-extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
+extension [A, E, S](effect: A < (Abort[E] & Async & S))
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.
       *
@@ -999,29 +998,21 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces the result of `next`
       */
     @targetName("zipRightPar")
-    inline def &>[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
+    def &>[A1, E1, S1](
+        using
+        s: Isolate.Contextual[S, IO],
+        s2: Isolate.Contextual[S1, IO]
+    )(next: A1 < (Abort[E1] & Async & S1))(
         using
         f: Flat[A],
         f1: Flat[A1],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
-    ): A1 < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
-        _zipRightPar(next)
-
-    private def _zipRightPar[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
-        using
-        f: Flat[A],
-        f1: Flat[A1],
-        b: Boundary[Ctx, IO & Abort[E]],
-        b1: Boundary[Ctx1, IO & Abort[E1]],
-        r: Reducible[Abort[E]],
-        r1: Reducible[Abort[E1]],
-        fr: Frame
-    ): A1 < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+    ): A1 < (r.SReduced & r1.SReduced & Async & S & S1) =
         for
-            fiberA  <- Async._run(effect)
-            fiberA1 <- Async._run(next)
+            fiberA  <- Async.run(using s)(effect)
+            fiberA1 <- Async.run(using s2)(next)
             _       <- fiberA.awaitCompletion
             a1      <- fiberA1.join
         yield a1
@@ -1034,29 +1025,21 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces the result of this computation
       */
     @targetName("zipLeftPar")
-    inline def <&[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
+    def <&[A1, E1, S1](next: A1 < (Abort[E1] & Async & S1))(
+        using
+        s: Isolate.Contextual[S, IO],
+        s2: Isolate.Contextual[S1, IO]
+    )(
         using
         f: Flat[A],
         f1: Flat[A1],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
-    ): A < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
-        _zipLeftPar(next)
-
-    private def _zipLeftPar[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
-        using
-        f: Flat[A],
-        f1: Flat[A1],
-        b: Boundary[Ctx, IO & Abort[E]],
-        b1: Boundary[Ctx1, IO & Abort[E1]],
-        r: Reducible[Abort[E]],
-        r1: Reducible[Abort[E1]],
-        fr: Frame
-    ): A < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+    ): A < (r.SReduced & r1.SReduced & Async & S & S1) =
         for
-            fiberA  <- Async._run(effect)
-            fiberA1 <- Async._run(next)
+            fiberA  <- Async.run(using s)(effect)
+            fiberA1 <- Async.run(using s2)(next)
             a       <- fiberA.join
             _       <- fiberA1.awaitCompletion
         yield a
@@ -1069,29 +1052,21 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces a tuple of both results
       */
     @targetName("zipPar")
-    inline def <&>[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
+    def <&>[A1, E1, S1](
+        using
+        s: Isolate.Contextual[S, IO],
+        s2: Isolate.Contextual[S1, IO]
+    )(next: A1 < (Abort[E1] & Async & S1))(
         using
         f: Flat[A],
         f1: Flat[A1],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
-    ): (A, A1) < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
-        _zipPar(next)
-
-    private def _zipPar[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
-        using
-        f: Flat[A],
-        f1: Flat[A1],
-        b: Boundary[Ctx, IO & Abort[E]],
-        b1: Boundary[Ctx1, IO & Abort[E1]],
-        r: Reducible[Abort[E]],
-        r1: Reducible[Abort[E1]],
-        fr: Frame
-    ): (A, A1) < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+    ): (A, A1) < (r.SReduced & r1.SReduced & Async & S & S1) =
         for
-            fiberA  <- Async._run(effect)
-            fiberA1 <- Async._run(next)
+            fiberA  <- Async.run(using s)(effect)
+            fiberA1 <- Async.run(using s2)(next)
             a       <- fiberA.join
             a1      <- fiberA1.join
         yield (a, a1)

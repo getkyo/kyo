@@ -2,7 +2,6 @@ package kyo
 
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
-import kyo.debug.Debug
 
 class TopicTest extends Test:
 
@@ -33,8 +32,9 @@ class TopicTest extends Test:
                     val messages = Seq(Message(1), Message(2), Message(3))
                     Topic.run {
                         for
-                            started  <- Latch.init(1)
-                            fiber    <- Async.run(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
+                            started <- Latch.init(1)
+                            fiber <-
+                                Async.run(using Topic.isolate)(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
                             _        <- started.await
                             _        <- Async.run(Topic.publish(uri)(Stream.init(messages)))
                             received <- fiber.get

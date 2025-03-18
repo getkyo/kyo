@@ -1,10 +1,8 @@
 package kyo
 
-import java.io.CharArrayReader
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 import scala.util.NotGiven
-import scala.util.boundary
 
 /** A channel for communicating between fibers.
   *
