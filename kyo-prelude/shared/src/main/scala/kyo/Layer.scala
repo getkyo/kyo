@@ -89,7 +89,7 @@ object Layer:
 
     /** Creates a layer from a function that takes one input and produces an effect.
       *
-      * @param f
+      * @param fn
       *   The function to wrap in a layer
       * @tparam A
       *   The input type required by the function
@@ -107,7 +107,7 @@ object Layer:
 
     /** Creates a layer from a function that takes two inputs and produces an effect.
       *
-      * @param f
+      * @param fn
       *   The function to wrap in a layer
       * @tparam A
       *   The first input type required by the function
@@ -120,14 +120,14 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A and B and produces C
       */
-    def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S)(using Frame): Layer[C, Env[A & B] & S] =
+    def from[A: Tag, B: Tag, C: Tag, S](fn: (A, B) => C < S)(using Frame): Layer[C, Env[A & B] & S] =
         apply {
-            Kyo.zip(Env.get[A], Env.get[B]).map { case (a, b) => f(a, b) }
+            Kyo.zip(Env.get[A], Env.get[B]).map { case (a, b) => fn(a, b) }
         }
 
     /** Creates a layer from a function that takes three inputs and produces an effect.
       *
-      * @param f
+      * @param fn
       *   The function to wrap in a layer
       * @tparam A
       *   The first input type required by the function
@@ -142,15 +142,15 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, and C and produces D
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](f: (A, B, C) => D < S)(using Frame): Layer[D, Env[A & B & C] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](fn: (A, B, C) => D < S)(using Frame): Layer[D, Env[A & B & C] & S] =
         apply {
             Kyo.zip(Env.get[A], Env.get[B], Env.get[C])
-                .map { case (a, b, c) => f(a, b, c) }
+                .map { case (a, b, c) => fn(a, b, c) }
         }
 
     /** Creates a layer from a function that takes four inputs and produces an effect.
       *
-      * @param f
+      * @param fn
       *   The function to wrap in a layer
       * @tparam A
       *   The first input type required by the function
@@ -167,9 +167,252 @@ object Layer:
       * @return
       *   A new layer that requires an environment with A, B, C, and D and produces E
       */
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](f: (A, B, C, D) => E < S)(using Frame): Layer[E, Env[A & B & C & D] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](fn: (A, B, C, D) => E < S)(using Frame): Layer[E, Env[A & B & C & D] & S] =
         apply {
-            Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D]).map { case (a, b, c, d) => f(a, b, c, d) }
+            Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D]).map { case (a, b, c, d) => fn(a, b, c, d) }
+        }
+
+    /** Creates a layer from a function that takes five inputs and produces an effect.
+      *
+      * @param fn
+      *   The function to wrap in a layer
+      * @tparam A
+      *   The first input type required by the function
+      * @tparam B
+      *   The second input type required by the function
+      * @tparam C
+      *   The third input type required by the function
+      * @tparam D
+      *   The fourth input type required by the function
+      * @tparam E
+      *   The fifth input type required by the function
+      * @tparam F
+      *   The output type of the function
+      * @tparam S
+      *   The effect type of the function
+      * @return
+      *   A new layer that requires an environment with A, B, C, D, E and produces F
+      */
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, S](fn: (A, B, C, D, E) => F < S)(using
+        Frame
+    ): Layer[F, Env[A & B & C & D & E] & S] =
+        apply {
+            Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D], Env.get[E]).map { case (a, b, c, d, e) => fn(a, b, c, d, e) }
+        }
+
+    /** Creates a layer from a function that takes six inputs and produces an effect.
+      *
+      * @param fn
+      *   The function to wrap in a layer
+      * @tparam A
+      *   The first input type required by the function
+      * @tparam B
+      *   The second input type required by the function
+      * @tparam C
+      *   The third input type required by the function
+      * @tparam D
+      *   The fourth input type required by the function
+      * @tparam E
+      *   The fifth input type required by the function
+      * @tparam F
+      *   The sixth input type required by the function
+      * @tparam G
+      *   The output type of the function
+      * @tparam S
+      *   The effect type of the function
+      * @return
+      *   A new layer that requires an environment with A, B, C, D, E and produces F
+      */
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, S](fn: (A, B, C, D, E, F) => G < S)(using
+        Frame
+    ): Layer[G, Env[A & B & C & D & E & F] & S] =
+        apply {
+            Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D], Env.get[E], Env.get[F]).map { case (a, b, c, d, e, f) =>
+                fn(a, b, c, d, e, f)
+            }
+        }
+
+    /** Creates a layer from a function that takes seven inputs and produces an effect.
+      *
+      * @param fn
+      *   The function to wrap in a layer
+      * @tparam A
+      *   The first input type required by the function
+      * @tparam B
+      *   The second input type required by the function
+      * @tparam C
+      *   The third input type required by the function
+      * @tparam D
+      *   The fourth input type required by the function
+      * @tparam E
+      *   The fifth input type required by the function
+      * @tparam F
+      *   The sixth input type required by the function
+      * @tparam G
+      *   The seventh input type required by the function
+      * @tparam H
+      *   The output type of the function
+      * @tparam S
+      *   The effect type of the function
+      * @return
+      *   A new layer that requires an environment with A, B, C, D, E and produces F
+      */
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, S](fn: (A, B, C, D, E, F, G) => H < S)(using
+        Frame
+    ): Layer[H, Env[A & B & C & D & E & F & G] & S] =
+        apply {
+            Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D], Env.get[E], Env.get[F], Env.get[G]).map { case (a, b, c, d, e, f, g) =>
+                fn(a, b, c, d, e, f, g)
+            }
+        }
+
+    /** Creates a layer from a function that takes eight inputs and produces an effect.
+      *
+      * @param fn
+      *   The function to wrap in a layer
+      * @tparam A
+      *   The first input type required by the function
+      * @tparam B
+      *   The second input type required by the function
+      * @tparam C
+      *   The third input type required by the function
+      * @tparam D
+      *   The fourth input type required by the function
+      * @tparam E
+      *   The fifth input type required by the function
+      * @tparam F
+      *   The sixth input type required by the function
+      * @tparam G
+      *   The seventh input type required by the function
+      * @tparam H
+      *   The eighth input type required by the function
+      * @tparam I
+      *   The output type of the function
+      * @tparam S
+      *   The effect type of the function
+      * @return
+      *   A new layer that requires an environment with A, B, C, D, E and produces F
+      */
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, S](fn: (A, B, C, D, E, F, G, H) => I < S)(using
+        Frame
+    ): Layer[I, Env[A & B & C & D & E & F & G & H] & S] =
+        apply {
+            Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D], Env.get[E], Env.get[F], Env.get[G], Env.get[H]).map {
+                case (a, b, c, d, e, f, g, h) =>
+                    fn(a, b, c, d, e, f, g, h)
+            }
+        }
+
+    /** Creates a layer from a function that takes nine inputs and produces an effect.
+      *
+      * @param fn
+      *   The function to wrap in a layer
+      * @tparam A
+      *   The first input type required by the function
+      * @tparam B
+      *   The second input type required by the function
+      * @tparam C
+      *   The third input type required by the function
+      * @tparam D
+      *   The fourth input type required by the function
+      * @tparam E
+      *   The fifth input type required by the function
+      * @tparam F
+      *   The sixth input type required by the function
+      * @tparam G
+      *   The seventh input type required by the function
+      * @tparam H
+      *   The eighth input type required by the function
+      * @tparam I
+      *   The ninth input type required by the function
+      * @tparam J
+      *   The output type of the function
+      * @tparam S
+      *   The effect type of the function
+      * @return
+      *   A new layer that requires an environment with A, B, C, D, E and produces F
+      */
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, J: Tag, S](fn: (
+        A,
+        B,
+        C,
+        D,
+        E,
+        F,
+        G,
+        H,
+        I
+    ) => J < S)(using
+        Frame
+    ): Layer[J, Env[A & B & C & D & E & F & G & H & I] & S] =
+        apply {
+            Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D], Env.get[E], Env.get[F], Env.get[G], Env.get[H], Env.get[I]).map {
+                case (a, b, c, d, e, f, g, h, i) =>
+                    fn(a, b, c, d, e, f, g, h, i)
+            }
+        }
+
+    /** Creates a layer from a function that takes ten inputs and produces an effect.
+      *
+      * @param fn
+      *   The function to wrap in a layer
+      * @tparam A
+      *   The first input type required by the function
+      * @tparam B
+      *   The second input type required by the function
+      * @tparam C
+      *   The third input type required by the function
+      * @tparam D
+      *   The fourth input type required by the function
+      * @tparam E
+      *   The fifth input type required by the function
+      * @tparam F
+      *   The sixth input type required by the function
+      * @tparam G
+      *   The seventh input type required by the function
+      * @tparam H
+      *   The eighth input type required by the function
+      * @tparam I
+      *   The ninth input type required by the function
+      * @tparam J
+      *   The tenth input type required by the function
+      * @tparam K
+      *   The output type of the function
+      * @tparam S
+      *   The effect type of the function
+      * @return
+      *   A new layer that requires an environment with A, B, C, D, E and produces F
+      */
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, F: Tag, G: Tag, H: Tag, I: Tag, J: Tag, K: Tag, S](fn: (
+        A,
+        B,
+        C,
+        D,
+        E,
+        F,
+        G,
+        H,
+        I,
+        J
+    ) => K < S)(using
+        Frame
+    ): Layer[K, Env[A & B & C & D & E & F & G & H & I & J] & S] =
+        apply {
+            Kyo.zip(
+                Env.get[A],
+                Env.get[B],
+                Env.get[C],
+                Env.get[D],
+                Env.get[E],
+                Env.get[F],
+                Env.get[G],
+                Env.get[H],
+                Env.get[I],
+                Env.get[J]
+            ).map {
+                case (a, b, c, d, e, f, g, h, i, j) =>
+                    fn(a, b, c, d, e, f, g, h, i, j)
+            }
         }
 
     transparent inline def init[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
