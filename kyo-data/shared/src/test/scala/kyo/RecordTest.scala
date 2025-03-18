@@ -294,7 +294,7 @@ class RecordTest extends Test:
         case class Column[A](name: String)(using AsColumn[A]) derives CanEqual
 
         object ColumnInline extends Record.StageAs[[n, v] =>> Column[v]]:
-            inline def fieldApply[Name <: String, Value](field: Field[Name, Value]): Column[Value] =
+            inline def stage[Name <: String, Value](field: Field[Name, Value]): Column[Value] =
                 Column[Value](field.name)(using summonInline[AsColumn[Value]])
 
         "build record if all inlined" in {

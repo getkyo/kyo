@@ -320,7 +320,7 @@ object Record:
     end given
 
     trait StageAs[F[_, _]] extends Inliner[(ForSome2[AsFieldAny], ForSome2[F])]:
-        inline def fieldApply[Name <: String, Value](field: Field[Name, Value]): F[Name, Value]
+        inline def stage[Name <: String, Value](field: Field[Name, Value]): F[Name, Value]
 
         override inline def apply[T]: (ForSome2[AsFieldAny], ForSome2[F]) =
             inline erasedValue[T] match
@@ -331,7 +331,7 @@ object Record:
 
                     (
                         ForSome2.of[AsFieldAny](Field(name, nextTag)),
-                        ForSome2(fieldApply[n, v](Field(name, prevTag)))
+                        ForSome2(stage[n, v](Field(name, prevTag)))
                     )
         end apply
     end StageAs

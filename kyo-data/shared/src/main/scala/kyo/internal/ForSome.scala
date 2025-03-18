@@ -28,7 +28,7 @@ object ForSome2:
 
     opaque type Type[F[_, _]] <: Unwrap[F, ?, ?] = Unwrap[F, ?, ?]
 
-    /** Converts value of type `F[A]` to existential form
+    /** Converts value of type `F[A1, A2]` to existential form
       */
     inline def apply[F[_, _], A1, A2](v: F[A1, A2]): Type[F] = Unwrap(v)
 
