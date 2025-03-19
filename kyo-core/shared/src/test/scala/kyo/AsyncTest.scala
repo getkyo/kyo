@@ -756,7 +756,7 @@ class AsyncTest extends Test:
                             f(1),
                             f(1)
                         ),
-                        2
+                        3
                     ),
                     f(1)
                 )
