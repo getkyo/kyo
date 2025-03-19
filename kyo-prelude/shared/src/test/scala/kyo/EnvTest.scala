@@ -220,7 +220,7 @@ class EnvTest extends Test:
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Env.runTypeMap(envMap)(kyo).eval == ("Hello", 123, true)
+                Env.runAll(envMap)(kyo).eval == ("Hello", 123, true)
             )
         }
 
@@ -233,7 +233,7 @@ class EnvTest extends Test:
                 yield (string, int, bool)
 
             val envMap: TypeMap[String & Int]                      = TypeMap("Hello", 123)
-            val withTypeMap: (String, Int, Boolean) < Env[Boolean] = Env.runTypeMap(envMap)(kyo)
+            val withTypeMap: (String, Int, Boolean) < Env[Boolean] = Env.runAll(envMap)(kyo)
             val withBool: (String, Int, Boolean) < Any             = Env.run(true)(withTypeMap)
             assert(
                 withBool.eval == ("Hello", 123, true)
@@ -253,7 +253,7 @@ class EnvTest extends Test:
             val boolTypeMap   = TypeMap(true)
             assert(
                 Env.run(true)(
-                    Env.runTypeMap(stringTypeMap)(Env.runTypeMap(intTypeMap)(Env.runTypeMap(boolTypeMap)(kyo)))
+                    Env.runAll(stringTypeMap)(Env.runAll(intTypeMap)(Env.runAll(boolTypeMap)(kyo)))
                 ).eval == ("Hello", 123, true)
             )
         }
@@ -261,14 +261,14 @@ class EnvTest extends Test:
         "providing the wrong env map" in {
             val kyo: String < Env[String]    = Env.get[String]
             val envMap: TypeMap[Int]         = TypeMap(12)
-            val result: String < Env[String] = Env.runTypeMap(envMap)(kyo)
+            val result: String < Env[String] = Env.runAll(envMap)(kyo)
             assert(Env.run("a")(result).eval == "a")
         }
 
         "providing an empty env map" in {
             val kyo    = Env.get[String]
             val envMap = TypeMap.empty
-            val result = Env.runTypeMap(envMap)(kyo)
+            val result = Env.runAll(envMap)(kyo)
             assert(Env.run("a")(result).eval == "a")
         }
 
@@ -280,7 +280,7 @@ class EnvTest extends Test:
                 yield (string, int)
             val envMap = TypeMap("Hello")
             val result: (String, Int) < Env[Int] =
-                Env.runTypeMap(envMap)(kyo)
+                Env.runAll(envMap)(kyo)
             assert(Env.run(42)(result).eval == ("Hello", 42))
         }
 
@@ -293,7 +293,7 @@ class EnvTest extends Test:
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Env.runTypeMap(envMap)(kyo).eval == ("Hello", 123)
+                Env.runAll(envMap)(kyo).eval == ("Hello", 123)
             )
         }
 
@@ -309,6 +309,102 @@ class EnvTest extends Test:
             val env    = "test"
             val result = Env.run(env)(Abort.run[String](Env.get[String]))
             assert(result.eval == Result.succeed(env))
+        }
+    }
+
+    "getAll" - {
+        "retrieve entire environment" in {
+            val kyo =
+                for
+                    env <- Env.getAll[String & Int & Boolean]
+                    string = env.get[String]
+                    int    = env.get[Int]
+                    bool   = env.get[Boolean]
+                yield (string, int, bool)
+
+            val envMap = TypeMap("Hello", 123, true)
+            assert(
+                Env.runAll(envMap)(kyo).eval == ("Hello", 123, true)
+            )
+        }
+
+        "empty environment" in {
+            val kyo = Env.getAll[Any]
+            assert(
+                Env.runAll(TypeMap.empty)(kyo).eval.isEmpty
+            )
+        }
+
+        "partial environment" in {
+            val kyo =
+                for
+                    env <- Env.getAll[String & Int]
+                    string = env.get[String]
+                    int    = env.get[Int]
+                yield (string, int)
+
+            val envMap = TypeMap("Hello", 123, true)
+            assert(
+                Env.runAll(envMap)(kyo).eval == ("Hello", 123)
+            )
+        }
+    }
+
+    "useAll" - {
+        "transform multiple values" in {
+            trait Config:
+                def host: String
+                def port: Int
+                def secure: Boolean
+            end Config
+
+            val kyo =
+                for
+                    config <- Env.useAll[String & Int & Boolean] { env =>
+                        new Config:
+                            def host   = env.get[String]
+                            def port   = env.get[Int]
+                            def secure = env.get[Boolean]
+                    }
+                yield config
+
+            val envMap = TypeMap("localhost", 8080, true)
+            val result = Env.runAll(envMap)(kyo).eval
+            assert(result.host == "localhost")
+            assert(result.port == 8080)
+            assert(result.secure)
+        }
+
+        "compose with other effects" in {
+            val kyo =
+                for
+                    env <- Env.getAll[String & Int]
+                    _   <- Abort.when(env.get[Int] <= 0)("Port must be positive")
+                    config <- Env.useAll[String & Int] { env =>
+                        (env.get[String], env.get[Int])
+                    }
+                yield config
+
+            val goodEnv = TypeMap("localhost", 8080)
+            assert(
+                Abort.run(Env.runAll(goodEnv)(kyo)).eval ==
+                    Result.succeed(("localhost", 8080))
+            )
+
+            val badEnv = TypeMap("localhost", -1)
+            assert(
+                Abort.run(Env.runAll(badEnv)(kyo)).eval ==
+                    Result.fail("Port must be positive")
+            )
+        }
+
+        "handle empty environment" in {
+            val kyo = Env.useAll[Any] { env =>
+                env.isEmpty
+            }
+            assert(
+                Env.runAll(TypeMap.empty)(kyo).eval
+            )
         }
     }
 

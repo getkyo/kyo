@@ -198,7 +198,7 @@ object Layer:
                         {
                             for
                                 leftResult  <- doRun(lhs)
-                                rightResult <- Env.runTypeMap(leftResult)(doRun(rhs))
+                                rightResult <- Env.runAll(leftResult)(doRun(rhs))
                             yield rightResult
                         }.asInstanceOf[Expected]
 
