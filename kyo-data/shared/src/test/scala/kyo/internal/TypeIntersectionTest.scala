@@ -182,12 +182,12 @@ class TypeIntersectionTest extends AnyFreeSpec:
 
         "collects type class instances" in {
             val instances = TypeIntersection.summonAll[A & B & C, TC]
-            assert(instances.map(_.name) == List("A", "B", "C"))
+            assert(instances.map(_.unwrap.name) == List("A", "B", "C"))
         }
 
         "preserves order" in {
             val instances = TypeIntersection.summonAll[C & A & B, TC]
-            assert(instances.map(_.name) == List("C", "A", "B"))
+            assert(instances.map(_.unwrap.name) == List("C", "A", "B"))
         }
 
         "maintains priority of overlapping instances" in {
@@ -195,7 +195,7 @@ class TypeIntersectionTest extends AnyFreeSpec:
                 def name = "AB"
 
             val instances = TypeIntersection.summonAll[A & B, TC]
-            assert(instances.map(_.name) == List("A", "B"))
+            assert(instances.map(_.unwrap.name) == List("A", "B"))
         }
 
         "large intersection" in {
