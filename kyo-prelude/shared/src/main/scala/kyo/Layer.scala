@@ -3,14 +3,38 @@ package kyo
 import Layer.internal.*
 import kyo.Tag
 
-/** Represents a composable layer of functionality in an application.
+/** Represents a composable layer of functionality for dependency management.
   *
-  * Layers allow for modular composition of different parts of an application, facilitating dependency injection and separation of concerns.
+  * Layer provides a type-safe, composable approach to dependency injection within the Kyo effect system. Each layer encapsulates a piece of
+  * functionality that produces values of type `Out` while potentially requiring effects of type `S` for its construction. Layers form the
+  * building blocks of modular applications, allowing functionality to be assembled in a structured manner with clear dependency
+  * relationships.
+  *
+  * The core power of layers comes from their composability. While layers can be manually composed using methods like `and`, `to`, and
+  * `using`, most applications should prefer the automatic dependency resolution provided by `Layer.init`, which analyzes your layers at
+  * compile-time and connects them based on their input and output types.
+  *
+  * Layers integrate seamlessly with the Env effect, providing a clean solution to the "environment problem" in functional programming. When
+  * a computation requires certain dependencies through `Env[SomeType]`, layers can satisfy those requirements through well-defined
+  * composition patterns. The layer system automatically handles dependency resolution, ensuring that values are provided in the correct
+  * order.
+  *
+  * Under the hood, layers use memoization to ensure efficiency when the same layer is referenced multiple times in a dependency graph. This
+  * prevents redundant computation and resource allocation while preserving the functional semantics of the system.
   *
   * @tparam Out
   *   The type of output produced by this layer
   * @tparam S
   *   The effect type of this layer
+  *
+  * @see
+  *   [[kyo.Layer.init]] for the preferred way to construct layers with automatic dependency resolution
+  * @see
+  *   [[kyo.Layer.from]], [[kyo.Layer.apply]] for creating individual layers
+  * @see
+  *   [[kyo.Env.runLayer]] for running computations with layered dependencies
+  * @see
+  *   [[kyo.Env]], [[kyo.Memo]] for related effects that interact with layers
   */
 abstract class Layer[+Out, -S]:
     self =>

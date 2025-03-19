@@ -5,6 +5,34 @@ import kyo.Tag
 import kyo.kernel.*
 import scala.annotation.nowarn
 
+/** Represents mutable state in the Kyo effect system.
+  *
+  * `Var` provides a functional approach to mutable state, allowing computations to maintain and modify values throughout their execution.
+  * Unlike traditional variables, changes to a `Var` are tracked as effects, preserving referential transparency while enabling stateful
+  * operations.
+  *
+  * The effect encapsulates three fundamental operations: reading the current state, setting a new state, and updating the state based on
+  * its current value. This simple API enables complex stateful patterns while keeping state changes explicit and manageable.
+  *
+  * State is isolated to specific computation scopes through the handlers like `run` and `runTuple`. When a computation completes, the state
+  * can either be discarded or returned alongside the computation result, providing flexibility in how state is managed. Further isolation
+  * strategies are available through the `Isolate`, allowing for sophisticated state management patterns.
+  *
+  * Var is valuable for implementing accumulators, local mutable caches, stateful parsers, or any computation requiring tracked state
+  * modifications. It serves as a building block for higher-level stateful effects in the Kyo ecosystem.
+  *
+  * @tparam V
+  *   The type of value stored in the state container
+  *
+  * @see
+  *   [[kyo.Var.get]], [[kyo.Var.use]] for retrieving values
+  * @see
+  *   [[kyo.Var.set]], [[kyo.Var.update]] for modifying values
+  * @see
+  *   [[kyo.Var.run]], [[kyo.Var.runTuple]] for running computations with state
+  * @see
+  *   [[kyo.Var.isolate]] for state isolation strategies
+  */
 sealed trait Var[V] extends ArrowEffect[Const[Op[V]], Const[V]]
 
 object Var:

@@ -6,10 +6,29 @@ import Batch.internal.Pending.ToExpand
 import kyo.Tag
 import kyo.kernel.*
 
-/** The Batch effect allows for efficient batching and processing of operations.
+/** The Batch effect provides a mechanism for efficiently grouping and executing operations together.
   *
-  * Batch is used to group multiple operations together and execute them in a single batch, which can lead to performance improvements,
-  * especially when dealing with external systems or databases.
+  * Batch enables automatic collection and processing of operations that would otherwise execute individually, resulting in improved
+  * performance when interacting with external systems like databases, APIs, or file systems. The key benefit is that you can write code as
+  * if each operation runs independently, while the Batch effect automatically optimizes execution by grouping compatible operations.
+  *
+  * This effect is valuable when dealing with N+1 query problems, API rate limiting, or any scenario where performing operations in bulk is
+  * more efficient than individual execution. Batch sources define how multiple inputs are processed together, while maintaining the ability
+  * to return individualized results.
+  *
+  * The implementation handles complex cases such as nested batches and operations with different sources, intelligently grouping compatible
+  * operations while preserving correct execution order and dependencies.
+  *
+  * @see
+  *   [[kyo.Batch.source]] for creating batched computations from functions processing multiple inputs
+  * @see
+  *   [[kyo.Batch.sourceMap]] for batched operations returning maps
+  * @see
+  *   [[kyo.Batch.sourceSeq]] for batched operations returning sequences
+  * @see
+  *   [[kyo.Batch.run]] for executing batched operations
+  * @see
+  *   [[kyo.Batch.eval]] for evaluating sequences of values in batches
   */
 sealed trait Batch extends ArrowEffect[Op, Id]
 

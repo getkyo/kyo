@@ -3,13 +3,33 @@ package kyo
 import kyo.Tag
 import kyo.kernel.*
 
-/** The Emit effect allows emitting values of type V during a computation.
+/** The Emit effect allows producing multiple values alongside the main result of a computation.
   *
-  * Emit can be used to produce a stream of values alongside the main result of a computation. Values are emitted using [[Emit.apply]] and
-  * can be collected or processed using various run methods like [[Emit.run]] or [[Emit.runFold]].
+  * Emit implements a push-based model where values of type V are actively emitted from a producer without waiting for consumer readiness.
+  * This makes it useful for event emission, logging, or any scenario where values need to be produced during computation regardless of
+  * downstream consumption patterns.
+  *
+  * As a low-level primitive in Kyo's streaming architecture, Emit provides fundamental capabilities but lacks many conveniences. For most
+  * streaming use cases, prefer the higher-level Stream abstraction which offers richer transformation capabilities, automatic chunking, and
+  * better composition. Direct use of Emit should generally be reserved for specialized scenarios.
+  *
+  * Values are emitted using methods like `value` and collected with various run handlers such as `run`, `runFold`, or `runForeach`. The
+  * effect follows a clean separation between emission and consumption, allowing for functional composition of streaming operations.
+  *
+  * Unlike Poll, which implements a pull-based model with backpressure, Emit is a simpler model where the producer drives the flow. When
+  * sophisticated flow control is needed, Emit and Poll can be connected using `Poll.run` to establish backpressure.
   *
   * @tparam V
   *   The type of values that can be emitted
+  *
+  * @see
+  *   [[kyo.Emit.value]], [[kyo.Emit.valueWith]] for emitting values
+  * @see
+  *   [[kyo.Emit.run]], [[kyo.Emit.runFold]], [[kyo.Emit.runForeach]] for handling emitted values
+  * @see
+  *   [[kyo.Poll]] for pull-based streaming with backpressure
+  * @see
+  *   [[kyo.Stream]] for higher-level streaming operations (preferred for most use cases)
   */
 sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Unit]]
 

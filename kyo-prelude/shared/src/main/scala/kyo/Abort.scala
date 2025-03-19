@@ -6,11 +6,36 @@ import kyo.Tag
 import kyo.kernel.Effect
 import scala.annotation.targetName
 
-/** The Abort effect allows for short-circuiting computations with failure values. This effect is used for handling errors and early
-  * termination scenarios in a functional manner and handle thrown exceptions.
+/** The Abort effect represents early termination of computations with typed failure values.
+  *
+  * Abort provides a functional approach to error handling, allowing you to explicitly model failures in your type signatures and handle
+  * them in a composable way. It serves as a more powerful alternative to exceptions that integrates with Kyo's effect system.
+  *
+  * A computation can terminate through Abort in three distinct ways:
+  *   - `Success[A]`: The computation completes successfully with a value of type A
+  *   - `Failure[E]`: An expected business/domain failure with a meaningful error value of type E
+  *   - `Panic(ex: Throwable)`: An unexpected exception, similar to unchecked exceptions
+  *
+  * Type unions allow expressing multiple possible error types: `Result < Abort[NetworkError | ValidationError]` indicates the operation
+  * might fail with either a network error or validation error. Abort supports handling specific failure types within unions, allowing
+  * selective recovery with methods like `run` and `recover` that can target precise error subtypes while preserving the rest of the union.
+  * This enables granular error handling without losing type information.
+  *
+  * Abort is designed for modeling domain-specific errors as values rather than exceptions, making error handling explicit in your function
+  * signatures. It's particularly valuable for validation scenarios, creating maintainable error recovery flows, and for integrating with
+  * exception-based code via the `catching` methods that bridge traditional exception handling and Abort's functional approach.
   *
   * @tparam E
-  *   The type of the failure value
+  *   The type of failure values that can be produced
+  *
+  * @see
+  *   [[kyo.Abort.fail]], [[kyo.Abort.panic]], [[kyo.Abort.ensuring]] for creating failures
+  * @see
+  *   [[kyo.Abort.get]] for lifting Either, Option, Try and other types into Abort
+  * @see
+  *   [[kyo.Abort.run]], [[kyo.Abort.recover]], [[kyo.Abort.fold]] for handling failures
+  * @see
+  *   [[kyo.Abort.catching]] for integrating with exception-based code
   */
 sealed trait Abort[-E] extends ArrowEffect[Const[Error[E]], Const[Unit]]
 
