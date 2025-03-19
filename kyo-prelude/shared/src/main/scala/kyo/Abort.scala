@@ -11,7 +11,7 @@ import scala.annotation.targetName
   * Abort provides a functional approach to error handling, allowing you to explicitly model failures in your type signatures and handle
   * them in a composable way. It serves as a more powerful alternative to exceptions that integrates with Kyo's effect system.
   *
-  * A computation can terminate through Abort in three distinct ways:
+  * A computation using Abort can complete in three distinct ways:
   *   - `Success[A]`: The computation completes successfully with a value of type A
   *   - `Failure[E]`: An expected business/domain failure with a meaningful error value of type E
   *   - `Panic(ex: Throwable)`: An unexpected exception, similar to unchecked exceptions
