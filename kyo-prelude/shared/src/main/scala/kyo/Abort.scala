@@ -16,7 +16,7 @@ import scala.annotation.targetName
   *   - `Failure[E]`: An expected business/domain failure with a meaningful error value of type E
   *   - `Panic(ex: Throwable)`: An unexpected exception, similar to unchecked exceptions
   *
-  * Type unions allow expressing multiple possible error types: `Result < Abort[NetworkError | ValidationError]` indicates the operation
+  * Type unions allow expressing multiple possible error types: `Value < Abort[NetworkError | ValidationError]` indicates the operation
   * might fail with either a network error or validation error. Abort supports handling specific failure types within unions, allowing
   * selective recovery with methods like `run` and `recover` that can target precise error subtypes while preserving the rest of the union.
   * This enables granular error handling without losing type information.
