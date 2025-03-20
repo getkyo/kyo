@@ -301,8 +301,17 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and Abort[E] effects
       */
-    def retry(n: Int)(using Flat[A], SafeClassTag[E], Frame): A < (S & Async & Abort[E]) =
-        Retry[E](Schedule.repeat(n))(effect)
+    def retry(n: Int)(using Flat[A], SafeClassTag[E], Frame): A < (S & Abort[E]) =
+        Loop(n): i =>
+            Abort.fold[E](
+                (result: A) => Loop.done[Int, A](result),
+                err =>
+                    if i == 0 then Abort.fail(err)
+                    else Loop.continue(i - 1),
+                thr =>
+                    if i == 0 then Abort.panic(thr)
+                    else Loop.continue(i - 1)
+            )(effect)
 
     /** Performs this computation repeatedly until it completes successfully.
       *
@@ -311,8 +320,13 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and no Abort[E]
       */
-    def retryForever(using Flat[A], SafeClassTag[E], Frame): A < (S & Async) =
-        Retry[E](Schedule.forever)(effect).orPanic
+    def retryForever(using Flat[A], SafeClassTag[E], Frame): A < S =
+        Loop(()): _ =>
+            Abort.fold[E](
+                (result: A) => Loop.done[Unit, A](result),
+                _ => Loop.continue,
+                _ => Loop.continue
+            )(effect)
 
 end extension
 
@@ -583,8 +597,19 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         Flat[A],
         SafeClassTag[E1],
         Frame
-    ): A < (S & Async & Abort[E1 | ER]) =
-        Retry[E1](Schedule.repeat(n))(effect.asInstanceOf[A < (S & Abort[E1 | ER])])
+    ): A < (S & Abort[E1 | ER]) =
+        val retypedEffect = effect.asInstanceOf[A < (S & Abort[E1 | ER])]
+        Loop(n): i =>
+            Abort.fold[E1](
+                (result: A) => Loop.done[Int, A](result),
+                err =>
+                    if i == 0 then Abort.fail(err)
+                    else Loop.continue(i - 1),
+                thr =>
+                    if i == 0 then Abort.panic(thr)
+                    else Loop.continue(i - 1)
+            )(retypedEffect)
+    end retry
 
     /** Performs this computation repeatedly until it completes successfully.
       *
@@ -600,6 +625,13 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         SafeClassTag[E1],
         SafeClassTag[E1 | ER],
         Frame
-    ): A < (S & Async & Abort[E1 | ER]) =
-        Retry[E1](Schedule.forever)(effect.asInstanceOf[A < (S & Abort[E1 | ER])]).orPanic
+    ): A < (S & Abort[ER]) =
+        val retypedEffect = effect.asInstanceOf[A < (S & Abort[E1 | ER])]
+        Loop(()): _ =>
+            Abort.fold[E1](
+                (result: A) => Loop.done[Unit, A](result),
+                _ => Loop.continue,
+                _ => Loop.continue
+            )(retypedEffect)
+    end retryForever
 end ForAbortOps

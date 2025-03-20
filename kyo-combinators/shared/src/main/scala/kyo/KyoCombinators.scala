@@ -122,14 +122,12 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
-    def repeatWhile[S1](fn: A => Boolean < S1)(using Flat[A], Frame): A < (S & S1 & Async) =
-        def loop(last: A): A < (S & S1 & Async) =
-            fn(last).map { cont =>
-                if cont then effect.map(v => loop(v))
-                else last
-            }
-
-        effect.map(v => loop(v))
+    def repeatWhile[S1](fn: A => Boolean < S1)(using Flat[A], Frame): A < (S & S1) =
+        Loop(()): _ =>
+            effect.map: a =>
+                fn(a).map: test =>
+                    if test then Loop.continue
+                    else Loop.done(a)
     end repeatWhile
 
     /** Performs this computation repeatedly while the given condition holds.
@@ -141,13 +139,12 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
     def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using Flat[A], Frame): A < (S & S1 & Async) =
-        def loop(last: A, i: Int): A < (S & S1 & Async) =
-            fn(last, i).map { case (cont, duration) =>
-                if cont then effect.delayed(duration).map(v => loop(v, i + 1))
-                else last
-            }
-
-        effect.map(v => loop(v, 0))
+        Loop.indexed: i =>
+            effect.map: a =>
+                fn(a, i).map:
+                    case (test, wait) =>
+                        if test then Kyo.sleep(wait).andThen(Loop.continue)
+                        else Loop.done(a)
     end repeatWhile
 
     /** Performs this computation repeatedly until the given condition holds.
@@ -158,13 +155,11 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of the first execution where the condition becomes true
       */
     def repeatUntil[S1](fn: A => Boolean < S1)(using Flat[A], Frame): A < (S & S1 & Async) =
-        def loop(last: A): A < (S & S1 & Async) =
-            fn(last).map { cond =>
-                if cond then last
-                else effect.map(loop)
-            }
-
-        effect.map(v => loop(v))
+        Loop(()): _ =>
+            effect.map: a =>
+                fn(a).map: test =>
+                    if test then Loop.done(a)
+                    else Loop.continue
     end repeatUntil
 
     /** Performs this computation repeatedly until the given condition holds.
@@ -179,24 +174,24 @@ extension [A, S](effect: A < S)
         Flat[A],
         Frame
     ): A < (S & S1 & Async) =
-        def loop(last: A, i: Int): A < (S & S1 & Async) =
-            fn(last, i).map { case (cont, duration) =>
-                if cont then last
-                else Kyo.sleep(duration) *> effect.map(v => loop(v, i + 1))
-            }
-
-        effect.map(v => loop(v, 0))
+        Loop.indexed: i =>
+            effect.map: a =>
+                fn(a, i).map:
+                    case (test, wait) =>
+                        if test then Loop.done(a)
+                        else Kyo.sleep(wait).andThen(Loop.continue)
     end repeatUntil
 
     /** Performs this computation indefinitely.
       *
       * @return
-      *   A computation that never completes
+      *   A computation that repeats forever and never completes
       * @note
       *   This method is typically used for long-running processes or servers that should run continuously
       */
     def forever(using Frame): Nothing < S =
-        (effect *> effect.forever) *> (throw new IllegalStateException("infinite loop ended"))
+        Loop.forever(effect).andThen:
+            bug(s"Loop.forever completed successfully")
 
     /** Performs this computation when the given condition holds.
       *
