@@ -342,7 +342,10 @@ lazy val `kyo-offheap` =
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .nativeSettings(
+            `native-settings`,
+            Compile / doc / sources := Seq.empty
+        )
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)

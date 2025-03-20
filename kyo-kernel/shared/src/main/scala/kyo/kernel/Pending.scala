@@ -190,6 +190,72 @@ object `<`:
             f6(pipe6)
         end pipe
 
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def pipe[B, C, D, E, F, G, H](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H
+        )(using inline flat: WeakFlat[A]): H =
+            def pipe7 = v.pipe(f1, f2, f3, f4, f5, f6)
+            f7(pipe7)
+        end pipe
+
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def pipe[B, C, D, E, F, G, H, I](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H,
+            inline f8: (=> H) => I
+        )(using inline flat: WeakFlat[A]): I =
+            def pipe8 = v.pipe(f1, f2, f3, f4, f5, f6, f7)
+            f8(pipe8)
+        end pipe
+
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def pipe[B, C, D, E, F, G, H, I, J](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H,
+            inline f8: (=> H) => I,
+            inline f9: (=> I) => J
+        )(using inline flat: WeakFlat[A]): J =
+            def pipe9 = v.pipe(f1, f2, f3, f4, f5, f6, f7, f8)
+            f9(pipe9)
+        end pipe
+
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def pipe[B, C, D, E, F, G, H, I, J, K](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H,
+            inline f8: (=> H) => I,
+            inline f9: (=> I) => J,
+            inline f10: (=> J) => K
+        )(using inline flat: WeakFlat[A]): K =
+            def pipe10 = v.pipe(f1, f2, f3, f4, f5, f6, f7, f8, f9)
+            f10(pipe10)
+        end pipe
+
         private[kyo] inline def evalNow(using inline flat: Flat[A]): Maybe[A] =
             v match
                 case kyo: Kyo[?, ?] => Maybe.empty
