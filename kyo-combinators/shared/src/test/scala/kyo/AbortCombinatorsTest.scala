@@ -2,7 +2,7 @@ package kyo
 
 import scala.util.Try
 
-class AbortCombinatorTest extends Test:
+class AbortCombinatorsTest extends Test:
 
     given ce[A, B]: CanEqual[A, B] = CanEqual.canEqualAny
 
@@ -689,4 +689,4 @@ class AbortCombinatorTest extends Test:
         }
     }
 
-end AbortCombinatorTest
+end AbortCombinatorsTest

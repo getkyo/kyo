@@ -1,6 +1,6 @@
 package kyo
 
-class EffectCombinatorTest extends Test:
+class KyoCombinatorsTest extends Test:
 
     "all effects" - {
 
@@ -361,4 +361,4 @@ class EffectCombinatorTest extends Test:
                 .andThen(assert(finalizerCalled))
         }
     }
-end EffectCombinatorTest
+end KyoCombinatorsTest
