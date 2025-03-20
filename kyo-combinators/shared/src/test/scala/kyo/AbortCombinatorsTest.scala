@@ -491,6 +491,54 @@ class AbortCombinatorsTest extends Test:
             }
         }
 
+        "retry" - {
+            "retry n times" - {
+                "succeeding" in run {
+                    val effect =
+                        for
+                            _ <- Var.update[Int](_ + 1)
+                            i <- Var.get[Int]
+                        yield i
+
+                    Var.run(0) {
+                        effect.retry(5).map: i =>
+                            Var.get[Int].map: i2 =>
+                                assert(i == 1 && i2 == 1)
+                    }
+                }
+
+                "failing" in run {
+                    val effect =
+                        for
+                            _ <- Var.update[Int](_ + 1)
+                            i <- Var.get[Int]
+                            _ <- Abort.fail(i)
+                        yield ()
+
+                    Var.run(0) {
+                        Abort.run(effect.retry(5)).map: result =>
+                            Var.get[Int].map: i =>
+                                assert(result == Result.Failure(6) && i == 6)
+                    }
+                }
+
+                "failing then succeeeding" in run {
+                    val effect =
+                        for
+                            _ <- Var.update[Int](_ + 1)
+                            i <- Var.get[Int]
+                            _ <- if i < 5 then Abort.fail("fail") else Kyo.unit
+                        yield i
+
+                    Var.run(0) {
+                        effect.retry(5).map: i =>
+                            Var.get[Int].map: i2 =>
+                                assert(i == 5 && i2 == 5)
+                    }
+                }
+            }
+        }
+
         "forAbort" - {
 
             "handle" - {
@@ -684,6 +732,70 @@ class AbortCombinatorsTest extends Test:
                             _.getMessage
                         )
                     assert(handledPanic.eval == "message")
+                }
+            }
+
+            "retry" - {
+                "retry n times" - {
+                    "succeeding" in run {
+                        val effect: Int < (Var[Int] & Abort[String | Int]) =
+                            for
+                                _ <- Var.update[Int](_ + 1)
+                                i <- Var.get[Int]
+                            yield i
+
+                        Var.run(0) {
+                            effect.forAbort[Int].retry(5).map: i =>
+                                Var.get[Int].map: i2 =>
+                                    assert(i == 1 && i2 == 1)
+                        }
+                    }
+
+                    "failing retried type" in run {
+                        val effect: Unit < (Var[Int] & Abort[String | Int]) =
+                            for
+                                _ <- Var.update[Int](_ + 1)
+                                i <- Var.get[Int]
+                                _ <- Abort.fail(i)
+                            yield ()
+
+                        Var.run(0) {
+                            Abort.run(effect.forAbort[Int].retry(5)).map: result =>
+                                Var.get[Int].map: i =>
+                                    assert(result == Result.Failure(6) && i == 6)
+                        }
+                    }
+
+                    "failing non-retried type" in run {
+                        val effect: Unit < (Var[Int] & Abort[String | Int]) =
+                            for
+                                _ <- Var.update[Int](_ + 1)
+                                i <- Var.get[Int]
+                                _ <- if i == 3 then Abort.fail("fail") else Kyo.unit
+                                _ <- Abort.fail(i)
+                            yield ()
+
+                        Var.run(0) {
+                            Abort.run(effect.forAbort[Int].retry(5)).map: result =>
+                                Var.get[Int].map: i =>
+                                    assert(result == Result.Failure("fail") && i == 3)
+                        }
+                    }
+
+                    "failing then succeeeding" in run {
+                        val effect: Int < (Var[Int] & Abort[String | Int]) =
+                            for
+                                _ <- Var.update[Int](_ + 1)
+                                i <- Var.get[Int]
+                                _ <- if i < 5 then Abort.fail("fail") else Kyo.unit
+                            yield i
+
+                        Var.run(0) {
+                            effect.retry(5).map: i =>
+                                Var.get[Int].map: i2 =>
+                                    assert(i == 5 && i2 == 5)
+                        }
+                    }
                 }
             }
         }
