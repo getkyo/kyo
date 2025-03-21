@@ -11,8 +11,12 @@ import scala.annotation.nowarn
   * Unlike traditional variables, changes to a `Var` are tracked as effects, preserving referential transparency while enabling stateful
   * operations.
   *
-  * The effect encapsulates three fundamental operations: reading the current state, setting a new state, and updating the state based on
-  * its current value. This simple API enables complex stateful patterns while keeping state changes explicit and manageable.
+  * The effect encapsulates three fundamental operations:
+  *   - Reading the current state via `get` and `use` methods
+  *   - Setting a new state via `set` and `setDiscard` methods
+  *   - Updating the state based on its current value via `update` and `updateDiscard` methods
+  *
+  * This simple API enables complex stateful patterns while keeping state changes explicit and manageable.
   *
   * State is isolated to specific computation scopes through the handlers like `run` and `runTuple`. When a computation completes, the state
   * can either be discarded or returned alongside the computation result, providing flexibility in how state is managed. Further isolation
