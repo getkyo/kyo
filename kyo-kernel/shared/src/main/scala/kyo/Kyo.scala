@@ -94,6 +94,55 @@ object Kyo:
             )
         )
 
+    /** Zips nine effects into a tuple.
+      */
+    def zip[A1, A2, A3, A4, A5, A6, A7, A8, A9, S](
+        v1: A1 < S,
+        v2: A2 < S,
+        v3: A3 < S,
+        v4: A4 < S,
+        v5: A5 < S,
+        v6: A6 < S,
+        v7: A7 < S,
+        v8: A8 < S,
+        v9: A9 < S
+    )(using Frame): (A1, A2, A3, A4, A5, A6, A7, A8, A9) < S =
+        v1.map(t1 =>
+            v2.map(t2 =>
+                v3.map(t3 =>
+                    v4.map(t4 => v5.map(t5 => v6.map(t6 => v7.map(t7 => v8.map(t8 => v9.map(t9 => (t1, t2, t3, t4, t5, t6, t7, t8, t9)))))))
+                )
+            )
+        )
+
+    /** Zips ten effects into a tuple.
+      */
+    def zip[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, S](
+        v1: A1 < S,
+        v2: A2 < S,
+        v3: A3 < S,
+        v4: A4 < S,
+        v5: A5 < S,
+        v6: A6 < S,
+        v7: A7 < S,
+        v8: A8 < S,
+        v9: A9 < S,
+        v10: A10 < S
+    )(using Frame): (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) < S =
+        v1.map(t1 =>
+            v2.map(t2 =>
+                v3.map(t3 =>
+                    v4.map(t4 =>
+                        v5.map(t5 =>
+                            v6.map(t6 =>
+                                v7.map(t7 => v8.map(t8 => v9.map(t9 => v10.map(t10 => (t1, t2, t3, t4, t5, t6, t7, t8, t9, t10)))))
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
     /** Applies an effect-producing function to each element of a sequence.
       *
       * @param seq
