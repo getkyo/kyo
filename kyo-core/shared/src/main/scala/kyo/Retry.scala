@@ -3,7 +3,24 @@ package kyo
 import kyo.Tag
 import scala.util.*
 
-/** Provides utilities for retrying operations with customizable policies. */
+/** A utility for retrying operations with configurable backoff strategies and failure handling.
+  *
+  * Retry provides a structured approach to executing operations that may temporarily fail, allowing them to be automatically retried based
+  * on sophisticated scheduling policies.
+  *
+  * Common usage patterns:
+  *   - Use `Retry[ErrorType](operation)` for simple retries with the default exponential backoff strategy
+  *   - Use `Retry[ErrorType](customSchedule)(operation)` for operations requiring specialized retry behavior
+  *   - Combine with `Schedule` combinators for advanced policies like "retry exponentially up to 5 times with randomized delays"
+  *
+  * The default retry policy (`defaultSchedule`) uses exponential backoff with jitter, which provides a balance between quick recovery for
+  * transient failures and protection against coordinated retries in distributed systems.
+  *
+  * @see
+  *   [[kyo.Schedule]] for defining custom retry policies
+  * @see
+  *   [[kyo.Abort]] for integrating with Kyo's structured error handling
+  */
 object Retry:
 
     /** The default retry schedule. */

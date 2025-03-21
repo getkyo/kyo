@@ -4,11 +4,34 @@ import java.io.Closeable
 import kyo.Tag
 import kyo.kernel.ContextEffect
 
-/** An effect representing resources that can be acquired and released safely.
+/** A structured effect for safe acquisition and finalization of resources.
   *
-  * Resources are typically used for managing external entities that need proper cleanup, such as file handles, network connections, or
-  * database connections. The Resource effect ensures that acquired resources are properly released when they are no longer needed, even in
-  * the presence of errors or exceptions.
+  * Resource provides a principled mechanism for working with entities that require proper cleanup, ensuring resources are released in a
+  * deterministic manner even in the presence of errors or interruptions. This effect is particularly valuable for managing external
+  * dependencies with lifecycle requirements such as file handles, network connections, database sessions, or any action that needs a
+  * corresponding cleanup step.
+  *
+  * Key features:
+  *   - Automatic resource finalization through `Resource.run` when computations complete or fail
+  *   - Compositional API allowing resource dependencies to be built up safely with `acquireRelease` and `acquire`
+  *   - Support for parallel cleanup through configurable concurrency levels with `run(closeParallelism)(...)`
+  *   - Declarative cleanup registration using `Resource.ensure` for custom finalizers
+  *
+  * The Resource effect follows the bracket pattern (acquire-use-release) but with improved interruption handling and parallel cleanup
+  * capabilities. Resource finalizers registered with `ensure` are guaranteed to run exactly once when the associated scope completes, with
+  * failures in finalizers logged rather than thrown to avoid masking the primary computation result.
+  *
+  * Typically, you would use `acquireRelease` to pair resource acquisition with its cleanup function, then compose multiple resources
+  * together before running the combined effect with `Resource.run`.
+  *
+  * @see
+  *   [[kyo.Resource.acquireRelease]] For creating resources with custom acquire and release functions
+  * @see
+  *   [[kyo.Resource.acquire]] For creating resources from Java Closeables
+  * @see
+  *   [[kyo.Resource.ensure]] For registering cleanup actions
+  * @see
+  *   [[kyo.Resource.run]] For executing resource-managed computations
   */
 sealed trait Resource extends ContextEffect[Resource.Finalizer]
 
