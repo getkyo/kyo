@@ -1292,4 +1292,39 @@ class AsyncTest extends Test:
         }
     }
 
+    "zip" - {
+        "executes nine computations in parallel" in run {
+            for
+                result <- Async.zip(
+                    IO(1),
+                    IO(2),
+                    IO(3),
+                    IO(4),
+                    IO(5),
+                    IO(6),
+                    IO(7),
+                    IO(8),
+                    IO(9)
+                )
+            yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9))
+        }
+
+        "executes ten computations in parallel" in run {
+            for
+                result <- Async.zip(
+                    IO(1),
+                    IO(2),
+                    IO(3),
+                    IO(4),
+                    IO(5),
+                    IO(6),
+                    IO(7),
+                    IO(8),
+                    IO(9),
+                    IO(10)
+                )
+            yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
+        }
+    }
+
 end AsyncTest

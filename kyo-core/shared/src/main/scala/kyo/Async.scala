@@ -495,7 +495,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2), 2)(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
 
@@ -508,7 +508,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3), 3)(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
         }
 
@@ -522,7 +522,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4), 4)(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
@@ -537,7 +537,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5))(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5), 5)(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4], s(4).asInstanceOf[A5])
         }
 
@@ -553,7 +553,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6))(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6), 6)(using Flat.unsafe.bypass).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -577,7 +577,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6, A7) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7))(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7), 7)(using Flat.unsafe.bypass).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -603,7 +603,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6, A7, A8) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8))(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8), 8)(using Flat.unsafe.bypass).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -613,6 +613,66 @@ object Async:
                 s(5).asInstanceOf[A6],
                 s(6).asInstanceOf[A7],
                 s(7).asInstanceOf[A8]
+            )
+        }
+
+    /** Executes nine computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, A9: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S),
+        v6: A6 < (Abort[E] & Async & S),
+        v7: A7 < (Abort[E] & Async & S),
+        v8: A8 < (Abort[E] & Async & S),
+        v9: A9 < (Abort[E] & Async & S)
+    )(
+        using frame: Frame
+    ): (A1, A2, A3, A4, A5, A6, A7, A8, A9) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9), 9)(using Flat.unsafe.bypass).map { s =>
+            (
+                s(0).asInstanceOf[A1],
+                s(1).asInstanceOf[A2],
+                s(2).asInstanceOf[A3],
+                s(3).asInstanceOf[A4],
+                s(4).asInstanceOf[A5],
+                s(5).asInstanceOf[A6],
+                s(6).asInstanceOf[A7],
+                s(7).asInstanceOf[A8],
+                s(8).asInstanceOf[A9]
+            )
+        }
+
+    /** Executes ten computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, A9: Flat, A10: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S),
+        v6: A6 < (Abort[E] & Async & S),
+        v7: A7 < (Abort[E] & Async & S),
+        v8: A8 < (Abort[E] & Async & S),
+        v9: A9 < (Abort[E] & Async & S),
+        v10: A10 < (Abort[E] & Async & S)
+    )(
+        using frame: Frame
+    ): (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9, v10), 10)(using Flat.unsafe.bypass).map { s =>
+            (
+                s(0).asInstanceOf[A1],
+                s(1).asInstanceOf[A2],
+                s(2).asInstanceOf[A3],
+                s(3).asInstanceOf[A4],
+                s(4).asInstanceOf[A5],
+                s(5).asInstanceOf[A6],
+                s(6).asInstanceOf[A7],
+                s(7).asInstanceOf[A8],
+                s(8).asInstanceOf[A9],
+                s(9).asInstanceOf[A10]
             )
         }
 
