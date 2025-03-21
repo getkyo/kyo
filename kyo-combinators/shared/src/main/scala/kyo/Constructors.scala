@@ -65,16 +65,6 @@ extension (kyoObject: Kyo.type)
     def attempt[A, S](effect: => A < S)(using Flat[A], Frame): A < (S & Abort[Throwable]) =
         Abort.catching[Throwable](effect)
 
-    /** Prints a message to the console.
-      *
-      * @param message
-      *   The message to print
-      * @return
-      *   An effect that prints the message to the console
-      */
-    def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
-        Console.printLine(message)
-
     /** Emits a value
       *
       * @param value
@@ -393,6 +383,14 @@ extension (kyoObject: Kyo.type)
       */
     def sleep(duration: Duration)(using Frame): Unit < Async =
         Async.sleep(duration)
+
+    /** Sleeps for all eternity.
+      *
+      * @return
+      *   An effect that sleeps forever and accomplishes nothing
+      */
+    def sleepForever(using Frame): Nothing < Async =
+        sleep(Duration.Infinity).forever
 
     /** Suspends an effect using IO.
       *

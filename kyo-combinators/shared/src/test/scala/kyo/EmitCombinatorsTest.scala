@@ -1,6 +1,6 @@
 package kyo
 
-class EmitCombinatorTest extends Test:
+class EmitCombinatorsTest extends Test:
 
     given ce[A, B]: CanEqual[A, B] = CanEqual.canEqualAny
 
@@ -105,4 +105,4 @@ class EmitCombinatorTest extends Test:
         assert(Var.runTuple(0)(stream.run).eval == (6, Seq(1, 2, 3)))
     }
 
-end EmitCombinatorTest
+end EmitCombinatorsTest
