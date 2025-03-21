@@ -3,13 +3,38 @@ package kyo
 import kyo.Ansi.*
 import kyo.kernel.*
 
-/** The Parse effect combines three fundamental capabilities needed for parsing:
-  *   - State management (Var[Parse.State]) to track input position
-  *   - Choice for handling alternatives and backtracking
-  *   - Error handling (Abort[ParseFailed]) for parse failures
+/** Parser combinator effect for compositional text parsing.
   *
-  * This combination enables building complex parsers that can handle ambiguous grammars, implement look-ahead, and provide detailed error
-  * messages.
+  * The Parse effect combines three fundamental capabilities needed for powerful parsing: state management through `Var[Parse.State]` to
+  * track input position, alternative exploration via `Choice` for backtracking and ambiguity handling, and structured error reporting with
+  * `Abort[ParseFailed]` for failures.
+  *
+  * This design enables building sophisticated parsers that can handle complex grammars while maintaining readability and composition of
+  * parsing logic. The core parsing model is based on consuming text incrementally and producing typed values with precise control over
+  * backtracking behavior.
+  *
+  * Parse operations follow a consistent pattern where parsers attempt to match input text and either succeed by returning a value and the
+  * remaining unconsumed input, or fail, allowing the system to try alternative parsing strategies. This approach supports both
+  * deterministic parsing (where exactly one interpretation is valid) and ambiguous grammars (where multiple interpretations might be
+  * acceptable).
+  *
+  * The effect provides a rich set of combinators that build on the fundamental `read` operation, including sequence, alternative,
+  * repetition, and look-ahead parsers. It also includes pre-built parsers for common needs like whitespace handling, numeric values,
+  * identifiers, and character recognition patterns.
+  *
+  * Parse is well-suited for implementing domain-specific languages, configuration formats, or any structured text processing that benefits
+  * from declarative grammar definitions with strong composition and error handling capabilities.
+  *
+  * @see
+  *   [[kyo.Parse.read]] for the fundamental parsing operation that other combinators build upon
+  * @see
+  *   [[kyo.Parse.firstOf]], [[kyo.Parse.anyOf]], [[kyo.Parse.inOrder]] for combining parsers
+  * @see
+  *   [[kyo.Parse.attempt]], [[kyo.Parse.peek]] for parsers with look-ahead and backtracking
+  * @see
+  *   [[kyo.Parse.run]] for executing parsers against input text
+  * @see
+  *   [[kyo.Var]], [[kyo.Choice]], [[kyo.Abort]] for the underlying effects that Parse composes
   */
 opaque type Parse <: (Var[Parse.State] & Choice & Abort[ParseFailed]) = Var[Parse.State] & Choice & Abort[ParseFailed]
 

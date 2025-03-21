@@ -4,19 +4,37 @@ import kyo.kernel.ArrowEffect
 
 /** Represents polling values from a data source with backpressure control.
   *
-  * * Key behaviors:
+  * Poll implements a pull-based streaming model where consumers actively request data when they're ready to process it. This approach
+  * provides natural backpressure, as values are only produced in response to explicit requests, preventing overwhelmed consumers.
+  *
+  * Key behaviors:
   *   - Poll returns Maybe[V], where:
   *     - Present(v) indicates a successful poll with value v
   *     - Absent indicates the end of the stream (no more values will be available)
   *   - Once Absent is received, the consumer should stop polling as the stream has terminated
-  * Poll is used to consume values. Each poll operation signals readiness to receive data, and returns Maybe[V] indicating whether a value
-  * was available.
   *
-  * The effect enables building streaming data pipelines with controlled consumption rates. Handlers can process values at their own pace by
-  * polling only as needed.
+  * Poll is used to consume values. Each poll operation signals readiness to receive data, and returns Maybe[V] indicating whether a value
+  * was available. This enables building streaming data pipelines with controlled consumption rates. Handlers can process values at their
+  * own pace by polling only as needed.
+  *
+  * The Poll effect can be connected to an Emit effect through `Poll.run` to synchronize producer and consumer, establishing proper flow
+  * control. For higher-level streaming operations with rich transformation capabilities, consider using the Stream abstraction.
   *
   * @tparam V
   *   The type of values being polled from the data source.
+  *
+  * @see
+  *   [[kyo.Poll.one]] for polling a single value
+  * @see
+  *   [[kyo.Poll.values]] for processing multiple polled values
+  * @see
+  *   [[kyo.Poll.fold]] for folding over polled values
+  * @see
+  *   [[kyo.Poll.run]] for connecting Poll with Emit effects
+  * @see
+  *   [[kyo.Emit]] for push-based value emission
+  * @see
+  *   [[kyo.Stream]] for higher-level streaming operations
   */
 sealed trait Poll[V] extends ArrowEffect[Const[Unit], Const[Maybe[V]]]
 

@@ -8,8 +8,20 @@ import scala.util.NotGiven
 
 /** Represents a stream of values of type `V` with effects of type `S`.
   *
-  * A `Stream` is a lazy sequence of values that can be processed and transformed. It encapsulates an effect that, when executed, emits
-  * chunks of values.
+  * Stream provides a high-level abstraction for working with sequences of values that can be processed and transformed lazily. It
+  * encapsulates an effect that, when executed, emits chunks of values, combining the benefits of both push and pull-based streaming models
+  * while hiding their complexity.
+  *
+  * Streams are built with rich transformation capabilities including mapping, filtering, folding, and concatenation. The implementation
+  * uses chunked processing for efficiency, enabling optimized operations on batches of data rather than individual elements. The lazy
+  * nature of Stream means values are only produced when needed and consumed downstream.
+  *
+  * Internally, Stream uses the Emit effect to produce chunks of values and can be connected with Poll for controlled consumption. This
+  * design provides automatic flow control and backpressure, ensuring producers don't overwhelm consumers. Streams can be run to collect all
+  * values or processed incrementally with operations like foreach and fold.
+  *
+  * The Stream abstraction is particularly valuable for data processing pipelines, event streams, or any scenario requiring transformation
+  * of potentially infinite sequences of values.
   *
   * @tparam V
   *   The type of values in the stream
@@ -18,6 +30,17 @@ import scala.util.NotGiven
   *
   * @param v
   *   The effect that produces acknowledgments and emits chunks of values
+  *
+  * @see
+  *   [[kyo.Stream.map]], [[kyo.Stream.filter]], [[kyo.Stream.flatMap]] for transforming streams
+  * @see
+  *   [[kyo.Stream.concat]], [[kyo.Stream.take]], [[kyo.Stream.drop]] for stream composition and slicing
+  * @see
+  *   [[kyo.Stream.run]], [[kyo.Stream.foreach]], [[kyo.Stream.fold]] for consuming streams
+  * @see
+  *   [[kyo.Emit]] for the underlying push-based emission mechanism
+  * @see
+  *   [[kyo.Poll]] for pull-based consumption with backpressure
   */
 sealed abstract class Stream[V, -S]:
 
