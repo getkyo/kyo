@@ -2,7 +2,28 @@ package kyo
 
 import scala.annotation.tailrec
 
-/** A class representing a random number generator with various methods for generating random values. */
+/** A high-performance random number generator with functionality for generating various types of random values.
+  *
+  * Random provides a complete toolkit for random number generation, supporting various data types, ranges, and distribution patterns. It
+  * offers both instance-based usage through object methods and context-based usage through companion object methods.
+  *
+  * Key features:
+  *   - Generates primitive values with consistent distribution (`nextInt`, `nextLong`, `nextDouble`, `nextBoolean`, etc.)
+  *   - Produces random collections with configurable constraints (`nextValues`, `nextStringAlphanumeric`, `nextBytes`)
+  *   - Allows sampling from existing collections with uniform probability (`nextValue`)
+  *   - Supports Fisher-Yates shuffling for randomizing sequence order (`shuffle`)
+  *   - Provides Gaussian (normal) distribution sampling for statistical applications (`nextGaussian`)
+  *
+  * The companion object supports flexible context management with methods like `let` and `withSeed` for controlling randomness in specific
+  * scopes. The `let` method allows temporary replacement of the current generator with a custom one, while `withSeed` creates reproducible
+  * sequences by using a deterministic seed. These methods provide safe isolation for random generation within effect boundaries, making
+  * them particularly valuable for testing scenarios where deterministic behavior is required.
+  *
+  * @see
+  *   [[kyo.Random.live]] For immediate access to the default random generator
+  * @see
+  *   [[kyo.Random.withSeed]] For creating reproducible random sequences
+  */
 abstract class Random:
     def nextInt(using Frame): Int < IO
     def nextInt(exclusiveBound: Int)(using Frame): Int < IO
