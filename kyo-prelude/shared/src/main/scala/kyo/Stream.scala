@@ -514,6 +514,36 @@ sealed abstract class Stream[V, -S]:
             done = (state, _) => state.flattenChunk
         )
 
+    /** Split the stream into a chunk that contains the first n elements of the stream, and the rest of the stream as a new stream.
+      *
+      * @param n
+      *   The number of elements to take
+      * @return
+      *   A tuple containing chunk of the first n elements and the rest of the stream
+      */
+    def splitAt(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): (Chunk[V], Stream[V, S]) < S =
+        val emptyEmit = Maybe.empty[Unit < (Emit[Chunk[V]] & S)]
+        ArrowEffect.handleState(tag, (Chunk.empty[V], emptyEmit), emit)(
+            handle = [C] =>
+                (input, state, cont) =>
+                    val (chunk, _)    = state
+                    val appendedChunk = chunk.concat(input)
+                    if (appendedChunk.size) < n then
+                        (appendedChunk -> emptyEmit, cont(()))
+                    else
+                        val (taken, rest) = appendedChunk.splitAt(n)
+                        val restEmit      = Maybe.Present(Emit.valueWith(rest)(cont(())))
+                        (taken -> restEmit, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
+                    end if
+            ,
+            done = (state, _) =>
+                val (chunk, lastEmit) = state
+                lastEmit match
+                    case Maybe.Present(emit) => (chunk, Stream(emit))
+                    case Maybe.Absent        => (chunk, Stream.empty)
+                end match
+        )
+    end splitAt
 end Stream
 
 object Stream:
