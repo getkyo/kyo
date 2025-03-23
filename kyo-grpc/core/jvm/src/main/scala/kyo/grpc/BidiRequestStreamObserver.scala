@@ -11,12 +11,11 @@ import scala.language.future
 
 class BidiRequestStreamObserver[Request: Tag, Response: { Flat, Tag }] private (
     f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
-    requestChannel: Channel[Result[GrpcRequest.Errors, Request]],
-    requestsCompleted: AtomicBoolean,
+    requestChannel: StreamChannel[Request, GrpcRequest.Errors],
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame, AllowUnsafe) extends StreamObserver[Request]:
 
-    private val responses = Stream.embed(f(StreamChannel.stream(requestChannel, requestsCompleted)))
+    private val responses = Stream.embed(f(requestChannel.stream))
 
     // TODO: Handle the backpressure properly.
     /** Only run this once.
@@ -26,14 +25,14 @@ class BidiRequestStreamObserver[Request: Tag, Response: { Flat, Tag }] private (
 
     override def onNext(request: Request): Unit =
         // TODO: Do a better job of backpressuring here.
-        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Success(request))).getOrThrow
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(request)).getOrThrow
 
     override def onError(t: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
-        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Failure(StreamNotifier.throwableToStatusException(t)))).getOrThrow
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.error(StreamNotifier.throwableToStatusException(t))).getOrThrow
 
     override def onCompleted(): Unit =
-        Abort.run(IO.Unsafe.run(requestsCompleted.set(true))).eval.getOrThrow
+        Abort.run(IO.Unsafe.run(requestChannel.complete)).eval.getOrThrow
 
 end BidiRequestStreamObserver
 
@@ -44,9 +43,8 @@ object BidiRequestStreamObserver:
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe): BidiRequestStreamObserver[Request, Response] < IO =
         for
-            requestChannel    <- StreamChannel.init[Request, GrpcRequest.Errors]
-            requestsCompleted <- AtomicBoolean.init(false)
-            observer = BidiRequestStreamObserver(f, requestChannel, requestsCompleted, responseObserver)
+            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
+            observer = BidiRequestStreamObserver(f, requestChannel, responseObserver)
             // TODO: This seems a bit sneaky.
             _ <- Async.run(observer.start)
         yield observer

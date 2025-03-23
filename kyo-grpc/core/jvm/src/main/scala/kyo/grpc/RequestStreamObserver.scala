@@ -10,12 +10,11 @@ import kyo.Result.*
 // TODO: Should this extend ServerCallStreamObserver?
 class RequestStreamObserver[Request: Tag, Response: Flat](
     f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
-    requestChannel: Channel[Result[GrpcRequest.Errors, Request]],
-    requestsCompleted: AtomicBoolean,
+    requestChannel: StreamChannel[Request, GrpcRequest.Errors],
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame, AllowUnsafe) extends StreamObserver[Request]:
 
-    private val response = f(StreamChannel.stream(requestChannel, requestsCompleted))
+    private val response = f(requestChannel.stream)
 
     // TODO: Handle the backpressure properly.
     /** Only run this once.
@@ -25,14 +24,14 @@ class RequestStreamObserver[Request: Tag, Response: Flat](
 
     override def onNext(request: Request): Unit =
         // TODO: Do a better job of backpressuring here.
-        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Success(request))).getOrThrow
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(request)).getOrThrow
 
     override def onError(t: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
-        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(Failure(StreamNotifier.throwableToStatusException(t)))).getOrThrow
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.error(StreamNotifier.throwableToStatusException(t))).getOrThrow
 
     override def onCompleted(): Unit =
-        Abort.run(IO.Unsafe.run(requestsCompleted.set(true))).eval.getOrThrow
+        Abort.run(IO.Unsafe.run(requestChannel.complete)).eval.getOrThrow
 
 end RequestStreamObserver
 
@@ -43,9 +42,8 @@ object RequestStreamObserver:
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe): RequestStreamObserver[Request, Response] < IO =
         for
-            requestChannel    <- StreamChannel.init[Request, GrpcRequest.Errors]
-            requestsCompleted <- AtomicBoolean.init(false)
-            observer = RequestStreamObserver(f, requestChannel, requestsCompleted, responseObserver)
+            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
+            observer = RequestStreamObserver(f, requestChannel, responseObserver)
             // TODO: This seems a bit sneaky.
             _ <- Async.run(observer.start)
         yield observer

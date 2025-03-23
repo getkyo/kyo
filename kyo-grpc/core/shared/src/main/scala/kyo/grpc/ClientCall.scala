@@ -41,12 +41,11 @@ object ClientCall:
     )(using Frame): Stream[Response, GrpcRequest] =
         val responses =
             for
-                responseChannel    <- StreamChannel.init[Response, GrpcResponse.Errors]
-                responsesCompleted <- AtomicBoolean.init(false)
-                responseObserver   <- IO.Unsafe(ResponseStreamObserver(responseChannel, responsesCompleted))
+                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]
+                responseObserver <- IO.Unsafe(ResponseStreamObserver(responseChannel))
                 // TODO: Do we have to cancel the observer returned here?
                 _ = ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver)
-            yield StreamChannel.stream(responseChannel, responsesCompleted)
+            yield responseChannel.stream
         Stream.embed(responses)
     end serverStreaming
 
