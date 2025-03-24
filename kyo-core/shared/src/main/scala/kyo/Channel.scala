@@ -358,7 +358,7 @@ object Channel:
                                         val taken     = batch.take(i)
                                         val remaining = batch.drop(i)
                                         if remaining.nonEmpty then
-                                            puts.offer(Put.Batch(remaining, promise))
+                                            discard(puts.offer(Put.Batch(remaining, promise)))
                                             flush()
                                             result(current.concat(taken))
                                         else
