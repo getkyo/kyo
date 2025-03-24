@@ -177,16 +177,16 @@ object Poll:
             using
             tag: Tag[Poll[V]],
             frame: Frame
-        ): (Maybe[V] => A < (Poll[V] & S)) < S =
+        ): Either[A, Maybe[V] => A < (Poll[V] & S)] < S =
             ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
                         // Effect found, return the input an continuation
-                    cont,
+                        Right(cont),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation
                     // that returns the result of the computation
-                    (_: Maybe[V]) => r: A < (Poll[V] & S)
+                    Left(r)
             )
     end RunFirstOps
 

@@ -128,36 +128,46 @@ class PollTest extends Test:
 
     "runFirst" - {
         "basic operation" in run {
-            for
-                cont1  <- Poll.runFirst(Poll.fold[Int](0)(_ + _))
-                cont2  <- Poll.runFirst(cont1(Maybe(1)))
-                cont3  <- Poll.runFirst(cont2(Maybe(2)))
-                result <- Poll.run(Chunk(4, 5, 6))(cont3(Maybe.empty))
-            yield assert(result == 3)
-            end for
+            Abort.run {
+                for
+                    cont1  <- Poll.runFirst(Poll.fold[Int](0)(_ + _)).map(Abort.get(_))
+                    cont2  <- Poll.runFirst(cont1(Maybe(1))).map(Abort.get(_))
+                    cont3  <- Poll.runFirst(cont2(Maybe(2))).map(Abort.get(_))
+                    result <- Poll.run(Chunk(4, 5, 6))(cont3(Maybe.empty))
+                yield assert(result == 3)
+                end for
+            }.map { r =>
+                assert(r.isSuccess)
+            }
         }
 
         "empty" in run {
-            for
-                cont1  <- Poll.runFirst(Poll.andMap[Int](_ => 42))
-                result <- Poll.run(Chunk.empty)(cont1(Maybe.empty))
-            yield assert(result == 42)
-            end for
+            Abort.run {
+                for
+                    cont1  <- Poll.runFirst(Poll.andMap[Int](_ => 42)).map(Abort.get(_))
+                    result <- Poll.run(Chunk.empty)(cont1(Maybe.empty))
+                yield assert(result == 42)
+                end for
+            }.map { r =>
+                assert(r.isSuccess)
+            }
         }
 
         "with effects" in run {
-            for
-                result <- Var.runTuple(0) {
-                    for
-                        cont1  <- Poll.runFirst(Poll.one[Int].map(_ => Var.update[Int](_ + 1)))
-                        cont2  <- Poll.runFirst(cont1(Maybe(1)))
-                        result <- Poll.run(Chunk.empty)(cont2(Maybe.empty))
-                    yield result
-                }
-            yield
-                val (counter, _) = result
-                assert(counter == 1)
-            end for
+            Abort.run {
+                for
+                    result <- Var.runTuple(0) {
+                        for
+                            cont1  <- Poll.runFirst(Poll.one[Int].map(_ => Var.update[Int](_ + 1))).map(Abort.get(_))
+                            cont2  <- Poll.runFirst(cont1(Maybe(1))).map(Abort.get(_))
+                            result <- Poll.run(Chunk.empty)(cont2(Maybe.empty))
+                        yield result
+                    }
+                yield ()
+                end for
+            }.map { r =>
+                assert(r.isFailure)
+            }
         }
     }
 

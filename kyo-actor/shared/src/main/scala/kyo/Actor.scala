@@ -3,9 +3,8 @@ package kyo
 import java.io.IOException
 import kyo.*
 import kyo.kernel.ArrowEffect
-import kyo.kernel.Boundary
 import kyo.kernel.ContextEffect
-import scala.annotation.targetName
+import scala.annotation.*
 
 /** An actor that processes messages asynchronously through a mailbox until completion or failure.
   *
@@ -62,11 +61,37 @@ abstract class Actor[+E, A, B]:
       *   The actor's final result of type B
       */
     def result(using Frame): B < (Async & Abort[Closed | E]) = fiber.get
+
+    /** Closes the actor's mailbox, preventing it from receiving any new messages.
+      *
+      * When called, this method:
+      *   - Prevents new messages from being sent to the actor
+      *   - Returns any messages that were queued but not yet processed
+      *   - Does not interrupt the processing of the current message if one is being handled
+      *
+      * @return
+      *   A Maybe containing a sequence of any messages that were in the mailbox when it was closed
+      */
+    def close(using Frame): Maybe[Seq[A]] < IO
 end Actor
 
 export Actor.Subject
 
 object Actor:
+
+    /** Default mailbox capacity for actors.
+      *
+      * This value can be configured through the system property "kyo.actor.capacity.default". If not specified, it defaults to 100
+      * messages.
+      */
+    val defaultCapacity =
+        import AllowUnsafe.embrace.danger
+        given Frame = Frame.internal
+        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.actor.capacity.default", 100))
+    end defaultCapacity
+
+    opaque type Context[A] <: Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async =
+        Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async
 
     /** Interface for sending messages to an actor.
       *
@@ -113,7 +138,7 @@ object Actor:
         def ask[B](f: Subject[B] => A)(using Frame): B < (Async & Abort[Closed]) =
             for
                 promise <- Promise.init[Nothing, B]
-                replyTo: Subject[B] = r => promise.completeDiscard(Result.success(r))
+                replyTo: Subject[B] = r => promise.completeDiscard(Result.succeed(r))
                 _      <- send(f(replyTo))
                 result <- promise.get
             yield result
@@ -144,7 +169,7 @@ object Actor:
       * @return
       *   A Subject[A] representing the current actor's message interface
       */
-    def self[A: Tag](using Frame): Subject[A] < Env[Subject[A]] =
+    def self[A: Tag](using Frame): Subject[A] < Context[A] =
         Env.get
 
     /** Sends a message to the actor designated as the current subject in the environment.
@@ -158,8 +183,65 @@ object Actor:
       * @return
       *   An effect representing the message enqueuing
       */
-    def resend[A: Tag](msg: A)(using Frame): Unit < (Abort[Closed] & Env[Subject[A]] & Async) =
+    def resend[A: Tag](msg: A)(using Frame): Unit < Context[A] =
         Env.use[Subject[A]](_.send(msg))
+
+    /** Receives and processes a single message from the actor's mailbox.
+      *
+      * This method polls for the next available message and applies the provided processing function. Message processing is done
+      * sequentially, ensuring only one message is handled at a time.
+      *
+      * @param f
+      *   The function to process each received message
+      * @tparam A
+      *   The type of messages being received
+      */
+    def receive[A](using Tag[A])[B, S](f: A => B < S)(using Frame): Unit < (Context[A] & S) =
+        Poll.values[A](f)
+
+    /** Receives and processes up to n messages from the actor's mailbox.
+      *
+      * This method polls for messages and applies the provided processing function to each one, up to the specified limit. Message
+      * processing is done sequentially.
+      *
+      * @param max
+      *   The maximum number of messages to process
+      * @param f
+      *   The function to process each received message
+      * @tparam A
+      *   The type of messages being received
+      */
+    def receive[A: Tag](max: Int)[B, S](f: A => B < S)(using Frame): Unit < (Context[A] & S) =
+        Poll.values[A](max)(f)
+
+    /** Creates and starts a new actor with default capacity from a message processing behavior.
+      *
+      * This is a convenience method that calls `run(defaultCapacity)(behavior)`. It creates an actor with the default mailbox capacity as
+      * specified by `defaultCapacity`.
+      *
+      * @param behavior
+      *   The behavior defining how messages are processed
+      * @tparam E
+      *   The type of errors that can occur
+      * @tparam A
+      *   The type of messages accepted
+      * @tparam B
+      *   The type of result produced
+      * @tparam S
+      *   Additional context effects required by the behavior
+      * @return
+      *   A new Actor instance in an async effect
+      */
+    @nowarn("msg=anonymous")
+    def run[E, A: Tag, B: Flat, S](
+        using Isolate.Contextual[S, IO]
+    )(behavior: B < (Context[A] & Abort[E] & S))(
+        using
+        Tag[Poll[A]],
+        Tag[Emit[A]],
+        Frame
+    ): Actor[E, A, B] < (Resource & Async & S) =
+        run(defaultCapacity)(behavior)
 
     /** Creates and starts new actor from a message processing behavior.
       *
@@ -167,7 +249,7 @@ object Actor:
       *   - Poll[A]: For receiving messages from the actor's mailbox
       *   - Env[Subject[A]]: For accessing self-reference to send messages to self via Actor.reenqueue
       *   - Abort[E]: For handling potential errors during message processing
-      *   - Ctx: For any additional context effects needed by the behavior
+      *   - S: For any additional context effects needed by the behavior
       *
       * Message processing continues until either:
       *   - The behavior completes normally, producing a final result
@@ -191,19 +273,15 @@ object Actor:
       * @return
       *   A new Actor instance in an async effect
       */
-    inline def run[E, A, B: Flat, Ctx](
-        behavior: B < (Poll[A] & Env[Subject[A]] & Abort[E | Closed] & Ctx)
-    )(
+    @nowarn("msg=anonymous")
+    def run[E, A: Tag, B: Flat, S](
+        using Isolate.Contextual[S, IO]
+    )(capacity: Int)(behavior: B < (Context[A] & Abort[E] & S))(
         using
-        pollTag: Tag[Poll[A]],
-        emitTag: Tag[Emit[A]]
-    ): Actor[E, A, B] < (Async & Ctx) =
-        _run(behavior)
-
-    // Indirection to avoid inference issues with Boundary
-    private def _run[E, A: Tag, B: Flat, Ctx](
-        behavior: B < (Poll[A] & Env[Subject[A]] & Abort[E | Closed] & Ctx)
-    )(using Boundary[Ctx, IO & Abort[E | Closed]], Frame): Actor[E, A, B] < (IO & Ctx) =
+        Tag[Poll[A]],
+        Tag[Emit[A]],
+        Frame
+    ): Actor[E, A, B] < (Resource & Async & S) =
         for
             mailbox <-
                 // Create an unbounded channel to serve as the actor's mailbox
@@ -214,29 +292,22 @@ object Actor:
                 // Messages sent through this subject are queued in the mailbox
                 msg => mailbox.put(msg)
             _consumer <-
-                // Start the actor's processing loop in an async context
-                Async._run {
-                    // Provide the actor's Subject to the environment so it can be accessed via Actor.self
-                    Env.run(_subject) {
-                        // Ensure mailbox cleanup by closing it when the actor completes or fails
-                        IO.ensure(mailbox.close.unit) {
-                            Loop(behavior) { b =>
-                                Poll.runFirst(b).map {
-                                    case (Ack.Stop, cont) =>
-                                        // Actor has signaled it wants to stop receiving messages
-                                        // Discard any remaining polls
-                                        Poll.run(Chunk.empty)(cont(Maybe.empty)).map(Loop.done)
-                                    case (_, cont) =>
-                                        // Actor is still actively processing messages
-                                        // Take the next message from mailbox and continue the loop
-                                        // with the continuation function
-                                        mailbox.take.map(v => Loop.continue(cont(Maybe(v))))
-                                }
-                            }
-                        }
+                Loop(behavior) { b =>
+                    Poll.runFirst(b).map {
+                        case Left(r) =>
+                            Loop.done(r)
+                        case Right(cont) =>
+                            mailbox.take.map(v => Loop.continue(cont(Maybe(v))))
                     }
-                }
+                }.pipe(
+                    IO.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
+                    Env.run(_subject),        // Provide the actor's Subject to the environment so it can be accessed via Actor.self
+                    Resource.run,             // Close used resources
+                    Async.run                 // Start the actor's processing loop in an async context
+                )
+            _ <- Resource.ensure(mailbox.close)
         yield new Actor[E, A, B]:
-            def subject = _subject
-            def fiber   = _consumer
+            def subject            = _subject
+            def fiber              = _consumer
+            def close(using Frame) = mailbox.close
 end Actor
