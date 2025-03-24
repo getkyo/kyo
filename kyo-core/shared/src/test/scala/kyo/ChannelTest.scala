@@ -326,7 +326,7 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
         }
-        "should consider pending puts - zero capacity" in pendingUntilFixed {
+        "should consider pending puts - zero capacity" in run {
             import AllowUnsafe.embrace.danger
             IO.Unsafe.evalOrThrow {
                 for
@@ -338,7 +338,6 @@ class ChannelTest extends Test:
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
-            ()
         }
     }
     "drainUpTo" - {
@@ -397,7 +396,7 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 1)
             }
         }
-        "should consider pending puts - zero capacity" in pendingUntilFixed {
+        "should consider pending puts - zero capacity" in run {
             import AllowUnsafe.embrace.danger
             IO.Unsafe.evalOrThrow {
                 for
@@ -410,7 +409,6 @@ class ChannelTest extends Test:
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
-            ()
         }
     }
     "close" - {
@@ -684,7 +682,7 @@ class ChannelTest extends Test:
         "putBatch and take" in run {
             (for
                 size    <- Choice.get(Seq(0, 1, 2, 10, 100))
-                channel <- Channel.init[Int](size)
+                channel <- Channel.init[Int](0)
                 latch   <- Latch.init(1)
 
                 putFiber <- Async.run(
