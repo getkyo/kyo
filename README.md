@@ -3532,8 +3532,8 @@ val folded: String < Any = effect.foldAbort(_.toString, _.toString, _.toString)
 val foldedWithoutPanic: String < Abort[Nothing] = effect.foldAbort(_.toString, _.toString)
 val unsafeFolded: String < Any = effect.foldAbortOrThrow(_.toString, _.toString)
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
-val caught: Int < Abort[Nothing] = effect.catching(_.toString.size)
-val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
+val recovered: Int < Abort[Nothing] = effect.recover(_.toString.size)
+val partiallyRecovered: Int < Abort[A | B | C] = effect.recoverSome { case err if err.toString.size > 5 => 0 }
 val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
 val retried: Int < Abort[A | B | C] = effect.retry(5)
 val retriedUntilSucceed: Int < Any = effect.retryForever
@@ -3543,8 +3543,8 @@ val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
 val handledWithoutPanicA: Result.Partial[A, Int] < Abort[B | C] = effect.forAbort[A].resultPartial
 val foldedA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString, _.toString)
 val foldedWithoutPanicA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString)
-val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
-val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
+val recoveredA: Int < Abort[B | C] = effect.forAbort[A].recover(_.toString.size)
+val partiallyRecoveredA: Int < Abort[A | B | C] = effect.forAbort[A].recoverSome { case err if err.toString.size > 5 => 0 }
 val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap
 val aToAbsent: Int < Abort[Absent | B | C] = effect.forAbort[A].toAbsent
 val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toChoiceDrop

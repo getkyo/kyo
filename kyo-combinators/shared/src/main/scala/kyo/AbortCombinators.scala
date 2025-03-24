@@ -61,7 +61,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl: Flat[A],
         fr: Frame
     ): A < (Abort[E1] & S & S1) =
-        effect.catching(e => fn(e).map(Kyo.fail))
+        effect.recover(e => fn(e).map(Kyo.fail))
 
     def forAbort[E1 <: E]: ForAbortOps[A, S, E, E1] = ForAbortOps(effect)
 
@@ -120,7 +120,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[E] effect handled
       */
-    def catching[A1 >: A, S1](fn: E => A1 < S1)(
+    def recover[A1 >: A, S1](fn: E => A1 < S1)(
         using
         ct: SafeClassTag[E],
         fl: Flat[A],
@@ -218,7 +218,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Abort[E] effect
       */
-    def catchingSome[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
+    def recoverSome[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
         using
         ct: SafeClassTag[E],
         fl: Flat[A],
@@ -376,14 +376,14 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         fl: Flat[A],
         fr: Frame
     ): A < (Abort[E2] & reduce.SReduced & S & S1) =
-        catching(e => fn(e).map(Kyo.fail))
+        recover(e => fn(e).map(Kyo.fail))
 
     /** Handles the partial Abort[E1] effect and applies a recovery function to the error.
       *
       * @return
       *   A computation that produces the result of this computation with the Abort[E1] effect handled
       */
-    def catching[ER](
+    def recover[ER](
         using
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
@@ -462,7 +462,7 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
       * @return
       *   A computation that produces the result of this computation with Abort[E1] effect
       */
-    def catchingSome[ER](
+    def recoverSome[ER](
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],

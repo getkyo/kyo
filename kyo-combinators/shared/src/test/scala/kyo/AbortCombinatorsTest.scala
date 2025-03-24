@@ -319,19 +319,19 @@ class AbortCombinatorsTest extends Test:
             }
         }
 
-        "catching" - {
+        "recover" - {
             "should catch all abort" in {
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
                 val handledFailure: Int < Any =
-                    failure.catching {
+                    failure.recover {
                         case "wrong"   => 99
                         case "failure" => 100
                     }.orThrow
                 assert(handledFailure.eval == 100)
                 val success: Int < Abort[String] = 23
                 val handledSuccess: Int < Any =
-                    success.catching {
+                    success.recover {
                         case "wrong"   => 99
                         case "failure" => 100
                     }.orThrow
@@ -342,7 +342,7 @@ class AbortCombinatorsTest extends Test:
                 val failure: Int < Abort[String | Int | Boolean] =
                     Abort.fail("failure")
                 val handledFailure: Int < Any =
-                    failure.catching {
+                    failure.recover {
                         case _: String  => 1
                         case _: Int     => 2
                         case _: Boolean => 3
@@ -354,7 +354,7 @@ class AbortCombinatorsTest extends Test:
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
                 val caughtFailure: Int < Abort[String] =
-                    failure.catchingSome {
+                    failure.recoverSome {
                         case "failure" => 100
                     }
                 val handledFailure: Result[String, Int] < Any =
@@ -362,7 +362,7 @@ class AbortCombinatorsTest extends Test:
                 assert(handledFailure.eval == Result.succeed(100))
                 val success: Int < Abort[String] = 23
                 val caughtSuccess: Int < Abort[String] =
-                    success.catchingSome {
+                    success.recoverSome {
                         case "failure" => 100
                     }
                 val handledSuccess: Result[String, Int] < Any =
@@ -374,7 +374,7 @@ class AbortCombinatorsTest extends Test:
                 val failure: Int < Abort[String | Int | Boolean] =
                     Abort.fail("failure")
                 val partialHandled: Int < Abort[String | Int | Boolean] =
-                    failure.catchingSome {
+                    failure.recoverSome {
                         case _: String => 1
                     }
                 val handledFailure: Result[String | Int | Boolean, Int] < Any =
@@ -609,38 +609,38 @@ class AbortCombinatorsTest extends Test:
                 }
             }
 
-            "catching" - {
+            "recover" - {
                 "should catch some abort" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val caught                                = effect.forAbort[String].catching(_ => 99)
+                    val caught                                = effect.forAbort[String].recover(_ => 99)
                     assert(Abort.run[Any](caught).eval == Result.succeed(99))
 
                     val effect2: Int < Abort[String | Boolean] = Abort.fail(true)
-                    val caught2                                = effect2.forAbort[String].catching(_ => 99)
+                    val caught2                                = effect2.forAbort[String].recover(_ => 99)
                     assert(Abort.run[Boolean](caught2).eval == Result.fail(true))
 
                     val effect3: Int < Abort[String | Boolean] = 42
-                    val caught3                                = effect3.forAbort[String].catching(_ => 99)
+                    val caught3                                = effect3.forAbort[String].recover(_ => 99)
                     assert(Abort.run[Any](caught3).eval == Result.succeed(42))
                 }
             }
 
-            "catchingSome" - {
+            "recoverSome" - {
                 "should catch some abort with partial function" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val caught = effect.forAbort[String].catchingSome {
+                    val caught = effect.forAbort[String].recoverSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught).eval == Result.succeed(99))
 
                     val effect2: Int < Abort[String | Boolean] = Abort.fail("other")
-                    val caught2 = effect2.forAbort[String].catchingSome {
+                    val caught2 = effect2.forAbort[String].recoverSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught2).eval == Result.fail("other"))
 
                     val effect3: Int < Abort[String | Boolean] = 42
-                    val caught3 = effect3.forAbort[String].catchingSome {
+                    val caught3 = effect3.forAbort[String].recoverSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught3).eval == Result.succeed(42))
