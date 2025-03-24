@@ -120,6 +120,7 @@ lazy val kyoJVM = project
         `kyo-zio`.jvm,
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
+        `kyo-playwright`.jvm,
         `kyo-examples`.jvm,
         `kyo-monix`.jvm
     )
@@ -559,6 +560,18 @@ lazy val `kyo-combinators` =
         .settings(`kyo-settings`)
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-playwright` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-playwright"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.51.0"
+        )
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-examples` =
