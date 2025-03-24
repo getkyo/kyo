@@ -224,7 +224,7 @@ class KyoCombinatorsTest extends Test:
                 "repeat with exponential backoff" in run {
                     var count   = 0
                     val backoff = (i: Int) => Math.pow(2, i).toLong.millis
-                    val effect  = IO { count += 1; count }.repeat(backoff, 3)
+                    val effect  = IO { count += 1; count }.repeatAtInterval(backoff, 3)
                     Async.run(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)

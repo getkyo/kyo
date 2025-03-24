@@ -238,7 +238,7 @@ class AbortCombinatorsTest extends Test:
 
         "convert" - {
 
-            "should convert all abort to empty" in {
+            "should convert all abort to absent" in {
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
                 val failureEmpty: Int < Abort[Absent] = failure.abortToAbsent
@@ -250,7 +250,7 @@ class AbortCombinatorsTest extends Test:
                 assert(handledSuccessEmpty.eval == Result.Success(23))
             }
 
-            "should convert all union abort to empty" in {
+            "should convert all union abort to absent" in {
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
                 val failureEmpty: Int < Abort[Absent] =
@@ -259,22 +259,22 @@ class AbortCombinatorsTest extends Test:
                 assert(handledFailureAbort.eval == Result.fail(Absent))
             }
 
-            "should convert all abort to empty choice" in {
+            "should convert all abort to dropped choice" in {
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
-                val failureChoice: Int < Choice = failure.abortToEmpty
+                val failureChoice: Int < Choice = failure.abortToChoiceDrop
                 val handledFailureChoice        = Choice.run(failureChoice)
                 assert(handledFailureChoice.eval.isEmpty)
                 val success: Int < Abort[String] = 23
-                val successChoice: Int < Choice  = success.abortToEmpty
+                val successChoice: Int < Choice  = success.abortToChoiceDrop
                 val handledSuccessChoice         = Choice.run(successChoice)
                 assert(handledSuccessChoice.eval == Seq(23))
             }
 
-            "should convert all union abort to empty choice" in {
+            "should convert all union abort to dropped choice" in {
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
-                val failureChoice: Int < Choice = failure.abortToEmpty
+                val failureChoice: Int < Choice = failure.abortToChoiceDrop
                 val handledFailureChoice        = Choice.run(failureChoice)
                 assert(handledFailureChoice.eval == Result.succeed(Seq.empty))
             }
@@ -308,12 +308,12 @@ class AbortCombinatorsTest extends Test:
 
             "should convert empty choice to absent abort" in {
                 val failure: Int < Choice                     = Choice.get(Seq())
-                val converted: Int < (Choice & Abort[Absent]) = failure.emptyToAbsent
+                val converted: Int < (Choice & Abort[Absent]) = failure.choiceDropToAbsent
                 val handled                                   = Abort.run(Choice.run(converted))
                 assert(handled.eval == Result.fail(Absent))
 
                 val success: Int < Choice                      = Choice.get(Seq(23))
-                val converted2: Int < (Choice & Abort[Absent]) = success.emptyToAbsent
+                val converted2: Int < (Choice & Abort[Absent]) = success.choiceDropToAbsent
                 val handled2                                   = Abort.run(Choice.run(converted2))
                 assert(handled2.eval == Result.succeed(Chunk(23)))
             }
@@ -565,14 +565,14 @@ class AbortCombinatorsTest extends Test:
                 }
             }
 
-            "toEmpty" - {
+            "toChoiceDrop" - {
                 "should convert some abort to choice" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val choiceEffect                          = effect.forAbort[String].toEmpty
+                    val choiceEffect                          = effect.forAbort[String].toChoiceDrop
                     assert(Abort.run[Any](Choice.run(choiceEffect)).eval.value.get.isEmpty)
 
                     val effect2: Int < Abort[String | Boolean] = 42
-                    val choiceEffect2                          = effect2.forAbort[String].toEmpty
+                    val choiceEffect2                          = effect2.forAbort[String].toChoiceDrop
                     assert(Abort.run[Any](Choice.run(choiceEffect2)).eval == Seq(42))
                 }
             }

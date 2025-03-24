@@ -26,7 +26,7 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
       *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Choice
       */
     def absentToChoice(using Flat[A], Frame): A < (S & Choice) =
-        effect.forAbort[Absent].toEmpty
+        effect.forAbort[Absent].toChoiceDrop
 
     /** Handles Abort[Absent], aborting in Absent cases with NoSuchElementException exceptions
       *

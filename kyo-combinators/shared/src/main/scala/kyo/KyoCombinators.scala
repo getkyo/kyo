@@ -88,6 +88,21 @@ extension [A, S](effect: A < S)
             }
         }
 
+    /** Performs this computation repeatedly with a backoff policy and a limit.
+      *
+      * @param backoff
+      *   The backoff policy to use
+      * @param limit
+      *   The limit to use
+      * @return
+      *   A computation that produces the result of this computation with Async effect
+      */
+    def repeatAtInterval(backoff: Int => Duration, limit: Int)(using Flat[A], Frame): A < (S & Async) =
+        Loop.indexed { i =>
+            if i >= limit then effect.map(Loop.done)
+            else effect.delayed(backoff(i)).andThen(Loop.continue)
+        }
+
     /** Performs this computation repeatedly with a limit.
       *
       * @param limit
@@ -99,21 +114,6 @@ extension [A, S](effect: A < S)
         Loop.indexed { i =>
             if i >= limit then effect.map(Loop.done)
             else effect.andThen(Loop.continue)
-        }
-
-    /** Performs this computation repeatedly with a backoff policy and a limit.
-      *
-      * @param backoff
-      *   The backoff policy to use
-      * @param limit
-      *   The limit to use
-      * @return
-      *   A computation that produces the result of this computation with Async effect
-      */
-    def repeat(backoff: Int => Duration, limit: Int)(using Flat[A], Frame): A < (S & Async) =
-        Loop.indexed { i =>
-            if i >= limit then effect.map(Loop.done)
-            else effect.delayed(backoff(i)).andThen(Loop.continue)
         }
 
     /** Performs this computation repeatedly while the given condition holds.

@@ -65,12 +65,12 @@ extension [A, S, E](effect: A < (Abort[E] & S))
 
     def forAbort[E1 <: E]: ForAbortOps[A, S, E, E1] = ForAbortOps(effect)
 
-    /** Translates the Abort effect to a Choice effect by handling failures as empty choices.
+    /** Translates the Abort effect to a Choice effect by handling failures as dropped choice.
       *
       * @return
-      *   A computation that produces the result of this computation with the Abort[E] effect translated to an empty Choice
+      *   A computation that produces the result of this computation with the Abort[E] effect translated to a dropped Choice
       */
-    def abortToEmpty(
+    def abortToChoiceDrop(
         using
         ct: SafeClassTag[E],
         fl: Flat[A],
@@ -482,7 +482,7 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
       * @return
       *   A computation that produces the result of this computation with the Abort[E1] effect translated to Choice
       */
-    def toEmpty[ER](
+    def toChoiceDrop[ER](
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
