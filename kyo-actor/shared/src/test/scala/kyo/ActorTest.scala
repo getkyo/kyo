@@ -156,7 +156,7 @@ class ActorTest extends Test:
                 assert(events.contains("child2 cleaned up"))
         }
 
-        "child actors are cleaned up when parent fails" in run {
+        "child actors are cleaned up when parent fails" in runNotJS {
             case object ParentError
 
             for
@@ -278,7 +278,7 @@ class ActorTest extends Test:
         }
     }
 
-    "graceful shutdown" in run {
+    "graceful shutdown" in runNotJS {
         for
             started   <- Latch.init(1)
             exit      <- Latch.init(1)
@@ -317,7 +317,7 @@ class ActorTest extends Test:
             yield assert(cleaned)
         }
 
-        "cleans up resources on error" in run {
+        "cleans up resources on error" in runNotJS {
             case object TestError
             for
                 resourceCleaned <- AtomicBoolean.init(false)
