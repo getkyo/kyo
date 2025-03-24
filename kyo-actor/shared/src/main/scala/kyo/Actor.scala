@@ -20,6 +20,16 @@ import scala.annotation.*
   * request-response style `ask` operations. The actor processes these messages one at a time until it either successfully completes,
   * encounters an error, or is explicitly closed.
   *
+  * Actors can form parent-child hierarchies where:
+  *   - Parent actors can spawn and supervise child actors
+  *   - Child actors inherit the resource scope of their parent
+  *   - When a parent actor completes or fails, its children are automatically shut down
+  *
+  * Graceful shutdown can be initiated by:
+  *   - Calling `close()` on the actor, which prevents new messages from being accepted
+  *   - Allowing the actor to process any remaining messages in its mailbox
+  *   - Awaiting the actor's completion via its `fiber` or `result`
+  *
   * If an error of type E occurs during message processing and is not handled within the actor's implementation (via Abort), the actor will
   * fail and complete with that error. The actor's lifecycle can be monitored through its underlying `fiber`, or by awaiting its final
   * `result`.
