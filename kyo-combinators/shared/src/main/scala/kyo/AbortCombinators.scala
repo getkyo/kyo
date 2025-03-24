@@ -26,7 +26,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces a partial result of this computation with the Abort[E] effect handled
       */
-    def partialResult(
+    def resultPartial(
         using
         ct: SafeClassTag[E],
         fl: Flat[A],
@@ -39,7 +39,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces a partial result of this computation with the Abort[E] effect handled
       */
-    def partialResultOrThrow(
+    def resultPartialOrThrow(
         using
         ct: SafeClassTag[E],
         fl: Flat[A],
@@ -125,10 +125,10 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         ct: SafeClassTag[E],
         fl: Flat[A],
         fr: Frame
-    ): A1 < (S & S1) =
+    ): A1 < (S & S1 & Abort[Nothing]) =
         effect.result.map {
             case Result.Failure(e) => fn(e)
-            case Result.Panic(e)   => throw e
+            case Result.Panic(e)   => Abort.panic(e)
             case Result.Success(v) => v
         }
 
@@ -228,7 +228,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case Result.Failure(e) =>
                 if fn.isDefinedAt(e) then fn(e)
                 else Abort.fail(e)
-            case Result.Panic(e)   => throw e
+            case Result.Panic(e)   => Abort.panic(e)
             case Result.Success(v) => v
         }
 
@@ -351,7 +351,7 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
       * @return
       *   A computation that produces the result of this computation with the Abort[E1] effect handled
       */
-    def partialResult[ER](
+    def resultPartial[ER](
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],

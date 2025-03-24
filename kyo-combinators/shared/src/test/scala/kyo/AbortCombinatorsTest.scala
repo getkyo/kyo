@@ -144,23 +144,23 @@ class AbortCombinatorsTest extends Test:
             }
         }
 
-        "partialResult" - {
+        "resultPartial" - {
             "should handle" in {
                 val effect1 = Abort.fail[String]("failure")
-                assert(effect1.partialResult.orThrow.eval == Result.fail("failure"))
+                assert(effect1.resultPartial.orThrow.eval == Result.fail("failure"))
 
                 val effect2 = Abort.get[Boolean](Right(1))
-                assert(effect2.partialResult.orThrow.eval == Result.succeed(1))
+                assert(effect2.resultPartial.orThrow.eval == Result.succeed(1))
             }
 
             "should handle incrementally" in {
                 val effect1: Int < Abort[String | Boolean | Int | Double] =
                     Abort.fail[String]("failure")
                 val handled = effect1
-                    .forAbort[String].partialResult
-                    .forAbort[Boolean].partialResult
-                    .forAbort[Int].partialResult
-                    .partialResult
+                    .forAbort[String].resultPartial
+                    .forAbort[Boolean].resultPartial
+                    .forAbort[Int].resultPartial
+                    .resultPartial
                 assert(handled.orThrow.eval == Result.succeed(Result.succeed(Result.succeed(Result.fail("failure")))))
             }
 
@@ -168,7 +168,7 @@ class AbortCombinatorsTest extends Test:
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
                 val handled: Result.Partial[String | Boolean | Double | Int, Int] < Abort[Nothing] =
-                    failure.partialResult
+                    failure.resultPartial
                 assert(handled.orThrow.eval == Result.fail("failure"))
             }
 
@@ -176,27 +176,27 @@ class AbortCombinatorsTest extends Test:
                 val exc                          = new Exception("message")
                 val failure: Int < Abort[String] = Abort.panic(exc)
                 assert:
-                    Abort.run(failure.partialResult).eval == Result.Panic(exc)
+                    Abort.run(failure.resultPartial).eval == Result.Panic(exc)
             }
         }
 
-        "partialResultOrThrow" - {
+        "resultPartialOrThrow" - {
             "should handle" in {
                 val effect1 = Abort.fail[String]("failure")
-                assert(effect1.partialResultOrThrow.eval == Result.fail("failure"))
+                assert(effect1.resultPartialOrThrow.eval == Result.fail("failure"))
 
                 val effect2 = Abort.get[Boolean](Right(1))
-                assert(effect2.partialResultOrThrow.eval == Result.succeed(1))
+                assert(effect2.resultPartialOrThrow.eval == Result.succeed(1))
             }
 
             "should handle incrementally" in {
                 val effect1: Int < Abort[String | Boolean | Int | Double] =
                     Abort.fail[String]("failure")
                 val handled = effect1
-                    .forAbort[String].partialResult
-                    .forAbort[Boolean].partialResult
-                    .forAbort[Int].partialResult
-                    .partialResultOrThrow
+                    .forAbort[String].resultPartial
+                    .forAbort[Boolean].resultPartial
+                    .forAbort[Int].resultPartial
+                    .resultPartialOrThrow
                 assert(handled.eval == Result.succeed(Result.succeed(Result.succeed(Result.fail("failure")))))
             }
 
@@ -204,7 +204,7 @@ class AbortCombinatorsTest extends Test:
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
                 val handled: Result.Partial[String | Boolean | Double | Int, Int] < Any =
-                    failure.partialResultOrThrow
+                    failure.resultPartialOrThrow
                 assert(handled.eval == Result.fail("failure"))
             }
 
@@ -212,7 +212,7 @@ class AbortCombinatorsTest extends Test:
                 val exc                          = new Exception("message")
                 val failure: Int < Abort[String] = Abort.panic(exc)
                 try
-                    val _ = failure.partialResultOrThrow.eval
+                    val _ = failure.resultPartialOrThrow.eval
                     fail("Failed to throw expected exception")
                 catch
                     case caught => assert(caught == exc)
@@ -327,14 +327,14 @@ class AbortCombinatorsTest extends Test:
                     failure.catching {
                         case "wrong"   => 99
                         case "failure" => 100
-                    }
+                    }.orThrow
                 assert(handledFailure.eval == 100)
                 val success: Int < Abort[String] = 23
                 val handledSuccess: Int < Any =
                     success.catching {
                         case "wrong"   => 99
                         case "failure" => 100
-                    }
+                    }.orThrow
                 assert(handledSuccess.eval == 23)
             }
 
@@ -346,7 +346,7 @@ class AbortCombinatorsTest extends Test:
                         case _: String  => 1
                         case _: Int     => 2
                         case _: Boolean => 3
-                    }
+                    }.orThrow
                 assert(handledFailure.eval == 1)
             }
 

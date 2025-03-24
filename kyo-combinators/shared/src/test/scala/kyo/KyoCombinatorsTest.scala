@@ -210,7 +210,7 @@ class KyoCombinatorsTest extends Test:
                 "repeat with custom policy" in run {
                     var count    = 0
                     val schedule = Schedule.repeat(3)
-                    val effect   = IO { count += 1; count }.repeat(schedule)
+                    val effect   = IO { count += 1; count }.repeatAtInterval(schedule)
                     Async.run(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)

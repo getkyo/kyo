@@ -6,7 +6,8 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
 
-sealed case class PanicException[A] private[kyo] (val error: A) extends Exception(s"Uncaught error: $error")
+sealed case class PanicException[A] private[kyo] (val error: A)(using Frame)
+    extends KyoException(s"Uncaught error", error.toString)
 
 extension [A, S](effect: A < S)
 
@@ -19,7 +20,7 @@ extension [A, S](effect: A < S)
       */
     @targetName("zipRight")
     def *>[A1, S1](next: => A1 < S1)(using Frame): A1 < (S & S1) =
-        effect.map(_ => next)
+        effect.andThen(next)
 
     /** Performs this computation and then the next one, discarding the result of the next computation.
       *
@@ -74,9 +75,9 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last execution
       */
-    def repeat(schedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
+    def repeatAtInterval(intervalSchedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
         Clock.use { clock =>
-            Loop(schedule) { schedule =>
+            Loop(intervalSchedule) { schedule =>
                 clock.now.map { now =>
                     schedule.next(now).map { (delay, nextSchedule) =>
                         effect.delayed(delay).andThen(Loop.continue(nextSchedule))

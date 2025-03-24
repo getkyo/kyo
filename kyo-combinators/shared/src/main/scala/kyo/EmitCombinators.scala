@@ -50,7 +50,7 @@ extension [A, B, S](effect: B < (Emit[A] & S))
         ArrowEffect.handle(tag, effect):
             [C] =>
                 (a, cont) =>
-                    fn(a).map(_ => cont(()))
+                    fn(a).andThen(cont(()))
 
     /** Handle Emit[A] by passing emitted values to [[channel]]. Fails with Abort[Closed] on channel closure
       *
