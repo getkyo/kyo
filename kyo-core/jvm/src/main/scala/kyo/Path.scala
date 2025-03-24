@@ -14,6 +14,7 @@ import java.nio.file.*
 import java.nio.file.Files as JFiles
 import java.nio.file.Path as JPath
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.regex.Pattern
 import kyo.*
 import kyo.Tag
 import scala.io.*
@@ -364,7 +365,7 @@ object Path:
         }
         val javaPath       = if flattened.isEmpty then Paths.get("") else Paths.get(flattened.head, flattened.tail*)
         val normalizedPath = javaPath.normalize().toString
-        if normalizedPath.isEmpty then empty else new Path(normalizedPath.split(File.separator).toList)
+        if normalizedPath.isEmpty then empty else new Path(normalizedPath.split(Pattern.quote(File.separator)).toList)
     end apply
 
     def apply(path: Part*): Path =
