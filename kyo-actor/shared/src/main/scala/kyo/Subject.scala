@@ -95,8 +95,11 @@ object Subject:
 
     /** Creates a Subject that completes a Promise with each received message.
       *
-      * This method creates a Subject that will complete the provided Promise with any message it receives. The Promise is completed with a
-      * successful Result containing the message.
+      * This method creates a Subject that will attempt to complete the provided Promise with any message it receives. The Promise is
+      * completed with a successful Result containing the message.
+      *
+      * Important: Only the first message sent to this Subject will successfully complete the Promise. Any subsequent messages will result
+      * in an `Abort[Closed]` effect, indicating that the Subject is closed (since the Promise can only be completed once).
       *
       * @param promise
       *   The Promise to complete when messages are received
@@ -105,13 +108,16 @@ object Subject:
       * @tparam A
       *   The type of messages this Subject can receive
       * @return
-      *   A Subject[A] that completes the Promise with received messages
+      *   A Subject[A] that completes the Promise with the first received message and aborts with Closed for subsequent messages
       */
-    def init[E, A](promise: Promise[E, A]): Subject[A] =
+    def init[E, A](promise: Promise[E, A])(using frame: Frame): Subject[A] =
+        def tryComplete(r: A) =
+            Abort.whenNot(promise.complete(Result.succeed(r)))(Closed("Subject", frame))
         init(
-            send = r => promise.completeDiscard(Result.succeed(r)),
-            trySend = r => promise.complete(Result.succeed(r))
+            send = tryComplete,
+            trySend = tryComplete(_).andThen(true)
         )
+    end init
 
     /** Creates a Subject that puts received messages into a Channel.
       *
