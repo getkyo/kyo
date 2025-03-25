@@ -8,6 +8,9 @@ import scala.annotation.*
 
 /** An actor that processes messages asynchronously through a mailbox until completion or failure.
   *
+  * WARNING: Actor is a low-level primitive with complex semantics. For most concurrent programming needs, consider using simpler primitives
+  * like kyo.Async or kyo.Stream instead.
+  *
   * Actors provide a message-based concurrency model where each instance:
   *   - Maintains a private mailbox for receiving messages
   *   - Processes messages sequentially in FIFO order
@@ -83,6 +86,7 @@ abstract class Actor[+E, A, B]:
       *   A Maybe containing a sequence of any messages that were in the mailbox when it was closed
       */
     def close(using Frame): Maybe[Seq[A]] < IO
+
 end Actor
 
 export Actor.Subject
@@ -206,7 +210,7 @@ object Actor:
       * @tparam A
       *   The type of messages being received
       */
-    def receive[A](using Tag[A])[B, S](f: A => B < S)(using Frame): Unit < (Context[A] & S) =
+    def receiveAll[A](using Tag[A])[B, S](f: A => B < S)(using Frame): Unit < (Context[A] & S) =
         Poll.values[A](f)
 
     /** Receives and processes up to n messages from the actor's mailbox.
@@ -221,8 +225,35 @@ object Actor:
       * @tparam A
       *   The type of messages being received
       */
-    def receive[A: Tag](max: Int)[B, S](f: A => B < S)(using Frame): Unit < (Context[A] & S) =
+    def receiveMax[A: Tag](max: Int)[S](f: A => Any < S)(using Frame): Unit < (Context[A] & S) =
         Poll.values[A](max)(f)
+
+    /** Receives and processes messages from the actor's mailbox in a loop until a termination condition is met.
+      *
+      * This method continuously polls for messages and applies the provided processing function to each one. The function returns a
+      * Loop.Outcome that determines whether to continue processing more messages or stop.
+      *
+      * To control the loop:
+      *   - Return `Loop.continue` to process the next message
+      *   - Return `Loop.done` to stop processing and complete the receive loop
+      *
+      * Use this when you need fine-grained control over message processing termination conditions beyond what receiveAll or receiveMax
+      * provide.
+      *
+      * @param f
+      *   A function that processes each received message and returns a Loop.Outcome indicating whether to continue or stop
+      * @tparam A
+      *   The type of messages being received
+      * @return
+      *   An effect representing the message processing loop
+      */
+    def receiveLoop[A](using Tag[A])[S](f: A => Loop.Outcome[Unit, Unit] < S)(using Frame): Unit < (Context[A] & S) =
+        Loop(()) { _ =>
+            Poll.one[A].map {
+                case Absent     => Loop.done
+                case Present(v) => f(v)
+            }
+        }
 
     /** Creates and starts a new actor with default capacity from a message processing behavior.
       *

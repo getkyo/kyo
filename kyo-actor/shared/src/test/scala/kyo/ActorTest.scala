@@ -16,7 +16,7 @@ class ActorTest extends Test:
         "processes messages" in run {
             for
                 sum      <- AtomicInt.init(0)
-                actor    <- Actor.run(Actor.receive[Int](3)(sum.addAndGet(_)))
+                actor    <- Actor.run(Actor.receiveMax[Int](3)(sum.addAndGet(_)))
                 _        <- actor.subject.send(1)
                 _        <- actor.subject.send(2)
                 _        <- actor.subject.send(3)
@@ -28,7 +28,7 @@ class ActorTest extends Test:
         "processes messages and returns value" in run {
             for
                 sum      <- AtomicInt.init(0)
-                actor    <- Actor.run(Actor.receive[Int](3)(sum.addAndGet(_)).andThen(sum.get))
+                actor    <- Actor.run(Actor.receiveMax[Int](3)(sum.addAndGet(_)).andThen(sum.get))
                 _        <- actor.subject.send(1)
                 _        <- actor.subject.send(2)
                 _        <- actor.subject.send(3)
@@ -39,7 +39,7 @@ class ActorTest extends Test:
         "stops after processing N messages" in run {
             for
                 counter <- AtomicInt.init(0)
-                actor   <- Actor.run(Actor.receive[Int](1)(_ => counter.incrementAndGet))
+                actor   <- Actor.run(Actor.receiveMax[Int](1)(_ => counter.incrementAndGet))
                 _       <- actor.subject.send(1)
                 _       <- actor.result
                 result  <- Abort.run(actor.subject.send(1))
@@ -55,13 +55,13 @@ class ActorTest extends Test:
 
             for
                 pongActor <- Actor.run {
-                    Actor.receive[Ping](3) { ping =>
+                    Actor.receiveMax[Ping](3) { ping =>
                         Actor.self[Ping].map(self => ping.replyTo.send(Pong(self)))
                     }
                 }
                 pingActor <- Actor.run {
                     Var.runTuple(0) {
-                        Actor.receive[Pong](3) { pong =>
+                        Actor.receiveMax[Pong](3) { pong =>
                             Var.update[Int](_ + 1).map { r =>
                                 Actor.self[Pong].map(self => pongActor.subject.send(Ping(self))).andThen(r)
                             }
@@ -79,10 +79,10 @@ class ActorTest extends Test:
                 results <- Queue.Unbounded.init[Int]()
                 workers <-
                     Kyo.foreach(1 to 3) { id =>
-                        Actor.run(Actor.receive[Int](3)(msg => results.add(msg * id)))
+                        Actor.run(Actor.receiveMax[Int](3)(msg => results.add(msg * id)))
                     }
                 scheduler <- Actor.run {
-                    Actor.receive[Int](3) { msg =>
+                    Actor.receiveMax[Int](3) { msg =>
                         Async.foreach(workers)(_.subject.send(msg))
                     }
                 }
@@ -103,7 +103,7 @@ class ActorTest extends Test:
         "propagates errors" in run {
             for
                 actor <- Actor.run {
-                    Actor.receive[Int] { v =>
+                    Actor.receiveAll[Int] { v =>
                         if v == 42 then Abort.fail(TestError)
                         else ()
                     }
@@ -126,7 +126,7 @@ class ActorTest extends Test:
                             for
                                 _ <- Resource.ensure(childActorStates.add("child1 cleaned up"))
                                 _ <- childActorStates.add("child1 started")
-                            yield Actor.receive[Int] { _ =>
+                            yield Actor.receiveAll[Int] { _ =>
                                 childActorStates.add("child1 received message").andThen(consumed.release)
                             }
                         }
@@ -134,7 +134,7 @@ class ActorTest extends Test:
                             for
                                 _ <- Resource.ensure(childActorStates.add("child2 cleaned up"))
                                 _ <- childActorStates.add("child2 started")
-                            yield Actor.receive[Int] { _ =>
+                            yield Actor.receiveAll[Int] { _ =>
                                 childActorStates.add("child2 received message").andThen(consumed.release)
                             }
                         }
@@ -168,7 +168,7 @@ class ActorTest extends Test:
                             childActor <- Actor.run {
                                 for
                                     _ <- Resource.ensure(childCleaned.set(true))
-                                yield Actor.receive[Int] { _ =>
+                                yield Actor.receiveAll[Int] { _ =>
                                     messageReceived.release
                                 }
                             }
@@ -197,7 +197,7 @@ class ActorTest extends Test:
                                 for
                                     _ <- Resource.ensure(cleanupCounter.incrementAndGet)
                                     _ <- startCounter.incrementAndGet
-                                yield Actor.receive[Int] { _ =>
+                                yield Actor.receiveAll[Int] { _ =>
                                     allReceived.release
                                 }
                             }
@@ -227,7 +227,7 @@ class ActorTest extends Test:
                                 for
                                     children <- Async.foreach(1 to 2) { childId =>
                                         Actor.run {
-                                            Actor.receive[Message](3) { msg =>
+                                            Actor.receiveMax[Message](3) { msg =>
                                                 val result = msg.value * parentId * childId
                                                 results.add(result).andThen {
                                                     msg.replyTo.send(result)
@@ -235,12 +235,12 @@ class ActorTest extends Test:
                                             }
                                         }
                                     }
-                                yield Actor.receive[Message](3) { msg =>
+                                yield Actor.receiveMax[Message](3) { msg =>
                                     Async.foreach(children)(_.subject.send(msg))
                                 }
                             }
                         }
-                    yield Actor.receive[Message](3) { msg =>
+                    yield Actor.receiveMax[Message](3) { msg =>
                         Async.foreach(parents)(_.subject.send(msg))
                     }
                 }
@@ -258,7 +258,7 @@ class ActorTest extends Test:
         "handles mailbox at capacity" in run {
             for
                 counter <- AtomicInt.init(0)
-                actor   <- Actor.run(100)(Actor.receive[Int](150)(counter.addAndGet(_)))
+                actor   <- Actor.run(100)(Actor.receiveMax[Int](150)(counter.addAndGet(_)))
                 _       <- Async.foreach(1 to 150)(i => actor.subject.send(i))
                 _       <- actor.result
                 sum     <- counter.get
@@ -268,7 +268,7 @@ class ActorTest extends Test:
         "under concurrency" in run {
             for
                 results  <- Queue.Unbounded.init[Int]()
-                actor    <- Actor.run(50)(Actor.receive[Int](1000)(results.add(_)))
+                actor    <- Actor.run(50)(Actor.receiveMax[Int](1000)(results.add(_)))
                 _        <- Async.fill(10)(Async.foreach(1 to 100)(i => actor.subject.send(i)))
                 _        <- actor.result
                 received <- results.drain
@@ -284,7 +284,7 @@ class ActorTest extends Test:
             exit      <- Latch.init(1)
             processed <- AtomicBoolean.init
             actor <- Actor.run {
-                Actor.receive[Int] { msg =>
+                Actor.receiveAll[Int] { msg =>
                     for
                         _ <- started.release
                         _ <- exit.await
@@ -306,7 +306,7 @@ class ActorTest extends Test:
                 resourceCleaned <- AtomicBoolean.init(false)
                 actor <- Actor.run {
                     Resource.ensure(resourceCleaned.set(true)).andThen {
-                        Actor.receive[Int](3) { _ => () }
+                        Actor.receiveMax[Int](3) { _ => () }
                     }
                 }
                 _       <- actor.subject.send(1)
@@ -323,7 +323,7 @@ class ActorTest extends Test:
                 resourceCleaned <- AtomicBoolean.init(false)
                 actor <- Actor.run {
                     Resource.ensure(resourceCleaned.set(true)).andThen {
-                        Actor.receive[Int](1) { _ =>
+                        Actor.receiveMax[Int](1) { _ =>
                             Abort.fail(TestError)
                         }
                     }
@@ -340,7 +340,7 @@ class ActorTest extends Test:
         "handles multiple senders" in run {
             for
                 sum    <- AtomicInt.init(0)
-                actor  <- Actor.run(Actor.receive[Int](100)(sum.addAndGet(_).unit))
+                actor  <- Actor.run(Actor.receiveMax[Int](100)(sum.addAndGet(_).unit))
                 _      <- Async.foreach(1 to 100)(i => actor.subject.send(i))
                 _      <- actor.result
                 result <- sum.get
@@ -350,7 +350,7 @@ class ActorTest extends Test:
         "maintains message order" in run {
             for
                 queue  <- Queue.Unbounded.init[Int]()
-                actor  <- Actor.run(Actor.receive[Int](100)(queue.add(_)))
+                actor  <- Actor.run(Actor.receiveMax[Int](100)(queue.add(_)))
                 _      <- Kyo.foreach(1 to 100)(i => actor.subject.send(i))
                 _      <- actor.result
                 result <- queue.drain
@@ -373,13 +373,13 @@ class ActorTest extends Test:
             for
                 loggedTransactions <- Queue.Unbounded.init[Transaction]()
                 logger <- Actor.run {
-                    Actor.receive[Transaction](11) { tx =>
+                    Actor.receiveMax[Transaction](11) { tx =>
                         loggedTransactions.add(tx)
                     }
                 }
                 account <- Actor.run {
                     Var.run(Account(1, 0.0)) {
-                        Actor.receive[AccountMessage](14) {
+                        Actor.receiveMax[AccountMessage](14) {
                             case AccountMessage.Deposit(amount, replyTo) =>
                                 for
                                     newBalance <- Var.update[Account](acc => acc.copy(balance = acc.balance + amount))
@@ -421,5 +421,50 @@ class ActorTest extends Test:
                 assert(logs.count(_.kind == "withdraw") == 1)
                 assert(logs.last.balance == 50.0)
         }
+    }
+
+    "receiveLoop" - {
+        "processes messages until done" in run {
+            for
+                sum <- AtomicInt.init(0)
+                actor <- Actor.run {
+                    Actor.receiveLoop[Int] { msg =>
+                        if msg == 0 then Loop.done
+                        else sum.addAndGet(msg).map(_ => Loop.continue)
+                    }
+                }
+                _        <- actor.subject.send(1)
+                _        <- actor.subject.send(2)
+                _        <- actor.subject.send(3)
+                _        <- actor.subject.send(0)
+                _        <- actor.result
+                finalSum <- sum.get
+            yield assert(finalSum == 6)
+        }
+
+        "can maintain state between iterations" in run {
+            for
+                results <- Queue.Unbounded.init[String]()
+                actor <- Actor.run {
+                    Var.run(0) {
+                        Actor.receiveLoop[String] { msg =>
+                            if msg == "stop" then Loop.done
+                            else
+                                for
+                                    count <- Var.update[Int](_ + 1)
+                                    _     <- results.add(s"$msg-$count")
+                                yield Loop.continue
+                        }
+                    }
+                }
+                _        <- actor.subject.send("a")
+                _        <- actor.subject.send("b")
+                _        <- actor.subject.send("c")
+                _        <- actor.subject.send("stop")
+                _        <- actor.result
+                received <- results.drain
+            yield assert(received == List("a-1", "b-2", "c-3"))
+        }
+
     }
 end ActorTest
