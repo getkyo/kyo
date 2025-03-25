@@ -75,7 +75,7 @@ sealed abstract class Actor[+E, A, B]:
       * @return
       *   The actor's final result of type B
       */
-    def result(using Frame): B < (Async & Abort[Closed | E]) = fiber.get
+    def await(using Frame): B < (Async & Abort[Closed | E]) = fiber.get
 
     /** Closes the actor's mailbox, preventing it from receiving any new messages.
       *
@@ -101,7 +101,7 @@ object Actor:
     val defaultCapacity =
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.actor.capacity.default", 100))
+        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.actor.capacity.default", 128))
     end defaultCapacity
 
     /** The execution context for actor behaviors, providing the essential capabilities for actor-based concurrency.
@@ -280,8 +280,7 @@ object Actor:
     ): Actor[E, A, B] < (Resource & Async & S) =
         for
             mailbox <-
-                // Create an unbounded channel to serve as the actor's mailbox
-                // Unbounded capacity in this initial prototype
+                // Create a bounded channel to serve as the actor's mailbox
                 Channel.init[A](Int.MaxValue, Access.MultiProducerSingleConsumer)
             _subject =
                 // Create the actor's message interface (Subject)

@@ -9,7 +9,7 @@ class ActorTest extends Test:
         "completes with final value" in run {
             for
                 actor  <- Actor.run("a")
-                result <- actor.result
+                result <- actor.await
             yield assert(result == "a")
         }
 
@@ -20,7 +20,7 @@ class ActorTest extends Test:
                 _        <- actor.send(1)
                 _        <- actor.send(2)
                 _        <- actor.send(3)
-                _        <- actor.result
+                _        <- actor.await
                 finalSum <- sum.get
             yield assert(finalSum == 6)
         }
@@ -32,7 +32,7 @@ class ActorTest extends Test:
                 _        <- actor.send(1)
                 _        <- actor.send(2)
                 _        <- actor.send(3)
-                finalSum <- actor.result
+                finalSum <- actor.await
             yield assert(finalSum == 6)
         }
 
@@ -41,7 +41,7 @@ class ActorTest extends Test:
                 counter <- AtomicInt.init(0)
                 actor   <- Actor.run(Actor.receiveMax[Int](1)(_ => counter.incrementAndGet))
                 _       <- actor.send(1)
-                _       <- actor.result
+                _       <- actor.await
                 result  <- Abort.run(actor.send(1))
                 count   <- counter.get
             yield assert(result.isFailure && count == 1)
@@ -69,7 +69,7 @@ class ActorTest extends Test:
                     }
                 }
                 _      <- pingActor.send(Pong(pongActor.subject))
-                result <- pingActor.result
+                result <- pingActor.await
             yield assert(result == (3, ()))
             end for
         }
@@ -89,8 +89,8 @@ class ActorTest extends Test:
                 _        <- scheduler.send(1)
                 _        <- scheduler.send(2)
                 _        <- scheduler.send(3)
-                _        <- scheduler.result
-                _        <- Async.foreach(workers)(_.result)
+                _        <- scheduler.await
+                _        <- Async.foreach(workers)(_.await)
                 received <- results.drain.map(_.sorted)
             yield assert(received == List(1, 2, 2, 3, 3, 4, 6, 6, 9))
         }
@@ -110,7 +110,7 @@ class ActorTest extends Test:
                 }
                 _      <- actor.send(1)
                 _      <- actor.send(42)
-                result <- Abort.run(actor.result)
+                result <- Abort.run(actor.await)
             yield assert(result == Result.fail(TestError))
         }
     }
@@ -143,7 +143,7 @@ class ActorTest extends Test:
                         _ <- consumed.await
                     yield "parent complete"
                 }
-                result <- parentActor.result
+                result <- parentActor.await
                 _      <- untilTrue(childActorStates.size.map(_ == 6))
                 events <- childActorStates.drain
             yield
@@ -177,7 +177,7 @@ class ActorTest extends Test:
                             _ <- Abort.fail(ParentError)
                         yield "never reached"
                     }
-                result <- Abort.run(parentActorFiber.result)
+                result <- Abort.run(parentActorFiber.await)
                 _      <- untilTrue(childCleaned.get)
             yield assert(result.isFailure)
             end for
@@ -206,7 +206,7 @@ class ActorTest extends Test:
                         _ <- allReceived.await
                     yield "parent done"
                 }
-                result     <- parentActor.result
+                result     <- parentActor.await
                 startCount <- startCounter.get
                 _          <- untilTrue(cleanupCounter.get.map(_ == actorCount))
             yield
@@ -260,7 +260,7 @@ class ActorTest extends Test:
                 counter <- AtomicInt.init(0)
                 actor   <- Actor.run(100)(Actor.receiveMax[Int](150)(counter.addAndGet(_)))
                 _       <- Async.foreach(1 to 150)(i => actor.send(i))
-                _       <- actor.result
+                _       <- actor.await
                 sum     <- counter.get
             yield assert(sum == (1 to 150).sum)
         }
@@ -270,7 +270,7 @@ class ActorTest extends Test:
                 results  <- Queue.Unbounded.init[Int]()
                 actor    <- Actor.run(50)(Actor.receiveMax[Int](1000)(results.add(_)))
                 _        <- Async.fill(10)(Async.foreach(1 to 100)(i => actor.send(i)))
-                _        <- actor.result
+                _        <- actor.await
                 received <- results.drain
             yield
                 assert(received.size == 1000)
@@ -312,7 +312,7 @@ class ActorTest extends Test:
                 _       <- actor.send(1)
                 _       <- actor.send(2)
                 _       <- actor.send(3)
-                _       <- actor.result
+                _       <- actor.await
                 cleaned <- resourceCleaned.get
             yield assert(cleaned)
         }
@@ -329,7 +329,7 @@ class ActorTest extends Test:
                     }
                 }
                 _       <- actor.send(1)
-                result  <- Abort.run(actor.result)
+                result  <- Abort.run(actor.await)
                 cleaned <- resourceCleaned.get
             yield assert(cleaned && result == Result.fail(TestError))
             end for
@@ -342,7 +342,7 @@ class ActorTest extends Test:
                 sum    <- AtomicInt.init(0)
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(sum.addAndGet(_).unit))
                 _      <- Async.foreach(1 to 100)(i => actor.send(i))
-                _      <- actor.result
+                _      <- actor.await
                 result <- sum.get
             yield assert(result == 5050)
         }
@@ -352,7 +352,7 @@ class ActorTest extends Test:
                 queue  <- Queue.Unbounded.init[Int]()
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(queue.add(_)))
                 _      <- Kyo.foreach(1 to 100)(i => actor.send(i))
-                _      <- actor.result
+                _      <- actor.await
                 result <- queue.drain
             yield assert(result == (1 to 100))
         }
@@ -409,8 +409,8 @@ class ActorTest extends Test:
                 result1  <- account.subject.ask(AccountMessage.Withdraw(200.0, _))
                 result2  <- account.subject.ask(AccountMessage.Withdraw(50.0, _))
                 balance2 <- account.subject.ask(AccountMessage.GetBalance(_))
-                _        <- account.result
-                _        <- logger.result
+                _        <- account.await
+                _        <- logger.await
                 logs     <- loggedTransactions.drain
             yield
                 assert(balance1 == 100.0)
@@ -437,7 +437,7 @@ class ActorTest extends Test:
                 _        <- actor.send(2)
                 _        <- actor.send(3)
                 _        <- actor.send(0)
-                _        <- actor.result
+                _        <- actor.await
                 finalSum <- sum.get
             yield assert(finalSum == 6)
         }
@@ -461,7 +461,7 @@ class ActorTest extends Test:
                 _        <- actor.send("b")
                 _        <- actor.send("c")
                 _        <- actor.send("stop")
-                _        <- actor.result
+                _        <- actor.await
                 received <- results.drain
             yield assert(received == List("a-1", "b-2", "c-3"))
         }
