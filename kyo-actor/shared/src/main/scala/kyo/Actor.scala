@@ -111,8 +111,8 @@ object Actor:
       *
       *   - [[Poll]]: Allows receiving and processing messages from the actor's mailbox. Used by `receiveAll`, `receiveMax`, and
       *     `receiveLoop` methods.
-      *   - [[Env[Subject[A]]]]: Provides access to the actor's own subject, enabling self-reference and communication with itself or other
-      *     actors. Used by `self` and `selfWith` methods.
+      *   - [[Env[Subject[A]]]]: Provides access to the actor's own subject, enabling self-reference and communication with itself. Used by
+      *     `self` and `selfWith` methods.
       *   - [[Abort[Closed]]]: Supports handling of mailbox closure situations with the specialized Closed error type. Triggered when
       *     `close` is called on the actor.
       *   - [[Resource]]: Enables proper management and cleanup of acquired resources. Used within the actor implementation for mailbox
