@@ -34,7 +34,7 @@ class TopicTest extends Test:
                         for
                             started <- Latch.init(1)
                             fiber <-
-                                Async.run(using Topic.isolate)(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
+                                Async.run(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
                             _        <- started.await
                             _        <- Async.run(Topic.publish(uri)(Stream.init(messages)))
                             received <- fiber.get
