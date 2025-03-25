@@ -1147,6 +1147,24 @@ class AsyncTest extends Test:
         }
     }
 
+    "fillIndexed" - {
+        "creates n computations with index access" in run {
+            for
+                results <- Async.fillIndexed(5) { i =>
+                    i * 2
+                }
+            yield assert(results == Chunk(0, 2, 4, 6, 8))
+        }
+
+        "handles empty input" in run {
+            for
+                results <- Async.fillIndexed(0) { i =>
+                    fail(s"Should not be called with i=$i")
+                }
+            yield assert(results.isEmpty)
+        }
+    }
+
     "memoize" - {
         "caches successful results" in run {
             for
