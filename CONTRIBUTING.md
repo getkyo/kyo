@@ -7,6 +7,7 @@ Thank you for considering contributing to this project! We welcome all contribut
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Setting Up Your Environment](#setting-up-your-environment)
+- [Configuring Java Options](#configuring-java-options)
 - [How to Build Locally](#how-to-build-locally)
 - [How to Open a Pull Request](#how-to-open-a-pull-request)
 - [How to Claim a Bounty](#how-to-claim-a-bounty)
@@ -40,6 +41,35 @@ Before you begin, make sure you have the following installed:
    ```sh
    git remote add upstream https://github.com/original-author/your-repo.git
    ```
+
+## Configuring Java Options
+
+Java options (`JAVA_OPTS` and `JVM_OPTS`) define how much memory and resources the JVM should use when running the project. Setting these options correctly ensures stable performance and prevents out-of-memory errors.
+
+To configure Java options, run the following commands in your terminal:
+```sh
+export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
+export JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
+```
+
+### Explanation of Parameters:
+
+- `-Xms2G`: Sets the initial heap size to 3GB.
+- `-Xmx3G`: Sets the maximum heap size to 4GB.
+- `-Xss10M`: Sets the stack size to 10MB.
+- `-XX:MaxMetaspaceSize=512M`: Limits the maximum metaspace size to 512MB.
+- `-XX:ReservedCodeCacheSize=128M`: Reserves 128MB for compiled code caching.
+- `-Dfile.encoding=UTF-8`: Ensures file encoding is set to UTF-8.
+
+### Adjusting These Values
+
+If you experience memory issues or your system has more resources, you can increase these values. For example, if you have 16GB RAM, you might set:
+```sh
+export JAVA_OPTS="-Xms4G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+export JVM_OPTS="-Xms4G -Xmx8G -Xss10M -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+```
+
+You can also add these lines to your `.bashrc` or `.zshrc` file for persistent settings.
 
 ## How to Build Locally
 Run the following commands to build and test the project locally:
