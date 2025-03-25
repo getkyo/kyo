@@ -44,7 +44,7 @@ import scala.annotation.*
   * @tparam B
   *   The type of result this actor produces upon completion
   */
-abstract class Actor[+E, A, B]:
+sealed abstract class Actor[+E, A, B]:
 
     /** Returns the message subject interface for sending messages to this actor.
       *
@@ -53,7 +53,9 @@ abstract class Actor[+E, A, B]:
       * @return
       *   A Subject[A] that can be used to send messages to this actor
       */
-    def subject: Subject[A]
+    val subject: Subject[A]
+
+    export subject.*
 
     /** Returns the fiber executing this actor's message processing.
       *
@@ -63,7 +65,7 @@ abstract class Actor[+E, A, B]:
       * @return
       *   A Fiber containing the actor's execution
       */
-    def fiber: Fiber[Closed | E, B]
+    val fiber: Fiber[Closed | E, B]
 
     /** Retrieves the final result of this actor.
       *
@@ -89,8 +91,6 @@ abstract class Actor[+E, A, B]:
 
 end Actor
 
-export Actor.Subject
-
 object Actor:
 
     /** Default mailbox capacity for actors.
@@ -104,75 +104,27 @@ object Actor:
         IO.Unsafe.evalOrThrow(System.property[Int]("kyo.actor.capacity.default", 100))
     end defaultCapacity
 
-    opaque type Context[A] <: Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async =
-        Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async
-
-    /** Interface for sending messages to an actor.
+    /** The execution context for actor behaviors, providing the essential capabilities for actor-based concurrency.
+      *
+      * Actor.Context is a combination of five foundational effect types that together create the environment in which actor behaviors
+      * operate:
+      *
+      *   - [[Poll]]: Allows receiving and processing messages from the actor's mailbox. Used by `receiveAll`, `receiveMax`, and
+      *     `receiveLoop` methods.
+      *   - [[Env[Subject[A]]]]: Provides access to the actor's own subject, enabling self-reference and communication with itself or other
+      *     actors. Used by `self` and `selfWith` methods.
+      *   - [[Abort[Closed]]]: Supports handling of mailbox closure situations with the specialized Closed error type. Triggered when
+      *     `close` is called on the actor.
+      *   - [[Resource]]: Enables proper management and cleanup of acquired resources. Used within the actor implementation for mailbox
+      *     cleanup and for maintaining actor hierarchies where child actors are automatically cleaned up when their parent completes or
+      *     fails.
+      *   - [[Async]]: Provides asynchronous execution capabilities. Used to run the actor's processing loop concurrently.
       *
       * @tparam A
-      *   The type of messages that can be sent
+      *   The type of messages this actor context can process
       */
-    trait Subject[A]:
-
-        /** Sends a message to the actor.
-          *
-          * The message will be queued in the actor's mailbox and processed asynchronously in FIFO order along with other pending messages.
-          *
-          * @param message
-          *   The message to send
-          * @return
-          *   An async effect representing the enqueuing of the message
-          */
-        def send(message: A): Unit < (Async & Abort[Closed])
-
-        /** Sends a message to an actor and waits for a response.
-          *
-          * This method implements the request-response pattern by automatically creating a temporary reply channel. It's useful when you
-          * need to get a response back from an actor after sending it a message.
-          *
-          * For a message type like:
-          *
-          * case class GetUserInfo(userId: Int, replyTo: Subject[UserData])
-          *
-          * You can use:
-          *
-          * subject.ask(GetUserInfo(123, _))
-          *
-          * The returned type (UserData) is determined by the reply channel type in the message.
-          *
-          * @param f
-          *   A function that takes a reply Subject[B] and returns the message to send
-          * @tparam B
-          *   The type of response expected
-          * @return
-          *   The response of type B from the actor
-          * @throws Closed
-          *   if the actor's mailbox is closed
-          */
-        def ask[B](f: Subject[B] => A)(using Frame): B < (Async & Abort[Closed]) =
-            for
-                promise <- Promise.init[Nothing, B]
-                replyTo: Subject[B] = r => promise.completeDiscard(Result.succeed(r))
-                _      <- send(f(replyTo))
-                result <- promise.get
-            yield result
-    end Subject
-
-    object Subject:
-        private val _noop: Subject[Any] = _ => {}
-
-        /** Creates a no-operation Subject that discards all messages.
-          *
-          * This Subject implementation ignores any messages sent to it and performs no action. It can be useful for testing or when you
-          * need a placeholder Subject implementation.
-          *
-          * @tparam A
-          *   The type of messages this Subject can receive (and discard)
-          * @return
-          *   A Subject[A] that discards all messages
-          */
-        def noop[A]: Subject[A] = _noop.asInstanceOf[Subject[A]]
-    end Subject
+    opaque type Context[A] <: Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async =
+        Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async
 
     /** Retrieves the current actor's Subject from the environment.
       *
@@ -186,6 +138,9 @@ object Actor:
     def self[A: Tag](using Frame): Subject[A] < Context[A] =
         Env.get
 
+    def selfWith[A: Tag](using Frame)[B, S](f: Subject[A] => B < S): B < (Context[A] & S) =
+        Env.use(f)
+
     /** Sends a message to the actor designated as the current subject in the environment.
       *
       * This method is designed be called within an Actor.run body and to re-enqueue messages for later processing by the actor itself.
@@ -197,7 +152,7 @@ object Actor:
       * @return
       *   An effect representing the message enqueuing
       */
-    def resend[A: Tag](msg: A)(using Frame): Unit < Context[A] =
+    def reenqueue[A: Tag](msg: A)(using Frame): Unit < Context[A] =
         Env.use[Subject[A]](_.send(msg))
 
     /** Receives and processes a single message from the actor's mailbox.
@@ -328,10 +283,10 @@ object Actor:
                 // Create an unbounded channel to serve as the actor's mailbox
                 // Unbounded capacity in this initial prototype
                 Channel.init[A](Int.MaxValue, Access.MultiProducerSingleConsumer)
-            _subject: Subject[A] =
+            _subject =
                 // Create the actor's message interface (Subject)
                 // Messages sent through this subject are queued in the mailbox
-                msg => mailbox.put(msg)
+                Subject.init(mailbox)
             _consumer <-
                 Loop(behavior) { b =>
                     Poll.runFirst(b).map {
@@ -348,7 +303,7 @@ object Actor:
                 )
             _ <- Resource.ensure(mailbox.close)
         yield new Actor[E, A, B]:
-            def subject            = _subject
-            def fiber              = _consumer
+            val subject            = _subject
+            val fiber              = _consumer
             def close(using Frame) = mailbox.close
 end Actor
