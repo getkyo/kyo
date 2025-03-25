@@ -6,8 +6,54 @@ import scala.util.NotGiven
 
 /** A channel for communicating between fibers.
   *
+  * Channel provides a thread-safe communication primitive designed for passing messages between fibers. It functions as a bounded buffer
+  * where producers can send values and consumers can receive them, creating a structured way to coordinate work and share data across
+  * concurrent computations.
+  *
+  * The core functionality of Channel can be understood through two main operation types:
+  *
+  * Synchronous operations (offer/poll) immediately succeed or fail without parking fibers. These are useful when you want to attempt
+  * communication without blocking execution:
+  *   - `offer` attempts to add an element, returning true if successful or false if the channel is full
+  *   - `poll` attempts to retrieve an element, returning Maybe.empty if the channel is empty
+  *
+  * Asynchronous operations (put/take) will suspend the current fiber until the operation can complete:
+  *   - `put` adds an element, suspending if the channel is full until space becomes available
+  *   - `take` retrieves an element, suspending if the channel is empty until an element arrives
+  *
+  * Channels have a fixed capacity specified at creation time, which serves as a natural backpressure mechanism. When the channel fills up,
+  * producers using `put` will be suspended until consumers make space by taking elements. This helps regulate the flow of work between
+  * faster producers and slower consumers, preventing unbounded resource consumption.
+  *
+  * Beyond individual operations, Channel also supports batching through operations like `putBatch` and `takeExactly`, allowing for more
+  * efficient bulk processing. For continuous consumption, the `stream` method transforms the channel's contents into a Stream that can be
+  * processed with standard stream operations.
+  *
+  * When a channel is no longer needed, it should be closed with the `close` method, which will release resources and notify any suspended
+  * fibers. Attempting operations on a closed channel will result in a Closed error.
+  *
+  * The access pattern (MPMC, MPSC, SPMC, or SPSC) can be specified at creation time to optimize performance based on your concurrency
+  * requirements. Use MPMC (the default) when multiple fibers will both produce and consume, or more specialized patterns when your usage
+  * follows a specific structure.
+  *
+  * IMPORTANT: While a Channel comes with a predefined capacity, there is no upper limit on the number of fibers that can be suspended by
+  * it. In scenarios where your application spawns an unrestricted number of fibers—such as an HTTP service where each incoming request
+  * initiates a new fiber—this can lead to significant memory consumption. The channel's internal queue for suspended fibers could grow
+  * indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent
+  * resource exhaustion.
+  *
+  * WARNING: On the JVM, the actual capacity of a Channel is rounded up to the next power of two for performance reasons. For example, if
+  * you specify a capacity of 10, the actual capacity will be 16.
+  *
+  * @see
+  *   [[kyo.Queue]] A similar structure without the fiber-aware asynchronous operations
+  * @see
+  *   [[kyo.Hub]] A multi-producer, multi-consumer broadcast primitive for one-to-many communication
+  * @see
+  *   [[kyo.Access]] For available producer-consumer access patterns
+  *
   * @tparam A
-  *   The type of elements in the channel
+  *   The type of elements that can be sent through the channel
   */
 opaque type Channel[A] = Channel.Unsafe[A]
 
