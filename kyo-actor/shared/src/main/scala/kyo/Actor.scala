@@ -138,6 +138,18 @@ object Actor:
     def self[A: Tag](using Frame): Subject[A] < Context[A] =
         Env.get
 
+    /** Retrieves the current actor's Subject from the environment and applies a function to it.
+      *
+      * This method is designed to be called within an Actor.run body, providing a convenient way to access the actor's Subject and perform
+      * operations on it in a single call.
+      *
+      * @param f
+      *   A function that takes the actor's Subject and returns a value of type B with effects S
+      * @tparam A
+      *   The type of messages the Subject can receive - should match the Actor's Poll type
+      * @return
+      *   The result of applying function f to the actor's Subject
+      */
     def selfWith[A: Tag](using Frame)[B, S](f: Subject[A] => B < S): B < (Context[A] & S) =
         Env.use(f)
 
