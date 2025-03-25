@@ -134,6 +134,28 @@ class SubjectTest extends Test:
         }
     }
 
+    "Subject.init with Queue.Unbounded" - {
+        "adds messages to the queue" in run {
+            for
+                queue <- Queue.Unbounded.init[Int]()
+                subject = Subject.init(queue)
+                _      <- subject.send(1)
+                _      <- subject.send(2)
+                _      <- subject.send(3)
+                values <- queue.drain
+            yield assert(values == Chunk(1, 2, 3))
+        }
+
+        "trySend always returns true" in run {
+            for
+                queue <- Queue.Unbounded.init[Int]()
+                subject = Subject.init(queue)
+                result <- subject.trySend(42)
+                values <- queue.drain
+            yield assert(result && values == Chunk(42))
+        }
+    }
+
     "Multiple Subjects" - {
         "can coordinate between different subject implementations" in run {
             for

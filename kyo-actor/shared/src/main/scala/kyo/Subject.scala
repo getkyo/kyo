@@ -137,6 +137,24 @@ object Subject:
             trySend = channel.offer
         )
 
+    /** Creates a Subject that adds received messages to an Unbounded Queue.
+      *
+      * This method creates a Subject that will add any message it receives into the provided Unbounded Queue. The `send` operation uses the
+      * Queue's `add` method, while `trySend` also uses `add` and always returns true since unbounded queues never reject messages.
+      *
+      * @param queue
+      *   The Unbounded Queue to add messages into
+      * @tparam A
+      *   The type of messages this Subject can receive
+      * @return
+      *   A Subject[A] that adds received messages into the Unbounded Queue
+      */
+    def init[A](queue: Queue.Unbounded[A]): Subject[A] =
+        init(
+            send = queue.add,
+            trySend = queue.add(_).andThen(true)
+        )
+
     /** Creates a custom Subject by directly specifying its send and trySend behaviors.
       *
       * This is a lower-level constructor that allows direct implementation of a Subject's behavior through its send and trySend operations.
