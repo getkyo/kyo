@@ -44,7 +44,7 @@ import scala.annotation.*
   * @tparam B
   *   The type of result this actor produces upon completion
   */
-sealed abstract class Actor[+E, A, B]:
+sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[Closed | E, B]):
 
     /** Returns the message subject interface for sending messages to this actor.
       *
@@ -53,9 +53,9 @@ sealed abstract class Actor[+E, A, B]:
       * @return
       *   A Subject[A] that can be used to send messages to this actor
       */
-    val subject: Subject[A]
+    def subject: Subject[A] = _subject
 
-    export subject.*
+    export _subject.*
 
     /** Returns the fiber executing this actor's message processing.
       *
@@ -65,7 +65,7 @@ sealed abstract class Actor[+E, A, B]:
       * @return
       *   A Fiber containing the actor's execution
       */
-    val fiber: Fiber[Closed | E, B]
+    def fiber: Fiber[Closed | E, B] = _fiber
 
     /** Retrieves the final result of this actor.
       *
@@ -240,7 +240,6 @@ object Actor:
       * @return
       *   A new Actor instance in an async effect
       */
-    @nowarn("msg=anonymous")
     def run[E, A: Tag, B: Flat, S](
         using Isolate.Contextual[S, IO]
     )(behavior: B < (Context[A] & Abort[E] & S))(
@@ -281,7 +280,6 @@ object Actor:
       * @return
       *   A new Actor instance in an async effect
       */
-    @nowarn("msg=anonymous")
     def run[E, A: Tag, B: Flat, S](
         using Isolate.Contextual[S, IO]
     )(capacity: Int)(behavior: B < (Context[A] & Abort[E] & S))(
@@ -293,7 +291,7 @@ object Actor:
         for
             mailbox <-
                 // Create a bounded channel to serve as the actor's mailbox
-                Channel.init[A](Int.MaxValue, Access.MultiProducerSingleConsumer)
+                Channel.init[A](capacity, Access.MultiProducerSingleConsumer)
             _subject =
                 // Create the actor's message interface (Subject)
                 // Messages sent through this subject are queued in the mailbox
@@ -313,8 +311,6 @@ object Actor:
                     Async.run                 // Start the actor's processing loop in an async context
                 )
             _ <- Resource.ensure(mailbox.close)
-        yield new Actor[E, A, B]:
-            val subject            = _subject
-            val fiber              = _consumer
+        yield new Actor[E, A, B](_subject, _consumer):
             def close(using Frame) = mailbox.close
 end Actor

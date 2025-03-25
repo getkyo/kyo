@@ -90,7 +90,7 @@ object Abort:
       * @return
       *   A unit computation that may fail if the condition is false
       */
-    inline def whenNot[E, S](b: Boolean < S)(inline value: => E < S)(using inline frame: Frame): Unit < (Abort[E] & S) =
+    inline def unless[E, S](b: Boolean < S)(inline value: => E < S)(using inline frame: Frame): Unit < (Abort[E] & S) =
         ensuring(b, ())(value)
 
     /** Ensures a condition is met before returning the provided result.

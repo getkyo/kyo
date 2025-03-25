@@ -574,9 +574,9 @@ class AbortTest extends Test:
             }
         }
 
-        "whenNot" - {
+        "unless" - {
             "basic usage" in {
-                def test(b: Boolean) = Abort.run[String](Abort.whenNot(b)("FAIL!")).eval
+                def test(b: Boolean) = Abort.run[String](Abort.unless(b)("FAIL!")).eval
 
                 assert(test(false) == Result.fail("FAIL!"))
                 assert(test(true) == Result.succeed(()))
@@ -585,7 +585,7 @@ class AbortTest extends Test:
             "with S effect in condition" in {
                 def test(env: Int) = Env.run(env) {
                     Abort.run[String](
-                        Abort.whenNot(Env.use[Int](_ <= 5))("Too big")
+                        Abort.unless(Env.use[Int](_ <= 5))("Too big")
                     )
                 }.eval
 
@@ -596,7 +596,7 @@ class AbortTest extends Test:
             "with S effect in value" in {
                 def test(env: String) = Env.run(env) {
                     Abort.run[String](
-                        Abort.whenNot(false)(Env.get[String])
+                        Abort.unless(false)(Env.get[String])
                     )
                 }.eval
 

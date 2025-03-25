@@ -112,7 +112,7 @@ object Subject:
       */
     def init[E, A](promise: Promise[E, A])(using frame: Frame): Subject[A] =
         def tryComplete(r: A) =
-            Abort.whenNot(promise.complete(Result.succeed(r)))(Closed("Subject", frame))
+            Abort.unless(promise.complete(Result.succeed(r)))(Closed("Subject", frame))
         init(
             send = tryComplete,
             trySend = tryComplete(_).andThen(true)
