@@ -485,7 +485,28 @@ object Async:
     )(n: Int, concurrency: Int = defaultConcurrency)(
         f: => A < (Abort[E] & Async & S)
     )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
-        foreach(0 until n, concurrency)(_ => f)
+        fillIndexed(n, concurrency)(_ => f)
+
+    /** Repeats a computation n times in parallel with index access.
+      *
+      * Similar to `fill`, but provides the current index to the computation function. This is useful when the computation needs to know
+      * which iteration it's processing.
+      *
+      * @param n
+      *   Number of times to repeat the computation
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
+      * @param f
+      *   Function that takes the current index (0 to n-1) and returns a computation
+      * @return
+      *   Chunk containing results of all iterations in index order
+      */
+    def fillIndexed[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(n: Int, concurrency: Int = defaultConcurrency)(
+        f: Int => A < (Abort[E] & Async & S)
+    )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
+        foreach(0 until n, concurrency)(f)
 
     /** Executes two computations in parallel and returns their results as a tuple.
       */
