@@ -436,8 +436,6 @@ object Channel:
                             puts.drain(_.promise.completeDiscard(closedResult))
                             flush()
                         else if !putsEmpty && !takesEmpty then
-                            // Directly transfer a value from a producer to a
-                            // consumer
                             Maybe(puts.poll()).foreach { put =>
                                 put match
                                     case Put.Value(value, promise) =>
