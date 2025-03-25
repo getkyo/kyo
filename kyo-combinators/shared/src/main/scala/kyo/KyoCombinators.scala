@@ -65,7 +65,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def delayed(duration: Duration)(using Frame): A < (S & Async) =
+    def delay(duration: Duration)(using Frame): A < (S & Async) =
         Async.delay(duration)(effect)
 
     /** Performs this computation repeatedly with a backoff policy.
