@@ -404,11 +404,11 @@ class ActorTest extends Test:
                         }
                     }
                 }
-                _        <- Async.fill(10)(account.subject.ask(AccountMessage.Deposit(10.0, _)))
-                balance1 <- account.subject.ask(AccountMessage.GetBalance(_))
-                result1  <- account.subject.ask(AccountMessage.Withdraw(200.0, _))
-                result2  <- account.subject.ask(AccountMessage.Withdraw(50.0, _))
-                balance2 <- account.subject.ask(AccountMessage.GetBalance(_))
+                _        <- Async.fill(10)(account.ask(AccountMessage.Deposit(10.0, _)))
+                balance1 <- account.ask(AccountMessage.GetBalance(_))
+                result1  <- account.ask(AccountMessage.Withdraw(200.0, _))
+                result2  <- account.ask(AccountMessage.Withdraw(50.0, _))
+                balance2 <- account.ask(AccountMessage.GetBalance(_))
                 _        <- account.await
                 _        <- logger.await
                 logs     <- loggedTransactions.drain
