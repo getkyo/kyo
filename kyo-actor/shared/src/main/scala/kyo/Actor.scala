@@ -310,7 +310,7 @@ object Actor:
                     Resource.run,             // Close used resources
                     Async.run                 // Start the actor's processing loop in an async context
                 )
-            _ <- Resource.ensure(mailbox.close)
+            _ <- Resource.ensure(mailbox.close) // Registers a finalizer in the outer scope to provide the actor hierarchy behavior
         yield new Actor[E, A, B](_subject, _consumer):
             def close(using Frame) = mailbox.close
 end Actor

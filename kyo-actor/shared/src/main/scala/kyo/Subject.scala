@@ -176,6 +176,7 @@ object Subject:
         _init(send, trySend)
 
     @nowarn("msg=anonymous")
+    // Indirection to avoid parameter shaddowing
     private inline def _init[A](
         inline _send: Frame ?=> A => Unit < (Async & Abort[Closed]),
         inline _trySend: Frame ?=> A => Boolean < (IO & Abort[Closed])

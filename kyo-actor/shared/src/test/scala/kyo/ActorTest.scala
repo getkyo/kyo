@@ -430,7 +430,7 @@ class ActorTest extends Test:
                 actor <- Actor.run {
                     Actor.receiveLoop[Int] { msg =>
                         if msg == 0 then Loop.done
-                        else sum.addAndGet(msg).map(_ => Loop.continue)
+                        else sum.addAndGet(msg).andThen(Loop.continue)
                     }
                 }
                 _        <- actor.send(1)
