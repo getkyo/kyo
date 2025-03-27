@@ -6,16 +6,6 @@ import scala.util.Success
 class ConstructorsTest extends Test:
 
     "Kyo constructors" - {
-        "debugln" - {
-            "should print a message to the console" in run {
-                val effect = Kyo.debugln("Test message")
-                effect.map { result =>
-                    // Note: This test doesn't actually verify console output
-                    assert(result == ())
-                }
-            }
-        }
-
         "emit" - {
             "should emit a value" in run {
                 val effect =

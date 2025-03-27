@@ -1,6 +1,6 @@
 package kyo
 
-class EnvCombinatorTest extends Test:
+class EnvCombinatorsTest extends Test:
 
     class Dep(val value: Int)
     object DepImpl extends Dep(1)
@@ -81,4 +81,4 @@ class EnvCombinatorTest extends Test:
         }
     }
 
-end EnvCombinatorTest
+end EnvCombinatorsTest

@@ -1,6 +1,6 @@
 package kyo
 
-class EffectCombinatorTest extends Test:
+class KyoCombinatorsTest extends Test:
 
     "all effects" - {
 
@@ -210,7 +210,7 @@ class EffectCombinatorTest extends Test:
                 "repeat with custom policy" in run {
                     var count    = 0
                     val schedule = Schedule.repeat(3)
-                    val effect   = IO { count += 1; count }.repeat(schedule)
+                    val effect   = IO { count += 1; count }.repeatAtInterval(schedule)
                     Async.run(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)
@@ -224,7 +224,7 @@ class EffectCombinatorTest extends Test:
                 "repeat with exponential backoff" in run {
                     var count   = 0
                     val backoff = (i: Int) => Math.pow(2, i).toLong.millis
-                    val effect  = IO { count += 1; count }.repeat(backoff, 3)
+                    val effect  = IO { count += 1; count }.repeatAtInterval(backoff, 3)
                     Async.run(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)
@@ -293,48 +293,6 @@ class EffectCombinatorTest extends Test:
             }
         }
 
-        "retry" - {
-            "retry with fixed number" - {
-                "successful after retries" in run {
-                    var count = 0
-                    val effect = IO {
-                        count += 1
-                        if count < 3 then throw new Exception("Retry")
-                        else count
-                    }.retry(3)
-                    Async.run(effect).map(_.toFuture).map { handled =>
-                        handled.map(v => assert(v == 3))
-                    }
-                }
-                "fails after max retries" in run {
-                    var count = 0
-                    val effect = IO {
-                        count += 1
-                        (throw new Exception("Always fails")): Int
-                    }.retry(2)
-                    Async.run(effect).map(_.toFuture).map { handled =>
-                        handled.failed.map(e => assert(e.getMessage == "Always fails"))
-                    }
-                }
-            }
-
-            "retry with policy" - {
-                "successful after retries with custom policy" in run {
-                    var count  = 0
-                    val policy = Schedule.fixed(10.millis).take(3)
-                    val effect = IO {
-                        count += 1
-                        if count < 3 then throw new Exception("Retry")
-                        else count
-                    }.retry(policy)
-                    Async.run(effect).map(_.toFuture).map { handled =>
-                        handled.map(v => assert(v == 3))
-                    }
-                }
-            }
-
-        }
-
         "unpanic" - {
             "with throwable" in run {
                 val effect: Nothing < (Abort[Throwable] & IO)     = IO { Abort.fail(Exception("failure")) }
@@ -361,4 +319,4 @@ class EffectCombinatorTest extends Test:
                 .andThen(assert(finalizerCalled))
         }
     }
-end EffectCombinatorTest
+end KyoCombinatorsTest

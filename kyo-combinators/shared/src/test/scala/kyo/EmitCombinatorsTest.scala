@@ -1,24 +1,24 @@
 package kyo
 
-class EmitCombinatorTest extends Test:
+class EmitCombinatorsTest extends Test:
 
     given ce[A, B]: CanEqual[A, B] = CanEqual.canEqualAny
 
     "emit" - {
         "handleEmit" in run {
-            val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).map(_ => "done")
+            val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
             emit.handleEmit.map:
                 case (chunk, res) => assert(chunk == Chunk(1, 2, 3) && res == "done")
         }
 
         "handleEmitDiscarding" in run {
-            val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).map(_ => "done")
+            val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
             emit.handleEmitDiscarding.map:
                 case chunk => assert(chunk == Chunk(1, 2, 3))
         }
 
         "foreachEmit" in run {
-            val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).map(_ => "done")
+            val emit = Loop(1)(i => if i == 4 then Loop.done else Emit.valueWith(i)(Loop.continue(i + 1))).andThen("done")
             val effect = emit.foreachEmit(i => Var.update[Int](v => v + i).unit).map: result =>
                 Var.get[Int].map(v => (result, v))
             Var.run(0)(effect).map:
@@ -83,14 +83,14 @@ class EmitCombinatorTest extends Test:
         }
 
         "emitToStreamDiscarding" in run {
-            val emit   = Kyo.foreach(0 until 3)(i => Emit.value[Chunk[Int]](Chunk.from((i * 3) until (i * 3) + 3)).map(_ => i))
+            val emit   = Kyo.foreach(0 until 3)(i => Emit.value[Chunk[Int]](Chunk.from((i * 3) until (i * 3) + 3)).andThen(i))
             val stream = emit.emitToStreamDiscarding
             stream.run.map: chunk =>
                 assert(chunk == Chunk.from(0 until 9))
         }
 
         "emitToStreamAndResult" in run {
-            val emit = Kyo.foreach(0 until 3)(i => Emit.value[Chunk[Int]](Chunk.from((i * 3) until (i * 3) + 3)).map(_ => i))
+            val emit = Kyo.foreach(0 until 3)(i => Emit.value[Chunk[Int]](Chunk.from((i * 3) until (i * 3) + 3)).andThen(i))
             for
                 (stream, handled) <- emit.emitToStreamAndResult
                 streamRes         <- stream.run
@@ -105,4 +105,4 @@ class EmitCombinatorTest extends Test:
         assert(Var.runTuple(0)(stream.run).eval == (6, Seq(1, 2, 3)))
     }
 
-end EmitCombinatorTest
+end EmitCombinatorsTest

@@ -3484,11 +3484,11 @@ val abortEffect: Int < Abort[String] = 1
 // Converts failures to empty failure
 val maybeEffect: Int < Abort[Absent] = abortEffect.abortToAbsent
 
-// Converts an aborted Absent to an empty "choice"
-val choiceEffect: Int < Choice = maybeEffect.absentToEmpty
+// Converts an aborted Absent to a dropped (i.e., empty) "choice"
+val choiceEffect: Int < Choice = maybeEffect.absentToChoiceDrop
 
-// Fails with exception if empty
-val newAbortEffect: Int < (Choice & Abort[Throwable]) = choiceEffect.emptyToThrowable
+// Fails with exception if choice is dropped
+val newAbortEffect: Int < (Choice & Abort[Throwable]) = choiceEffect.choiceDropToThrowable
 ```
 
 To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic`/`orThrow` and `unpanic` respectively:
@@ -3526,27 +3526,31 @@ trait C
 val effect: Int < Abort[A | B | C] = 1
 
 val handled: Result[A | B | C, Int] < Any = effect.result
-val handledWithoutPanic: Result.Partial[A | B | C, Int] < Abort[Nothing] = effect.partialResult
-val unsafeHandled: Result.Partial[A | B | C, Int] < Any = effect.partialResultOrThrow
+val handledWithoutPanic: Result.Partial[A | B | C, Int] < Abort[Nothing] = effect.resultPartial
+val unsafeHandled: Result.Partial[A | B | C, Int] < Any = effect.resultPartialOrThrow
 val folded: String < Any = effect.foldAbort(_.toString, _.toString, _.toString)
 val foldedWithoutPanic: String < Abort[Nothing] = effect.foldAbort(_.toString, _.toString)
 val unsafeFolded: String < Any = effect.foldAbortOrThrow(_.toString, _.toString)
 val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
-val caught: Int < Any = effect.catching(_.toString.size)
-val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
+val recovered: Int < Abort[Nothing] = effect.recover(_.toString.size)
+val partiallyRecovered: Int < Abort[A | B | C] = effect.recoverSome { case err if err.toString.size > 5 => 0 }
 val swapped: (A | B | C) < Abort[Int] = effect.swapAbort
+val retried: Int < Abort[A | B | C] = effect.retry(5)
+val retriedUntilSucceed: Int < Any = effect.retryForever
 
 // Select error types within the Abort union for handling
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
-val handledWithoutPanicA: Result.Partial[A, Int] < Abort[B | C] = effect.forAbort[A].partialResult
+val handledWithoutPanicA: Result.Partial[A, Int] < Abort[B | C] = effect.forAbort[A].resultPartial
 val foldedA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString, _.toString)
 val foldedWithoutPanicA: String < Abort[B | C] = effect.forAbort[A].fold(_.toString, _.toString)
-val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
-val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
+val recoveredA: Int < Abort[B | C] = effect.forAbort[A].recover(_.toString.size)
+val partiallyRecoveredA: Int < Abort[A | B | C] = effect.forAbort[A].recoverSome { case err if err.toString.size > 5 => 0 }
 val aSwapped: A < Abort[Int | B | C] = effect.forAbort[A].swap
 val aToAbsent: Int < Abort[Absent | B | C] = effect.forAbort[A].toAbsent
-val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toEmpty
+val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toChoiceDrop
 val aToThrowable: Int < Abort[Throwable | B | C] = effect.forAbort[A].toThrowable
+val retriedA: Int < (Abort[A | B | C]) = effect.forAbort[A].retry(5)
+val retriedAUntilSucceed: Int < (Abort[B | C]) = effect.forAbort[A].retryForever
 ```
 
 
