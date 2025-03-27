@@ -78,8 +78,20 @@ object Abort:
       * @return
       *   A unit computation that may fail if the condition is true
       */
-    inline def when[E](b: Boolean)(inline value: => E)(using inline frame: Frame): Unit < Abort[E] =
-        ensuring(!b, ())(value)
+    inline def when[E, S](b: Boolean < S)(inline value: => E < S)(using inline frame: Frame): Unit < (Abort[E] & S) =
+        ensuring(b.map(!_), ())(value)
+
+    /** Fails the computation if the condition is false.
+      *
+      * @param b
+      *   The condition to check
+      * @param value
+      *   The failure value to use if the condition is false
+      * @return
+      *   A unit computation that may fail if the condition is false
+      */
+    inline def unless[E, S](b: Boolean < S)(inline value: => E < S)(using inline frame: Frame): Unit < (Abort[E] & S) =
+        ensuring(b, ())(value)
 
     /** Ensures a condition is met before returning the provided result.
       *
@@ -96,9 +108,13 @@ object Abort:
       * @return
       *   A computation that succeeds with the result if the condition is true, or fails with the given value if it's false
       */
-    inline def ensuring[A, E](cond: Boolean, result: => A)(inline value: => E)(using inline frame: Frame): A < Abort[E] =
-        if !cond then fail(value)
-        else result
+    inline def ensuring[E, A, S](cond: Boolean < S, result: => A < S)(inline value: => E < S)(using
+        inline frame: Frame
+    ): A < (Abort[E] & S) =
+        cond.map {
+            case true  => result
+            case false => value.map(fail)
+        }
 
     final class GetOps[E >: Nothing](dummy: Unit) extends AnyVal:
 

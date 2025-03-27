@@ -551,6 +551,57 @@ class AbortTest extends Test:
                 assert(Env.run(())(test(false)).eval == Result.succeed(()))
                 assert(sideEffect == 1)
             }
+
+            "with S effect in condition" in {
+                def test(env: Int) = Env.run(env) {
+                    Abort.run[String](
+                        Abort.when(Env.use[Int](_ > 5))("Too big")
+                    )
+                }.eval
+
+                assert(test(3) == Result.succeed(()))
+                assert(test(7) == Result.fail("Too big"))
+            }
+
+            "with S effect in value" in {
+                def test(env: String) = Env.run(env) {
+                    Abort.run[String](
+                        Abort.when(true)(Env.get[String])
+                    )
+                }.eval
+
+                assert(test("Error message") == Result.fail("Error message"))
+            }
+        }
+
+        "unless" - {
+            "basic usage" in {
+                def test(b: Boolean) = Abort.run[String](Abort.unless(b)("FAIL!")).eval
+
+                assert(test(false) == Result.fail("FAIL!"))
+                assert(test(true) == Result.succeed(()))
+            }
+
+            "with S effect in condition" in {
+                def test(env: Int) = Env.run(env) {
+                    Abort.run[String](
+                        Abort.unless(Env.use[Int](_ <= 5))("Too big")
+                    )
+                }.eval
+
+                assert(test(3) == Result.succeed(()))
+                assert(test(7) == Result.fail("Too big"))
+            }
+
+            "with S effect in value" in {
+                def test(env: String) = Env.run(env) {
+                    Abort.run[String](
+                        Abort.unless(false)(Env.get[String])
+                    )
+                }.eval
+
+                assert(test("Error message") == Result.fail("Error message"))
+            }
         }
 
         "ensuring" - {
