@@ -123,88 +123,75 @@ object System:
     def let[A, S](system: System)(f: => A < S)(using Frame): A < S =
         local.let(system)(f)
 
-    class EnvOps[A](dummy: Unit) extends AnyVal:
-        /** Retrieves an environment variable.
-          *
-          * @param name
-          *   The name of the environment variable.
-          * @tparam E
-          *   The error type for parsing.
-          * @return
-          *   A `Maybe` containing the parsed value if it exists, or `Maybe.empty` otherwise.
-          */
-        def apply[E](name: String)(
-            using
-            parser: Parser[E, A],
-            frame: Frame,
-            reduce: Reducible[Abort[E]]
-        ): Maybe[A] < (reduce.SReduced & IO) =
-            reduce(local.use(_.env[E, A](name)))
+    /** Retrieves an environment variable.
+      *
+      * @param name
+      *   The name of the environment variable.
+      * @tparam E
+      *   The error type for parsing.
+      * @return
+      *   A `Maybe` containing the parsed value if it exists, or `Maybe.empty` otherwise.
+      */
+    def env[A](using Frame)[E](name: String)(using parser: Parser[E, A], reduce: Reducible[Abort[E]]): Maybe[A] < (reduce.SReduced & IO) =
+        reduce(local.use(_.env[E, A](name)))
 
-        /** Retrieves an environment variable with a default value.
-          *
-          * @param name
-          *   The name of the environment variable.
-          * @param default
-          *   The default value to use if the variable is not found.
-          * @tparam E
-          *   The error type for parsing.
-          * @return
-          *   The parsed value if it exists, or the default value otherwise.
-          */
-        def apply[E](name: String, default: => A)(
-            using
-            parser: Parser[E, A],
-            frame: Frame,
-            reduce: Reducible[Abort[E]]
-        ): A < (reduce.SReduced & IO) =
-            reduce(local.use(_.env[E, A](name).map(_.getOrElse(default))))
+    /** Retrieves an environment variable with a default value.
+      *
+      * @param name
+      *   The name of the environment variable.
+      * @param default
+      *   The default value to use if the variable is not found.
+      * @tparam E
+      *   The error type for parsing.
+      * @return
+      *   The parsed value if it exists, or the default value otherwise.
+      */
+    def env[A](using
+        Frame
+    )[E](name: String, default: => A)(
+        using
+        parser: Parser[E, A],
+        reduce: Reducible[Abort[E]]
+    ): A < (reduce.SReduced & IO) =
+        reduce(local.use(_.env[E, A](name).map(_.getOrElse(default))))
 
-    end EnvOps
+    /** Retrieves a system property.
+      *
+      * @param name
+      *   The name of the system property.
+      * @tparam E
+      *   The error type for parsing.
+      * @return
+      *   A `Maybe` containing the parsed value if it exists, or `Maybe.empty` otherwise.
+      */
+    def property[A](using
+        Frame
+    )[E](name: String)(
+        using
+        parser: Parser[E, A],
+        reduce: Reducible[Abort[E]]
+    ): Maybe[A] < (reduce.SReduced & IO) =
+        reduce(local.use(_.property[E, A](name)))
 
-    def env[A]: EnvOps[A] = EnvOps(())
-
-    class PropertyOps[A](dummy: Unit) extends AnyVal:
-
-        /** Retrieves a system property.
-          *
-          * @param name
-          *   The name of the system property.
-          * @tparam E
-          *   The error type for parsing.
-          * @return
-          *   A `Maybe` containing the parsed value if it exists, or `Maybe.empty` otherwise.
-          */
-        def apply[E](name: String)(
-            using
-            parser: Parser[E, A],
-            frame: Frame,
-            reduce: Reducible[Abort[E]]
-        ): Maybe[A] < (reduce.SReduced & IO) =
-            reduce(local.use(_.property[E, A](name)))
-
-        /** Retrieves a system property with a default value.
-          *
-          * @param name
-          *   The name of the system property.
-          * @param default
-          *   The default value to use if the property is not found.
-          * @tparam E
-          *   The error type for parsing.
-          * @return
-          *   The parsed value if it exists, or the default value otherwise.
-          */
-        def apply[E](name: String, default: => A)(
-            using
-            parser: Parser[E, A],
-            frame: Frame,
-            reduce: Reducible[Abort[E]]
-        ): A < (reduce.SReduced & IO) =
-            reduce(local.use(_.property[E, A](name).map(_.getOrElse(default))))
-
-    end PropertyOps
-
-    def property[A]: PropertyOps[A] = PropertyOps(())
+    /** Retrieves a system property with a default value.
+      *
+      * @param name
+      *   The name of the system property.
+      * @param default
+      *   The default value to use if the property is not found.
+      * @tparam E
+      *   The error type for parsing.
+      * @return
+      *   The parsed value if it exists, or the default value otherwise.
+      */
+    def property[A](using
+        Frame
+    )[E](name: String, default: => A)(
+        using
+        parser: Parser[E, A],
+        reduce: Reducible[Abort[E]]
+    ): A < (reduce.SReduced & IO) =
+        reduce(local.use(_.property[E, A](name).map(_.getOrElse(default))))
 
     /** Retrieves the system-dependent line separator string. */
     def lineSeparator(using Frame): String < IO = local.use(_.lineSeparator)
