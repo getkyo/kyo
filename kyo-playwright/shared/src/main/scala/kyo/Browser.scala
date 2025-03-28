@@ -48,7 +48,12 @@ object Browser:
       *   The result of the operations
       */
     def run[A: Flat, S](timeout: Duration)(v: A < (Browser & S))(using Frame): A < (IO & S) =
-        run(Playwright.create().chromium().launch().newPage(), timeout)(v)
+        IO {
+            val playwright = Playwright.create()
+            IO.ensure(playwright.close) {
+                run(playwright.chromium().launch().newPage(), timeout)(v)
+            }
+        }
 
     /** Runs browser operations with a specified page and timeout.
       *
@@ -61,21 +66,17 @@ object Browser:
       * @return
       *   The result of the operations
       */
-    def run[A: Flat, S](page: => Page, timeout: Duration = defaultTimeout)(v: A < (Browser & S))(using Frame): A < (IO & S) =
+    def run[A: Flat, S](page: Page, timeout: Duration = defaultTimeout)(v: A < (Browser & S))(using Frame): A < (IO & S) =
         IO {
-            lazy val p =
-                val r = page
-                r.setDefaultTimeout(timeout.toMillis.toDouble)
-                r.setDefaultNavigationTimeout(timeout.toMillis.toDouble)
-                r
-            end p
+            page.setDefaultTimeout(timeout.toMillis.toDouble)
+            page.setDefaultNavigationTimeout(timeout.toMillis.toDouble)
 
             ArrowEffect.handle[Op, Id, Browser, A, S, IO](Tag[Browser], v)(
                 [C] =>
                     (input, cont) =>
                         for
                             _ <- Log.debug(s"Browser: Executing $input")
-                            r <- cont(input.unsafeRun(p))
+                            r <- IO(cont(input.unsafeRun(page)))
                             _ <- Log.debug(s"Browser: Done $input")
                         yield r
             )

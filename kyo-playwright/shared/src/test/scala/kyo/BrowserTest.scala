@@ -1,10 +1,16 @@
 package kyo.test
 
+import com.microsoft.playwright.Playwright
 import kyo.*
 import kyo.Browser
 import scala.util.Try
 
 class BrowserTest extends Test:
+
+    // Preload Playwright so the tests don't timeout
+    val p = Playwright.create()
+    p.chromium().launch().newPage()
+    p.close()
 
     private val resourcePath =
         "file://" + Thread.currentThread().getContextClassLoader().getResource("basic-page.html").getPath().replaceAll(
