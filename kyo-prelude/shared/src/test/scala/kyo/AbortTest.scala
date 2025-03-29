@@ -1214,4 +1214,70 @@ class AbortTest extends Test:
         }
     }
 
+    "literal" - {
+        "string" in {
+            val result: Nothing < Abort["FAIL!"] = Abort.literal.fail("FAIL!")
+            val _: Nothing < Abort[String]       = result
+            assert(Abort.run(result).eval == Result.fail("FAIL!"))
+        }
+
+        "numeric" in {
+            val result: Nothing < Abort[-1] = Abort.literal.fail(-1)
+            assert(Abort.run(result).eval == Result.fail(-1))
+        }
+
+        "ensuring" in {
+            def divide(a: Int, b: Int): Int < Abort["Division by zero"] =
+                Abort.literal.ensuring(b != 0, a / b)("Division by zero")
+
+            val result: Int < Abort["Division by zero"] = divide(1, 0)
+            assert(Abort.run(result).eval == Result.fail("Division by zero"))
+            assert(Abort.run(divide(1, 1)).eval == Result.succeed(1))
+        }
+
+        "unless" in {
+            def unless(b: Boolean): Unit < Abort["BOOM"] =
+                Abort.literal.unless(b)("BOOM")
+
+            val result: Unit < Abort["BOOM"] = unless(false)
+            assert(Abort.run(result).eval == Result.fail("BOOM"))
+            assert(Abort.run(unless(true)).eval == Result.unit)
+        }
+
+        "when" in {
+            def when(b: Boolean): Unit < Abort["TOO_BIG"] =
+                Abort.literal.when(b)("TOO_BIG")
+
+            val result: Unit < Abort["TOO_BIG"] = when(false)
+            assert(Abort.run(result).eval == Result.unit)
+            assert(Abort.run(when(true)).eval == Result.fail("TOO_BIG"))
+        }
+
+        "effects" in {
+            val result = Env.run(15) {
+                Abort.run {
+                    for
+                        x <- Env.get[Int]
+                        _ <- Abort.literal.when(x > 10)("TOO_BIG")
+                    yield x
+                }
+            }.eval
+            assert(result == Result.fail("TOO_BIG"))
+        }
+
+        "generic" in {
+            def test[A](a: A): Nothing < Abort[A] =
+                Abort.literal.fail(a)
+
+            val result: Int < Abort[Int] = test(1)
+            assert(Abort.run(result).eval == Result.fail(1))
+        }
+
+        "union" in {
+            val result: Nothing < Abort["FAIL!" | "FAIL2!"] = Abort.literal.fail("FAIL!")
+            val _: Nothing < Abort["FAIL!" | "FAIL2!"]      = result
+            assert(Abort.run(result).eval == Result.fail("FAIL!"))
+        }
+    }
+
 end AbortTest

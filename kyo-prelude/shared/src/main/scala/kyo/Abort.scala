@@ -487,4 +487,72 @@ object Abort:
             case ex     => Abort.panic(ex)
         }
 
+    /** Provides methods for working with literal error values in Abort effects.
+      *
+      * The literal namespace ensures that error types are preserved as singleton types rather than being widened to their base types. This
+      * is particularly useful when you want to maintain precise type information about specific error values.
+      *
+      * For example:
+      * ```scala
+      * val error1 = Abort.fail("error")         // Nothing < Abort[String]
+      * val error2 = Abort.literal.fail("error") // Nothing < Abort["error"]
+      * ```
+      */
+    object literal:
+        /** Fails the computation with a literal value, preserving its singleton type.
+          *
+          * Unlike [[kyo.Abort.fail]], this method preserves the exact literal type of the failure value.
+          *
+          * @param value
+          *   The literal failure value
+          * @return
+          *   A computation that immediately fails with the given literal value, preserving its exact type
+          */
+        inline def fail[V <: Singleton](inline value: V)(using inline frame: Frame): Nothing < Abort[V] =
+            Abort.fail(value)
+
+        /** Fails the computation if the condition is true, using a literal failure value.
+          *
+          * @param b
+          *   The condition to check
+          * @param value
+          *   The literal failure value to use if the condition is true
+          * @return
+          *   A unit computation that may fail with the literal value if the condition is true
+          */
+        inline def when[V <: Singleton, S](b: Boolean < S)(inline value: V)(using inline frame: Frame): Unit < (Abort[V] & S) =
+            Abort.when(b)(value)
+
+        /** Fails the computation if the condition is false, using a literal failure value.
+          *
+          * @param b
+          *   The condition to check
+          * @param value
+          *   The literal failure value to use if the condition is false
+          * @return
+          *   A unit computation that may fail with the literal value if the condition is false
+          */
+        inline def unless[V <: Singleton, S](b: Boolean < S)(inline value: V)(using inline frame: Frame): Unit < (Abort[V] & S) =
+            Abort.unless(b)(value)
+
+        /** Ensures a condition is met before returning the provided result, using a literal failure value.
+          *
+          * @param cond
+          *   The condition to check
+          * @param result
+          *   The result to return if the condition is true
+          * @param value
+          *   The literal failure value to use if the condition is false
+          * @tparam A
+          *   The type of the result
+          * @return
+          *   A computation that succeeds with the result if the condition is true, or fails with the literal value if it's false
+          */
+        inline def ensuring[V <: Singleton, A, S](cond: Boolean < S, result: => A < S)(inline value: V)(using
+            inline frame: Frame
+        ): A < (Abort[V] & S) =
+            Abort.ensuring(cond, result)(value)
+
+    end literal
+
 end Abort
