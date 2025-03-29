@@ -553,6 +553,13 @@ object Abort:
         ): A < (Abort[V] & S) =
             Abort.ensuring(cond, result)(value)
 
+        /** Runs an Abort effect with a literal error type, preserving the singleton type in the Result.
+          */
+        inline def run[V <: Singleton](
+            using Frame
+        )[A: Flat, S](v: => A < (Abort[V] & S)): Result[V, A] < S =
+            Abort.run(v)
+
     end literal
 
 end Abort

@@ -1216,13 +1216,15 @@ class AbortTest extends Test:
 
     "literal" - {
         "string" in {
-            val result: Nothing < Abort["FAIL!"] = Abort.literal.fail("FAIL!")
-            val _: Nothing < Abort[String]       = result
+            val result                      = Abort.literal.fail("FAIL!")
+            val _: Nothing < Abort["FAIL!"] = result
+            val _: Nothing < Abort[String]  = result
             assert(Abort.run(result).eval == Result.fail("FAIL!"))
         }
 
         "numeric" in {
-            val result: Nothing < Abort[-1] = Abort.literal.fail(-1)
+            val result                 = Abort.literal.fail(-1)
+            val _: Nothing < Abort[-1] = result
             assert(Abort.run(result).eval == Result.fail(-1))
         }
 
@@ -1230,7 +1232,8 @@ class AbortTest extends Test:
             def divide(a: Int, b: Int): Int < Abort["Division by zero"] =
                 Abort.literal.ensuring(b != 0, a / b)("Division by zero")
 
-            val result: Int < Abort["Division by zero"] = divide(1, 0)
+            val result                             = divide(1, 0)
+            val _: Int < Abort["Division by zero"] = result
             assert(Abort.run(result).eval == Result.fail("Division by zero"))
             assert(Abort.run(divide(1, 1)).eval == Result.succeed(1))
         }
@@ -1239,7 +1242,8 @@ class AbortTest extends Test:
             def unless(b: Boolean): Unit < Abort["BOOM"] =
                 Abort.literal.unless(b)("BOOM")
 
-            val result: Unit < Abort["BOOM"] = unless(false)
+            val result                  = unless(false)
+            val _: Unit < Abort["BOOM"] = result
             assert(Abort.run(result).eval == Result.fail("BOOM"))
             assert(Abort.run(unless(true)).eval == Result.unit)
         }
@@ -1248,20 +1252,22 @@ class AbortTest extends Test:
             def when(b: Boolean): Unit < Abort["TOO_BIG"] =
                 Abort.literal.when(b)("TOO_BIG")
 
-            val result: Unit < Abort["TOO_BIG"] = when(false)
+            val result                     = when(false)
+            val _: Unit < Abort["TOO_BIG"] = result
             assert(Abort.run(result).eval == Result.unit)
             assert(Abort.run(when(true)).eval == Result.fail("TOO_BIG"))
         }
 
         "effects" in {
             val result = Env.run(15) {
-                Abort.run {
+                Abort.literal.run {
                     for
                         x <- Env.get[Int]
                         _ <- Abort.literal.when(x > 10)("TOO_BIG")
                     yield x
                 }
             }.eval
+            val _: Result["TOO_BIG", Int] = result
             assert(result == Result.fail("TOO_BIG"))
         }
 
@@ -1269,13 +1275,14 @@ class AbortTest extends Test:
             def test[A](a: A): Nothing < Abort[A] =
                 Abort.literal.fail(a)
 
-            val result: Int < Abort[Int] = test(1)
+            val result                  = test(1)
+            val _: Nothing < Abort[Int] = result
             assert(Abort.run(result).eval == Result.fail(1))
         }
 
         "union" in {
-            val result: Nothing < Abort["FAIL!" | "FAIL2!"] = Abort.literal.fail("FAIL!")
-            val _: Nothing < Abort["FAIL!" | "FAIL2!"]      = result
+            val result                                 = Abort.literal.fail("FAIL!")
+            val _: Nothing < Abort["FAIL!" | "FAIL2!"] = result
             assert(Abort.run(result).eval == Result.fail("FAIL!"))
         }
     }
