@@ -6,7 +6,7 @@ import scala.concurrent.Future
 private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async & Resource]:
     def run(v: Future[Assertion] < (Abort[Any] & Async & Resource)): Future[Assertion] =
         import AllowUnsafe.embrace.danger
-        v.pipe(
+        v.handle(
             Resource.run,
             Abort.recover[Any] {
                 case ex: Throwable => throw ex

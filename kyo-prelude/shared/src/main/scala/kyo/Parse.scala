@@ -714,7 +714,7 @@ object Parse:
         Tag[Emit[Chunk[A]]]
     ): Stream[A, S & S2 & Abort[ParseFailed]] =
         Stream {
-            input.emit.pipe {
+            input.emit.handle {
                 // Maintains a running buffer of text and repeatedly attempts parsing
                 Emit.runFold[Chunk[Text]](Text.empty) {
                     (acc: Text, curr: Chunk[Text]) =>

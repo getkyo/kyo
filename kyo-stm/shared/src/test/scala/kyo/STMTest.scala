@@ -503,7 +503,7 @@ class STMTest extends Test:
                 _     <- Async.fill(size, size)(STM.run(ref.update(_ + 1)))
                 value <- STM.run(ref.get)
             yield assert(value == size))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -523,7 +523,7 @@ class STMTest extends Test:
                 reads <- readFiber.get
                 value <- STM.run(ref.get)
             yield assert(value == size && reads.forall(_ <= size)))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -546,7 +546,7 @@ class STMTest extends Test:
                 }
                 value <- STM.run(ref.get)
             yield assert(value == size * 2))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -576,7 +576,7 @@ class STMTest extends Test:
                 }
                 finalStates <- Kyo.collectAll(forks.map(fork => STM.run(fork.get)))
             yield assert(finalStates.forall(identity)))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -626,7 +626,7 @@ class STMTest extends Test:
                 assert(final2 >= 0)
                 assert(final3 >= 0)
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -678,7 +678,7 @@ class STMTest extends Test:
                 assert(final2 >= 0)
                 assert(final3 >= 0)
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
     }

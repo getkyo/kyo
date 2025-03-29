@@ -135,11 +135,11 @@ object Resource:
                                     .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                             }
                                 .unit
-                                .pipe(Async.run[Nothing, Unit, Any])
+                                .handle(Async.run[Nothing, Unit, Any])
                                 .map(p.becomeDiscard)
                     }
                 ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
-                    .pipe(IO.ensure(close))
+                    .handle(IO.ensure(close))
                     .map(result => p.get.andThen(result))
             }
         }

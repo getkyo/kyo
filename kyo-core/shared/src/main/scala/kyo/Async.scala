@@ -732,7 +732,7 @@ object Async:
                                         promise.completeDiscard(r)
                                         Abort.get(r)
                                     }
-                                }.pipe(IO.ensure {
+                                }.handle(IO.ensure {
                                     IO.Unsafe {
                                         if !promise.done() then
                                             ref.set(Absent)

@@ -724,7 +724,7 @@ class StreamTest extends Test:
                 Env.use[Int] { multiplier =>
                     sum += i * multiplier
                 }
-            }.pipe(Env.run(2)).map { _ =>
+            }.handle(Env.run(2)).map { _ =>
                 assert(sum == 30)
             }
         }
@@ -768,7 +768,7 @@ class StreamTest extends Test:
                 Env.use[Int] { multiplier =>
                     sum += chunk.foldLeft(0)(_ + _) * multiplier
                 }
-            }.pipe(Env.run(2)).map { _ =>
+            }.handle(Env.run(2)).map { _ =>
                 assert(sum == 30)
             }
         }

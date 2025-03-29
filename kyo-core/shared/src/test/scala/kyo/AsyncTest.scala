@@ -70,10 +70,11 @@ class AsyncTest extends Test:
 
         "timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
-                .pipe(Async.timeout(10.millis))
-                .pipe(Async.runAndBlock(Duration.Infinity))
-                .pipe(Abort.run[Timeout](_))
-                .map {
+                .handle(
+                    Async.timeout(10.millis),
+                    Async.runAndBlock(Duration.Infinity),
+                    Abort.run[Timeout]
+                ).map {
                     case Result.Failure(_: Timeout) => succeed
                     case v                          => fail(v.toString())
                 }
@@ -81,9 +82,10 @@ class AsyncTest extends Test:
 
         "block timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
-                .pipe(Async.runAndBlock(10.millis))
-                .pipe(Abort.run[Timeout](_))
-                .map {
+                .handle(
+                    Async.runAndBlock(10.millis),
+                    Abort.run[Timeout]
+                ).map {
                     case Result.Failure(_: Timeout) => succeed
                     case v                          => fail(v.toString())
                 }
@@ -91,9 +93,10 @@ class AsyncTest extends Test:
 
         "multiple fibers timeout" in runNotJS {
             Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
-                .pipe(Async.runAndBlock(10.millis))
-                .pipe(Abort.run[Timeout](_))
-                .map {
+                .handle(
+                    Async.runAndBlock(10.millis),
+                    Abort.run[Timeout]
+                ).map {
                     case Result.Failure(_: Timeout) => succeed
                     case v                          => fail(v.toString())
                 }

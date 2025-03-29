@@ -241,7 +241,7 @@ class HubTest extends Test:
                 assert(subs1.count(_.isSuccess) == pubs.count(_.isSuccess))
                 assert(subs2.count(_.isSuccess) == pubs.count(_.isSuccess))
                 assert(subs3.count(_.isSuccess) == pubs.count(_.isSuccess))
-            ).pipe(Choice.run, _.unit, Loop.repeat(repeats))
+            ).handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -260,7 +260,7 @@ class HubTest extends Test:
                 listeners  <- listenerFiber.get
                 backlog    <- closeFiber.get
                 isClosed   <- hub.closed
-            yield assert(isClosed)).pipe(Choice.run, _.unit, Loop.repeat(repeats))
+            yield assert(isClosed)).handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 

@@ -226,7 +226,7 @@ class LayerTest extends Test:
                 assert(grandchild.parent.age == 10)
 
                 assert(env.size == 1)
-            }.pipe(Memo.run)
+            }.handle(Memo.run)
         }
         "effects" in run {
             class A

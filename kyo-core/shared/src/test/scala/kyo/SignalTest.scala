@@ -241,7 +241,7 @@ class SignalTest extends Test:
                 _   <- Async.fill(10, 10)(ref.updateAndGet(_ + 1))
                 v   <- ref.get
             yield assert(v == 10))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -268,7 +268,7 @@ class SignalTest extends Test:
                 writeResults <- writers.get
                 finalValue   <- ref.get
             yield assert(readResults.forall(_ == 10) && writeResults.forall(_ == 10) && finalValue == 10))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 

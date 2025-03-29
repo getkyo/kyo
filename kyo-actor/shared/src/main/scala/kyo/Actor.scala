@@ -304,7 +304,7 @@ object Actor:
                         case Right(cont) =>
                             mailbox.take.map(v => Loop.continue(cont(Maybe(v))))
                     }
-                }.pipe(
+                }.handle(
                     IO.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
                     Env.run(_subject),        // Provide the actor's Subject to the environment so it can be accessed via Actor.self
                     Resource.run,             // Close used resources
