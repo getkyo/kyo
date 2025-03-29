@@ -55,7 +55,7 @@ class ResourceTest extends Test:
         assert(r2.acquires == 0)
         Async.runAndBlock(timeout)(r)
             .handle(Env.run(1))
-            .handle(Abort.run(_))
+            .handle(Abort.run)
             .handle(IO.Unsafe.evalOrThrow)
         assert(r1.closes == 1)
         assert(r2.closes == 0)
@@ -116,7 +116,7 @@ class ResourceTest extends Test:
         assert(r2.acquires == 0)
         r.handle(Env.run(3))
             .handle(Async.runAndBlock(timeout))
-            .handle(Abort.run(_))
+            .handle(Abort.run)
             .handle(IO.Unsafe.evalOrThrow)
         assert(r1.closes == 1)
         assert(r2.closes == 1)
@@ -146,7 +146,7 @@ class ResourceTest extends Test:
                 r
         io.handle(Resource.run)
             .handle(Async.runAndBlock(timeout))
-            .handle(Abort.run(_))
+            .handle(Abort.run)
             .map { finalizedResource =>
                 finalizedResource.foldError(_.closes.get.map(i => assert(i == 1)), _ => ???)
             }
@@ -159,7 +159,7 @@ class ResourceTest extends Test:
             Resource.ensure(Async.run(closes += 1).map(_.get).unit)
                 .handle(Resource.run)
                 .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run(_))
+                .handle(Abort.run)
                 .map { _ =>
                     assert(closes == 1)
                 }
@@ -178,8 +178,8 @@ class ResourceTest extends Test:
             Resource.acquireRelease(acquire)(release)
                 .handle(Resource.run)
                 .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run[Timeout](_))
-                .handle(Abort.run[Absent](_))
+                .handle(Abort.run[Timeout])
+                .handle(Abort.run[Absent])
                 .map { _ =>
                     assert(closes == 1)
                 }
@@ -190,7 +190,7 @@ class ResourceTest extends Test:
             Resource.acquire(Async.run(r).map(_.get))
                 .handle(Resource.run)
                 .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run(_))
+                .handle(Abort.run)
                 .map { _ =>
                     assert(r.closes == 1)
                 }
@@ -204,7 +204,7 @@ class ResourceTest extends Test:
             val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => Kyo.unit)
             Resource.run(io)
                 .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run(_))
+                .handle(Abort.run)
                 .map {
                     case Result.Panic(t) => assert(t eq TestException)
                     case _               => fail("Expected panic")
@@ -222,7 +222,7 @@ class ResourceTest extends Test:
             }
             Resource.run(io)
                 .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run(_))
+                .handle(Abort.run)
                 .map { _ =>
                     assert(acquired && released)
                 }
