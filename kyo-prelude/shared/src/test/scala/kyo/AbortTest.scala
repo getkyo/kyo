@@ -1178,25 +1178,25 @@ class AbortTest extends Test:
             }
         }
 
-        "with pipe operator" - {
+        "with handle operator" - {
             case class CustomError(message: String) derives CanEqual
 
             "recovers from failures" in {
                 val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
-                val result                                = computation.pipe(Abort.recover[CustomError](_ => 42))
+                val result                                = computation.handle(Abort.recover[CustomError](_ => 42))
                 assert(Abort.run(result).eval == Result.succeed(42))
             }
 
             "doesn't affect successful computations" in {
                 val computation: Int < Abort[CustomError] = 10
-                val result                                = computation.pipe(Abort.recover[CustomError](_ => 42))
+                val result                                = computation.handle(Abort.recover[CustomError](_ => 42))
                 assert(Abort.run(result).eval == Result.succeed(10))
             }
 
             "can be chained with other operations" in {
                 val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
                 val result = computation
-                    .pipe(Abort.recover[CustomError](_ => 42))
+                    .handle(Abort.recover[CustomError](_ => 42))
                     .map(_ * 2)
 
                 assert(Abort.run(result).eval == Result.succeed(84))
@@ -1205,7 +1205,7 @@ class AbortTest extends Test:
             "works with onPanic" in {
                 val ex                                    = new RuntimeException("Panic!")
                 val computation: Int < Abort[CustomError] = Abort.panic(ex)
-                val result = computation.pipe(Abort.recover[CustomError](
+                val result = computation.handle(Abort.recover[CustomError](
                     onFail = _ => 42,
                     onPanic = _ => -1
                 ))
