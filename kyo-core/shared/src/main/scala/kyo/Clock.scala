@@ -608,7 +608,7 @@ object Clock:
                     Promise.Unsafe.fromIOPromise {
                         new IOPromise[Nothing, Unit] with Callable[Unit]:
                             val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
-                            override def interrupt[E2 >: Nothing](error: Result.Error[E2]): Boolean =
+                            override def interrupt(error: Result.Error[Nothing]): Boolean =
                                 discard(task.cancel(true))
                                 super.interrupt(error)
                             def call(): Unit = completeDiscard(Result.unit)

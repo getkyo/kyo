@@ -194,7 +194,7 @@ object Async:
         else if !after.isFinite then v
         else
             isolate.capture { state =>
-                Async.run(isolate.isolate(state, v)).map { task =>
+                Async.run(isolate.isolate(state, v: A < (Abort[E | Timeout] & Async & S))).map { task =>
                     Clock.use { clock =>
                         IO.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)

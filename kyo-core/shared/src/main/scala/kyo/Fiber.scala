@@ -36,7 +36,7 @@ import scala.util.control.NoStackTrace
   * @see
   *   [[Fiber.Unsafe]] for low-level operations requiring [[AllowUnsafe]]
   */
-opaque type Fiber[+E, +A] = IOPromise[E, A]
+opaque type Fiber[E, A] = IOPromise[E, A]
 
 object Fiber extends FiberPlatformSpecific:
 
@@ -155,7 +155,7 @@ object Fiber extends FiberPlatformSpecific:
           * @param f
           *   The callback function
           */
-        def onComplete[E2 >: E, A2 >: A](f: Result[E2, A2] => Any < IO)(using Frame): Unit < IO =
+        def onComplete(f: Result[E, A] => Any < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
             IO(self.onComplete(r => IO.Unsafe.evalOrThrow(f(r).unit)))
 
@@ -208,7 +208,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A new Fiber with the flat mapped result
           */
-        def flatMap[E2, B](f: A => Fiber[E2, B] < IO)(using Frame): Fiber[E | E2, B] < IO =
+        def flatMap[E2 >: E, B](f: A => Fiber[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
             IO.Unsafe(Unsafe.flatMap(self)(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Maps the Result of the Fiber using the provided function.
@@ -221,7 +221,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A new Fiber with the mapped Result
           */
-        def mapResult[E2, B: Flat](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
+        def mapResult[E2 >: E, B: Flat](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
             IO.Unsafe(Unsafe.mapResult(self)(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Creates a new Fiber that runs with interrupt masking.
@@ -361,7 +361,7 @@ object Fiber extends FiberPlatformSpecific:
                                             indices(okInt - 1) = idx
                                             results(okInt - 1) = v.asInstanceOf[AnyRef]
                                             discard(VarHandle.storeStoreFence())
-                                    case result: Result.Error[?] =>
+                                    case result: Result.Error[E] @unchecked =>
                                         if ok == 0 && ok + nok == total then
                                             // If we have no successful results and all computations have completed,
                                             // propagate the last encountered error since there's nothing else to return
@@ -379,7 +379,7 @@ object Fiber extends FiberPlatformSpecific:
                                     quickSort(indices, results, size)
 
                                     // Limit final result to max successful results
-                                    completeDiscard(Result.succeed(Chunk.fromNoCopy(results).take(size)))
+                                    completeDiscard(Result.succeed(Chunk.fromNoCopy(results).take(size).asInstanceOf[Chunk[A]]))
                                 end if
                             end if
                         end loop
@@ -497,7 +497,7 @@ object Fiber extends FiberPlatformSpecific:
                     }
                 }
 
-    opaque type Unsafe[+E, +A] = IOPromise[E, A]
+    opaque type Unsafe[E, A] = IOPromise[E, A]
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
@@ -537,21 +537,21 @@ object Fiber extends FiberPlatformSpecific:
                 r.future
             end toFuture
 
-            def map[B](f: A => B)(using AllowUnsafe): Unsafe[E, B] =
+            def map[B](f: A => B)(using AllowUnsafe, Frame): Unsafe[E, B] =
                 val p = new IOPromise[E, B](interrupts = self) with (Result[E, A] => Unit):
                     def apply(v: Result[E, A]) = completeDiscard(v.map(f))
                 self.onComplete(p)
                 p
             end map
 
-            def flatMap[E2, B](f: A => Unsafe[E2, B])(using AllowUnsafe): Unsafe[E | E2, B] =
-                val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit):
+            def flatMap[E2 >: E, B](f: A => Unsafe[E2, B])(using AllowUnsafe, Frame): Unsafe[E2, B] =
+                val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit):
                     def apply(r: Result[E, A]) = r.foldError(v => becomeDiscard(f(v)), completeDiscard)
                 self.onComplete(p)
                 p
             end flatMap
 
-            def mapResult[E2, B](f: Result[E, A] => Result[E2, B])(using AllowUnsafe): Unsafe[E2, B] =
+            def mapResult[E2 >: E, B](f: Result[E, A] => Result[E2, B])(using AllowUnsafe, Frame): Unsafe[E2, B] =
                 val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit):
                     def apply(r: Result[E, A]) = completeDiscard(Result(f(r)).flatten)
                 self.onComplete(p)
@@ -562,7 +562,7 @@ object Fiber extends FiberPlatformSpecific:
         end extension
     end Unsafe
 
-    opaque type Promise[+E, +A] <: Fiber[E, A] = IOPromise[E, A]
+    opaque type Promise[E, A] <: Fiber[E, A] = IOPromise[E, A]
 
     object Promise:
         inline given [E, A]: Flat[Promise[E, A]] = Flat.unsafe.bypass
@@ -621,7 +621,7 @@ object Fiber extends FiberPlatformSpecific:
             def unsafe: Unsafe[E, A] = self
         end extension
 
-        opaque type Unsafe[+E, +A] <: Fiber.Unsafe[E, A] = IOPromise[E, A]
+        opaque type Unsafe[E, A] <: Fiber.Unsafe[E, A] = IOPromise[E, A]
 
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         object Unsafe:
@@ -631,15 +631,15 @@ object Fiber extends FiberPlatformSpecific:
 
             def initMasked[E, A]()(using AllowUnsafe): Unsafe[E, A] =
                 new IOPromise[E, A]:
-                    override def interrupt[E2 >: E](error: Result.Error[E2]): Boolean = false
+                    override def interrupt(error: Result.Error[E]): Boolean = false
 
             private[kyo] def fromIOPromise[E, A](p: IOPromise[E, A]): Unsafe[E, A] = p
 
             extension [E, A](self: Unsafe[E, A])
-                def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)
-                def completeDiscard[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
-                def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Boolean     = self.become(other)
-                def becomeDiscard[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Unit = discard(self.become(other))
+                def complete(v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)
+                def completeDiscard(v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
+                def become(other: Fiber[E, A])(using AllowUnsafe): Boolean     = self.become(other)
+                def becomeDiscard(other: Fiber[E, A])(using AllowUnsafe): Unit = discard(self.become(other))
                 def safe: Promise[E, A]                                                            = self
             end extension
         end Unsafe

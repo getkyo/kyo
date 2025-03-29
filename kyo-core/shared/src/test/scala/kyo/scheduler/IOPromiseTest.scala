@@ -18,6 +18,11 @@ class IOPromiseTest extends Test:
             assert(p.block(deadline()) == Result.succeed(1))
         }
 
+        "wrong type" in {
+            val p = new IOPromise[Nothing, String]()
+            typeCheckFailure("p.complete(Result.succeed(1))")("")
+        }
+
         "failure" in {
             val ex = new Exception("Test exception")
             val p  = new IOPromise[Exception, Int]()
