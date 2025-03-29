@@ -51,34 +51,23 @@ object Var:
     inline def get[V](using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         use[V](identity)
 
-    final class UseOps[V](dummy: Unit) extends AnyVal:
-        /** Invokes the provided function with the current value of the `Var`.
-          *
-          * @param f
-          *   The function to apply to the current value
-          * @tparam A
-          *   The return type of the function
-          * @tparam S
-          *   Additional effects in the function
-          * @return
-          *   The result of applying the function to the current value
-          */
-        inline def apply[A, S](inline f: V => A < S)(
-            using
-            inline tag: Tag[Var[V]],
-            inline frame: Frame
-        ): A < (Var[V] & S) =
-            ArrowEffect.suspendWith[V](tag, Get: Op[V])(f)
-    end UseOps
-
-    /** Creates a new UseOps instance for the given type V.
+    /** Invokes the provided function with the current value of the `Var`.
       *
-      * @tparam V
-      *   The type of the value stored in the Var
+      * @param f
+      *   The function to apply to the current value
+      * @tparam A
+      *   The return type of the function
+      * @tparam S
+      *   Additional effects in the function
       * @return
-      *   A new UseOps instance
+      *   The result of applying the function to the current value
       */
-    inline def use[V]: UseOps[V] = UseOps(())
+    inline def use[V](
+        using inline frame: Frame
+    )[A, S](inline f: V => A < S)(
+        using inline tag: Tag[Var[V]]
+    ): A < (Var[V] & S) =
+        ArrowEffect.suspendWith[V](tag, Get: Op[V])(f)
 
     /** Sets a new value and returns the previous one.
       *
