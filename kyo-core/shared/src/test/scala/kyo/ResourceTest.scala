@@ -54,9 +54,11 @@ class ResourceTest extends Test:
         assert(r1.acquires == 1)
         assert(r2.acquires == 0)
         Async.runAndBlock(timeout)(r)
-            .handle(Env.run(1))
-            .handle(Abort.run)
-            .handle(IO.Unsafe.evalOrThrow)
+            .handle(
+                Env.run(1),
+                Abort.run,
+                IO.Unsafe.evalOrThrow
+            )
         assert(r1.closes == 1)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -115,9 +117,11 @@ class ResourceTest extends Test:
         assert(r1.acquires == 1)
         assert(r2.acquires == 0)
         r.handle(Env.run(3))
-            .handle(Async.runAndBlock(timeout))
-            .handle(Abort.run)
-            .handle(IO.Unsafe.evalOrThrow)
+            .handle(
+                Async.runAndBlock(timeout),
+                Abort.run,
+                IO.Unsafe.evalOrThrow
+            )
         assert(r1.closes == 1)
         assert(r2.closes == 1)
         assert(r1.acquires == 1)
@@ -127,9 +131,10 @@ class ResourceTest extends Test:
     "nested" in run {
         val r1 = TestResource(1)
         Resource.acquire(r1())
-            .handle(Resource.run)
-            .handle(Resource.run)
-            .map { r =>
+            .handle(
+                Resource.run,
+                Resource.run
+            ).map { r =>
                 assert(r == r1)
                 assert(r1.acquires == 1)
                 assert(r1.closes == 1)
@@ -145,9 +150,10 @@ class ResourceTest extends Test:
                 assert(closeCount == 0)
                 r
         io.handle(Resource.run)
-            .handle(Async.runAndBlock(timeout))
-            .handle(Abort.run)
-            .map { finalizedResource =>
+            .handle(
+                Async.runAndBlock(timeout),
+                Abort.run
+            ).map { finalizedResource =>
                 finalizedResource.foldError(_.closes.get.map(i => assert(i == 1)), _ => ???)
             }
     }
@@ -157,10 +163,11 @@ class ResourceTest extends Test:
         "ensure" taggedAs jvmOnly in run {
             var closes = 0
             Resource.ensure(Async.run(closes += 1).map(_.get).unit)
-                .handle(Resource.run)
-                .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run)
-                .map { _ =>
+                .handle(
+                    Resource.run,
+                    Async.runAndBlock(timeout),
+                    Abort.run
+                ).map { _ =>
                     assert(closes == 1)
                 }
         }
@@ -176,11 +183,12 @@ class ResourceTest extends Test:
                     closes += 1
                 }.map(_.get)
             Resource.acquireRelease(acquire)(release)
-                .handle(Resource.run)
-                .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run[Timeout])
-                .handle(Abort.run[Absent])
-                .map { _ =>
+                .handle(
+                    Resource.run,
+                    Async.runAndBlock(timeout),
+                    Abort.run[Timeout],
+                    Abort.run[Absent]
+                ).map { _ =>
                     assert(closes == 1)
                 }
         }
@@ -188,10 +196,11 @@ class ResourceTest extends Test:
         "acquire" taggedAs jvmOnly in run {
             val r = TestResource(1)
             Resource.acquire(Async.run(r).map(_.get))
-                .handle(Resource.run)
-                .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run)
-                .map { _ =>
+                .handle(
+                    Resource.run,
+                    Async.runAndBlock(timeout),
+                    Abort.run
+                ).map { _ =>
                     assert(r.closes == 1)
                 }
         }
@@ -221,9 +230,10 @@ class ResourceTest extends Test:
                 }
             }
             Resource.run(io)
-                .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run)
-                .map { _ =>
+                .handle(
+                    Async.runAndBlock(timeout),
+                    Abort.run
+                ).map { _ =>
                     assert(acquired && released)
                 }
         }
