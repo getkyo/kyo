@@ -55,12 +55,12 @@ class KyoException private[kyo] (
 
         if Environment.isDevelopment then
             val msg = frame.render(
-                ("⚠️ KyoException".red.bold :: Maybe(message).toList ::: detail.toList)
+                ("⚠️ KyoException".red.bold :: message :: detail.toList)
                     .map(_.show)*
             )
             s"\n$msg\n"
         else
-            detail.map(_.toString).getOrElse(null)
+            (message + detail.fold("")(" " + _)).toString
         end if
     end getMessage
 end KyoException
