@@ -379,7 +379,7 @@ class TMapTest extends Test:
                 snapshot.size == size &&
                     snapshot.forall((k, v) => k == v && k >= 1 && k <= size)
             ))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -414,7 +414,7 @@ class TMapTest extends Test:
                 assert(snapshot.forall((k, v) => v == k * 2))
                 assert(reads.forall(maybeVal => maybeVal.isEmpty || maybeVal.exists(_ % 2 == 0)))
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -437,7 +437,7 @@ class TMapTest extends Test:
                 snapshot.size == size &&
                     snapshot.forall((_, v) => v == 11) // Initial 1 + 10 increments
             ))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -453,7 +453,7 @@ class TMapTest extends Test:
                 )
                 snapshot <- STM.run(map.snapshot)
             yield assert(snapshot.isEmpty))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -480,7 +480,7 @@ class TMapTest extends Test:
                 assert(snapshot.forall((_, v) => v % 2 == 0))
                 assert(sums.forall(_ == snapshot.values.sum))
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
     }
