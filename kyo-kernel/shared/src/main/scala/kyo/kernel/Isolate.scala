@@ -68,14 +68,26 @@ import scala.quoted.*
   */
 object Isolate:
 
-    /** Controls effect propagation during forking by copying effect state.
+    /** Controls effect propagation during forking by capturing and copying effect state.
       *
       * @tparam Retain
       *   The effects that will be satisfied by this isolation
       * @tparam Passthrough
       *   Additional effects that will remain pending after isolation
       */
-    sealed abstract class Contextual[Retain, -Passthrough]:
+    abstract class Contextual[Retain, -Passthrough]:
+        self =>
+
+        /** The type of state being managed */
+        type State
+
+        /** Captures the current state of the effects. This is the first phase of isolation - getting the state to be managed.
+          */
+        def capture[A: Flat, S](f: State => A < S)(using Frame): A < (S & Retain & Passthrough)
+
+        /** Executes a computation with isolated state. This uses the captured state to run the computation in isolation.
+          */
+        def isolate[A: Flat, S](state: State, v: A < (S & Retain))(using Frame): A < (S & Passthrough)
 
         /** Runs a computation with transformed effects.
           *
@@ -89,22 +101,43 @@ object Isolate:
           * @return
           *   The transformed computation
           */
-        @nowarn("msg=anonymous")
-        inline def run[A, S](inline v: => A < (S & Retain))(inline _frame: Frame): A < (S & Passthrough) =
-            new KyoDefer[A, S & Passthrough]:
-                def frame = _frame
-                def apply(ign: Unit, context: Context)(using safepoint: Safepoint) =
-                    def loop(v: A < (S & Retain)): A < (S & Passthrough) =
-                        v match
-                            case kyo: KyoSuspend[IX, OX, EX, Any, A, S & Retain] @unchecked =>
-                                new KyoContinue[IX, OX, EX, Any, A, S & Passthrough](kyo):
-                                    def frame = _frame
-                                    def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                        loop(kyo(v, context))
-                            case _ =>
-                                v.asInstanceOf[A]
-                    loop(v)
-                end apply
+        def run[A: Flat, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
+            capture(state => isolate(state, v))
+
+        /** Applies this isolate to a computation that requires it.
+          *
+          * Provides a more ergonomic way to use isolates with effects:
+          * {{{
+          * Var.isolate.update[Int].use {
+          *   Async.mask {
+          *     // computation with isolated Var[Int] effect
+          *   }
+          * }
+          * }}}
+          *
+          * @param f
+          *   The computation requiring this isolate
+          * @return
+          *   The result of running the computation with this isolate
+          */
+        final def use[A](f: this.type ?=> A): A = f(using this)
+
+        /** Composes this isolate with another, managing both states.
+          *
+          * Creates a new isolate that handles the state lifecycles of both this isolate and the next one, maintaining proper ordering and
+          * effect tracking.
+          */
+        def andThen[R2, P2](next: Contextual[R2, P2]): Contextual[Retain & R2, Passthrough & P2] =
+            new Contextual[Retain & R2, Passthrough & P2]:
+                type State = (self.State, next.State)
+
+                def capture[A: Flat, S2](f: State => A < S2)(using Frame) =
+                    self.capture(s1 => next.capture(s2 => f((s1, s2))))
+
+                def isolate[A: Flat, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
+                    self.isolate(state._1, next.isolate(state._2, v))
+            end new
+        end andThen
 
         /** Internal API for running computations with trace and context management. */
         @nowarn("msg=anonymous")
@@ -120,7 +153,9 @@ object Isolate:
         /** Cached instance to avoid allocations */
         private[Isolate] val cached: Contextual[Any, Any] =
             new Contextual[Any, Any]:
-                def run[A, S2](v: A < S2): A < S2 = v
+                type State = Unit
+                def capture[A: Flat, S2](f: Unit => A < S2)(using Frame)      = f(())
+                def isolate[A: Flat, S2](state: Unit, v: A < S2)(using Frame) = v
 
         /** Gets the Contextual isolate instance for given effect types. */
         def apply[R, P](using s: Contextual[R, P]): Contextual[R, P] = s
@@ -173,11 +208,8 @@ object Isolate:
       * @tparam Passthrough
       *   Additional effects that will remain pending after isolation
       */
-    abstract class Stateful[Retain, -Passthrough]:
+    abstract class Stateful[Retain, -Passthrough] extends Contextual[Retain, Passthrough]:
         self =>
-
-        /** The type of state being managed */
-        type State
 
         /** How state is transformed during isolated execution */
         type Transform[_]
@@ -185,55 +217,28 @@ object Isolate:
         /** Evidence that transformed state can be properly handled */
         given flatTransform[A: Flat]: Flat[Transform[A]]
 
-        /** Runs a computation with full state lifecycle management.
-          *
-          * Convenience method that composes capture, isolate and restore to handle the complete state lifecycle.
+        /** Executes a computation with isolated state, producing a transformed result. This overrides the isolate method from Contextual to
+          * handle transformation.
           */
-        final def run[A: Flat, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
-            capture(state => restore(isolate(state, v)))
+        override def isolate[A: Flat, S](state: State, v: A < (S & Retain))(using Frame): A < (S & Passthrough)
 
-        /** Phase 1: Capture Initial State
-          *
-          * Obtains the initial state that will be managed during isolation. This begins the isolation process by capturing current state.
+        /** Executes a computation with isolated state, producing a transformed result. This is the more powerful version that allows state
+          * transformation.
           */
-        def capture[A: Flat, S](f: State => A < S)(using Frame): A < (S & Retain & Passthrough)
+        def transform[A: Flat, S](state: State, v: A < (S & Retain))(using Frame): Transform[A] < (S & Passthrough)
 
-        /** Phase 2: Isolated Execution
-          *
-          * Executes a computation with isolated state. The computation runs with a transformed copy of the state, preventing effects from
-          * leaking.
-          */
-        def isolate[A: Flat, S](state: State, v: A < (S & Retain))(using Frame): Transform[A] < (S & Passthrough)
-
-        /** Phase 3: State Restoration
-          *
-          * Restores/merges state after isolated execution completes. Determines how transformed state is propagated back to the outer
-          * context.
+        /** Restores/merges state after isolated execution completes. This is how transformed state is propagated back to the outer context.
           */
         def restore[A: Flat, S](v: Transform[A] < S)(using Frame): A < (S & Retain & Passthrough)
 
-        /** Applies this isolate to a computation that requires it.
-          *
-          * Provides a more ergonomic way to use isolates with effects:
-          * {{{
-          * Var.isolate.update[Int].use {
-          *   Async.mask {
-          *     // computation with isolated Var[Int] effect
-          *   }
-          * }
-          * }}}
-          *
-          * @param f
-          *   The computation requiring this isolate
-          * @return
-          *   The result of running the computation with this isolate
+        /** Runs a computation with full state lifecycle management. This overrides the run method from Contextual to add transformation and
+          * restoration.
           */
-        final def use[A](f: this.type ?=> A): A = f(using this)
+        override def run[A: Flat, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
+            capture(state => restore(transform(state, v)))
 
-        /** Composes this isolate with another, managing both states.
-          *
-          * Creates a new isolate that handles the state lifecycles of both this isolate and the next one, maintaining proper ordering and
-          * effect tracking.
+        /** Composes this isolate with another Stateful isolate. This overrides the andThen method from Contextual for Stateful-specific
+          * composition.
           */
         def andThen[R2, P2](next: Stateful[R2, P2]): Stateful[Retain & R2, Passthrough & P2] =
             new Stateful[Retain & R2, Passthrough & P2]:
@@ -245,11 +250,41 @@ object Isolate:
                     self.capture(s1 => next.capture(s2 => f((s1, s2))))
 
                 def isolate[A: Flat, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
-                    self.isolate(state._1, next.isolate(state._2, v))(using Flat.unsafe.bypass)
+                    self.isolate(state._1, next.isolate(state._2, v))
+
+                def transform[A: Flat, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
+                    self.transform(state._1, next.transform(state._2, v))(using Flat.unsafe.bypass)
 
                 def restore[A: Flat, S2](v: self.Transform[next.Transform[A]] < S2)(using Frame) =
                     next.restore(self.restore(v)(using Flat.unsafe.bypass))
             end new
+        end andThen
+
+        /** Composes this Stateful isolate with a simpler Contextual isolate */
+        override def andThen[R2, P2](next: Contextual[R2, P2]): Stateful[Retain & R2, Passthrough & P2] =
+            // If next is already Stateful, use the Stateful.andThen implementation
+            next match
+                case stateful: Stateful[R2, P2] => this.andThen(stateful)
+                case _                          =>
+                    // Otherwise, adapt the Contextual to work with a Stateful
+                    new Stateful[Retain & R2, Passthrough & P2]:
+                        type State        = (self.State, next.State)
+                        type Transform[A] = self.Transform[A]
+                        given flatTransform[A: Flat]: Flat[Transform[A]] = self.flatTransform
+
+                        def capture[A: Flat, S2](f: State => A < S2)(using Frame) =
+                            self.capture(s1 => next.capture(s2 => f((s1, s2))))
+
+                        def isolate[A: Flat, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
+                            self.isolate(state._1, next.isolate(state._2, v))
+
+                        def transform[A: Flat, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
+                            self.transform(state._1, next.isolate(state._2, v))(using Flat.unsafe.bypass)
+
+                        def restore[A: Flat, S2](v: self.Transform[A] < S2)(using Frame) =
+                            self.restore(v)
+                    end new
+            end match
         end andThen
     end Stateful
 
@@ -260,11 +295,23 @@ object Isolate:
             new Stateful[Any, Any]:
                 type State        = Unit
                 type Transform[A] = A
-                given flatTransform[A: Flat]: Flat[A]                                 = Flat.derive[A]
-                def capture[A: Flat, S2](f: State => A < S2)(using Frame)             = f(())
-                def isolate[A: Flat, S2](state: Unit, v: A < (Any & S2))(using Frame) = v
-                def restore[A: Flat, S2](v: A < S2)(using Frame)                      = v
-                override def andThen[R2, P2](next: Stateful[R2, P2])                  = next
+                given flatTransform[A: Flat]: Flat[A]                                   = Flat.derive[A]
+                def capture[A: Flat, S2](f: State => A < S2)(using Frame)               = f(())
+                def isolate[A: Flat, S2](state: Unit, v: A < (Any & S2))(using Frame)   = v
+                def transform[A: Flat, S2](state: Unit, v: A < (Any & S2))(using Frame) = v
+                def restore[A: Flat, S2](v: A < S2)(using Frame)                        = v
+                override def andThen[R2, P2](next: Contextual[R2, P2]) =
+                    next match
+                        case stateful: Stateful[R2, P2] => stateful
+                        case _ =>
+                            new Stateful[R2, P2]:
+                                type State        = next.State
+                                type Transform[A] = A
+                                given flatTransform[A: Flat]: Flat[A]                                        = Flat.derive[A]
+                                def capture[A: Flat, S2](f: State => A < S2)(using Frame)                    = next.capture(f)
+                                def isolate[A: Flat, S2](state: next.State, v: A < (R2 & S2))(using Frame)   = next.isolate(state, v)
+                                def transform[A: Flat, S2](state: next.State, v: A < (R2 & S2))(using Frame) = next.isolate(state, v)
+                                def restore[A: Flat, S2](v: A < S2)(using Frame)                             = v
 
         /** Gets the Stateful isolate instance for given effect types. */
         def apply[Retain, Passthrough](using s: Stateful[Retain, Passthrough]): Stateful[Retain, Passthrough] = s
@@ -328,8 +375,38 @@ object Isolate:
 
                 val statefulIsolates =
                     isolates.flatMap {
-                        case (_, Some(Right(isolate))) => Some(isolate)
-                        case _                         => None
+                        case (_, Some(Right(isolate)))   => Some(isolate)
+                        case (t, Some(Left(contextual))) =>
+                            // We need to adapt a Contextual to Stateful
+                            // Extract the specific effect type from t
+                            t.asType match
+                                case '[effectType] =>
+                                    Some('{
+                                        // Create a bridge adapter that handles the specific effect type
+                                        val ctx = $contextual
+
+                                        new Stateful[R, P]:
+                                            type State        = ctx.State
+                                            type Transform[A] = A
+                                            given flatTransform[A: Flat]: Flat[A] = Flat.derive[A]
+
+                                            def capture[A: Flat, S2](f: State => A < S2)(using Frame): A < (S2 & R & P) =
+                                                // We need to cast the return type since ctx.capture returns with ctx.Retain
+                                                ctx.capture(f).asInstanceOf[A < (S2 & R & P)]
+
+                                            def isolate[A: Flat, S2](state: State, v: A < (R & S2))(using Frame): A < (S2 & P) =
+                                                // We need to cast the input type since ctx.isolate expects ctx.Retain
+                                                ctx.isolate(state, v.asInstanceOf[A < (S2 & effectType)]).asInstanceOf[A < (S2 & P)]
+
+                                            def transform[A: Flat, S2](state: State, v: A < (R & S2))(using Frame): A < (S2 & P) =
+                                                // We need to cast the input type since ctx.isolate expects ctx.Retain
+                                                ctx.isolate(state, v.asInstanceOf[A < (S2 & effectType)]).asInstanceOf[A < (S2 & P)]
+
+                                            def restore[A: Flat, S2](v: A < S2)(using Frame): A < (S2 & R & P) =
+                                                v.asInstanceOf[A < (S2 & R & P)]
+                                        end new
+                                    })
+                        case _ => None
                     }
 
                 statefulIsolates.foldLeft('{ noop.asInstanceOf[Stateful[R, P]] })((prev, next) =>
