@@ -13,12 +13,12 @@ class DebugTest extends Test:
         Env.run(10) {
             val x = Env.use[Int](_ + 1)
             val y = Env.use[Int](_ * 2)
-            val z = Kyo.zip(x, y).map(_ + _).handle(Debug)
+            val z = Kyo.zip(x, y).map(_ + _).handle(Debug(_))
             z
         }
 
-    def pipeComputation =
-        Env.use[Int](_ + 1).handle(Env.run(10)).handle(Debug)
+    def handleComputation =
+        Env.use[Int](_ + 1).handle(Env.run(10), Debug(_))
 
     def nestedDebugComputation = Debug(Debug(42))
 
@@ -108,12 +108,12 @@ class DebugTest extends Test:
                 effectsComputation.eval
             }
 
-        "with handle" in
+        "with pipe" in
             testOutput(
-                "DebugTest.scala:21:64",
+                "DebugTest.scala:21:57",
                 "11"
             ) {
-                pipeComputation.eval
+                handleComputation.eval
             }
 
         "nested Debug calls" in
