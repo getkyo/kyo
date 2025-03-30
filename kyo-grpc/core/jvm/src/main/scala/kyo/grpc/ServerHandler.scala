@@ -25,6 +25,7 @@ object ServerHandler:
         Frame
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncClientStreamingCall(responseObserver =>
+            // TODO: Double check that the caller does not use the observer concurrently since it is not thread-safe.
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
             val observer               = RequestStreamObserver.init(f, serverResponseObserver)
             Abort.run(IO.Unsafe.run(observer)).eval.getOrThrow

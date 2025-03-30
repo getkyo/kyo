@@ -30,7 +30,7 @@ class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], priva
     def take(using Frame): Result[E, A] < (Abort[Closed] & Async) =
         for
             value <- channel.take
-            _     <- closeIfEmpty
+            _     <- closeIfCompleteAndEmpty
         yield value
 
     def complete(using Frame): Unit < (Abort[Closed] & IO) =
@@ -39,18 +39,16 @@ class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], priva
             _ <- closeIfEmpty
         yield ()
 
-    /** Closes the channel and discards any unread values in the channel.
-      */
-    def close(using Frame): Unit < IO =
-        for
-            _ <- _completed.set(true)
-            _ <- channel.close
-        yield ()
-
     private def closeIfEmpty(using Frame) =
         for
             shouldClose <- Abort.recover[Closed](_ => false)(channel.empty)
             _           <- if shouldClose then channel.close else Kyo.unit
+        yield ()
+
+    private def closeIfCompleteAndEmpty(using Frame) =
+        for
+            shouldClose <- _completed.get
+            _           <- if shouldClose then closeIfEmpty else Kyo.unit
         yield ()
 
     def completed(using Frame): Boolean < IO =
@@ -63,7 +61,7 @@ class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], priva
         Stream(emitChunks())
 
     // TODO: This was copied from Channel because we don't have a way of closing the Channel without draining.
-    // See https://github.com/getkyo/kyo/issues/721.
+    //  See https://github.com/getkyo/kyo/issues/721.
     private def emitChunks(maxChunkSize: Int = Int.MaxValue)(using Frame): Unit < (Emit[Chunk[A]] & Abort[E] & Async) =
         if maxChunkSize <= 0 then ()
         else
@@ -72,11 +70,7 @@ class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], priva
                     for
                         head <- channel.take
                         tail <- channel.drainUpTo(maxChunkSize - 1)
-                        // TODO: There ought to be a better way to do this.
-                        // See https://github.com/getkyo/kyo/issues/721.
-                        empty        <- channel.empty
-                        closeIfEmpty <- completed
-                        _            <- if empty && closeIfEmpty then channel.close else Kyo.pure(Maybe.empty)
+                        _ <- closeIfCompleteAndEmpty
                         // TODO: Can we avoid the extra Chunk allocation here?
                         results = Chunk(head).concat(tail)
                         // TODO: Should be easier to fold Result[E, A] to A < Abort[E]

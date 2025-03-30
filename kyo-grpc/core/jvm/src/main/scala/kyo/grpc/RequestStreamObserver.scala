@@ -8,6 +8,10 @@ import kyo.*
 import kyo.Result.*
 
 // TODO: Should this extend ServerCallStreamObserver?
+
+/**
+ * This is not thread-safe.
+ */
 class RequestStreamObserver[Request: Tag, Response: Flat](
     f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
     requestChannel: StreamChannel[Request, GrpcRequest.Errors],
@@ -17,6 +21,7 @@ class RequestStreamObserver[Request: Tag, Response: Flat](
     private val response = f(requestChannel.stream)
 
     // TODO: Handle the backpressure properly.
+    // TODO: It should be possible to stop all these observers.
     /** Only run this once.
       */
     private val start: Unit < Async =

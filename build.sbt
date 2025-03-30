@@ -92,7 +92,10 @@ lazy val kyoJVM = project
     .in(file("."))
     .settings(
         name := "kyoJVM",
-        `kyo-settings`
+        `kyo-settings`,
+        commands += Command.command("testOnlyUntilFailed") { state =>
+            "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"echo\"" :: "testOnlyUntilFailed" :: state
+        }
     )
     .disablePlugins(MimaPlugin)
     .aggregate(
