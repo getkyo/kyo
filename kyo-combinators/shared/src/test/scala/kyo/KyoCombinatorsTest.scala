@@ -137,21 +137,17 @@ class KyoCombinatorsTest extends Test:
             "condition is true" in run {
                 val effect = IO("value").unless(Env.get[Boolean])
                 Env.run(true) {
-                    Abort.run {
-                        effect
-                    }
+                    effect
                 }.map { result =>
-                    assert(result == Result.fail(Absent))
+                    assert(result == Absent)
                 }
             }
             "condition is false" in run {
                 val effect = IO("value").unless(Env.get[Boolean])
                 Env.run(false) {
-                    Abort.run {
-                        effect
-                    }
+                    effect
                 }.map { result =>
-                    assert(result == Result.succeed("value"))
+                    assert(result == Present("value"))
                 }
             }
         }
@@ -171,15 +167,15 @@ class KyoCombinatorsTest extends Test:
             }
         }
 
-        "delayed" - {
+        "delay" - {
             "with short delay" in run {
-                val effect = IO(42).delayed(1.millis)
+                val effect = IO(42).delay(1.millis)
                 Async.run(effect).map(_.toFuture).map { handled =>
                     handled.map(v => assert(v == 42))
                 }
             }
             "with zero delay" in run {
-                val effect = IO("test").delayed(0.millis)
+                val effect = IO("test").delay(0.millis)
                 Async.run(effect).map(_.toFuture).map { handled =>
                     handled.map(v => assert(v == "test"))
                 }

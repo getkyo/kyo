@@ -156,7 +156,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl2: Flat[B],
         fr: Frame
     ): B < (Abort[Nothing] & S & S1) =
-        Abort.fold(onSuccess, onFail)(effect)
+        Abort.fold[E](onSuccess, onFail)(effect)
 
     /** Recovers from an Abort failure by applying the provided function.
       *

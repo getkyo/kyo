@@ -185,7 +185,7 @@ val b: String < IO =
     a.andThen("test")
 ```
 
-The `pipe` method allows for chaining effect handlers without nesting parentheses. It's particularly useful when dealing with multiple effects.
+The `handle` method allows for chaining effect handlers without nesting parentheses. It's particularly useful when dealing with multiple effects.
 
 ```scala
 import kyo.*
@@ -196,23 +196,23 @@ val a: Int < (Abort[String] & Env[Int]) =
         e <- Env.get[Int]
     yield v + e
 
-// Handle effects using `pipe`
+// Handle effects using `handle`
 val b: Result[String, Int] =
-    a.pipe(Abort.run(_))   // Handle Abort
-     .pipe(Env.run(10))    // Handle Env
+    a.handle(Abort.run(_))   // Handle Abort
+     .handle(Env.run(10))    // Handle Env
      .eval                 // Evaluate the computation
 
-// Equivalent without `pipe`
+// Equivalent without `handle`
 val c: Result[String, Int] =
     Env.run(10)(Abort.run(a)).eval
 
-// `pipe` also supports multiple functions
+// `handle` also supports multiple functions
 val d: Result[String, Int] =
-    a.pipe(Abort.run(_), Env.run(10)).eval
+    a.handle(Abort.run(_), Env.run(10)).eval
 
 // Mixing effect handling, 'map' transformation, and 'eval'
 val e: Int =
-    a.pipe(
+    a.handle(
         Abort.run(_),
         Env.run(10),
         _.map(_.getOrElse(24)), // Convert Result to Int

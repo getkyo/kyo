@@ -70,10 +70,11 @@ class AsyncTest extends Test:
 
         "timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
-                .pipe(Async.timeout(10.millis))
-                .pipe(Async.runAndBlock(Duration.Infinity))
-                .pipe(Abort.run[Timeout](_))
-                .map {
+                .handle(
+                    Async.timeout(10.millis),
+                    Async.runAndBlock(Duration.Infinity),
+                    Abort.run[Timeout]
+                ).map {
                     case Result.Failure(_: Timeout) => succeed
                     case v                          => fail(v.toString())
                 }
@@ -81,9 +82,10 @@ class AsyncTest extends Test:
 
         "block timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
-                .pipe(Async.runAndBlock(10.millis))
-                .pipe(Abort.run[Timeout](_))
-                .map {
+                .handle(
+                    Async.runAndBlock(10.millis),
+                    Abort.run[Timeout]
+                ).map {
                     case Result.Failure(_: Timeout) => succeed
                     case v                          => fail(v.toString())
                 }
@@ -91,9 +93,10 @@ class AsyncTest extends Test:
 
         "multiple fibers timeout" in runNotJS {
             Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
-                .pipe(Async.runAndBlock(10.millis))
-                .pipe(Abort.run[Timeout](_))
-                .map {
+                .handle(
+                    Async.runAndBlock(10.millis),
+                    Abort.run[Timeout]
+                ).map {
                     case Result.Failure(_: Timeout) => succeed
                     case v                          => fail(v.toString())
                 }
@@ -1147,6 +1150,24 @@ class AsyncTest extends Test:
         }
     }
 
+    "fillIndexed" - {
+        "creates n computations with index access" in run {
+            for
+                results <- Async.fillIndexed(5) { i =>
+                    i * 2
+                }
+            yield assert(results == Chunk(0, 2, 4, 6, 8))
+        }
+
+        "handles empty input" in run {
+            for
+                results <- Async.fillIndexed(0) { i =>
+                    fail(s"Should not be called with i=$i")
+                }
+            yield assert(results.isEmpty)
+        }
+    }
+
     "memoize" - {
         "caches successful results" in run {
             for
@@ -1289,6 +1310,41 @@ class AsyncTest extends Test:
                 _ <- done.await
             yield assert(executed)
             end for
+        }
+    }
+
+    "zip" - {
+        "executes nine computations in parallel" in run {
+            for
+                result <- Async.zip(
+                    IO(1),
+                    IO(2),
+                    IO(3),
+                    IO(4),
+                    IO(5),
+                    IO(6),
+                    IO(7),
+                    IO(8),
+                    IO(9)
+                )
+            yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9))
+        }
+
+        "executes ten computations in parallel" in run {
+            for
+                result <- Async.zip(
+                    IO(1),
+                    IO(2),
+                    IO(3),
+                    IO(4),
+                    IO(5),
+                    IO(6),
+                    IO(7),
+                    IO(8),
+                    IO(9),
+                    IO(10)
+                )
+            yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
         }
     }
 

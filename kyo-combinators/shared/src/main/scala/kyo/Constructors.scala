@@ -384,13 +384,6 @@ extension (kyoObject: Kyo.type)
     def sleep(duration: Duration)(using Frame): Unit < Async =
         Async.sleep(duration)
 
-    /** Sleeps for all eternity.
-      *
-      * @return
-      *   An effect that sleeps forever and accomplishes nothing
-      */
-    def never(using Frame): Nothing < Async = Async.never
-
     /** Suspends an effect using IO.
       *
       * @param effect

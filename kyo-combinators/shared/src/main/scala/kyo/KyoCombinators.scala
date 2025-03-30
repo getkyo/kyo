@@ -80,7 +80,7 @@ extension [A, S](effect: A < S)
             Loop(intervalSchedule) { schedule =>
                 clock.now.map { now =>
                     schedule.next(now).map { (delay, nextSchedule) =>
-                        effect.delayed(delay).andThen(Loop.continue(nextSchedule))
+                        effect.delay(delay).andThen(Loop.continue(nextSchedule))
                     }.getOrElse {
                         effect.map(Loop.done)
                     }
@@ -100,7 +100,7 @@ extension [A, S](effect: A < S)
     def repeatAtInterval(backoff: Int => Duration, limit: Int)(using Flat[A], Frame): A < (S & Async) =
         Loop.indexed { i =>
             if i >= limit then effect.map(Loop.done)
-            else effect.delayed(backoff(i)).andThen(Loop.continue)
+            else effect.delay(backoff(i)).andThen(Loop.continue)
         }
 
     /** Performs this computation repeatedly with a limit.
@@ -229,8 +229,8 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Abort[Absent] effect
       */
-    def unless[S1](condition: Boolean < S1)(using Frame): A < (S & S1 & Abort[Absent]) =
-        condition.map(c => if c then Abort.fail(Absent) else effect)
+    def unless[S1](condition: Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
+        condition.map(c => if c then Absent else effect.map(Present(_)))
 
     /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
       * the Resource effect is handled.

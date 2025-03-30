@@ -3,15 +3,31 @@ package kyo
 import Ansi.*
 import kyo.kernel.*
 
-/** Represents a failed check condition.
+/** Validation effect for asserting conditions during computation.
   *
-  * `CheckFailed` is an exception that is thrown when a condition in a `Check` effect fails. It contains information about the failure,
-  * including a custom message and the frame where the failure occurred.
+  * The `Check` effect provides a functional alternative to traditional assertions, enabling runtime validation of conditions within the Kyo
+  * effect system. Unlike exceptions that immediately halt execution, checks can be collected, transformed, or handled in various ways
+  * without disrupting the control flow.
   *
-  * @param message
-  *   The custom message describing the failed condition
-  * @param frame
-  *   The [[Frame]] where the check failure occurred
+  * Checks create a `CheckFailed` instance when a condition isn't met, capturing both a message and the frame location where the failure
+  * occurred. This rich error context makes debugging easier by providing precise information about what failed and where.
+  *
+  * Three handling strategies give flexibility in how validation failures are processed:
+  *   - Collecting all failures for later inspection
+  *   - Converting failures to the `Abort` effect for immediate error propagation
+  *   - Discarding failures for non-critical validations
+  *
+  * The effect supports parallel computations where it can accumulate multiple failures across branches rather than short-circuiting on the
+  * first error, enabling more comprehensive validation reporting.
+  *
+  * @see
+  *   [[kyo.Check.require]] for creating conditional checks
+  * @see
+  *   [[kyo.Check.runChunk]] for collecting all failures during execution
+  * @see
+  *   [[kyo.Check.runAbort]] for converting failures to the Abort effect
+  * @see
+  *   [[kyo.Check.runDiscard]] for ignoring check failures
   */
 final class CheckFailed(val message: String, val frame: Frame) extends AssertionError(message):
     override def getMessage() = frame.render("Check failed! ".red.bold + message)

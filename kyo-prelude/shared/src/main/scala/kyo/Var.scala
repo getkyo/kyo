@@ -5,6 +5,38 @@ import kyo.Tag
 import kyo.kernel.*
 import scala.annotation.nowarn
 
+/** Represents mutable state in the Kyo effect system.
+  *
+  * `Var` provides a functional approach to mutable state, allowing computations to maintain and modify values throughout their execution.
+  * Unlike traditional variables, changes to a `Var` are tracked as effects, preserving referential transparency while enabling stateful
+  * operations.
+  *
+  * The effect encapsulates three fundamental operations:
+  *   - Reading the current state via `get` and `use` methods
+  *   - Setting a new state via `set` and `setDiscard` methods
+  *   - Updating the state based on its current value via `update` and `updateDiscard` methods
+  *
+  * This simple API enables complex stateful patterns while keeping state changes explicit and manageable.
+  *
+  * State is isolated to specific computation scopes through the handlers like `run` and `runTuple`. When a computation completes, the state
+  * can either be discarded or returned alongside the computation result, providing flexibility in how state is managed. Further isolation
+  * strategies are available through the `Isolate`, allowing for sophisticated state management patterns.
+  *
+  * Var is valuable for implementing accumulators, local mutable caches, stateful parsers, or any computation requiring tracked state
+  * modifications. It serves as a building block for higher-level stateful effects in the Kyo ecosystem.
+  *
+  * @tparam V
+  *   The type of value stored in the state container
+  *
+  * @see
+  *   [[kyo.Var.get]], [[kyo.Var.use]] for retrieving values
+  * @see
+  *   [[kyo.Var.set]], [[kyo.Var.update]] for modifying values
+  * @see
+  *   [[kyo.Var.run]], [[kyo.Var.runTuple]] for running computations with state
+  * @see
+  *   [[kyo.Var.isolate]] for state isolation strategies
+  */
 sealed trait Var[V] extends ArrowEffect[Const[Op[V]], Const[V]]
 
 object Var:
@@ -19,34 +51,23 @@ object Var:
     inline def get[V](using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         use[V](identity)
 
-    final class UseOps[V](dummy: Unit) extends AnyVal:
-        /** Invokes the provided function with the current value of the `Var`.
-          *
-          * @param f
-          *   The function to apply to the current value
-          * @tparam A
-          *   The return type of the function
-          * @tparam S
-          *   Additional effects in the function
-          * @return
-          *   The result of applying the function to the current value
-          */
-        inline def apply[A, S](inline f: V => A < S)(
-            using
-            inline tag: Tag[Var[V]],
-            inline frame: Frame
-        ): A < (Var[V] & S) =
-            ArrowEffect.suspendWith[V](tag, Get: Op[V])(f)
-    end UseOps
-
-    /** Creates a new UseOps instance for the given type V.
+    /** Invokes the provided function with the current value of the `Var`.
       *
-      * @tparam V
-      *   The type of the value stored in the Var
+      * @param f
+      *   The function to apply to the current value
+      * @tparam A
+      *   The return type of the function
+      * @tparam S
+      *   Additional effects in the function
       * @return
-      *   A new UseOps instance
+      *   The result of applying the function to the current value
       */
-    inline def use[V]: UseOps[V] = UseOps(())
+    inline def use[V](
+        using inline frame: Frame
+    )[A, S](inline f: V => A < S)(
+        using inline tag: Tag[Var[V]]
+    ): A < (Var[V] & S) =
+        ArrowEffect.suspendWith[V](tag, Get: Op[V])(f)
 
     /** Sets a new value and returns the previous one.
       *

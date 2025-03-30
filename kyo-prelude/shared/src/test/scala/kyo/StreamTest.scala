@@ -724,7 +724,7 @@ class StreamTest extends Test:
                 Env.use[Int] { multiplier =>
                     sum += i * multiplier
                 }
-            }.pipe(Env.run(2)).map { _ =>
+            }.handle(Env.run(2)).map { _ =>
                 assert(sum == 30)
             }
         }
@@ -768,7 +768,7 @@ class StreamTest extends Test:
                 Env.use[Int] { multiplier =>
                     sum += chunk.foldLeft(0)(_ + _) * multiplier
                 }
-            }.pipe(Env.run(2)).map { _ =>
+            }.handle(Env.run(2)).map { _ =>
                 assert(sum == 30)
             }
         }
@@ -807,6 +807,22 @@ class StreamTest extends Test:
             Env.use[Seq[Int]](seq => Stream.init(seq))
         Env.run(Seq(1, 2, 3))(stream.map(_.run)).eval
         succeed
+    }
+
+    "splitAt" - {
+        "split under length" in run {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAt(4).map: (chunk, restStream) =>
+                assert(chunk == Chunk(0, 1, 2, 3))
+                assert(restStream.run.eval == Seq(4, 5, 6, 7, 8, 9))
+        }
+
+        "split over length" in run {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAt(12).map: (chunk, restStream) =>
+                assert(chunk == Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+                assert(restStream.run.eval == Seq())
+        }
     }
 
     "edge cases" - {
