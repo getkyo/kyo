@@ -553,7 +553,7 @@ class ChannelTest extends Test:
                 assert(drained.isFailure)
                 assert(isClosed)
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -573,7 +573,7 @@ class ChannelTest extends Test:
                 polled      <- pollFiber.get
                 channelSize <- channel.size
             yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + channelSize))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -592,7 +592,7 @@ class ChannelTest extends Test:
                 puts  <- putFiber.get
                 takes <- takeFiber.get
             yield assert(puts.count(_.isSuccess) == takes.count(_.isSuccess) && takes.flatMap(_.toMaybe.toList).toSet == (1 to 100).toSet))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -615,7 +615,7 @@ class ChannelTest extends Test:
                 assert(offered.count(_.contains(true)) == backlog.get.size - size)
                 assert(isClosed)
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -639,7 +639,7 @@ class ChannelTest extends Test:
                 assert(backlog.flatMap(_.toList.flatten).size == offered.count(_.contains(true)))
                 assert(isClosed)
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -675,7 +675,7 @@ class ChannelTest extends Test:
                 assert(totalOffered - totalTaken == backlog.get.size)
                 assert(isClosed)
             )
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -698,7 +698,7 @@ class ChannelTest extends Test:
                 takeRes   <- takeFiber.get
                 finalSize <- channel.size
             yield assert(putRes.flatten.toSet == takeRes.toSet))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -723,7 +723,7 @@ class ChannelTest extends Test:
                 takeRes   <- takeFiber.get
                 finalSize <- channel.size
             yield assert(putRes.flatten.toSet == takeRes.flatten.toSet))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 

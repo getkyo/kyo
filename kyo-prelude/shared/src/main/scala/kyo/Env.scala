@@ -112,54 +112,37 @@ object Env:
                     runAll(env)(value)
                 }
 
-    /** Provides operations for using values from the environment.
+    /** Applies a function to the value from the environment.
+      *
+      * @param f
+      *   The function to apply to the environment value
+      * @return
+      *   A computation that applies the function to the environment value
+      */
+    inline def use[R](
+        using Frame
+    )[A, S](inline f: R => A < S)(
+        using inline tag: Tag[R]
+    ): A < (Env[R] & S) =
+        ContextEffect.suspendWith(erasedTag[R]) { map =>
+            f(map.asInstanceOf[TypeMap[R]].get(using tag))
+        }
+
+    /** Applies a function to the entire TypeMap of environment values specified by the type intersection R.
+      *
+      * This is similar to `use` but provides access to the complete environment context rather than just a single value. The type parameter
+      * R should be an intersection type of all the values you want to access, for example: `useAll[String & Int]` will provide a TypeMap
+      * containing String and Int values.
       *
       * @tparam R
-      *   The type of value in the environment
+      *   An intersection type (A & B & C...) specifying which values to access from the environment
+      * @return
+      *   Operations for applying functions to the environment TypeMap
       */
-    final class UseOps[R](dummy: Unit) extends AnyVal:
-        /** Applies a function to the value from the environment.
-          *
-          * @param f
-          *   The function to apply to the environment value
-          * @return
-          *   A computation that applies the function to the environment value
-          */
-        inline def apply[A, S](inline f: R => A < S)(
-            using
-            inline tag: Tag[R],
-            inline frame: Frame
-        ): A < (Env[R] & S) =
-            ContextEffect.suspendWith(erasedTag[R]) { map =>
-                f(map.asInstanceOf[TypeMap[R]].get(using tag))
-            }
-    end UseOps
-
-    /** Creates a UseOps instance for a given type. */
-    inline def use[R >: Nothing]: UseOps[R] = UseOps(())
-
-    final class UseAllOps[R](dummy: Unit) extends AnyVal:
-
-        /** Applies a function to the entire TypeMap of environment values specified by the type intersection R.
-          *
-          * This is similar to `use` but provides access to the complete environment context rather than just a single value. The type
-          * parameter R should be an intersection type of all the values you want to access, for example: `useAll[String & Int]` will
-          * provide a TypeMap containing String and Int values.
-          *
-          * @tparam R
-          *   An intersection type (A & B & C...) specifying which values to access from the environment
-          * @return
-          *   Operations for applying functions to the environment TypeMap
-          */
-        inline def apply[A, S](inline f: TypeMap[R] => A < S)(
-            using inline frame: Frame
-        ): A < (Env[R] & S) =
-            ContextEffect.suspendWith(erasedTag[R]) { map =>
-                f(map.asInstanceOf[TypeMap[R]])
-            }
-    end UseAllOps
-
-    inline def useAll[R >: Nothing]: UseAllOps[R] = UseAllOps(())
+    inline def useAll[R](using Frame)[A, S](inline f: TypeMap[R] => A < S): A < (Env[R] & S) =
+        ContextEffect.suspendWith(erasedTag[R]) { map =>
+            f(map.asInstanceOf[TypeMap[R]])
+        }
 
     private val cachedIsolate                         = Isolate.Contextual.derive[Env[Any], Any]
     given isolate[V]: Isolate.Contextual[Env[V], Any] = cachedIsolate.asInstanceOf[Isolate.Contextual[Env[V], Any]]
