@@ -383,7 +383,7 @@ object Channel:
         end BaseUnsafe
 
         final class ZeroCapacityUnsafe[A](using initFrame: Frame, allow: AllowUnsafe) extends BaseUnsafe[A]:
-            val isClosed = new java.util.concurrent.atomic.AtomicBoolean()
+            val isClosed = AtomicBoolean.Unsafe.init(false)
 
             private val closedResult                     = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
             def asResult[A](value: A): Result[Closed, A] = if isClosed.get() then closedResult else Result.succeed(value)
@@ -498,7 +498,7 @@ object Channel:
 
             def empty()(using AllowUnsafe)  = asResult(true)
             def full()(using AllowUnsafe)   = asResult(true)
-            def closed()(using AllowUnsafe) = isClosed.get
+            def closed()(using AllowUnsafe) = isClosed.get()
 
             @tailrec protected def flush(): Unit =
                 // This method ensures that all values are processed
