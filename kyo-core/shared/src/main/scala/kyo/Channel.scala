@@ -352,7 +352,7 @@ object Channel:
             case Value(value: A, override val promise: Promise.Unsafe[Closed, Unit])
         end Put
 
-        abstract class BaseUnsafe[A] extends Unsafe[A]:
+        sealed abstract class BaseUnsafe[A] extends Unsafe[A]:
             val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A]](8)
             val puts  = new MpmcUnboundedXaddArrayQueue[Put[A]](8)
 
