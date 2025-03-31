@@ -339,6 +339,13 @@ object Channel:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
+        def init[A](
+            capacity: Int,
+            access: Access = Access.MultiProducerMultiConsumer
+        )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
+            if capacity <= 0 then ZeroCapacityUnsafe[A]
+            else NonZeroCapacityUnsafe(capacity, access)
+
         private[Unsafe] enum Put[A]:
             val promise: Promise.Unsafe[Closed, Unit]
             case Batch(batch: Chunk[A], override val promise: Promise.Unsafe[Closed, Unit])
@@ -351,7 +358,7 @@ object Channel:
 
             protected def flush(): Unit
 
-            def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
+            final def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
                 val promise = Promise.Unsafe.init[Closed, Unit]()
                 val put     = Put.Value(value, promise)
                 puts.add(put)
@@ -359,7 +366,7 @@ object Channel:
                 promise
             end putFiber
 
-            def putBatchFiber(values: Seq[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
+            final def putBatchFiber(values: Seq[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
                 val promise = Promise.Unsafe.init[Closed, Unit]()
                 val put     = Put.Batch(Chunk.from(values), promise)
                 puts.add(put)
@@ -367,7 +374,7 @@ object Channel:
                 promise
             end putBatchFiber
 
-            def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A] =
+            final def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A] =
                 val promise = Promise.Unsafe.init[Closed, A]()
                 takes.add(promise)
                 flush()
@@ -388,7 +395,7 @@ object Channel:
             def offer(value: A)(using AllowUnsafe) =
                 Maybe(takes.poll()) match
                     case Absent =>
-                        asResult(puts.offer(Put.Value(value, Promise.Unsafe.init[Closed, Unit]())))
+                        asResult(false)
                     case Present(takePromise) =>
                         if takePromise.complete(Result.succeed(value)) then asResult(true)
                         else offer(value)
@@ -402,8 +409,7 @@ object Channel:
                             Maybe(takes.poll()) match
                                 case Absent =>
                                     asResult {
-                                        if puts.offer(Put.Batch(currentChunk, Promise.Unsafe.init[Closed, Unit]())) then Chunk.empty
-                                        else currentChunk
+                                        currentChunk
                                     }
                                 case Present(takePromise) =>
                                     if takePromise.complete(Result.succeed(value)) then loop(currentChunk.dropLeft(1))
@@ -744,13 +750,6 @@ object Channel:
                 end if
             end flush
         end NonZeroCapacityUnsafe
-
-        def init[A](
-            capacity: Int,
-            access: Access = Access.MultiProducerMultiConsumer
-        )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
-            if capacity <= 0 then ZeroCapacityUnsafe[A]
-            else NonZeroCapacityUnsafe(capacity, access)
 
     end Unsafe
 end Channel
