@@ -342,6 +342,98 @@ class StreamTest extends Test:
         }
     }
 
+    "collect" - {
+        "non-empty" in {
+            assert(
+                Stream.init(Seq(None, Some(2), None)).collect({ case Some(v) => v }).run.eval ==
+                    Seq(2)
+            )
+        }
+
+        "all in" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collect({ case any => any }).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "all out" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collect({ case any if false => any }).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(1 to n).collect({ case v if v % 2 == 0 => v }).run.eval.size ==
+                    n / 2
+            )
+        }
+
+        "with effects" in {
+            val predicate: PartialFunction[Option[Int], Int < Var[Int]] = {
+                case Some(v) => Var.get[Int].map(i => Var.set(i + 1).andThen(v + i))
+            }
+            val result = Var.run(0)(Stream.init((1 to 10).map(v => if v % 2 == 0 then Some(v) else None)).collect(predicate).run).eval
+            assert(
+                result == (2 to 10 by 2).zip(0 to 10).map(_ + _)
+            )
+        }
+    }
+
+    "collectWhile" - {
+        "take none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectWhile({ case i if i < 0 => i + 1 }).run.eval == Seq.empty
+            )
+        }
+
+        "take some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhile({ case i if i < 4 => i + 1 }).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take some even if subsequent elements pass predicate" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhile({ case i if i != 4 => i + 1 }).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhile({ case i if i < 10 => i + 1 }).run.eval ==
+                    Seq(2, 3, 4, 5, 6)
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).collectWhile({ case i => i + 1 }).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "with effects" in {
+            val stream = Stream.init(Seq(1, 2, 3, 4, 5))
+            val taken = stream.collectWhile {
+                case v if v < 4 =>
+                    Var.update[Int](_ + 1).map(i => i + v)
+            }.run
+            assert(Var.run(0)(taken).eval == Seq(2, 4, 6))
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).collectWhile({ case 1 => 1 }).run.eval ==
+                    Seq.fill(n)(1)
+            )
+        }
+    }
+
     "changes" - {
         "no duplicates" in {
             assert(

@@ -272,14 +272,16 @@ sealed abstract class Stream[V, -S]:
         discr: Stream.Dummy,
         frame: Frame
     ): Stream[V, S] =
-        Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
+        Stream[V, S](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
-                (input, state, cont) =>
-                    if !state then (false, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
-                    else if input.isEmpty then (state, cont(()))
+                (input, _, cont) =>
+                    if input.isEmpty then ((), cont(()))
                     else
                         val c = input.takeWhile(f)
-                        Emit.valueWith(c)((c.size == input.size, cont(())))
+                        Emit.valueWith(c):
+                            if c.size == input.size then ((), cont(()))
+                            else ((), Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
+                    end if
         ))
     end takeWhile
 
@@ -350,6 +352,88 @@ sealed abstract class Stream[V, -S]:
                     val c = input.filter(f)
                     if c.isEmpty then ((), cont(()))
                     else Emit.valueWith(c)(((), cont(())))
+        ))
+
+    /** Transform the stream with a partial function, filtering out values for which the partial function is undefined. Combines the
+      * functionality of map and filter.
+      *
+      * @param f
+      *   Partial function transforming V to V2
+      * @return
+      *   A new stream containing transformed elements
+      */
+    def collect[V2, S2](f: PartialFunction[V, V2 < S2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2] =
+        Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    Kyo.collect(input) {
+                        case v if f.isDefinedAt(v) => f(v).map(Present(_))
+                        case _                     => Absent
+                    }.map: c =>
+                        Emit.valueWith(c)(((), cont(())))
+        ))
+
+    def collect[V2](f: PartialFunction[V, V2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.collect(f)
+                    if c.isEmpty then ((), cont(()))
+                    else Emit.valueWith(c)(((), cont(())))
+        ))
+
+    /** Transform the stream with a partial function, terminating the stream when the first element is encountered for which the partial
+      * function is undefined. Combines the functionality of map and takeWhile.
+      *
+      * @param f
+      *   Partial function transforming V to V2
+      * @return
+      *   A new stream containing transformed elements
+      */
+    def collectWhile[V2, S2](f: PartialFunction[V, V2 < S2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2] =
+        Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    Kyo.collect(input.takeWhile(f.isDefinedAt)) {
+                        case v if f.isDefinedAt(v) => f(v).map(Present(_))
+                        case _                     => Absent
+                    }.map: c =>
+                        if c.isEmpty && c.size != input.size then ((), Kyo.lift(()))
+                        else
+                            Emit.valueWith(c):
+                                if c.size != input.size then ((), Kyo.lift(()))
+                                else ((), cont(()))
+        ))
+
+    def collectWhile[V2](f: PartialFunction[V, V2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.takeWhile(f.isDefinedAt).collect(f)
+                    if c.isEmpty && c.size != input.size then ((), Kyo.lift(()))
+                    else
+                        Emit.valueWith(c):
+                            if c.size != input.size then ((), Kyo.lift(()))
+                            else ((), cont(()))
+                    end if
         ))
 
     /** Emits only elements that are different from their predecessor.
