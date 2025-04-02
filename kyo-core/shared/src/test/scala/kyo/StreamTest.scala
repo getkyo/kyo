@@ -16,7 +16,7 @@ class StreamTest extends Test:
             }.andThen(succeed)
         }
 
-        "mergeAllRacing" in run {
+        "mergeAllHalting" in run {
             Choice.run {
                 for
                     size <- Choice.get(Seq(0, 1, 32, 1024))
