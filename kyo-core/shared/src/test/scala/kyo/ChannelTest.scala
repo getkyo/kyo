@@ -698,7 +698,7 @@ class ChannelTest extends Test:
         "putBatch and take" in run {
             (for
                 size    <- Choice.get(Seq(0, 1, 2, 10, 100))
-                channel <- Channel.init[Int](0)
+                channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 
                 putFiber <- Async.run(

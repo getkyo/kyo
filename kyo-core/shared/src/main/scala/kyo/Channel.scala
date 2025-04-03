@@ -2,8 +2,6 @@ package kyo
 
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
-import scala.collection.mutable.Builder
-import scala.util.NotGiven
 
 /** A channel for communicating between fibers.
   *
