@@ -15,7 +15,7 @@ extension (streamObj: Stream.type)
                     ))
                     _ <- channel
                         .streamUntilClosed()
-                        .collectWhile { case Some(v) => v }
+                        .collectWhile(Maybe.fromOption)
                         .emit
                 yield ()
 
@@ -33,7 +33,7 @@ extension (streamObj: Stream.type)
                     ))
                     _ <- channel
                         .streamUntilClosed()
-                        .collectWhile { case Some(v) => v }
+                        .collectWhile(Maybe.fromOption)
                         .emit
                 yield ()
 end extension
@@ -59,7 +59,7 @@ extension [V, S](stream: Stream[V, S])
                     )
                     _ <- channel
                         .streamUntilClosed()
-                        .collectWhile { case Some(v) => v }
+                        .collectWhile(Maybe.fromOption)
                         .emit
                 yield ()
 

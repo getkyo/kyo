@@ -362,7 +362,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A new stream containing transformed elements
       */
-    def collect[V2, S2](f: PartialFunction[V, V2 < S2])(using
+    def collect[V2, S2](f: V => Maybe[V2] < S2)(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -370,14 +370,11 @@ sealed abstract class Stream[V, -S]:
         Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
                 (input, _, cont) =>
-                    Kyo.collect(input) {
-                        case v if f.isDefinedAt(v) => f(v).map(Present(_))
-                        case _                     => Absent
-                    }.map: c =>
+                    Kyo.collect(input)(f).map: c =>
                         Emit.valueWith(c)(((), cont(())))
         ))
 
-    def collect[V2](f: PartialFunction[V, V2])(using
+    def collect[V2](f: V => Maybe[V2])(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
         discr: Stream.Dummy,
@@ -386,7 +383,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
                 (input, _, cont) =>
-                    val c = input.collect(f)
+                    val c = input.map(f).collect({ case Present(v) => v })
                     if c.isEmpty then ((), cont(()))
                     else Emit.valueWith(c)(((), cont(())))
         ))
@@ -399,7 +396,7 @@ sealed abstract class Stream[V, -S]:
       * @return
       *   A new stream containing transformed elements
       */
-    def collectWhile[V2, S2](f: PartialFunction[V, V2 < S2])(using
+    def collectWhile[V2, S2](f: V => Maybe[V2] < S2)(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -407,18 +404,18 @@ sealed abstract class Stream[V, -S]:
         Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
                 (input, _, cont) =>
-                    Kyo.collect(input.takeWhile(f.isDefinedAt)) {
-                        case v if f.isDefinedAt(v) => f(v).map(Present(_))
-                        case _                     => Absent
-                    }.map: c =>
-                        if c.isEmpty && c.size != input.size then ((), Kyo.lift(()))
-                        else
-                            Emit.valueWith(c):
-                                if c.size != input.size then ((), Kyo.lift(()))
-                                else ((), cont(()))
+                    Kyo.foreach(input)(f)
+                        .map(_.takeWhile(_.isDefined)
+                            .collect({ case Present(v) => v }))
+                        .map: c =>
+                            if c.isEmpty && c.size != input.size then ((), Kyo.lift(()))
+                            else
+                                Emit.valueWith(c):
+                                    if c.size != input.size then ((), Kyo.lift(()))
+                                    else ((), cont(()))
         ))
 
-    def collectWhile[V2](f: PartialFunction[V, V2])(using
+    def collectWhile[V2](f: V => Maybe[V2])(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
         discr: Stream.Dummy,
@@ -427,7 +424,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
             [C] =>
                 (input, _, cont) =>
-                    val c = input.takeWhile(f.isDefinedAt).collect(f)
+                    val c = input.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
                     if c.isEmpty && c.size != input.size then ((), Kyo.lift(()))
                     else
                         Emit.valueWith(c):
