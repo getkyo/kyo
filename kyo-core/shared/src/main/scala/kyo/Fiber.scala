@@ -273,6 +273,13 @@ object Fiber extends FiberPlatformSpecific:
           */
         def waiters(using Frame): Int < IO = IO(self.waiters())
 
+        /** Polls the Fiber for a result without blocking.
+          *
+          * @return
+          *   Maybe containing the Result if the Fiber is done, or Absent if still pending
+          */
+        def poll(using Frame): Maybe[Result[E, A]] < IO = IO(self.poll())
+
     end extension
 
     case class Interrupted(at: Frame)
@@ -571,6 +578,8 @@ object Fiber extends FiberPlatformSpecific:
             def safe: Fiber[E, A] = self
 
             def waiters()(using AllowUnsafe): Int = self.waiters()
+
+            def poll()(using AllowUnsafe): Maybe[Result[E, A]] = self.poll()
         end extension
     end Unsafe
 
@@ -642,6 +651,13 @@ object Fiber extends FiberPlatformSpecific:
               */
             def waiters(using Frame): Int < IO = IO(self.waiters())
 
+            /** Polls the Promise for a result without blocking.
+              *
+              * @return
+              *   Maybe containing the Result if the Promise is done, or Absent if still pending
+              */
+            def poll(using Frame): Maybe[Result[E, A]] < IO = IO(self.poll())
+
         end extension
 
         opaque type Unsafe[+E, +A] <: Fiber.Unsafe[E, A] = IOPromise[E, A]
@@ -665,6 +681,7 @@ object Fiber extends FiberPlatformSpecific:
                 def becomeDiscard[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Unit = discard(self.become(other))
                 def safe: Promise[E, A]                                                            = self
                 def waiters()(using AllowUnsafe): Int                                              = self.waiters()
+                def poll()(using AllowUnsafe): Maybe[Result[E, A]]                                 = self.poll()
             end extension
         end Unsafe
     end Promise

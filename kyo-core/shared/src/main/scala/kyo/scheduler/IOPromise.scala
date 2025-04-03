@@ -43,9 +43,16 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
     end done
 
     final def poll(): Maybe[Result[E, A]] =
-        this.state match
-            case _: (Pending[?, ?] | Linked[?, ?]) => Absent
-            case r                                 => Present(r.asInstanceOf[Result[E, A]])
+        @tailrec def pollLoop(promise: IOPromise[E, A]): Maybe[Result[E, A]] =
+            promise.state match
+                case p: Pending[E, A] @unchecked =>
+                    Absent
+                case l: Linked[E, A] @unchecked =>
+                    pollLoop(l.p)
+                case r =>
+                    Present(r.asInstanceOf[Result[E, A]])
+        pollLoop(this)
+    end poll
 
     final protected def isPending(): Boolean =
         state.isInstanceOf[Pending[?, ?]]
