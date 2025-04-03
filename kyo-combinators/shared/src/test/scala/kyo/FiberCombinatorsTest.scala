@@ -1,6 +1,6 @@
 package kyo
 
-class FiberCombinatorTest extends Test:
+class FiberCombinatorsTest extends Test:
 
     "fibers" - {
         "construct" - {
@@ -212,4 +212,4 @@ class FiberCombinatorTest extends Test:
             }
         }
     }
-end FiberCombinatorTest
+end FiberCombinatorsTest

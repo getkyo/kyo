@@ -2,7 +2,7 @@ package kyo
 
 import scala.concurrent.Future
 
-class ResourceCombinatorTest extends Test:
+class ResourceCombinatorsTest extends Test:
 
     "construct" - {
         "should construct a resource with acquireRelease" in run {
@@ -55,4 +55,4 @@ class ResourceCombinatorTest extends Test:
             }
         }
     }
-end ResourceCombinatorTest
+end ResourceCombinatorsTest
