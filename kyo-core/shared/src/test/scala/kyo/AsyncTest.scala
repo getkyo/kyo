@@ -1362,6 +1362,7 @@ class AsyncTest extends Test:
                 }
                 _       <- done.await
                 waiters <- fiber.waiters
+                _       <- exit.release
             yield assert(waiters == 1)
         }
         "with delay" in run {
@@ -1375,6 +1376,7 @@ class AsyncTest extends Test:
                 }
                 _       <- done.await
                 waiters <- fiber.waiters
+                _       <- exit.release
             yield assert(waiters == 1)
         }
     }
