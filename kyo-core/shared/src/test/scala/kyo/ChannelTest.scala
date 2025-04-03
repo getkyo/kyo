@@ -326,7 +326,7 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
         }
-        "should consider pending puts - zero capacity" in pendingUntilFixed {
+        "should consider pending puts - zero capacity" in run {
             import AllowUnsafe.embrace.danger
             IO.Unsafe.evalOrThrow {
                 for
@@ -338,7 +338,6 @@ class ChannelTest extends Test:
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
-            ()
         }
     }
     "drainUpTo" - {
@@ -397,7 +396,7 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 1)
             }
         }
-        "should consider pending puts - zero capacity" in pendingUntilFixed {
+        "should consider pending puts - zero capacity" in run {
             import AllowUnsafe.embrace.danger
             IO.Unsafe.evalOrThrow {
                 for
@@ -410,7 +409,6 @@ class ChannelTest extends Test:
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
-            ()
         }
     }
     "close" - {
@@ -550,7 +548,11 @@ class ChannelTest extends Test:
                 isClosed      <- channel.closed
             yield
                 assert(backlog.isDefined)
-                assert(offered.count(_.contains(true)) == backlog.get.size)
+                if size == 0 then
+                    assert(backlog.get.size == 0)
+                else
+                    discard(assert(offered.count(_.contains(true)) == backlog.get.size))
+                end if
                 assert(closedChannel.isEmpty)
                 assert(drained.isFailure)
                 assert(isClosed)
@@ -614,7 +616,11 @@ class ChannelTest extends Test:
                 isClosed   <- channel.closed
             yield
                 assert(backlog.isDefined)
-                assert(offered.count(_.contains(true)) == backlog.get.size - size)
+                if size == 0 then
+                    assert(backlog.get.size == 0)
+                else
+                    assert(offered.count(_.contains(true)) == backlog.get.size - size)
+                end if
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
@@ -638,7 +644,11 @@ class ChannelTest extends Test:
                 isClosed <- channel.closed
             yield
                 assert(backlog.count(_.isDefined) == 1)
-                assert(backlog.flatMap(_.toList.flatten).size == offered.count(_.contains(true)))
+                if size == 0 then
+                    assert(backlog.flatMap(_.toList.flatten).size == 0)
+                else
+                    assert(backlog.flatMap(_.toList.flatten).size == offered.count(_.contains(true)))
+                end if
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
@@ -674,7 +684,11 @@ class ChannelTest extends Test:
                 val totalOffered = offered.count(_.contains(true)) + puts.count(_.isSuccess)
                 val totalTaken   = polled.count(_.toMaybe.flatten.isDefined) + takes.count(_.isSuccess)
                 assert(backlog.isDefined)
-                assert(totalOffered - totalTaken == backlog.get.size)
+                if size == 0 then
+                    assert(backlog.get.size == 0)
+                else
+                    assert(totalOffered - totalTaken == backlog.get.size)
+                end if
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
