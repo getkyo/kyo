@@ -286,7 +286,7 @@ object Schedule:
         if period == Duration.Zero then immediate
         else Anchored(period, offset, Maybe.empty)
 
-    private[kyo] object internal:
+    object internal:
 
         case object Immediate extends Schedule:
             val _next              = Maybe((Duration.Zero, Done))

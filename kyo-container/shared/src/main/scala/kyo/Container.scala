@@ -2,22 +2,16 @@ package kyo
 
 import kyo.debug.Debug
 
-case class Container(id: String) extends AnyVal:
+case class Container(config: Container.Config, id: String):
 
-    def state(using Frame): Container.State < (Async & Abort[ContainerException]) =
-        Container.Service.use(_.state(id))
+    def status(using Frame): Container.Status < (Async & Abort[ContainerException]) =
+        Container.Service.use(_.status(id))
 
     def stop(using Frame): Unit < (Async & Abort[ContainerException]) =
-        Container.Service.use(_.stop(id))
+        Container.Service.use(_.stop(id, config.stopTimeout))
 
     def execute(command: String)(using Frame): String < (Async & Abort[ContainerException]) =
         Container.Service.use(_.execute(id, command))
-
-    def copyTo(source: Path, destination: Path)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        Container.Service.use(_.copyTo(id, source, destination))
-
-    def copyFrom(source: Path, destination: Path)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        Container.Service.use(_.copyFrom(id, source, destination))
 
     def logs(using Frame): String < (Async & Abort[ContainerException]) =
         Container.Service.use(_.logs(id))
@@ -27,8 +21,9 @@ end Container
 case class ContainerException(message: Text, cause: Text | Throwable = "")(using Frame) extends KyoException(message, cause)
 
 object Container:
-    enum State derives CanEqual:
-        case Running, Stopped, Failed
+    enum Status derives CanEqual:
+        case Running, Stopped, Failed, Created, Paused
+        case Other(rawStatus: String)
 
     case class Config(
         image: String,
@@ -36,7 +31,9 @@ object Container:
         ports: List[Config.Port] = Nil,
         env: Map[String, String] = Map.empty,
         volumes: List[Config.Volume] = Nil,
-        waitFor: Config.WaitFor = Config.WaitFor.default
+        waitFor: Config.WaitFor = Config.WaitFor.default,
+        keepAlive: Boolean = true,
+        stopTimeout: Duration = 5.seconds
     ) derives CanEqual
 
     object Config:
@@ -47,24 +44,22 @@ object Container:
             def apply(container: Container)(using Frame): Unit < (Async & Abort[ContainerException])
 
         object WaitFor:
-            val default = healthCheck()
+            val default = HealthCheck()
 
-            def healthCheck(
-                command: String = "echo 1",
-                expectedResult: String = "1",
+            case class HealthCheck(
+                command: String = "echo ok",
+                expectedResult: String = "ok",
                 retryPolicy: Schedule = Schedule.fixed(1.second).take(10)
-            ): WaitFor =
-                new WaitFor:
-                    def apply(container: Container)(using frame: Frame) =
-                        Retry[ContainerException](retryPolicy) {
-                            container.execute(command).map { res =>
-                                val x = res
-                                println(x)
-                                Abort.when(res != "1")(
-                                    Abort.fail(ContainerException(s"Invalid health check return. Expected '$expectedResult' but got '$res"))
-                                )
-                            }
+            ) extends WaitFor:
+                def apply(container: Container)(using frame: Frame) =
+                    Retry[ContainerException](retryPolicy) {
+                        container.execute(command).map { res =>
+                            Abort.when(res != expectedResult)(
+                                Abort.fail(ContainerException(s"Invalid health check return. Expected '$expectedResult' but got '$res"))
+                            )
                         }
+                    }
+            end HealthCheck
 
             case class LogMessage(
                 message: String,
@@ -96,8 +91,8 @@ object Container:
             for
                 id <- service.create(config)
                 _  <- service.start(id)
-                _  <- Resource.ensure(service.stop(id))
-                container = new Container(id)
+                _  <- Resource.ensure(service.stop(id, config.stopTimeout))
+                container = new Container(config, id)
                 _ <- config.waitFor(container)
             yield container
         }
@@ -108,7 +103,9 @@ object Container:
         ports: List[(Int, Int)] = Nil,
         env: Map[String, String] = Map.empty,
         volumes: List[(Path, Path)] = Nil,
-        waitFor: Config.WaitFor = Config.WaitFor.healthCheck()
+        waitFor: Config.WaitFor = Config.WaitFor.default,
+        keepAlive: Boolean = true,
+        stopTimeout: Duration = 5.seconds
     )(using Frame): Container < (Async & Abort[ContainerException] & Resource) =
         init(Config(
             image,
@@ -116,17 +113,17 @@ object Container:
             ports.map((h, c) => Config.Port(h, c)),
             env,
             volumes.map((h, c) => Config.Volume(h, c)),
-            waitFor
+            waitFor,
+            keepAlive,
+            stopTimeout
         ))
 
     abstract class Service:
         def create(config: Config)(using Frame): String < (Async & Abort[ContainerException])
         def start(id: String)(using Frame): Unit < (Async & Abort[ContainerException])
-        def stop(id: String)(using Frame): Unit < (Async & Abort[ContainerException])
-        def state(id: String)(using Frame): State < (Async & Abort[ContainerException])
+        def stop(id: String, timeout: Duration)(using Frame): Unit < (Async & Abort[ContainerException])
+        def status(id: String)(using Frame): Status < (Async & Abort[ContainerException])
         def execute(id: String, command: String)(using Frame): String < (Async & Abort[ContainerException])
-        def copyTo(id: String, source: Path, destination: Path)(using Frame): Unit < (Async & Abort[ContainerException])
-        def copyFrom(id: String, source: Path, destination: Path)(using Frame): Unit < (Async & Abort[ContainerException])
         def logs(id: String)(using Frame): String < (Async & Abort[ContainerException])
     end Service
 
@@ -147,44 +144,52 @@ object Container:
 
         class ProcessService(commandName: String) extends Service:
             private def runCommand(args: String*)(using frame: Frame) =
-                println(args.mkString(" "))
-                val command = Process.Command((commandName +: args)*)
-                Abort.run[Throwable](command.text)
-                    .map {
-                        case Result.Error(ex) =>
-                            println(ex)
-                            Abort.fail(ContainerException(s"Command failed: $command", ex))
-                        case Result.Success(v) =>
-                            println(v)
-                            v
+                val command = commandName +: args
+                Process.Command(command*).spawn.map { process =>
+                    process.waitFor.map {
+                        case 0 =>
+                            new String(process.stdout.readAllBytes()).trim
+                        case code =>
+                            Abort.fail(ContainerException(s"Command failed with error code $code: ${command.mkString(" ")}"))
                     }
+                }
             end runCommand
 
             def create(config: Config)(using Frame) =
-                val createArgs = Seq("create") ++
-                    config.name.map(n => Seq("--name", n)).getOrElse(Seq.empty) ++
-                    config.ports.flatMap(p => Seq("-p", s"${p.host}:${p.container}")) ++
-                    config.env.flatMap((k, v) => Seq("-e", s"$k=$v")) ++
-                    config.volumes.flatMap(v => Seq("-v", s"${v.host}:${v.container}")) ++
-                    Seq(config.image)
-                runCommand(createArgs*).map(_.trim)
+                val createArgs =
+                    Seq("create") ++
+                        config.name.map(n => Seq("--name", n)).getOrElse(Seq.empty) ++
+                        config.ports.flatMap(p => Seq("-p", s"${p.host}:${p.container}")) ++
+                        config.env.flatMap((k, v) => Seq("-e", s"$k=$v")) ++
+                        config.volumes.flatMap(v => Seq("-v", s"${v.host}:${v.container}")) ++
+                        Seq("-t") ++
+                        Seq(config.image) ++
+                        (if config.keepAlive then Seq("tail", "-f", "/dev/null") else Seq.empty)
+                runCommand(createArgs*)
             end create
 
-            def start(id: String)(using Frame) = runCommand("start", id).unit
-            def stop(id: String)(using Frame)  = runCommand("stop", id).unit
-            def state(id: String)(using Frame) =
-                runCommand("inspect", "-f", "{{.State.Status}}", id).map {
-                    case "running" => State.Running
-                    case "exited"  => State.Stopped
-                    case _         => State.Failed
+            def start(id: String)(using Frame) =
+                runCommand("start", id).unit
+
+            def stop(id: String, timeout: Duration)(using Frame) =
+                runCommand("stop", s"--time=${timeout.toSeconds}", id).unit
+
+            def status(id: String)(using Frame) =
+                runCommand("inspect", "-f", "{{.State.Status}}", id).map(_.toLowerCase).map {
+                    case "running"    => Status.Running
+                    case "exited"     => Status.Stopped
+                    case "stopped"    => Status.Stopped
+                    case "created"    => Status.Created
+                    case "configured" => Status.Created
+                    case "paused"     => Status.Paused
+                    case other        => Status.Other(other)
                 }
+
             def execute(id: String, command: String)(using Frame) =
-                runCommand("exec", id, s""""sh -c '$command'"""")
-            def copyTo(id: String, source: Path, destination: Path)(using Frame) =
-                runCommand("cp", source.toString, s"$id:${destination.toString}").unit
-            def copyFrom(id: String, source: Path, destination: Path)(using Frame) =
-                runCommand("cp", s"$id:${source.toString}", destination.toString).unit
+                runCommand("exec", id, "sh", "-c", command)
+
             def logs(id: String)(using Frame) = runCommand("logs", id)
+
         end ProcessService
 
         private def detectService(using frame: Frame): Service < (IO & Abort[ContainerException]) =

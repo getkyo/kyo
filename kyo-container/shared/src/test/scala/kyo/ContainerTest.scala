@@ -5,13 +5,30 @@ import kyo.internal.LayerMacros.Validated.succeed
 
 class ContainerTest extends Test:
 
-    "init creates and starts a container" in run {
-        val config = Container.Config("alpine:latest")
+    val testImage = "alpine:latest"
 
-        Container.init(config).map { container =>
-            println(container)
-            succeed
-        }
+    "init" in run {
+        for
+            c      <- Container.init(testImage, stopTimeout = 0.seconds)
+            status <- c.status
+            res    <- c.execute("echo test")
+        yield
+            assert(status == Container.Status.Running)
+            assert(res == "test")
+    }
+
+    "stop" in run {
+        for
+            c      <- Container.init(testImage, stopTimeout = 0.seconds)
+            res    <- c.execute("echo test")
+            _      <- c.stop
+            status <- c.status
+            res2   <- Abort.run(c.execute("echo test"))
+        yield
+            assert(status == Container.Status.Stopped)
+            assert(res == "test")
+            println(res2.show)
+            assert(res2.isFailure)
     }
 
     // "mocked" - {
