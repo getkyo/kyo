@@ -51,17 +51,25 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                     [C] =>
                         (input, cont) =>
                             locally {
-                                val runtime = (clock.currentMillis() - startMillis + this.runtime()).toInt
-                                this.interrupts(input)
-                                val finalizers = this.finalizers
-                                this.finalizers = Finalizers.empty
-                                val trace = this.trace
-                                this.trace = null.asInstanceOf[Trace]
-                                input.onComplete { r =>
-                                    val task = IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, finalizers, runtime)
-                                    this.becomeDiscard(task)
-                                }
-                                nullResult
+                                input.poll() match
+                                    case null =>
+                                        cont(null)
+                                    case Present(r) =>
+                                        cont(r.asInstanceOf[Result[Nothing, C]])
+                                    case Absent =>
+                                        val runtime    = (clock.currentMillis() - startMillis + this.runtime()).toInt
+                                        val finalizers = this.finalizers
+                                        this.finalizers = Finalizers.empty
+                                        val trace = this.trace
+                                        this.trace = null.asInstanceOf[Trace]
+                                        this.interrupts(input)
+                                        input.onComplete { r =>
+                                            val task =
+                                                IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, finalizers, runtime)
+                                            this.removeInterrupt(input)
+                                            this.becomeDiscard(task)
+                                        }
+                                        nullResult
                         }
                 )
             }

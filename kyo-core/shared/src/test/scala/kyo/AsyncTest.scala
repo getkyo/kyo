@@ -1348,4 +1348,37 @@ class AsyncTest extends Test:
         }
     }
 
+    "fiber with multiple children" - {
+        "immediate" in run {
+            for
+                done <- Latch.init(1)
+                exit <- Latch.init(1)
+                fiber <- Async.run {
+                    Kyo.fill(100) {
+                        Promise.init[Nothing, Int].map { p2 =>
+                            p2.completeDiscard(Result.succeed(1)).andThen(p2.get)
+                        }
+                    }.andThen(done.release).andThen(exit.await)
+                }
+                _       <- done.await
+                waiters <- fiber.waiters
+                _       <- exit.release
+            yield assert(waiters == 1)
+        }
+        "with delay" in run {
+            for
+                done <- Latch.init(1)
+                exit <- Latch.init(1)
+                fiber <- Async.run {
+                    Kyo.fill(100) {
+                        Async.sleep(1.nanos)
+                    }.andThen(done.release).andThen(exit.await)
+                }
+                _       <- done.await
+                waiters <- fiber.waiters
+                _       <- exit.release
+            yield assert(waiters == 1)
+        }
+    }
+
 end AsyncTest
