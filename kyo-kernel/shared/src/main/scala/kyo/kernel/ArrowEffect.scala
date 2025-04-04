@@ -38,325 +38,314 @@ abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 
 object ArrowEffect:
 
-    final class SuspendOps[A](dummy: Unit) extends AnyVal:
-
-        /** Creates a suspended computation that requests a function implementation from an arrow effect. This establishes a requirement for
-          * a function that must be satisfied by a handler higher up in the program. The requirement becomes part of the effect type,
-          * ensuring that handlers must provide the requested function before the program can execute.
-          *
-          * @param effectTag
-          *   Identifies which arrow effect to request the function from
-          * @param funcionInput
-          *   The input value to be transformed by the function
-          * @return
-          *   A computation that will receive the requested function when executed
-          */
-        @nowarn("msg=anonymous")
-        inline def apply[I[_], O[_], E <: ArrowEffect[I, O]](
-            inline effectTag: Tag[E],
-            inline funcionInput: I[A]
-        )(using inline _frame: Frame): O[A] < E =
-            new KyoSuspend[I, O, E, A, O[A], E]:
-                def frame = _frame
-                def tag   = effectTag
-                def input = funcionInput
-                def apply(v: O[A], context: Context)(using Safepoint) =
-                    v
-    end SuspendOps
-
-    /** See [[SuspendOps.apply]] */
-    inline def suspend[A]: SuspendOps[A] = SuspendOps(())
-
+    /** Creates a suspended computation that requests a function implementation from an arrow effect. This establishes a requirement for a
+      * function that must be satisfied by a handler higher up in the program. The requirement becomes part of the effect type, ensuring
+      * that handlers must provide the requested function before the program can execute.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to request the function from
+      * @param funcionInput
+      *   The input value to be transformed by the function
+      * @return
+      *   A computation that will receive the requested function when executed
+      */
     @nowarn("msg=anonymous")
-    final class SuspendAndMapOps[A](dummy: Unit) extends AnyVal:
+    inline def suspend[A](
+        using inline _frame: Frame
+    )[I[_], O[_], E <: ArrowEffect[I, O]](
+        inline effectTag: Tag[E],
+        inline funcionInput: I[A]
+    ): O[A] < E =
+        new KyoSuspend[I, O, E, A, O[A], E]:
+            def frame = _frame
+            def tag   = effectTag
+            def input = funcionInput
+            def apply(v: O[A], context: Context)(using Safepoint) =
+                v
 
-        /** Creates a suspended computation that requests a function implementation and transforms its result immediately upon receipt. This
-          * combines the operations of requesting and transforming a function into a single step.
-          *
-          * @param effectTag
-          *   Identifies which arrow effect to request the function from
-          * @param funcionInput
-          *   The input value to be transformed by the function
-          * @param f
-          *   The function to transform the handler's result
-          * @return
-          *   A computation containing the transformed result
-          */
-        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], B, S](
-            inline effectTag: Tag[E],
-            inline funcionInput: I[A]
-        )(
-            inline f: Safepoint ?=> O[A] => B < S
-        )(using inline _frame: Frame): B < (S & E) =
-            new KyoSuspend[I, O, E, A, B, S & E]:
-                def frame = _frame
-                def tag   = effectTag
-                def input = funcionInput
-                def apply(v: O[A], context: Context)(using Safepoint) =
-                    Safepoint.handle(v)(
-                        suspend = f(v),
-                        continue = f(v)
+    /** Creates a suspended computation that requests a function implementation and transforms its result immediately upon receipt. This
+      * combines the operations of requesting and transforming a function into a single step.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to request the function from
+      * @param funcionInput
+      *   The input value to be transformed by the function
+      * @param f
+      *   The function to transform the handler's result
+      * @return
+      *   A computation containing the transformed result
+      */
+    @nowarn("msg=anonymous")
+    inline def suspendWith[A](
+        using inline _frame: Frame
+    )[I[_], O[_], E <: ArrowEffect[I, O], B, S](
+        inline effectTag: Tag[E],
+        inline funcionInput: I[A]
+    )(
+        inline f: Safepoint ?=> O[A] => B < S
+    ): B < (S & E) =
+        new KyoSuspend[I, O, E, A, B, S & E]:
+            def frame = _frame
+            def tag   = effectTag
+            def input = funcionInput
+            def apply(v: O[A], context: Context)(using Safepoint) =
+                Safepoint.handle(v)(
+                    suspend = f(v),
+                    continue = f(v)
+                )
+
+    /** Handles an arrow effect by providing a handler function implementation.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation to provide
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    inline def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2)
+    )(
+        using
+        inline _frame: Frame,
+        inline flat: Flat[A],
+        safepoint: Safepoint
+    ): A < (S & S2) =
+        @nowarn("msg=anonymous")
+        def handleLoop(v: A < (E & S & S2), context: Context)(using Safepoint): A < (S & S2) =
+            v match
+                case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle[Any](kyo.input, kyo(_, context)),
+                        continue = handleLoop(_, context),
+                        suspend = handleLoop(kyo, context)
                     )
-    end SuspendAndMapOps
+                case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            handleLoop(kyo(v, context), context)
+                    end new
+                case kyo =>
+                    kyo.asInstanceOf[A]
+            end match
+        end handleLoop
+        handleLoop(v, Context.empty)
+    end handle
 
-    /** See [[SuspendAndMapOps.apply]] */
-    inline def suspendWith[A]: SuspendAndMapOps[A] = SuspendAndMapOps(())
+    /** Handles two arrow effects by providing function implementations.
+      *
+      * @param effect1Tag
+      *   First effect tag to handle
+      * @param effect2Tag
+      *   Second effect tag to handle
+      * @param v
+      *   The computation requiring the function implementations
+      * @param handle1
+      *   Implementation for first effect
+      * @param handle2
+      *   Implementation for second effect
+      * @return
+      *   The computation result with both function implementations provided
+      */
+    inline def handle[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], A, S, S2](
+        inline effect1Tag: Tag[E1],
+        inline effect2Tag: Tag[E2],
+        v: A < (E1 & E2 & S)
+    )(
+        inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
+        inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
+    )(
+        using
+        inline _frame: Frame,
+        inline flat: Flat[A],
+        safepoint: Safepoint
+    ): A < (S & S2) =
+        @nowarn("msg=anonymous")
+        def handle2Loop(kyo: A < (E1 & E2 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
+            kyo match
+                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle1[Any](kyo.input, kyo(_, context)),
+                        suspend = handle2Loop(kyo, context),
+                        continue = handle2Loop(_, context)
+                    )
+                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle2[Any](kyo.input, kyo(_, context)),
+                        suspend = handle2Loop(kyo, context),
+                        continue = handle2Loop(_, context)
+                    )
+                case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            handle2Loop(kyo(v, context), context)
+                    end new
+                case kyo =>
+                    kyo.asInstanceOf[A]
+            end match
+        end handle2Loop
+        handle2Loop(v, Context.empty)
+    end handle
 
-    object handle:
+    /** Handles three arrow effects by providing function implementations.
+      *
+      * @param effect1Tag
+      *   First effect tag to handle
+      * @param effect2Tag
+      *   Second effect tag to handle
+      * @param effect3Tag
+      *   Third effect tag to handle
+      * @param v
+      *   The computation requiring the function implementations
+      * @param handle1
+      *   Implementation for first effect
+      * @param handle2
+      *   Implementation for second effect
+      * @param handle3
+      *   Implementation for third effect
+      * @return
+      *   The computation result with all three function implementations provided
+      */
+    inline def handle[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], I3[_], O3[_], E3 <: ArrowEffect[
+        I3,
+        O3
+    ], A, S, S2](
+        inline effect1Tag: Tag[E1],
+        inline effect2Tag: Tag[E2],
+        inline effect3Tag: Tag[E3],
+        v: A < (E1 & E2 & E3 & S)
+    )(
+        inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+        inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+        inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
+    )(
+        using
+        inline _frame: Frame,
+        inline flat: Flat[A],
+        safepoint: Safepoint
+    ): A < (S & S2) =
+        @nowarn("msg=anonymous")
+        def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
+            v match
+                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle1[Any](kyo.input, kyo(_, context)),
+                        suspend = handle3Loop(kyo, context),
+                        continue = handle3Loop(_, context)
+                    )
+                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle2[Any](kyo.input, kyo(_, context)),
+                        suspend = handle3Loop(kyo, context),
+                        continue = handle3Loop(_, context)
+                    )
+                case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect3Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle3[Any](kyo.input, kyo(_, context)),
+                        suspend = handle3Loop(kyo, context),
+                        continue = handle3Loop(_, context)
+                    )
+                case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            handle3Loop(kyo(v, context), context)
+                    end new
+                case kyo =>
+                    kyo.asInstanceOf[A]
+            end match
+        end handle3Loop
+        handle3Loop(v, Context.empty)
+    end handle
 
-        /** Handles an arrow effect by providing a handler function implementation.
-          *
-          * @param effectTag
-          *   Identifies which arrow effect to handle
-          * @param v
-          *   The computation requiring the function implementation
-          * @param handle
-          *   The function implementation to provide
-          * @return
-          *   The computation result with the function implementation provided
-          */
-        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
-            inline effectTag: Tag[E],
-            v: A < (E & S)
-        )(
-            inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2)
-        )(
-            using
-            inline _frame: Frame,
-            inline flat: Flat[A],
-            safepoint: Safepoint
-        ): A < (S & S2) =
-            @nowarn("msg=anonymous")
-            def handleLoop(v: A < (E & S & S2), context: Context)(using Safepoint): A < (S & S2) =
-                v match
-                    case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle[Any](kyo.input, kyo(_, context)),
-                            continue = handleLoop(_, context),
-                            suspend = handleLoop(kyo, context)
-                        )
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                            def frame = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                handleLoop(kyo(v, context), context)
-                        end new
-                    case kyo =>
-                        kyo.asInstanceOf[A]
-                end match
-            end handleLoop
-            handleLoop(v, Context.empty)
-        end apply
-
-        /** Handles two arrow effects by providing function implementations.
-          *
-          * @param effect1Tag
-          *   First effect tag to handle
-          * @param effect2Tag
-          *   Second effect tag to handle
-          * @param v
-          *   The computation requiring the function implementations
-          * @param handle1
-          *   Implementation for first effect
-          * @param handle2
-          *   Implementation for second effect
-          * @return
-          *   The computation result with both function implementations provided
-          */
-        inline def apply[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], A, S, S2](
-            inline effect1Tag: Tag[E1],
-            inline effect2Tag: Tag[E2],
-            v: A < (E1 & E2 & S)
-        )(
-            inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
-            inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
-        )(
-            using
-            inline _frame: Frame,
-            inline flat: Flat[A],
-            safepoint: Safepoint
-        ): A < (S & S2) =
-            @nowarn("msg=anonymous")
-            def handle2Loop(kyo: A < (E1 & E2 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
-                kyo match
-                    case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle1[Any](kyo.input, kyo(_, context)),
-                            suspend = handle2Loop(kyo, context),
-                            continue = handle2Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle2[Any](kyo.input, kyo(_, context)),
-                            suspend = handle2Loop(kyo, context),
-                            continue = handle2Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                            def frame = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                handle2Loop(kyo(v, context), context)
-                        end new
-                    case kyo =>
-                        kyo.asInstanceOf[A]
-                end match
-            end handle2Loop
-            handle2Loop(v, Context.empty)
-        end apply
-
-        /** Handles three arrow effects by providing function implementations.
-          *
-          * @param effect1Tag
-          *   First effect tag to handle
-          * @param effect2Tag
-          *   Second effect tag to handle
-          * @param effect3Tag
-          *   Third effect tag to handle
-          * @param v
-          *   The computation requiring the function implementations
-          * @param handle1
-          *   Implementation for first effect
-          * @param handle2
-          *   Implementation for second effect
-          * @param handle3
-          *   Implementation for third effect
-          * @return
-          *   The computation result with all three function implementations provided
-          */
-        inline def apply[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], I3[_], O3[_], E3 <: ArrowEffect[
-            I3,
-            O3
-        ], A, S, S2](
-            inline effect1Tag: Tag[E1],
-            inline effect2Tag: Tag[E2],
-            inline effect3Tag: Tag[E3],
-            v: A < (E1 & E2 & E3 & S)
-        )(
-            inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
-        )(
-            using
-            inline _frame: Frame,
-            inline flat: Flat[A],
-            safepoint: Safepoint
-        ): A < (S & S2) =
-            @nowarn("msg=anonymous")
-            def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
-                v match
-                    case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle1[Any](kyo.input, kyo(_, context)),
-                            suspend = handle3Loop(kyo, context),
-                            continue = handle3Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle2[Any](kyo.input, kyo(_, context)),
-                            suspend = handle3Loop(kyo, context),
-                            continue = handle3Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect3Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle3[Any](kyo.input, kyo(_, context)),
-                            suspend = handle3Loop(kyo, context),
-                            continue = handle3Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                            def frame = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                handle3Loop(kyo(v, context), context)
-                        end new
-                    case kyo =>
-                        kyo.asInstanceOf[A]
-                end match
-            end handle3Loop
-            handle3Loop(v, Context.empty)
-        end apply
-
-        /** Handles four arrow effects by providing function implementations.
-          *
-          * @param effect1Tag
-          *   First effect tag to handle
-          * @param effect2Tag
-          *   Second effect tag to handle
-          * @param effect3Tag
-          *   Third effect tag to handle
-          * @param effect4Tag
-          *   Fourth effect tag to handle
-          * @param v
-          *   The computation requiring the function implementations
-          * @param handle1
-          *   Implementation for first effect
-          * @param handle2
-          *   Implementation for second effect
-          * @param handle3
-          *   Implementation for third effect
-          * @param handle4
-          *   Implementation for fourth effect
-          * @return
-          *   The computation result with all four function implementations provided
-          */
-        inline def apply[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], I3[_], O3[_], E3 <: ArrowEffect[
-            I3,
-            O3
-        ], I4[_], O4[_], E4 <: ArrowEffect[I4, O4], A, S, S2](
-            inline effect1Tag: Tag[E1],
-            inline effect2Tag: Tag[E2],
-            inline effect3Tag: Tag[E3],
-            inline effect4Tag: Tag[E4],
-            v: A < (E1 & E2 & E3 & E4 & S)
-        )(
-            inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2),
-            inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2),
-            inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2),
-            inline handle4: [C] => (I4[C], Safepoint ?=> O4[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2)
-        )(
-            using
-            inline _frame: Frame,
-            inline flat: Flat[A],
-            safepoint: Safepoint
-        ): A < (S & S2) =
-            @nowarn("msg=anonymous")
-            def handle4Loop(v: A < (E1 & E2 & E3 & E4 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
-                v match
-                    case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle1[Any](kyo.input, kyo(_, context)),
-                            suspend = handle4Loop(kyo, context),
-                            continue = handle4Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle2[Any](kyo.input, kyo(_, context)),
-                            suspend = handle4Loop(kyo, context),
-                            continue = handle4Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect3Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle3[Any](kyo.input, kyo(_, context)),
-                            suspend = handle4Loop(kyo, context),
-                            continue = handle4Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[I4, O4, E4, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect4Tag =:= kyo.tag =>
-                        Safepoint.handle(kyo.input)(
-                            eval = handle4[Any](kyo.input, kyo(_, context)),
-                            suspend = handle4Loop(kyo, context),
-                            continue = handle4Loop(_, context)
-                        )
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                            def frame = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                handle4Loop(kyo(v, context), context)
-                        end new
-                    case kyo =>
-                        kyo.asInstanceOf[A]
-                end match
-            end handle4Loop
-            handle4Loop(v, Context.empty)
-        end apply
+    /** Handles four arrow effects by providing function implementations.
+      *
+      * @param effect1Tag
+      *   First effect tag to handle
+      * @param effect2Tag
+      *   Second effect tag to handle
+      * @param effect3Tag
+      *   Third effect tag to handle
+      * @param effect4Tag
+      *   Fourth effect tag to handle
+      * @param v
+      *   The computation requiring the function implementations
+      * @param handle1
+      *   Implementation for first effect
+      * @param handle2
+      *   Implementation for second effect
+      * @param handle3
+      *   Implementation for third effect
+      * @param handle4
+      *   Implementation for fourth effect
+      * @return
+      *   The computation result with all four function implementations provided
+      */
+    inline def handle[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], I3[_], O3[_], E3 <: ArrowEffect[
+        I3,
+        O3
+    ], I4[_], O4[_], E4 <: ArrowEffect[I4, O4], A, S, S2](
+        inline effect1Tag: Tag[E1],
+        inline effect2Tag: Tag[E2],
+        inline effect3Tag: Tag[E3],
+        inline effect4Tag: Tag[E4],
+        v: A < (E1 & E2 & E3 & E4 & S)
+    )(
+        inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2),
+        inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2),
+        inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2),
+        inline handle4: [C] => (I4[C], Safepoint ?=> O4[C] => A < (E1 & E2 & E3 & E4 & S & S2)) => A < (E1 & E2 & E3 & E4 & S & S2)
+    )(
+        using
+        inline _frame: Frame,
+        inline flat: Flat[A],
+        safepoint: Safepoint
+    ): A < (S & S2) =
+        @nowarn("msg=anonymous")
+        def handle4Loop(v: A < (E1 & E2 & E3 & E4 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
+            v match
+                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle1[Any](kyo.input, kyo(_, context)),
+                        suspend = handle4Loop(kyo, context),
+                        continue = handle4Loop(_, context)
+                    )
+                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle2[Any](kyo.input, kyo(_, context)),
+                        suspend = handle4Loop(kyo, context),
+                        continue = handle4Loop(_, context)
+                    )
+                case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect3Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle3[Any](kyo.input, kyo(_, context)),
+                        suspend = handle4Loop(kyo, context),
+                        continue = handle4Loop(_, context)
+                    )
+                case kyo: KyoSuspend[I4, O4, E4, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect4Tag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        eval = handle4[Any](kyo.input, kyo(_, context)),
+                        suspend = handle4Loop(kyo, context),
+                        continue = handle4Loop(_, context)
+                    )
+                case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            handle4Loop(kyo(v, context), context)
+                    end new
+                case kyo =>
+                    kyo.asInstanceOf[A]
+            end match
+        end handle4Loop
+        handle4Loop(v, Context.empty)
     end handle
 
     /** Handles the first occurrence of an arrow effect and transforms the final result. This is useful when you want to handle just the

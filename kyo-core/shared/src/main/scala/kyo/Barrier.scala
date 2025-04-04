@@ -4,9 +4,20 @@ import scala.annotation.tailrec
 
 /** A synchronization primitive that allows a fixed number of parties to wait for each other to reach a common point of execution.
   *
-  *   - The Barrier is initialized with a specific number of parties. Each party calls `await` when it reaches the barrier point.
-  *   - The barrier releases all waiting parties when the last party arrives.
-  *   - The barrier can only be used once. After all parties have been released, the barrier cannot be reset.
+  * Barrier provides a coordination mechanism where a predetermined number of fibers or threads (parties) must all arrive at a specific
+  * synchronization point before any of them can proceed. This is useful for scenarios where concurrent operations must wait for each other
+  * to complete before continuing execution.
+  *
+  * Key characteristics:
+  *   - The Barrier is initialized with a specific number of parties
+  *   - Each party calls `await` when it reaches the barrier point
+  *   - All parties remain blocked until the last party arrives at the barrier
+  *   - When the last party arrives, all waiting parties are released simultaneously
+  *   - The barrier can only be used once - it cannot be reset after all parties have been released
+  *   - If initialized with parties <= 0, the barrier behaves as a no-op (await returns immediately)
+  *
+  * @see
+  *   [[Latch]] A related primitive that allows one or more tasks to wait until a set of operations completes
   */
 final case class Barrier private (unsafe: Barrier.Unsafe):
 

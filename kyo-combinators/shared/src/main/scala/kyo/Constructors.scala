@@ -65,16 +65,6 @@ extension (kyoObject: Kyo.type)
     def attempt[A, S](effect: => A < S)(using Flat[A], Frame): A < (S & Abort[Throwable]) =
         Abort.catching[Throwable](effect)
 
-    /** Prints a message to the console.
-      *
-      * @param message
-      *   The message to print
-      * @return
-      *   An effect that prints the message to the console
-      */
-    def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
-        Console.printLine(message)
-
     /** Emits a value
       *
       * @param value
