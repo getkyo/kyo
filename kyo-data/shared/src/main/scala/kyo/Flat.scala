@@ -11,6 +11,11 @@ import scala.quoted.*
   * For example, given `opaque type Box[A] = A | Container[A]`, allowing `A` to be another `Box[A]` would make it impossible to reliably
   * distinguish between a direct value and a boxed value through runtime checks.
   *
+  * Flat encoding provides better performance by avoiding allocation of a wrapper class object. Since opaque types are erased to `Any` at
+  * runtime, primitive types will still be boxed, though modern JIT compilers can often eliminate these transient allocations through
+  * speculative optimizations in hot code paths. For non-primitive values, boxing is avoided entirely, reducing memory overhead and
+  * improving cache locality.
+  *
   * `Flat[A]` enforces this constraint at compile-time through a macro that recursively checks the structure of types:
   *   - For union and intersection types, each component is checked
   *   - For other types, it verifies they have their own `Flat` evidence or are concrete class types, which excludes opaque types
