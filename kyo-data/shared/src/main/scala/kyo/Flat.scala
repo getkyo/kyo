@@ -2,12 +2,48 @@ package kyo
 
 import scala.quoted.*
 
+/** A compile-time guarantee that a parametrized opaque type with internal flat encoding doesn't contain instances of itself.
+  *
+  * When designing opaque types with flat internal encodings like `A | Container[A]` (union types), runtime discrimination between the cases
+  * requires that `A` isn't itself another instance of the opaque type. Otherwise, type discrimination would confuse nested instances with
+  * direct values, breaking the semantics of operations on the type at runtime.
+  *
+  * For example, given `opaque type Box[A] = A | Container[A]`, allowing `A` to be another `Box[A]` would make it impossible to reliably
+  * distinguish between a direct value and a boxed value through runtime checks.
+  *
+  * Flat encoding provides better performance by avoiding allocation of a wrapper class object. Since opaque types are erased to `Any` at
+  * runtime, primitive types will still be boxed, though modern JIT compilers can often eliminate these transient allocations through
+  * speculative optimizations in hot code paths. For non-primitive values, boxing is avoided entirely, reducing memory overhead and
+  * improving cache locality.
+  *
+  * `Flat[A]` enforces this constraint at compile-time through a macro that recursively checks the structure of types:
+  *   - For union and intersection types, each component is checked
+  *   - For other types, it verifies they have their own `Flat` evidence or are concrete class types, which excludes opaque types
+  *   - It fails compilation with a helpful error message when it detects potential nesting issues
+  *
+  * This ensures the integrity of the flat encoding pattern with union types without runtime overhead.
+  *
+  * @tparam A
+  *   the type to verify does not contain unwanted opaque type nesting
+  */
 opaque type Flat[A] = Null
 
 object Flat:
+    /** Provides unsafe methods to bypass Flat type checking. */
     object unsafe:
+        /** Unconditionally provides Flat evidence for any type.
+          *
+          * Warning: Use only when you can guarantee the type doesn't contain unwanted opaque type nesting. Useful for custom types where
+          * you control the implementation and can ensure no problematic nesting.
+          */
         inline given bypass[A]: Flat[A] = null
+    end unsafe
 
+    /** Derives Flat evidence for type A via compile-time checks.
+      *
+      * This macro recursively examines the structure of the type to ensure it cannot contain nested instances that would violate the flat
+      * encoding pattern.
+      */
     inline given derive[A]: Flat[A] = FlatMacro.derive
 
 end Flat
