@@ -5,7 +5,6 @@ import java.util.concurrent.locks.LockSupport
 import kyo.*
 import kyo.Result.Error
 import kyo.kernel.internal.Safepoint
-import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -276,7 +275,6 @@ private[kyo] object IOPromise:
         def removeInterrupt(other: IOPromise[?, ?]): Pending[E, A]
         def run[E2 >: E, A2 >: A](v: Result[E2, A2]): Pending[E2, A2]
 
-        @nowarn("msg=anonymous")
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def waiters: Int = self.waiters + 1
@@ -302,7 +300,6 @@ private[kyo] object IOPromise:
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
                     self
 
-        @nowarn("msg=anonymous")
         def onInterrupt(f: Error[E] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt[E2 >: E](error: Error[E2]) =
