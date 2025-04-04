@@ -466,5 +466,266 @@ class ActorTest extends Test:
             yield assert(received == List("a-1", "b-2", "c-3"))
         }
 
+        "can maintain single state value" in run {
+            for
+                actor <- Actor.run {
+                    Actor.receiveLoop[Int](0) { (msg, sum) =>
+                        if msg == 0 then Loop.done(sum)
+                        else Loop.continue(sum + msg)
+                    }
+                }
+                _      <- actor.send(10)
+                _      <- actor.send(20)
+                _      <- actor.send(30)
+                _      <- actor.send(0)
+                result <- actor.await
+            yield assert(result == 60)
+        }
+
+        "can maintain two state values" in run {
+            for
+                actor <- Actor.run {
+                    Actor.receiveLoop[String]("", 0) { (msg, str, count) =>
+                        if msg == "stop" then Loop.done((str, count))
+                        else Loop.continue(str + msg, count + 1)
+                    }
+                }
+                _      <- actor.send("a")
+                _      <- actor.send("b")
+                _      <- actor.send("c")
+                _      <- actor.send("stop")
+                result <- actor.await
+            yield assert(result == ("abc", 3))
+        }
+
+        "can maintain three state values" in run {
+            for
+                actor <- Actor.run {
+                    Actor.receiveLoop[Int](0, 0, 1) { (msg, sum, count, product) =>
+                        if msg == 0 then Loop.done((sum, count, product))
+                        else Loop.continue(sum + msg, count + 1, product * msg)
+                    }
+                }
+                _      <- actor.send(2)
+                _      <- actor.send(3)
+                _      <- actor.send(4)
+                _      <- actor.send(0)
+                result <- actor.await
+            yield assert(result == (9, 3, 24))
+        }
+
+        "can maintain four state values" in run {
+            for
+                actor <- Actor.run {
+                    Actor.receiveLoop[String]("", 0, 0, true) { (msg, str, length, wordCount, valid) =>
+                        if msg == "stop" then Loop.done((str, length, wordCount, valid))
+                        else if msg == "invalid" then Loop.continue(str, length, wordCount, false)
+                        else if msg == " " then Loop.continue(str + msg, length + 1, wordCount + 1, valid)
+                        else Loop.continue(str + msg, length + msg.length, wordCount, valid)
+                    }
+                }
+                _      <- actor.send("Hello")
+                _      <- actor.send(" ")
+                _      <- actor.send("World")
+                _      <- actor.send("invalid")
+                _      <- actor.send("stop")
+                result <- actor.await
+            yield
+                assert(result._1 == "Hello World")
+                assert(result._2 == 11)
+                assert(result._3 == 1)
+                assert(result._4 == false)
+        }
     }
+
+    "multiple receive calls" - {
+
+        "combines receiveMax and receiveAll" in run {
+            for
+                results <- Queue.Unbounded.init[String]()
+                actor <- Actor.run {
+                    for
+                        _ <- Actor.receiveMax[Int](2) { msg =>
+                            results.add(s"receiveMax: $msg")
+                        }
+                        _ <- Actor.receiveAll[Int] { msg =>
+                            results.add(s"receiveAll: $msg")
+                        }
+                    yield ()
+                }
+                _        <- actor.send(1)
+                _        <- actor.send(2)
+                _        <- actor.send(3)
+                _        <- untilTrue(results.size.map(_ == 3))
+                _        <- actor.close
+                received <- results.drain
+            yield assert(received == List("receiveMax: 1", "receiveMax: 2", "receiveAll: 3"))
+        }
+
+        "combines receiveLoop and receiveMax" in run {
+            for
+                results <- Queue.Unbounded.init[String]()
+                actor <- Actor.run {
+                    for
+                        sum <- Actor.receiveLoop[Int](0) { (msg, acc) =>
+                            if msg == 0 then Loop.done(acc)
+                            else Loop.continue(acc + msg)
+                        }
+                        _ <- Actor.receiveMax[Int](2) { msg =>
+                            results.add(s"After loop: $msg (sum was $sum)")
+                        }
+                    yield sum
+                }
+                _      <- actor.send(10)
+                _      <- actor.send(20)
+                _      <- actor.send(0)
+                _      <- actor.send(30)
+                _      <- actor.send(40)
+                result <- actor.await
+                logs   <- results.drain
+            yield
+                assert(result == 30)
+                assert(logs == List("After loop: 30 (sum was 30)", "After loop: 40 (sum was 30)"))
+        }
+    }
+
+    "supervision" - {
+
+        case object TemporaryError
+        case object PermanentError
+
+        case class TestMessage(v: Int, replyTo: Subject[Int])
+
+        "Retry" in run {
+            for
+                attempts <- AtomicInt.init(0)
+                actor <- Actor.run {
+                    Retry[TemporaryError.type] {
+                        attempts.incrementAndGet.map { count =>
+                            Actor.receiveAll[TestMessage] { msg =>
+                                msg.replyTo.send(msg.v + 1)
+                                    .andThen(Abort.when(msg.v == 42)(TemporaryError))
+                            }
+                        }
+                    }
+                }
+                v1    <- actor.ask(TestMessage(1, _))
+                v2    <- actor.ask(TestMessage(42, _))
+                v3    <- actor.ask(TestMessage(2, _))
+                v4    <- actor.ask(TestMessage(3, _))
+                v5    <- actor.ask(TestMessage(42, _))
+                v6    <- actor.ask(TestMessage(4, _))
+                count <- attempts.get
+            yield assert(
+                count == 3 && v1 == 2 && v2 == 43 && v3 == 3 && v4 == 4 && v5 == 43 && v6 == 5
+            )
+        }
+
+        "Retry limit" in run {
+            for
+                attempts <- AtomicInt.init(0)
+                actor <- Actor.run {
+                    Retry[TemporaryError.type](Schedule.repeat(2)) {
+                        attempts.incrementAndGet.map { count =>
+                            Actor.receiveAll[TestMessage] { msg =>
+                                msg.replyTo.send(msg.v + 1)
+                                    .andThen(Abort.when(msg.v == 42)(TemporaryError))
+                            }
+                        }
+                    }
+                }
+                v1     <- actor.ask(TestMessage(1, _))
+                v2     <- actor.ask(TestMessage(42, _))
+                v3     <- actor.ask(TestMessage(2, _))
+                _      <- actor.ask(TestMessage(42, _))
+                _      <- actor.ask(TestMessage(42, _))
+                result <- Abort.run(actor.ask(TestMessage(3, _)))
+                count  <- attempts.get
+            yield assert(
+                count == 3 && v1 == 2 && v2 == 43 && v3 == 3 && result.isFailure
+            )
+        }
+
+        "Abort" in run {
+            for
+                events <- Queue.Unbounded.init[String]()
+                actor <- Actor.run {
+                    Abort.recover[TemporaryError.type] { _ =>
+                        events.add("Recovered from error").andThen {
+                            Actor.receiveMax[Int](2) { msg =>
+                                events.add(s"Processing $msg")
+                            }
+                        }
+                    } {
+                        Actor.receiveAll[Int] { msg =>
+                            if msg < 0 then Abort.fail(TemporaryError)
+                            else events.add(s"Received $msg")
+                        }
+                    }
+                }
+                _   <- actor.send(1)
+                _   <- actor.send(-1)
+                _   <- actor.send(2)
+                _   <- actor.send(3)
+                _   <- actor.await
+                log <- events.drain
+            yield assert(log == List(
+                "Received 1",
+                "Recovered from error",
+                "Processing 2",
+                "Processing 3"
+            ))
+        }
+
+        "mixed" in run {
+            for
+                attempts <- AtomicInt.init(0)
+                events   <- Queue.Unbounded.init[String]()
+                actor <- Actor.run {
+                    Abort.recover[PermanentError.type] { _ =>
+                        events.add("Switched to fallback behavior").andThen {
+                            Actor.receiveMax[Int](1) { msg =>
+                                events.add(s"Fallback processing: $msg")
+                            }
+                        }
+                    } {
+                        Retry[TemporaryError.type](Schedule.repeat(2)) {
+                            attempts.incrementAndGet.map { count =>
+                                events.add(s"Attempt #$count").andThen {
+                                    Actor.receiveAll[Int] { msg =>
+                                        if msg == 0 then Abort.fail(PermanentError)
+                                        else if msg < 0 then Abort.fail(TemporaryError)
+                                        else events.add(s"Processing: $msg (attempt $count)")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _     <- actor.send(1)
+                _     <- actor.send(-1)
+                _     <- actor.send(2)
+                _     <- actor.send(-1)
+                _     <- actor.send(3)
+                _     <- actor.send(0)
+                _     <- actor.send(4)
+                _     <- actor.await
+                count <- attempts.get
+                log   <- events.drain
+            yield
+                assert(count == 3)
+                assert(log == List(
+                    "Attempt #1",
+                    "Processing: 1 (attempt 1)",
+                    "Attempt #2",
+                    "Processing: 2 (attempt 2)",
+                    "Attempt #3",
+                    "Processing: 3 (attempt 3)",
+                    "Switched to fallback behavior",
+                    "Fallback processing: 4"
+                ))
+        }
+
+    }
+
 end ActorTest
