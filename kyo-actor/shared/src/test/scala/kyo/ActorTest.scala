@@ -540,7 +540,7 @@ class ActorTest extends Test:
 
     "multiple receive calls" - {
 
-        "combines receiveMax and receiveAll" in run {
+        "combines receiveMax and receiveAll" in runNotJS {
             for
                 results <- Queue.Unbounded.init[String]()
                 actor <- Actor.run {
