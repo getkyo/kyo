@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Infinite Scroll Test Page</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .post {
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin-bottom: 20px;
+      background-color: #f9f9f9;
+    }
+
+    .post h2 {
+      margin-top: 0;
+      color: #333;
+    }
+
+    .post-meta {
+      color: #666;
+      font-size: 0.9em;
+      margin-bottom: 10px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      display: none;
+    }
+
+    #scrollTarget {
+      padding: 10px;
+      background-color: #4CAF50;
+      color: white;
+      text-align: center;
+      margin: 20px 0;
+    }
+
+    .nav-bar {
+      position: sticky;
+      top: 0;
+      background-color: #333;
+      color: white;
+      padding: 10px;
+      margin-bottom: 20px;
+    }
+
+    .nav-bar a {
+      color: white;
+      text-decoration: none;
+      margin-right: 15px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="nav-bar">
+    <a href="basic-page.html">Home</a>
+    <a href="form-page.html">Forms</a>
+    <a href="content-page.html">Content</a>
+  </div>
+
+  <h1>Infinite Scroll Test Page</h1>
+  <p>This page simulates an infinite scroll pattern commonly found on social media and news sites.</p>
+  <p>Scroll down to load more content. This tests the browser's ability to interact with dynamically loaded content.</p>
+
+  <div id="posts">
+    <!-- Initial posts will be here -->
+  </div>
+
+  <div class="loading" id="loadingIndicator">
+    Loading more posts...
+  </div>
+
+  <div id="scrollTarget" style="display: none;">
+    You've reached the scroll target! This content was loaded dynamically after scrolling.
+  </div>
+
+  <script>
+    const posts = [
+      {
+        title: "Understanding Browser Automation",
+        author: "Jane Developer",
+        date: "January 15, 2023",
+        content: "Browser automation tools like Playwright and Selenium allow developers to control web browsers programmatically. This enables automated testing of web applications, data scraping, and performance monitoring.",
+        id: 1
+      },
+      {
+        title: "The Future of Web Testing",
+        author: "John Tester",
+        date: "February 3, 2023",
+        content: "As web applications become more complex, testing strategies must evolve. Modern testing frameworks now focus on end-to-end testing that simulates real user behavior rather than just unit testing isolated components.",
+        id: 2
+      },
+      {
+        title: "Headless Browsers Explained",
+        author: "Alice Engineer",
+        date: "March 12, 2023",
+        content: "Headless browsers run without a visible UI, making them ideal for automated testing environments. They use fewer resources while still providing the same JavaScript and rendering capabilities as their headed counterparts.",
+        id: 3
+      }
+    ];
+
+    // Additional posts that will be loaded on scroll
+    const additionalPosts = [
+      {
+        title: "Handling Dynamic Content in Tests",
+        author: "Bob QA",
+        date: "April 5, 2023",
+        content: "Dynamic content poses challenges for automation. Waiting strategies like waitForSelector and polling are essential for ensuring tests interact with elements only after they're fully loaded and ready.",
+        id: 4
+      },
+      {
+        title: "Cross-Browser Testing Strategies",
+        author: "Eva Compatibility",
+        date: "May 20, 2023",
+        content: "Supporting multiple browsers requires a robust testing strategy. Automation tools that can drive different browser engines help ensure consistent behavior across Chrome, Firefox, Safari, and Edge.",
+        id: 5
+      },
+      {
+        title: "Performance Testing with Browser Automation",
+        author: "Dave Performance",
+        date: "June 8, 2023",
+        content: "Browser automation isn't just for functional testing. Tools can measure page load times, resource usage, and other performance metrics to ensure web applications remain fast and responsive.",
+        id: 6
+      },
+      {
+        title: "Mobile Browser Automation",
+        author: "Fiona Mobile",
+        date: "July 14, 2023",
+        content: "Automating tests on mobile browsers presents unique challenges. Device emulation, touch events, and responsive design testing require specialized approaches and tools.",
+        id: 7
+      },
+      {
+        title: "Authentication in Automated Tests",
+        author: "George Security",
+        date: "August 9, 2023",
+        content: "Handling login flows in automated tests can be tricky. Best practices include using API calls for authentication when possible and securely managing test credentials.",
+        id: 8
+      }
+    ];
+
+    function createPostElement(post) {
+      const postElement = document.createElement('div');
+      postElement.className = 'post';
+      postElement.id = `post-${post.id}`;
+
+      postElement.innerHTML = `
+                <h2>${post.title}</h2>
+                <div class="post-meta">By ${post.author} | Published: ${post.date}</div>
+                <p>${post.content}</p>
+            `;
+
+      return postElement;
+    }
+
+    // Load initial posts
+    function loadInitialPosts() {
+      const postsContainer = document.getElementById('posts');
+      posts.forEach(post => {
+        postsContainer.appendChild(createPostElement(post));
+      });
+    }
+
+    // Load more posts when scrolling
+    let currentPostIndex = 0;
+    function loadMorePosts() {
+      const loadingIndicator = document.getElementById('loadingIndicator');
+      loadingIndicator.style.display = 'block';
+
+      // Simulate loading delay
+      setTimeout(() => {
+        const postsContainer = document.getElementById('posts');
+
+        // Add 2 more posts if available
+        for (let i = 0; i < 2; i++) {
+          if (currentPostIndex < additionalPosts.length) {
+            postsContainer.appendChild(createPostElement(additionalPosts[currentPostIndex]));
+            currentPostIndex++;
+          }
+        }
+
+        loadingIndicator.style.display = 'none';
+
+        // Show the scroll target after loading all posts
+        if (currentPostIndex >= additionalPosts.length) {
+          document.getElementById('scrollTarget').style.display = 'block';
+        }
+      }, 1000);
+    }
+
+    // Initialize
+    loadInitialPosts();
+
+    // Set up infinite scroll
+    window.addEventListener('scroll', () => {
+      if (currentPostIndex >= additionalPosts.length) return;
+
+      const scrollPosition = window.innerHeight + window.scrollY;
+      const pageHeight = document.body.offsetHeight;
+
+      // If we're near the bottom of the page
+      if (pageHeight - scrollPosition < 300) {
+        loadMorePosts();
+      }
+    });
+  </script>
+</body>
+
+</html>

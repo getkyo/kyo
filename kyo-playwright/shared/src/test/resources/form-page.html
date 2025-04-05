@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Form Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .form-container {
+            border: 1px solid #ddd;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        #formResult {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f8f8;
+            border: 1px solid #ddd;
+            display: none;
+        }
+
+        .cookie-banner {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: #333;
+            color: white;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .cookie-banner button {
+            margin-left: 15px;
+            background-color: #f1f1f1;
+            color: #333;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Form Test Page</h1>
+    <p>This page contains various form elements for testing browser automation.</p>
+    <p><a href="basic-page.html">Return to Basic Test Page</a></p>
+
+    <div class="form-container">
+        <h2>Test Form</h2>
+        <form id="testForm">
+            <div>
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name" required>
+            </div>
+
+            <div>
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email" required>
+            </div>
+
+            <div>
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+
+            <div>
+                <label for="category">Category:</label>
+                <select id="category" name="category">
+                    <option value="">Select a category</option>
+                    <option value="technology">Technology</option>
+                    <option value="health">Health</option>
+                    <option value="science">Science</option>
+                    <option value="arts">Arts</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Subscription Options:</label>
+                <div>
+                    <input type="checkbox" id="newsletter" name="subscription" value="newsletter">
+                    <label for="newsletter">Newsletter</label>
+                </div>
+                <div>
+                    <input type="checkbox" id="updates" name="subscription" value="updates">
+                    <label for="updates">Product Updates</label>
+                </div>
+            </div>
+
+            <div>
+                <label>Preferred Contact Method:</label>
+                <div>
+                    <input type="radio" id="contactEmail" name="contactMethod" value="email" checked>
+                    <label for="contactEmail">Email</label>
+                </div>
+                <div>
+                    <input type="radio" id="contactPhone" name="contactMethod" value="phone">
+                    <label for="contactPhone">Phone</label>
+                </div>
+            </div>
+
+            <div>
+                <label for="message">Message:</label>
+                <textarea id="message" name="message" rows="4"></textarea>
+            </div>
+
+            <button type="submit">Submit Form</button>
+        </form>
+
+        <div id="formResult"></div>
+    </div>
+
+    <div id="cookieBanner" class="cookie-banner">
+        This website uses cookies to ensure you get the best experience.
+        <button id="acceptCookies">Accept</button>
+        <button id="rejectCookies">Reject</button>
+    </div>
+
+    <script>
+        // Form submission
+        document.getElementById('testForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            let result = '<h3>Form Submitted</h3><ul>';
+
+            for (const [key, value] of formData.entries()) {
+                result += `<li><strong>${key}:</strong> ${value}</li>`;
+            }
+
+            result += '</ul>';
+
+            const formResult = document.getElementById('formResult');
+            formResult.innerHTML = result;
+            formResult.style.display = 'block';
+        });
+
+        // Cookie banner
+        document.getElementById('acceptCookies').addEventListener('click', function () {
+            document.getElementById('cookieBanner').style.display = 'none';
+        });
+
+        document.getElementById('rejectCookies').addEventListener('click', function () {
+            document.getElementById('cookieBanner').style.display = 'none';
+        });
+    </script>
+</body>
+
+</html>
