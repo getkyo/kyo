@@ -85,7 +85,7 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[Closed
       *   - Does not interrupt the processing of the current message if one is being handled
       *
       * @return
-      *   A Maybe containing a sequence of any messages that were in the mailbox when it was closed
+      *   A Maybe containing a sequence of any messages that were in the mailbox if the close is successful
       */
     def close(using Frame): Maybe[Seq[A]] < IO
 
@@ -170,20 +170,20 @@ object Actor:
     /** Receives and processes a single message from the actor's mailbox.
       *
       * This method polls for the next available message and applies the provided processing function. Message processing is done
-      * sequentially, ensuring only one message is handled at a time.
+      * sequentially, ensuring only one message is handled at a time. The result of the processing function is discarded.
       *
       * @param f
       *   The function to process each received message
       * @tparam A
       *   The type of messages being received
       */
-    def receiveAll[A](using Tag[A])[B, S](f: A => B < S)(using Frame): Unit < (Context[A] & S) =
+    def receiveAll[A: Tag](using Frame)[S](f: A => Any < S): Unit < (Context[A] & S) =
         Poll.values[A](f)
 
     /** Receives and processes up to n messages from the actor's mailbox.
       *
       * This method polls for messages and applies the provided processing function to each one, up to the specified limit. Message
-      * processing is done sequentially.
+      * processing is done sequentially. The result of the processing function is discarded.
       *
       * @param max
       *   The maximum number of messages to process
@@ -214,11 +214,155 @@ object Actor:
       * @return
       *   An effect representing the message processing loop
       */
-    def receiveLoop[A](using Tag[A])[S](f: A => Loop.Outcome[Unit, Unit] < S)(using Frame): Unit < (Context[A] & S) =
+    def receiveLoop[A: Tag](using Frame)[S](f: A => Loop.Outcome[Unit, Unit] < S): Unit < (Context[A] & S) =
         Loop(()) { _ =>
             Poll.one[A].map {
                 case Absent     => Loop.done
                 case Present(v) => f(v)
+            }
+        }
+
+    /** Receives and processes messages from the actor's mailbox in a loop with a single state value.
+      *
+      * This method continuously polls for messages and applies the provided processing function to each one, maintaining a state value
+      * between iterations. The function returns a Loop.Outcome that determines whether to continue processing more messages with an updated
+      * state or stop with a final result.
+      *
+      * To control the loop:
+      *   - Return `Loop.continue(newState)` to continue processing with an updated state
+      *   - Return `Loop.done(finalState)` to stop processing and return the final state
+      *
+      * When the loop completes, the final state value is returned as the result.
+      *
+      * @param initialState
+      *   The initial state value to use for the first message
+      * @param f
+      *   A function that processes each received message with the current state and returns a Loop.Outcome
+      * @tparam A
+      *   The type of messages being received
+      * @return
+      *   The final state value after the loop completes
+      */
+    def receiveLoop[A: Tag](
+        using Frame
+    )[State, S](state: State)(
+        f: (A, State) => Loop.Outcome[State, State] < S
+    ): State < (Context[A] & S) =
+        Loop(state) { state =>
+            Poll.one[A].map {
+                case Absent     => Loop.done(state)
+                case Present(v) => f(v, state)
+            }
+        }
+
+    /** Receives and processes messages from the actor's mailbox in a loop with two state values.
+      *
+      * This method continuously polls for messages and applies the provided processing function to each one, maintaining two state values
+      * between iterations. The function returns a Loop.Outcome that determines whether to continue processing more messages with updated
+      * states or stop with a final result.
+      *
+      * To control the loop:
+      *   - Return `Loop.continue(newState1, newState2)` to continue processing with updated states
+      *   - Return `Loop.done((finalState1, finalState2))` to stop processing and return the final states
+      *
+      * When the loop completes, the final state values are returned as a tuple.
+      *
+      * @param state1
+      *   The first initial state value
+      * @param state2
+      *   The second initial state value
+      * @param f
+      *   A function that processes each received message with the current states and returns a Loop.Outcome
+      * @tparam A
+      *   The type of messages being received
+      * @return
+      *   A tuple containing the final state values after the loop completes
+      */
+    def receiveLoop[A: Tag](
+        using Frame
+    )[State1, State2, S](state1: State1, state2: State2)(
+        f: (A, State1, State2) => Loop.Outcome2[State1, State2, (State1, State2)] < S
+    ): (State1, State2) < (Context[A] & S) =
+        Loop(state1, state2) { (s1, s2) =>
+            Poll.one[A].map {
+                case Absent     => Loop.done((s1, s2))
+                case Present(v) => f(v, s1, s2)
+            }
+        }
+
+    /** Receives and processes messages from the actor's mailbox in a loop with three state values.
+      *
+      * This method continuously polls for messages and applies the provided processing function to each one, maintaining three state values
+      * between iterations. The function returns a Loop.Outcome that determines whether to continue processing more messages with updated
+      * states or stop with a final result.
+      *
+      * To control the loop:
+      *   - Return `Loop.continue(newState1, newState2, newState3)` to continue processing with updated states
+      *   - Return `Loop.done((finalState1, finalState2, finalState3))` to stop processing and return the final states
+      *
+      * When the loop completes, the final state values are returned as a tuple.
+      *
+      * @param state1
+      *   The first initial state value
+      * @param state2
+      *   The second initial state value
+      * @param state3
+      *   The third initial state value
+      * @param f
+      *   A function that processes each received message with the current states and returns a Loop.Outcome
+      * @tparam A
+      *   The type of messages being received
+      * @return
+      *   A tuple containing the final state values after the loop completes
+      */
+    def receiveLoop[A: Tag](
+        using Frame
+    )[State1, State2, State3, S](state1: State1, state2: State2, state3: State3)(
+        f: (A, State1, State2, State3) => Loop.Outcome3[State1, State2, State3, (State1, State2, State3)] < S
+    ): (State1, State2, State3) < (Context[A] & S) =
+        Loop(state1, state2, state3) { (s1, s2, s3) =>
+            Poll.one[A].map {
+                case Absent     => Loop.done((s1, s2, s3))
+                case Present(v) => f(v, s1, s2, s3)
+            }
+        }
+
+    /** Receives and processes messages from the actor's mailbox in a loop with four state values.
+      *
+      * This method continuously polls for messages and applies the provided processing function to each one, maintaining four state values
+      * between iterations. The function returns a Loop.Outcome that determines whether to continue processing more messages with updated
+      * states or stop with a final result.
+      *
+      * To control the loop:
+      *   - Return `Loop.continue(newState1, newState2, newState3, newState4)` to continue processing with updated states
+      *   - Return `Loop.done((finalState1, finalState2, finalState3, finalState4))` to stop processing and return the final states
+      *
+      * When the loop completes, the final state values are returned as a tuple.
+      *
+      * @param state1
+      *   The first initial state value
+      * @param state2
+      *   The second initial state value
+      * @param state3
+      *   The third initial state value
+      * @param state4
+      *   The fourth initial state value
+      * @param f
+      *   A function that processes each received message with the current states and returns a Loop.Outcome
+      * @tparam A
+      *   The type of messages being received
+      * @return
+      *   A tuple containing the final state values after the loop completes
+      */
+    def receiveLoop[A: Tag](
+        using Frame
+    )[State1, State2, State3, State4, S](state1: State1, state2: State2, state3: State3, state4: State4)(
+        f: (A, State1, State2, State3, State4) => Loop.Outcome4[State1, State2, State3, State4, (State1, State2, State3, State4)] < S
+    ): (State1, State2, State3, State4) < (Context[A] & S) =
+        Loop(state1, state2, state3, state4) { (s1, s2, s3, s4) =>
+            Poll.one[A].map {
+                case Absent     => Loop.done((s1, s2, s3, s4))
+                case Present(v) => f(v, s1, s2, s3, s4)
             }
         }
 
