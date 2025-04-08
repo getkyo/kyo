@@ -650,7 +650,8 @@ object Browser:
 
     /** Base class for browser operations. */
     sealed abstract class Op[+A](private[Browser] val unsafeRun: Page => A):
-        def suspend(using Frame): A < Browser = ArrowEffect.suspend(Tag[Browser], this)
+        def suspend(using Frame): A < Browser                                = ArrowEffect.suspend(Tag[Browser], this)
+        def suspendWith[B, S](f: A => B < S)(using Frame): B < (Browser & S) = ArrowEffect.suspendWith(Tag[Browser], this)(f)
 
     object Op:
 

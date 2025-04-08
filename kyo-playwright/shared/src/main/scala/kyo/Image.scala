@@ -1,5 +1,6 @@
 package kyo
 
+import Image.ConsoleType
 import java.util.Base64
 
 /** Represents an image with utility methods for manipulation and display.
@@ -11,7 +12,7 @@ import java.util.Base64
   *
   * Images can be created from binary data or base64 strings using the companion object's factory methods.
   */
-case class Image(data: Array[Byte]):
+final case class Image private (data: Array[Byte]):
 
     /** Writes the image to a file in binary format.
       *
@@ -58,7 +59,7 @@ case class Image(data: Array[Byte]):
       * @return
       *   The image data as an IArray[Byte]
       */
-    def binary: IArray[Byte] = IArray(data*)
+    def binary: IArray[Byte] = IArray.unsafeFromArray(data)
 
     /** Converts the image data to a base64 encoded string.
       *
@@ -79,36 +80,52 @@ case class Image(data: Array[Byte]):
       *   A Maybe containing the terminal control sequence if rendering is supported, or Absent if the terminal doesn't support inline
       *   images
       */
-    def renderToConsole(charsWidth: Int = 0, charsHeight: Int = 0)(using Frame): Maybe[String] =
+    def renderToConsole(charsWidth: Int = 0, charsHeight: Int = 0, consoleType: Maybe[ConsoleType] = ConsoleType.get)(
+        using Frame
+    ): Maybe[String] =
         val base64Image = base64
-        val termProgram = sys.env.getOrElse("TERM_PROGRAM", "").toLowerCase
-        val term        = sys.env.getOrElse("TERM", "").toLowerCase
-
-        if termProgram.contains("iterm") then
-            val sizeSpec =
-                if charsWidth > 0 && charsHeight > 0 then
-                    s"width=${charsWidth}ch;height=${charsHeight}ch;"
-                else if charsWidth > 0 then
-                    s"width=${charsWidth}ch;"
-                else
-                    ""
-            Present(s"\u001b]1337;File=inline=1;${sizeSpec}preserveAspectRatio=1:${base64Image}\u0007")
-        else if termProgram.contains("kitty") || term.contains("kitty") then
-            val sizeParams =
-                if charsWidth > 0 && charsHeight > 0 then
-                    s"s=${charsWidth},v=${charsHeight},"
-                else if charsWidth > 0 then
-                    s"s=${charsWidth},"
-                else
-                    ""
-            Present(s"\u001b_Gf=100,${sizeParams}m=1;${base64Image}\u001b\\")
-        else
-            Absent
-        end if
+        consoleType.map {
+            case ConsoleType.iterm =>
+                val sizeSpec =
+                    if charsWidth > 0 && charsHeight > 0 then
+                        s"width=${charsWidth}ch;height=${charsHeight}ch;"
+                    else if charsWidth > 0 then
+                        s"width=${charsWidth}ch;"
+                    else
+                        ""
+                s"\u001b]1337;File=inline=1;${sizeSpec}preserveAspectRatio=1:${base64Image}\u0007"
+            case ConsoleType.kitty =>
+                val sizeParams =
+                    if charsWidth > 0 && charsHeight > 0 then
+                        s"s=${charsWidth},v=${charsHeight},"
+                    else if charsWidth > 0 then
+                        s"s=${charsWidth},"
+                    else
+                        ""
+                s"\u001b_Gf=100,${sizeParams}m=1;${base64Image}\u001b\\"
+        }
     end renderToConsole
 end Image
 
 object Image:
+
+    enum ConsoleType derives CanEqual:
+        case iterm, kitty
+
+    object ConsoleType:
+        def get: Maybe[ConsoleType] =
+            val termProgram = sys.env.getOrElse("TERM_PROGRAM", "").toLowerCase
+            val term        = sys.env.getOrElse("TERM", "").toLowerCase
+            if termProgram.contains("iterm") then
+                Present(ConsoleType.iterm)
+            else if termProgram.contains("kitty") || term.contains("kitty") then
+                Present(ConsoleType.kitty)
+            else
+                Absent
+            end if
+        end get
+
+    end ConsoleType
 
     /** Creates an Image from binary data.
       *
