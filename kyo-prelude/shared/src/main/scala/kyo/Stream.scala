@@ -272,16 +272,14 @@ sealed abstract class Stream[V, -S] extends Serializable:
         discr: Stream.Dummy,
         frame: Frame
     ): Stream[V, S] =
-        Stream[V, S](ArrowEffect.handleState(tag, (), emit)(
+        Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
-                (input, _, cont) =>
-                    if input.isEmpty then ((), cont(()))
+                (input, state, cont) =>
+                    if !state then (false, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
+                    else if input.isEmpty then (state, cont(()))
                     else
                         val c = input.takeWhile(f)
-                        Emit.valueWith(c):
-                            if c.size == input.size then ((), cont(()))
-                            else ((), Kyo.unit)
-                    end if
+                        Emit.valueWith(c)((c.size == input.size, cont(())))
         ))
     end takeWhile
 
@@ -296,7 +294,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         Stream[V, S & S2](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
                 (input, state, cont) =>
-                    if !state then (false, Kyo.unit)
+                    if !state then (false, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
                     else
                         Kyo.takeWhile(input)(f).map { c =>
                             Emit.valueWith(c)((c.size == input.size, cont(())))

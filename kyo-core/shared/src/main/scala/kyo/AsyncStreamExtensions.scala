@@ -26,20 +26,25 @@ object AsyncStreamExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        inline def collectAll[V, S](streams: Seq[Stream[V, S]], bufferSize: Int = DefaultCollectBufferSize)(using
+        def collectAll[V, E: SafeClassTag, S](streams: Seq[Stream[V, Abort[E] & S & Async]], bufferSize: Int = DefaultCollectBufferSize)(
+            using
+            Isolate.Contextual[S, IO],
+            Isolate.Stateful[S, Abort[E] & Async],
+            Tag[V],
             Frame
         ): Stream[V, S & Async] =
             Stream:
                 Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
                     IO.ensure(channel.close):
                         for
-                            _ <- Async.run(Abort.run(
-                                Async
+                            _ <- Async.run[E, Unit, S](Abort.run {
+                                val somat = Async
                                     .foreachDiscard(streams)(
-                                        _.foreachChunk(c => channel.put(Present(c)))
+                                        _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
                                     )
-                            )
-                                .andThen(channel.put(Absent)))
+                                somat
+                            }
+                                .andThen(Abort.run(channel.put(Absent)).unit))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
@@ -54,7 +59,14 @@ object AsyncStreamExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        inline def collectAllHalting[V, S](streams: Seq[Stream[V, S]], bufferSize: Int = DefaultCollectBufferSize)(using
+        def collectAllHalting[V, E: SafeClassTag, S](
+            streams: Seq[Stream[V, S & Abort[E] & Async]],
+            bufferSize: Int = DefaultCollectBufferSize
+        )(
+            using
+            Isolate.Contextual[S, IO],
+            Isolate.Stateful[S, Abort[E] & Async],
+            Tag[V],
             Frame
         ): Stream[V, S & Async] =
             Stream:
@@ -64,15 +76,15 @@ object AsyncStreamExtensions:
                             _ <- Async.run(Abort.run(
                                 Async
                                     .foreachDiscard(streams)(
-                                        _.foreachChunk(c => channel.put(Present(c)))
-                                            .andThen(channel.put(Absent))
+                                        _.foreachChunk(c => Abort.run(channel.put(Present(c))))
+                                            .andThen(Abort.run(channel.put(Absent)))
                                     )
                             ))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
     end extension
 
-    extension [V, S](stream: Stream[V, S])
+    extension [V, S, E](stream: Stream[V, S & Abort[E] & Async])
         /** Merges with another stream. Stream stops when both streams have completed.
           *
           * @note
@@ -84,8 +96,20 @@ object AsyncStreamExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        inline def collect[S2](other: Stream[V, S2], bufferSize: Int = DefaultCollectBufferSize): Stream[V, S & S2 & Async] =
-            Stream.collectAll(Seq(stream, other))
+        def merge[S2](
+            other: Stream[V, Abort[E] & S & Async],
+            bufferSize: Int = DefaultCollectBufferSize
+        )(
+            using
+            Isolate.Contextual[S, IO],
+            Isolate.Stateful[S, Abort[E] & Async],
+            SafeClassTag[E],
+            Tag[V],
+            Frame
+        ): Stream[V, Abort[E] & S & Async] =
+            val streams: Seq[Stream[V, Abort[E] & S & Async]] = Seq(stream, other)
+            Stream.collectAll[V, E, S](streams)
+        end merge
 
         /** Merges with another stream. Stream stops as soon as either has have completed.
           *
@@ -96,8 +120,18 @@ object AsyncStreamExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        inline def collectHalting[S2](other: Stream[V, S2], bufferSize: Int = DefaultCollectBufferSize): Stream[V, S & S2 & Async] =
-            Stream.collectAllHalting(Seq(stream, other))
+        def mergeHalting[S2](
+            other: Stream[V, Abort[E] & S & Async],
+            bufferSize: Int = DefaultCollectBufferSize
+        )(
+            using
+            Isolate.Contextual[S, IO],
+            Isolate.Stateful[S, Abort[E] & Async],
+            SafeClassTag[E],
+            Tag[V],
+            Frame
+        ): Stream[V, Abort[E] & S & S2 & Async] =
+            Stream.collectAllHalting[V, E, S](Seq(stream, other))
 
         /** Merges with another stream. Stream stops when original stream has completed or when both streams have completed.
           *
@@ -110,7 +144,17 @@ object AsyncStreamExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        inline def collectHaltingLeft[S2](other: Stream[V, S2], bufferSize: Int = DefaultCollectBufferSize): Stream[V, S & S2 & Async] =
+        def mergeHaltingLeft(
+            other: Stream[V, Abort[E] & S & Async],
+            bufferSize: Int = DefaultCollectBufferSize
+        )(
+            using
+            Isolate.Contextual[S, IO],
+            Isolate.Stateful[S, Abort[E] & Async],
+            SafeClassTag[E],
+            Tag[V],
+            Frame
+        ): Stream[V, Abort[E] & S & Async] =
             Stream:
                 Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
                     IO.ensure(channel.close):
@@ -136,8 +180,18 @@ object AsyncStreamExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        inline def collectHaltingRight[S2](other: Stream[V, S2], bufferSize: Int = DefaultCollectBufferSize): Stream[V, S & S2 & Async] =
-            other.collectHaltingLeft(stream)
+        def mergeHaltingRight(
+            other: Stream[V, Abort[E] & S & Async],
+            bufferSize: Int = DefaultCollectBufferSize
+        )(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Abort[E] & Async],
+            sct: SafeClassTag[E],
+            t: Tag[V],
+            f: Frame
+        ): Stream[V, Abort[E] & S & Async] =
+            other.mergeHaltingLeft(stream)(using i1, i2, sct, t, f)
     end extension
 end AsyncStreamExtensions
 
