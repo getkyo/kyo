@@ -18,7 +18,7 @@ import scala.util.control.NonFatal
   *   - [[ArrowEffect]] for suspended computations involving input/output transformations.
   *   - [[ContextEffect]] for suspended computations requiring contextual values.
   */
-abstract class Effect private[kernel] () extends Serializable
+abstract class Effect private[kernel] ()
 
 object Effect:
 
