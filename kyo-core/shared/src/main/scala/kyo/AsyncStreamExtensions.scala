@@ -5,6 +5,15 @@ import kyo.kernel.ArrowEffect
 object AsyncStreamExtensions:
     val DefaultCollectBufferSize = 1024
 
+    private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[V], Frame) =
+        val emit = Loop(()): _ =>
+            channel.take.map:
+                case Absent => Loop.done
+                case Present(c) =>
+                    Emit.valueWith(c)(Loop.continue(()))
+        Abort.run(emit).unit
+    end emitMaybeChunksFromChannel
+
     extension (streamObj: Stream.type)
         /** Merges multiple streams asynchronously. Stream stops when all sources streams have completed.
           *
@@ -21,21 +30,17 @@ object AsyncStreamExtensions:
             Frame
         ): Stream[V, S & Async] =
             Stream:
-                Channel.init[Chunk[V]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
+                Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
                     IO.ensure(channel.close):
                         for
                             _ <- Async.run(Abort.run(
                                 Async
                                     .foreachDiscard(streams)(
-                                        _.foreachChunk(c => if c.nonEmpty then channel.put(c) else Kyo.unit)
+                                        _.foreachChunk(c => channel.put(Present(c)))
                                     )
                             )
-                                .andThen(channel.put(Chunk.empty)))
-                            _ <- channel
-                                .streamUntilClosed(1)
-                                .takeWhile(_.nonEmpty)
-                                .mapChunk(_.flattenChunk)
-                                .emit
+                                .andThen(channel.put(Absent)))
+                            _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
@@ -53,21 +58,17 @@ object AsyncStreamExtensions:
             Frame
         ): Stream[V, S & Async] =
             Stream:
-                Channel.init[Chunk[V]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
+                Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
                     IO.ensure(channel.close):
                         for
                             _ <- Async.run(Abort.run(
                                 Async
                                     .foreachDiscard(streams)(
-                                        _.foreachChunk(c => if c.nonEmpty then channel.put(c) else Kyo.unit)
-                                            .andThen(channel.put(Chunk.empty))
+                                        _.foreachChunk(c => channel.put(Present(c)))
+                                            .andThen(channel.put(Absent))
                                     )
                             ))
-                            _ <- channel
-                                .streamUntilClosed(1)
-                                .takeWhile(_.nonEmpty)
-                                .mapChunk(_.flattenChunk)
-                                .emit
+                            _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
     end extension
 
@@ -111,21 +112,17 @@ object AsyncStreamExtensions:
           */
         inline def collectHaltingLeft[S2](other: Stream[V, S2], bufferSize: Int = DefaultCollectBufferSize): Stream[V, S & S2 & Async] =
             Stream:
-                Channel.init[Chunk[V]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
+                Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
                     IO.ensure(channel.close):
                         for
                             _ <- Async.run(
                                 Async.gather(
-                                    stream.foreachChunk(c => if c.nonEmpty then channel.put(c) else Kyo.unit)
-                                        .andThen(channel.put(Chunk.empty)),
-                                    other.foreachChunk(c => if c.nonEmpty then channel.put(c) else Kyo.unit)
-                                ).andThen(channel.put(Chunk.empty))
+                                    stream.foreachChunk(c => channel.put(Present(c)))
+                                        .andThen(channel.put(Absent)),
+                                    other.foreachChunk(c => channel.put(Present(c)))
+                                ).andThen(channel.put(Absent))
                             )
-                            _ <- channel
-                                .streamUntilClosed(1)
-                                .takeWhile(_.nonEmpty)
-                                .mapChunk(_.flattenChunk)
-                                .emit
+                            _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
         /** Merges with another stream. Stream stops when other stream has completed or when both streams have completed.
