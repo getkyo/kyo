@@ -178,12 +178,13 @@ abstract private class PublisherToSubscriberTest extends Test:
                 subStream3  <- subscriber3.stream
                 subscriber4 <- streamSubscriber
                 subStream4  <- subscriber4.stream
-                latch       <- Latch.init(6)
+                latch       <- Latch.init(4)
                 fiber1      <- Async.run(latch.release.andThen(subStream1.run.unit))
                 fiber2      <- Async.run(latch.release.andThen(subStream2.run.unit))
                 fiber3      <- Async.run(latch.release.andThen(subStream3.run.unit))
                 fiber4      <- Async.run(latch.release.andThen(subStream4.run.unit))
-                publisherFiber <- Async.run(latch.release.andThen(Resource.run(
+                latchPub    <- Latch.init(1)
+                publisherFiber <- Async.run(latch.await.andThen(Resource.run(
                     Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                         .toPublisher
                         .map { publisher =>
@@ -192,9 +193,10 @@ abstract private class PublisherToSubscriberTest extends Test:
                             publisher.subscribe(subscriber3)
                             publisher.subscribe(subscriber4)
                         }
-                        .andThen(latch.release.andThen(Async.sleep(1.seconds)))
+                        .andThen(latchPub.release).andThen(Async.never)
                 )))
-                _ <- latch.await.andThen(publisherFiber.interrupt.unit)
+                _ <- latchPub.await
+                _ <- publisherFiber.interrupt.unit
                 _ <- fiber1.getResult
                 _ <- fiber2.getResult
                 _ <- fiber3.getResult
