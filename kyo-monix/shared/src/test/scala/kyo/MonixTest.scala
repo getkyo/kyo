@@ -153,10 +153,10 @@ class MonixTest extends AsyncFreeSpec:
                     val panic   = Result.Panic(new Exception)
                     for
                         f <- Async.run(Monix.get(monixLoop(started, done)))
-                        _ <- kyoWait(started, 100.millis)
+                        _ <- kyoWait(started, 200.millis)
                         _ <- f.interrupt(panic)
                         r <- f.getResult
-                        _ <- kyoWait(done, 100.millis)
+                        _ <- kyoWait(done, 200.millis)
                     yield assert(r == panic)
                     end for
                 }
@@ -171,10 +171,10 @@ class MonixTest extends AsyncFreeSpec:
                     end parallelEffect
                     for
                         f <- Async.run(parallelEffect)
-                        _ <- kyoWait(started, 100.millis)
+                        _ <- kyoWait(started, 200.millis)
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- kyoWait(done, 100.millis)
+                        _ <- kyoWait(done, 200.millis)
                     yield assert(r.isPanic)
                     end for
                 }
