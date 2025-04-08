@@ -312,4 +312,11 @@ class VarTest extends Test:
             }
         }
     }
+
+    "updateWith" in {
+        val result = Var.run(1) {
+            Var.updateWith[Int](_ + 1)(v => v * 2)
+        }.eval
+        assert(result == 4)
+    }
 end VarTest

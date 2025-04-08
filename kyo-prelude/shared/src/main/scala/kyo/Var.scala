@@ -90,7 +90,7 @@ object Var:
       * @return
       *   The result of the computation after setting the new value
       */
-    private[kyo] inline def setWith[V, A, S](inline value: V)(inline f: => A < S)(using
+    inline def setWith[V, A, S](inline value: V)(inline f: => A < S)(using
         inline tag: Tag[Var[V]],
         inline frame: Frame
     ): A < (Var[V] & S) =
@@ -117,9 +117,16 @@ object Var:
       * @return
       *   The new value after applying the update function
       */
+    inline def update[V](inline update: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
+        updateWith(update)(identity)
+
     @nowarn("msg=anonymous")
-    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
-        ArrowEffect.suspend[V](tag, (v => f(v)): Update[V])
+    inline def updateWith[V](inline update: V => V)[A, S](inline f: V => A < S)(
+        using
+        inline tag: Tag[Var[V]],
+        inline frame: Frame
+    ): A < (Var[V] & S) =
+        ArrowEffect.suspendWith[V](tag, (v => update(v)): Update[V])(f)
 
     /** Applies the update function and returns `Unit`.
       *
