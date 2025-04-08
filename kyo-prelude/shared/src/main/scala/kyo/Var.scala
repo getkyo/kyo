@@ -90,7 +90,7 @@ object Var:
       * @return
       *   The result of the computation after setting the new value
       */
-    private[kyo] inline def setWith[V, A, S](inline value: V)(inline f: => A < S)(using
+    inline def setWith[V, A, S](inline value: V)(inline f: => A < S)(using
         inline tag: Tag[Var[V]],
         inline frame: Frame
     ): A < (Var[V] & S) =
