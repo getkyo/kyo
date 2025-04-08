@@ -51,9 +51,9 @@ class VarTest extends Test:
         assert(r == (2, 3))
     }
 
-    "setAndThen" in {
+    "setWith" in {
         val result = Var.run(1) {
-            Var.setAndThen(2)(Var.use[Int](_ * 2))
+            Var.setWith(2)(Var.use[Int](_ * 2))
         }.eval
         assert(result == 4)
     }
