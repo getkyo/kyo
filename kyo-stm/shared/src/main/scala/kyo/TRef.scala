@@ -56,7 +56,8 @@ end TRef
   */
 final private class TRefImpl[A] private[kyo] (initialState: Write[A])
     extends AtomicInteger(0) // Atomic super class to keep the lock state
-    with TRef[A]:
+    with TRef[A]
+    with Serializable:
 
     @volatile private var currentState = initialState
 

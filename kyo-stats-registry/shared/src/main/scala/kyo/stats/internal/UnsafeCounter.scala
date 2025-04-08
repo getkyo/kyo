@@ -2,7 +2,7 @@ package kyo.stats.internal
 
 import java.util.concurrent.atomic.LongAdder
 
-class UnsafeCounter {
+class UnsafeCounter extends Serializable {
     private var last  = 0L
     private val adder = new LongAdder
 
