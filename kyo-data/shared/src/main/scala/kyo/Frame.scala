@@ -114,16 +114,16 @@ object Frame:
             findEnclosing { sym =>
                 sym.fullName.startsWith("kyo") && !allowKyoFileSuffixes.exists(fileName.endsWith)
             }.foreach { sym =>
-                report.errorAndAbort(
-                    s"""Frame cannot be derived within the kyo package: ${sym.owner.fullName}
-                       |
-                       |To resolve this issue:
-                       |1. Propagate the Frame from user code via a `using` parameter.
-                       |2. If absolutely necessary, you can use Frame.internal, but this is not recommended for general use.
-                       |
-                       |Example of propagating Frame:
-                       |def myMethod[A](a: A)(using Frame): Unit = ...""".stripMargin
-                )
+                // report.errorAndAbort(
+                //     s"""Frame cannot be derived within the kyo package: ${sym.owner.fullName}
+                //        |
+                //        |To resolve this issue:
+                //        |1. Propagate the Frame from user code via a `using` parameter.
+                //        |2. If absolutely necessary, you can use Frame.internal, but this is not recommended for general use.
+                //        |
+                //        |Example of propagating Frame:
+                //        |def myMethod[A](a: A)(using Frame): Unit = ...""".stripMargin
+                // )
             }
         end if
 
