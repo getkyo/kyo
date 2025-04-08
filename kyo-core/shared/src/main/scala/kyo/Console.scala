@@ -242,7 +242,7 @@ object Console:
     def checkErrors(using Frame): Boolean < IO = IO.Unsafe.withLocal(local)(console => console.unsafe.checkErrors)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    abstract class Unsafe extends Serializable:
         def readLine()(using AllowUnsafe): Result[IOException, String]
         def print(s: String)(using AllowUnsafe): Unit
         def printErr(s: String)(using AllowUnsafe): Unit

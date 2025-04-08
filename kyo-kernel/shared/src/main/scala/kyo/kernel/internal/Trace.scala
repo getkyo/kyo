@@ -22,7 +22,7 @@ import scala.util.control.NoStackTrace
 final private[kyo] class Trace(
     private[kernel] val frames: Array[Frame],
     private[kernel] var index: Int
-)
+) extends Serializable
 
 private[kyo] object Trace:
 

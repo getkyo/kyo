@@ -6,7 +6,7 @@ import kyo.stats.internal.TraceReceiver
 
 /** A counter for tracking numeric values that only increase.
   */
-abstract class Counter:
+abstract class Counter extends Serializable:
     /** The underlying unsafe counter implementation. */
     val unsafe: UnsafeCounter
 
@@ -29,7 +29,7 @@ end Counter
 
 /** A histogram for observing the distribution of values.
   */
-abstract class Histogram:
+abstract class Histogram extends Serializable:
     /** The underlying unsafe histogram implementation. */
     val unsafe: UnsafeHistogram
 
@@ -62,7 +62,7 @@ end Histogram
 
 /** A gauge for measuring a specific value that can go up and down.
   */
-abstract class Gauge:
+abstract class Gauge extends Serializable:
     /** The underlying unsafe gauge implementation. */
     val unsafe: UnsafeGauge
 
@@ -75,7 +75,7 @@ end Gauge
 
 /** A gauge that specifically measures counter-like values.
   */
-abstract class CounterGauge:
+abstract class CounterGauge extends Serializable:
     /** The underlying unsafe counter gauge implementation. */
     val unsafe: UnsafeCounterGauge
 
@@ -86,7 +86,7 @@ abstract class CounterGauge:
     def collect(using Frame): Long < IO
 end CounterGauge
 
-final class Stat(private val registryScope: StatsRegistry.Scope):
+final class Stat(private val registryScope: StatsRegistry.Scope) extends Serializable:
 
     /** Create a new Stat instance with an additional scope.
       * @param path

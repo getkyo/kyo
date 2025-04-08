@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
   * @param store
   *   The underlying cache store
   */
-class Cache(private[kyo] val store: Store):
+class Cache(private[kyo] val store: Store) extends Serializable:
 
     /** Memoizes a function with a single argument.
       *

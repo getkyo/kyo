@@ -329,7 +329,7 @@ object Queue:
     end Unbounded
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe[A]:
+    abstract class Unsafe[A] extends Serializable:
         def capacity: Int
         def size()(using AllowUnsafe): Result[Closed, Int]
         def empty()(using AllowUnsafe): Result[Closed, Boolean]

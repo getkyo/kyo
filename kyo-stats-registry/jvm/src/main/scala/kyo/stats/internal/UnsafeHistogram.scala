@@ -2,7 +2,7 @@ package kyo.stats.internal
 
 import org.HdrHistogram.ConcurrentDoubleHistogram as HdrHistogram
 
-class UnsafeHistogram(numberOfSignificantValueDigits: Int, highestToLowestValueRatio: Long) {
+class UnsafeHistogram(numberOfSignificantValueDigits: Int, highestToLowestValueRatio: Long) extends Serializable {
     private val hdr =
         new HdrHistogram(
             highestToLowestValueRatio,

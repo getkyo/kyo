@@ -21,7 +21,7 @@ import scala.io.*
 import scala.jdk.CollectionConverters.*
 import scala.jdk.StreamConverters.*
 
-final class Path private (val path: List[String]) derives CanEqual:
+final class Path private (val path: List[String]) extends Serializable derives CanEqual:
 
     def toJava: JPath               = Paths.get(path.mkString(File.separator))
     lazy val parts: List[Path.Part] = path

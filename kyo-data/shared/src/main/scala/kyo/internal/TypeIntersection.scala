@@ -13,7 +13,7 @@ import scala.quoted.*
   *   - Apply type constructors uniformly across all components
   *   - Collect type class instances for all component types
   */
-sealed abstract class TypeIntersection[A]:
+sealed abstract class TypeIntersection[A] extends Serializable:
 
     /** The tuple representation of the decomposed types.
       *
