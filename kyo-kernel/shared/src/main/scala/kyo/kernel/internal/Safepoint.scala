@@ -16,7 +16,7 @@ import scala.util.control.NonFatal
   * This class is not meant to be used directly by user code, but rather serves as infrastructure for effect handlers and combinators. It's
   * a key part of ensuring effect execution remains practical and debuggable while maintaining good performance characteristics.
   */
-final class Safepoint private () extends Trace.Owner:
+final class Safepoint private () extends Trace.Owner with Serializable:
 
     private var state: State             = State.init()
     private var interceptor: Interceptor = null
@@ -43,6 +43,8 @@ final class Safepoint private () extends Trace.Owner:
         interceptor = newInterceptor
         state = state.withInterceptor(newInterceptor != null)
 
+    private def writeReplace() = Safepoint.Restore
+
     override def toString(): String =
         val currentState = state
         s"Safepoint(depth=${currentState.depth}, threadId=${currentState.threadId}, interceptor=${interceptor})"
@@ -50,6 +52,9 @@ final class Safepoint private () extends Trace.Owner:
 end Safepoint
 
 object Safepoint:
+
+    private[Safepoint] object Restore extends Serializable:
+        private def readResolve() = get
 
     implicit def get: Safepoint = local.get()
 

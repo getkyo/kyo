@@ -8,7 +8,7 @@ import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interceptor:
+private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interceptor with Serializable:
 
     @volatile private var state = init
 

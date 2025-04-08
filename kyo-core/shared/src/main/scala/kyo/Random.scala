@@ -24,7 +24,7 @@ import scala.annotation.tailrec
   * @see
   *   [[kyo.Random.withSeed]] For creating reproducible random sequences
   */
-abstract class Random:
+abstract class Random extends Serializable:
     def nextInt(using Frame): Int < IO
     def nextInt(exclusiveBound: Int)(using Frame): Int < IO
     def nextLong(using Frame): Long < IO
@@ -44,7 +44,7 @@ end Random
 object Random:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    abstract class Unsafe extends Serializable:
         def nextInt()(using AllowUnsafe): Int
         def nextInt(exclusiveBound: Int)(using AllowUnsafe): Int
         def nextLong()(using AllowUnsafe): Long
