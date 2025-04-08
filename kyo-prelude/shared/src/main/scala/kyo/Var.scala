@@ -90,7 +90,7 @@ object Var:
       * @return
       *   The result of the computation after setting the new value
       */
-    private[kyo] inline def setAndThen[V, A, S](inline value: V)(inline f: => A < S)(using
+    private[kyo] inline def setWith[V, A, S](inline value: V)(inline f: => A < S)(using
         inline tag: Tag[Var[V]],
         inline frame: Frame
     ): A < (Var[V] & S) =
@@ -215,7 +215,7 @@ object Var:
         def update[V](using Tag[Var[V]]): Isolate.Stateful[Var[V], Any] =
             new Base[V, Any]:
                 def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
-                    v.map(Var.setAndThen(_)(_))
+                    v.map(Var.setWith(_)(_))
 
         /** Creates an isolate that merges Var values using a combination function.
           *
@@ -232,7 +232,7 @@ object Var:
         def merge[V](using Tag[Var[V]])[S](f: (V, V) => V < S): Isolate.Stateful[Var[V], S] =
             new Base[V, S]:
                 def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
-                    Var.use[V](prev => v.map((state, r) => f(prev, state).map(Var.setAndThen(_)(r))))
+                    Var.use[V](prev => v.map((state, r) => f(prev, state).map(Var.setWith(_)(r))))
 
         /** Creates an isolate that keeps Var modifications local.
           *
