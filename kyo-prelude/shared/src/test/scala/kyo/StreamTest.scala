@@ -954,4 +954,42 @@ class StreamTest extends Test:
         }
     }
 
+    "chunking" - {
+        val chunkSize: Int = 64
+
+        def maintains(ops: ((Stream[Int, Any] => Stream[Int, Any]), String)*): Unit =
+            val streamSize: Int = 513
+            for (transform, opName) <- ops do
+                s"$opName maintains chunks" in {
+                    val base     = Stream.range(0, streamSize, chunkSize = chunkSize)
+                    val expected = chunkSizes(base).eval
+
+                    val transformed = transform(base)
+                    val actual      = chunkSizes(transformed).eval
+
+                    assert(actual == expected)
+                }
+            end for
+        end maintains
+
+        maintains(
+            (_.map(identity), "map"),
+            (_.map(Kyo.lift), "map (kyo)"),
+            (_.mapChunk(identity), "mapChunk"),
+            (_.mapChunk(Kyo.lift), "mapChunk (kyo)"),
+            (_.tap(identity), "tap"),
+            (_.tapChunk(identity), "tapChunk"),
+            (_.take(Int.MaxValue), "take"),
+            (_.takeWhile(_ => true), "takeWhile"),
+            (_.takeWhile(_ => Kyo.lift(true)), "takeWhile (kyo)"),
+            (_.dropWhile(_ => false), "dropWhile"),
+            (_.dropWhile(_ => Kyo.lift(false)), "dropWhile (kyo)"),
+            (_.filter(_ => true), "filter"),
+            (_.filter(_ => Kyo.lift(true)), "filter (kyo)"),
+            (_.changes, "changes"),
+            (_.rechunk(chunkSize), "rechunk"),
+            (_.flatMapChunk(c => Stream.init(c)), "flatMapChunk")
+        )
+    }
+
 end StreamTest

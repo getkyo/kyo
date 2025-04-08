@@ -263,6 +263,23 @@ object Fiber extends FiberPlatformSpecific:
 
         def unsafe: Fiber.Unsafe[E, A] = self
 
+        /** Gets the number of waiters on this Fiber.
+          *
+          * This method returns the count of callbacks and other fibers waiting for this fiber to complete. Primarily useful for debugging
+          * and monitoring purposes.
+          *
+          * @return
+          *   The number of waiters on this Fiber
+          */
+        def waiters(using Frame): Int < IO = IO(self.waiters())
+
+        /** Polls the Fiber for a result without blocking.
+          *
+          * @return
+          *   Maybe containing the Result if the Fiber is done, or Absent if still pending
+          */
+        def poll(using Frame): Maybe[Result[E, A]] < IO = IO(self.poll())
+
     end extension
 
     case class Interrupted(at: Frame)
@@ -559,6 +576,10 @@ object Fiber extends FiberPlatformSpecific:
             end mapResult
 
             def safe: Fiber[E, A] = self
+
+            def waiters()(using AllowUnsafe): Int = self.waiters()
+
+            def poll()(using AllowUnsafe): Maybe[Result[E, A]] = self.poll()
         end extension
     end Unsafe
 
@@ -619,6 +640,24 @@ object Fiber extends FiberPlatformSpecific:
             def becomeDiscard[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Unit < IO = IO(discard(self.become(other)))
 
             def unsafe: Unsafe[E, A] = self
+
+            /** Gets the number of waiters on this Promise.
+              *
+              * This method returns the count of callbacks and other fibers waiting for this promise to complete. Primarily useful for
+              * debugging and monitoring purposes.
+              *
+              * @return
+              *   The number of waiters on this Promise
+              */
+            def waiters(using Frame): Int < IO = IO(self.waiters())
+
+            /** Polls the Promise for a result without blocking.
+              *
+              * @return
+              *   Maybe containing the Result if the Promise is done, or Absent if still pending
+              */
+            def poll(using Frame): Maybe[Result[E, A]] < IO = IO(self.poll())
+
         end extension
 
         opaque type Unsafe[+E, +A] <: Fiber.Unsafe[E, A] = IOPromise[E, A]
@@ -641,6 +680,8 @@ object Fiber extends FiberPlatformSpecific:
                 def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Boolean     = self.become(other)
                 def becomeDiscard[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Unit = discard(self.become(other))
                 def safe: Promise[E, A]                                                            = self
+                def waiters()(using AllowUnsafe): Int                                              = self.waiters()
+                def poll()(using AllowUnsafe): Maybe[Result[E, A]]                                 = self.poll()
             end extension
         end Unsafe
     end Promise
