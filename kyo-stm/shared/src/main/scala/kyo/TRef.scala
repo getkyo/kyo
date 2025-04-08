@@ -76,7 +76,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                         else
                             // Append Read to the log and return value
                             val entry = Read(state.tid, state.value)
-                            Var.setAndThen(log.put(this, entry))(f(state.value))
+                            Var.setWith(log.put(this, entry))(f(state.value))
                         end if
                     }
             end match
