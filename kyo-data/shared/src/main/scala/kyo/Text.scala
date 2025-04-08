@@ -25,7 +25,7 @@ object Text:
     def empty: Text = ""
 
     /** Abstract class for character predicates used in Text operations */
-    abstract class Predicate:
+    abstract class Predicate extends Serializable:
         /** Tests if a character matches the predicate
           *
           * @param char
@@ -560,7 +560,7 @@ object Text:
 
     private[kyo] object internal:
 
-        sealed trait Op:
+        sealed trait Op extends Serializable:
             def isEmpty: Boolean
             def length: Int
             def charAt(index: Int): Char

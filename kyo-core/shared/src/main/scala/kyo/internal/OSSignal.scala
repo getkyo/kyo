@@ -4,7 +4,7 @@ package kyo.internal
   */
 private[kyo] object OsSignal extends OsSignalPlatformSpecific:
     /** A handler for signals. */
-    abstract class Handler:
+    abstract class Handler extends Serializable:
         def apply(signal: String, handle: => Unit): Unit
 
     object Handler:

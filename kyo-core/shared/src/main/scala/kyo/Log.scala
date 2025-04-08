@@ -87,7 +87,7 @@ object Log extends LogPlatformSpecific:
         let(Log(Unsafe.ConsoleLogger(name, level)))(v)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    abstract class Unsafe extends Serializable:
         def level: Level
 
         def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit

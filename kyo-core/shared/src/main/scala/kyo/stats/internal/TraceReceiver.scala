@@ -6,7 +6,7 @@ import kyo.stats.*
 import kyo.stats.Attributes
 import scala.jdk.CollectionConverters.*
 
-trait TraceReceiver:
+trait TraceReceiver extends Serializable:
 
     def startSpan(
         scope: List[String],

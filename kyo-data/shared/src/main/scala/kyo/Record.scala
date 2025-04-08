@@ -145,7 +145,7 @@ object Record:
 
     given [Fields]: Flat[Record[Fields]] = Flat.unsafe.bypass
 
-    final infix class ~[Name <: String, Value] private ()
+    final infix class ~[Name <: String, Value] private () extends Serializable
 
     object `~`:
         given [Name <: String, Value](using CanEqual[Value, Value]): CanEqual[Name ~ Value, Name ~ Value] =

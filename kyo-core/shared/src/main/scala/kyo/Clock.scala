@@ -131,7 +131,7 @@ object Clock:
 
     object Stopwatch:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-        final class Unsafe(start: Duration, clock: Clock.Unsafe):
+        final class Unsafe(start: Duration, clock: Clock.Unsafe) extends Serializable:
             def elapsed()(using AllowUnsafe): Duration = clock.nowMonotonic() - start
             def safe: Stopwatch                        = Stopwatch(this)
         end Unsafe
@@ -161,7 +161,7 @@ object Clock:
 
     object Deadline:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-        final class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe):
+        final class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe) extends Serializable:
 
             def timeLeft()(using AllowUnsafe): Duration =
                 endInstant.map(_ - clock.now()).getOrElse(Duration.Infinity)
