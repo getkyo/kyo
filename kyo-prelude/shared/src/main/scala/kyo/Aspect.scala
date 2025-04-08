@@ -29,7 +29,7 @@ import Aspect.*
   */
 final class Aspect[Input[_], Output[_], S] private[kyo] (
     default: Cut[Input, Output, S]
-)(using Frame):
+)(using Frame) extends Serializable:
 
     /** Applies this aspect to transform a computation.
       *

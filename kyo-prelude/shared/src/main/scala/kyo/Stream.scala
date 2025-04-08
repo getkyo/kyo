@@ -42,7 +42,7 @@ import scala.util.NotGiven
   * @see
   *   [[kyo.Poll]] for pull-based consumption with backpressure
   */
-sealed abstract class Stream[V, -S]:
+sealed abstract class Stream[V, -S] extends Serializable:
 
     /** Returns the effect that produces acknowledgments and emits chunks of values. */
     def emit: Unit < (Emit[Chunk[V]] & S)
@@ -703,7 +703,7 @@ object Stream:
 
     /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
       */
-    sealed class Dummy
+    sealed class Dummy extends Serializable
     object Dummy:
         given Dummy = new Dummy {}
 

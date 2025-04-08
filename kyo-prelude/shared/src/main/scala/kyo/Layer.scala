@@ -36,7 +36,7 @@ import kyo.Tag
   * @see
   *   [[kyo.Env]], [[kyo.Memo]] for related effects that interact with layers
   */
-abstract class Layer[+Out, -S]:
+abstract class Layer[+Out, -S] extends Serializable:
     self =>
 
     /** Composes this layer with another layer that depends on the output of this layer.
@@ -294,7 +294,7 @@ object Layer:
 
         private given Frame = Frame.internal
 
-        class DoRun[Out, S]:
+        class DoRun[Out, S] extends Serializable:
             private val memo = Memo[Layer[Out, S], TypeMap[Out], S & Memo] { self =>
                 type Expected = TypeMap[Out] < (S & Memo)
                 self match

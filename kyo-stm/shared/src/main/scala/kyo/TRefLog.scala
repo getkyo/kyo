@@ -37,7 +37,7 @@ private[kyo] object TRefLog:
 
     val isolate = Var.isolate.update[TRefLog](using tag)
 
-    sealed abstract class Entry[A]:
+    sealed abstract class Entry[A] extends Serializable:
         def tid: Long
         def value: A
 

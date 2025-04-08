@@ -35,7 +35,7 @@ import scala.annotation.nowarn
   * @see
   *   [[kyo.Env]] for required dependencies without defaults
   */
-abstract class Local[A]:
+abstract class Local[A] extends Serializable:
 
     /** The default value for this Local. */
     def default: A

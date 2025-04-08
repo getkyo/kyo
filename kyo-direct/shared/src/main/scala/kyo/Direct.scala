@@ -162,7 +162,8 @@ object directInternal:
     given Frame = Frame.internal
     class KyoCpsMonad[S]
         extends CpsMonadContext[[A] =>> A < S]
-        with CpsMonad[[A] =>> A < S]:
+        with CpsMonad[[A] =>> A < S]
+        with Serializable:
 
         type Context = KyoCpsMonad[S]
 

@@ -27,7 +27,7 @@ object Loop:
       * @tparam A
       *   The type of the single state value maintained between iterations
       */
-    abstract class Continue[A]:
+    abstract class Continue[A] extends Serializable:
         private[Loop] def _1: A
 
     /** Represents the state of two values to be carried forward to the next iteration.
@@ -37,7 +37,7 @@ object Loop:
       * @tparam B
       *   The type of the second state value
       */
-    abstract class Continue2[A, B]:
+    abstract class Continue2[A, B] extends Serializable:
         private[Loop] def _1: A
         private[Loop] def _2: B
 
@@ -50,7 +50,7 @@ object Loop:
       * @tparam C
       *   The type of the third state value
       */
-    abstract class Continue3[A, B, C]:
+    abstract class Continue3[A, B, C] extends Serializable:
         private[Loop] def _1: A
         private[Loop] def _2: B
         private[Loop] def _3: C
@@ -67,7 +67,7 @@ object Loop:
       * @tparam D
       *   The type of the fourth state value
       */
-    abstract class Continue4[A, B, C, D]:
+    abstract class Continue4[A, B, C, D] extends Serializable:
         private[Loop] def _1: A
         private[Loop] def _2: B
         private[Loop] def _3: C

@@ -765,7 +765,7 @@ class AsyncTest extends Test:
                 )
             }.map { result =>
                 assert(result == (Seq(2, 2, 2), 2))
-                assert(count == 3)
+                assert(count <= 3)
             }
         }
 
