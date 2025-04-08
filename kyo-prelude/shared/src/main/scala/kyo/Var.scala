@@ -117,8 +117,8 @@ object Var:
       * @return
       *   The new value after applying the update function
       */
-    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
-        ArrowEffect.suspend[V](tag, (v => f(v)): Update[V])
+    inline def update[V](inline update: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
+        updateWith(update)(identity)
 
     @nowarn("msg=anonymous")
     inline def updateWith[V](inline update: V => V)[A, S](inline f: V => A < S)(
