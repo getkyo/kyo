@@ -582,7 +582,7 @@ object Clock:
         }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    sealed abstract class Unsafe:
 
         def now()(using AllowUnsafe): Instant
 

@@ -203,7 +203,7 @@ object System:
     def operatingSystem(using Frame): OS < IO = local.use(_.operatingSystem)
 
     /** Abstract class for parsing string values into specific types. */
-    abstract class Parser[E, A] extends Serializable:
+    sealed abstract class Parser[E, A] extends Serializable:
         /** Parses a string value into type A.
           *
           * @param s

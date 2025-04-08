@@ -268,7 +268,7 @@ object Meter:
 
     private val acquiredMeters = Local.initNoninheritable(Set.empty[Meter])
 
-    abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
+    sealed abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
 
         // MinValue => closed
         // >= 0     => # of permits
