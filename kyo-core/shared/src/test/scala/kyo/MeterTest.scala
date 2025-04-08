@@ -172,9 +172,7 @@ class MeterTest extends Test:
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFibers <- Kyo.foreach(1 to 100)(_ =>
-                        started.release.andThen(
-                            Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
-                        )
+                        Async.run(started.release.andThen(latch.await.andThen(meter.run(counter.incrementAndGet))))
                     )
                     interruptFiber <- Async.run(latch.await.andThen(
                         Async.foreach(runFibers.take(50), 50)(_.interrupt(panic))
