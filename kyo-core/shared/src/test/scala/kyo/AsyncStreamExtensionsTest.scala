@@ -93,7 +93,7 @@ class AsyncStreamExtensionsTest extends Test:
             val s1 = Stream:
                 Env.get[Int].map(i =>
                     Loop(i)(i1 =>
-                        if i1 > 100 then Abort.fail("failure")
+                        if i1 > i then Abort.fail("failure") // Should never be true
                         else if i1 == 0 then Loop.done
                         else Emit.valueWith(Chunk(i1))(Loop.continue(i1 - 1))
                     )
