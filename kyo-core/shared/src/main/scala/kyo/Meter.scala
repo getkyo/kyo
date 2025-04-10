@@ -28,7 +28,7 @@ import scala.annotation.tailrec
   * @see
   *   [[kyo.Meter.pipeline]] For combining multiple meters into a composite control
   */
-abstract class Meter:
+abstract class Meter private[kyo] ():
     self =>
 
     /** Runs an effect after acquiring a permit.
