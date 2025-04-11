@@ -233,7 +233,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
                         val c   = input.take(state)
                         val nst = state - c.size
                         Emit.valueWith(c)(
-                            (nst, if nst <= 0 then Kyo.lift[Unit, S & Emit[Chunk[V]]](()) else cont(()))
+                            (nst, if nst <= 0 then Kyo.unit else cont(()))
                     )
             ))
         end if
@@ -350,6 +350,85 @@ sealed abstract class Stream[V, -S] extends Serializable:
                     val c = input.filter(f)
                     if c.isEmpty then ((), cont(()))
                     else Emit.valueWith(c)(((), cont(())))
+        ))
+
+    /** Transform the stream with a partial function, filtering out values for which the partial function is undefined. Combines the
+      * functionality of map and filter.
+      *
+      * @param f
+      *   Partial function transforming V to V2
+      * @return
+      *   A new stream containing transformed elements
+      */
+    def collect[V2, S2](f: V => Maybe[V2] < S2)(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2] =
+        Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    Kyo.collect(input)(f).map: c =>
+                        Emit.valueWith(c)(((), cont(())))
+        ))
+
+    def collect[V2](f: V => Maybe[V2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.map(f).collect({ case Present(v) => v })
+                    if c.isEmpty then ((), cont(()))
+                    else Emit.valueWith(c)(((), cont(())))
+        ))
+
+    /** Transform the stream with a partial function, terminating the stream when the first element is encountered for which the partial
+      * function is undefined. Combines the functionality of map and takeWhile.
+      *
+      * @param f
+      *   Partial function transforming V to V2
+      * @return
+      *   A new stream containing transformed elements
+      */
+    def collectWhile[V2, S2](f: V => Maybe[V2] < S2)(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2] =
+        Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    Kyo.foreach(input)(f)
+                        .map(_.takeWhile(_.isDefined)
+                            .collect({ case Present(v) => v }))
+                        .map: c =>
+                            if c.isEmpty && c.size != input.size then ((), Kyo.unit)
+                            else
+                                Emit.valueWith(c):
+                                    if c.size != input.size then ((), Kyo.unit)
+                                    else ((), cont(()))
+        ))
+
+    def collectWhile[V2](f: V => Maybe[V2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
+                    if c.isEmpty && c.size != input.size then ((), Kyo.unit)
+                    else
+                        Emit.valueWith(c):
+                            if c.size != input.size then ((), Kyo.unit)
+                            else ((), cont(()))
+                    end if
         ))
 
     /** Emits only elements that are different from their predecessor.
@@ -533,7 +612,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
                     else
                         val (taken, rest) = appendedChunk.splitAt(n)
                         val restEmit      = Maybe.Present(Emit.valueWith(rest)(cont(())))
-                        (taken -> restEmit, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
+                        (taken -> restEmit, Kyo.unit)
                     end if
             ,
             done = (state, _) =>
