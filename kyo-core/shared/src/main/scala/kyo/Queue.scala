@@ -329,7 +329,7 @@ object Queue:
     end Unbounded
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe[A] extends Serializable:
+    sealed abstract class Unsafe[A] extends Serializable:
         def capacity: Int
         def size()(using AllowUnsafe): Result[Closed, Int]
         def empty()(using AllowUnsafe): Result[Closed, Boolean]
@@ -347,7 +347,7 @@ object Queue:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
-        abstract private class Closeable[A](initFrame: Frame) extends Unsafe[A]:
+        sealed abstract private class Closeable[A](initFrame: Frame) extends Unsafe[A]:
             import AllowUnsafe.embrace.danger
             final protected val _closed = AtomicRef.Unsafe.init(Maybe.empty[Result.Error[Closed]])
 

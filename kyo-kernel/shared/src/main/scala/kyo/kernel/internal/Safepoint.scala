@@ -128,7 +128,7 @@ object Safepoint:
         immediate(p)(loop(v))
     end propagating
 
-    abstract private[kyo] class Ensure extends AtomicBoolean with Function0[Unit]:
+    sealed abstract private[kyo] class Ensure extends AtomicBoolean with Function0[Unit]:
         def run: Unit
         final def apply(): Unit =
             if compareAndSet(false, true) then
