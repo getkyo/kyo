@@ -265,9 +265,9 @@ private[kyo] object IOPromise:
 
     type State[+E, +A] = Result[E, A] | Pending[E, A] | Linked[E, A]
 
-    case class Linked[+E, +A](p: IOPromise[E, A])
+    final case class Linked[+E, +A](p: IOPromise[E, A])
 
-    abstract class Pending[+E, +A]:
+    sealed abstract class Pending[+E, +A]:
         self =>
 
         def waiters: Int
