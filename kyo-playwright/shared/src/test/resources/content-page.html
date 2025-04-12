@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Test Page</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    .article {
+      border: 1px solid #ddd;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      color: #333;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+
+    table,
+    th,
+    td {
+      border: 1px solid #ddd;
+    }
+
+    th,
+    td {
+      padding: 12px;
+      text-align: left;
+    }
+
+    th {
+      background-color: #f2f2f2;
+    }
+
+    .tabs {
+      margin-top: 20px;
+    }
+
+    .tab-buttons {
+      display: flex;
+      margin-bottom: -1px;
+    }
+
+    .tab-button {
+      padding: 10px 20px;
+      background-color: #f1f1f1;
+      border: 1px solid #ddd;
+      cursor: pointer;
+      margin-right: 5px;
+    }
+
+    .tab-button.active {
+      background-color: white;
+      border-bottom: 1px solid white;
+    }
+
+    .tab-content {
+      display: none;
+      padding: 15px;
+      border: 1px solid #ddd;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    blockquote {
+      border-left: 5px solid #ccc;
+      margin-left: 0;
+      padding-left: 20px;
+      font-style: italic;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Content Test Page</h1>
+  <p>This page contains various content elements for testing browser automation, especially for content extraction.</p>
+  <p><a href="basic-page.html">Return to Basic Test Page</a></p>
+
+  <div class="article">
+    <h2>Article Title: Browser Automation Testing</h2>
+    <p class="author">By Test Author | Published: January 1, 2023</p>
+
+    <p>Browser automation is an essential part of modern web development and testing. It allows developers to simulate
+      user interactions with web applications, ensuring they function correctly across different browsers and scenarios.
+    </p>
+
+    <p>The primary benefits of browser automation include:</p>
+    <ul>
+      <li>Increased testing efficiency and coverage</li>
+      <li>Consistent and repeatable tests</li>
+      <li>Early detection of regressions and issues</li>
+      <li>Reduced manual testing effort</li>
+    </ul>
+
+    <h3>Common Browser Automation Tools</h3>
+    <p>Several tools have emerged as industry standards for browser automation:</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Tool</th>
+          <th>Language</th>
+          <th>Key Features</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Selenium</td>
+          <td>Multiple</td>
+          <td>Wide browser support, mature ecosystem</td>
+        </tr>
+        <tr>
+          <td>Playwright</td>
+          <td>JavaScript/TypeScript</td>
+          <td>Modern architecture, auto-waiting, multiple browsers</td>
+        </tr>
+        <tr>
+          <td>Puppeteer</td>
+          <td>JavaScript</td>
+          <td>Chrome-focused, fast, headless testing</td>
+        </tr>
+        <tr>
+          <td>Cypress</td>
+          <td>JavaScript</td>
+          <td>Developer-friendly, real-time reloading</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <blockquote>
+      "Automated testing is not about replacing manual testing, but about increasing testing efficiency and allowing
+      testers to focus on more complex scenarios." - Testing Expert
+    </blockquote>
+
+    <h3>Best Practices for Browser Testing</h3>
+    <ol>
+      <li>Write atomic, independent tests</li>
+      <li>Use explicit waits rather than implicit delays</li>
+      <li>Implement proper error handling and reporting</li>
+      <li>Maintain test data separately from test logic</li>
+      <li>Run tests in parallel when possible</li>
+    </ol>
+  </div>
+
+  <div class="tabs">
+    <h2>Content in Tabs</h2>
+    <div class="tab-buttons">
+      <div class="tab-button active" data-tab="tab1">Tab 1</div>
+      <div class="tab-button" data-tab="tab2">Tab 2</div>
+      <div class="tab-button" data-tab="tab3">Tab 3</div>
+    </div>
+
+    <div id="tab1" class="tab-content active">
+      <h3>Tab 1 Content</h3>
+      <p>This is the content of the first tab. It contains information that would be hidden if you were on another tab.
+      </p>
+      <p>Testing tab navigation is important for dynamic content.</p>
+    </div>
+
+    <div id="tab2" class="tab-content">
+      <h3>Tab 2 Content</h3>
+      <p>This is the content of the second tab. This information is not visible until you click on Tab 2.</p>
+      <p>Tab 2 contains unique information that should be extractable.</p>
+      <ul>
+        <li>Item 1 in Tab 2</li>
+        <li>Item 2 in Tab 2</li>
+        <li>Item 3 in Tab 2</li>
+      </ul>
+    </div>
+
+    <div id="tab3" class="tab-content">
+      <h3>Tab 3 Content</h3>
+      <p>This is the content of the third tab. Again, this information is hidden until Tab 3 is clicked.</p>
+      <p>Extracting content from multiple tabs is a good test for dynamic content handling.</p>
+      <table>
+        <tr>
+          <th>Column 1</th>
+          <th>Column 2</th>
+        </tr>
+        <tr>
+          <td>Data 1</td>
+          <td>Data 2</td>
+        </tr>
+        <tr>
+          <td>Data 3</td>
+          <td>Data 4</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // Tab switching
+    document.querySelectorAll('.tab-button').forEach(button => {
+      button.addEventListener('click', function () {
+        // Remove active class from all buttons and content
+        document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        // Add active class to current button
+        this.classList.add('active');
+
+        // Show the associated content
+        const tabId = this.getAttribute('data-tab');
+        document.getElementById(tabId).classList.add('active');
+      });
+    });
+  </script>
+</body>
+
+</html>

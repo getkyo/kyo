@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basic Test Page</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .container {
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    button {
+      padding: 8px 15px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #45a049;
+    }
+
+    input[type="text"] {
+      padding: 8px;
+      margin: 5px 0;
+      width: 300px;
+    }
+
+    #toggleContent {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Basic Test Page</h1>
+  <p>This is a test page for browser automation testing.</p>
+
+  <div class="container">
+    <h2>Navigation Test</h2>
+    <p>Test navigation to <a href="form-page.html">Form Test Page</a> or <a href="content-page.html">Content Test
+        Page</a>.</p>
+  </div>
+
+  <div class="container">
+    <h2>Click Interaction Test</h2>
+    <button id="clickButton">Click Me</button>
+    <p id="clickResult">Button not clicked yet.</p>
+  </div>
+
+  <div class="container">
+    <h2>Input Test</h2>
+    <input type="text" id="testInput" placeholder="Type something here...">
+    <button id="submitButton">Submit</button>
+    <p id="inputResult">No input submitted yet.</p>
+  </div>
+
+  <div class="container">
+    <h2>Toggle Content Test</h2>
+    <button id="toggleButton">Show Hidden Content</button>
+    <div id="toggleContent">
+      <p>This content was hidden and is now visible!</p>
+      <p>The toggle content test was successful.</p>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Scroll Test</h2>
+    <div style="height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
+      <p>Scroll down to see more content...</p>
+      <div style="height: 400px;"></div>
+      <p id="scrollTarget">You found the scroll target!</p>
+    </div>
+  </div>
+
+  <script>
+    // Click test
+    document.getElementById('clickButton').addEventListener('click', function () {
+      document.getElementById('clickResult').textContent = 'Button was clicked at ' + new Date().toLocaleTimeString();
+    });
+
+    // Input test
+    document.getElementById('submitButton').addEventListener('click', function () {
+      const inputValue = document.getElementById('testInput').value;
+      document.getElementById('inputResult').textContent = 'Input received: "' + inputValue + '"';
+    });
+
+    // Toggle test
+    document.getElementById('toggleButton').addEventListener('click', function () {
+      const toggleContent = document.getElementById('toggleContent');
+      if (toggleContent.style.display === 'block') {
+        toggleContent.style.display = 'none';
+        this.textContent = 'Show Hidden Content';
+      } else {
+        toggleContent.style.display = 'block';
+        this.textContent = 'Hide Content';
+      }
+    });
+  </script>
+</body>
+
+</html>
