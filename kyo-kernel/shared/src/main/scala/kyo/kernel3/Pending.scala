@@ -129,9 +129,8 @@ object `<`:
             type I[_]
             type O[_]
             type E <: ArrowEffect[I, O]
-            def _tag: Tag[E]
-            def v: A < (S & E)
-            def run[V](input: I[V], cont: O[V] => A < (S & E)): A < (S & E)
+            def accepts[E](tag: Tag[E]): Boolean
+            def run: A < (S & E)
 
         trait Defer extends ArrowEffect[Const[Unit], Const[Unit]]
 
