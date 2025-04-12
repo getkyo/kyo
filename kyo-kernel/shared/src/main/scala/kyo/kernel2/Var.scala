@@ -16,20 +16,21 @@ object Var:
     inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         ArrowEffect.suspend(tag, value: Op[V])
 
-    def run[V, A, S](init: V, v: A < (Var[V] & S))(using tag: Tag[Var[V]]): A < S =
+    def runTuple[V, A, S](init: V)(v: A < (Var[V] & S))(using tag: Tag[Var[V]]): (V, A) < S =
         ArrowEffect.handleLoop(tag, v, init)(
             [C] =>
-                (input, state, cont) =>
+                (state, input, cont) =>
                     input match
                         case input: Get.type =>
-                            Loop.continue(cont(state), state)
+                            Loop.continue(state, cont(state))
                         case input: Update[V] @unchecked =>
                             val nst = input(state)
-                            Loop.continue(cont(nst), nst)
+                            Loop.continue(nst, cont(nst))
                         case input: V @unchecked =>
-                            Loop.continue(cont(state), input)
+                            Loop.continue(input, cont(state))
+            ,
+            (state, v) => (state, v)
         )
-    end run
 
     object internal:
         type Op[V] = Get.type | V | Update[V]

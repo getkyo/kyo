@@ -27,7 +27,7 @@ object Loop:
       *   The type of the single state value maintained between iterations
       */
     abstract class Continue[A]:
-        private[Loop] def _1: A
+        private[kernel2] def _1: A
 
     /** Represents the state of two values to be carried forward to the next iteration.
       *
@@ -37,8 +37,8 @@ object Loop:
       *   The type of the second state value
       */
     abstract class Continue2[A, B]:
-        private[Loop] def _1: A
-        private[Loop] def _2: B
+        private[kernel2] def _1: A
+        private[kernel2] def _2: B
 
     /** Represents the state of three values to be carried forward to the next iteration.
       *
@@ -50,9 +50,9 @@ object Loop:
       *   The type of the third state value
       */
     abstract class Continue3[A, B, C]:
-        private[Loop] def _1: A
-        private[Loop] def _2: B
-        private[Loop] def _3: C
+        private[kernel2] def _1: A
+        private[kernel2] def _2: B
+        private[kernel2] def _3: C
     end Continue3
 
     /** Represents the state of four values to be carried forward to the next iteration.
@@ -67,10 +67,10 @@ object Loop:
       *   The type of the fourth state value
       */
     abstract class Continue4[A, B, C, D]:
-        private[Loop] def _1: A
-        private[Loop] def _2: B
-        private[Loop] def _3: C
-        private[Loop] def _4: D
+        private[kernel2] def _1: A
+        private[kernel2] def _2: B
+        private[kernel2] def _3: C
+        private[kernel2] def _4: D
     end Continue4
 
     /** Represents the result of a loop iteration, which can either continue with new state or complete with a final value.
@@ -82,6 +82,20 @@ object Loop:
       */
     opaque type Outcome[A, O] = O | Continue[A]
 
+    object Outcome:
+        extension [A, O](self: Outcome[A, O])
+            inline def reduce[B](
+                inline continue: Continue[A] => B,
+                inline done: O => B
+            ): B =
+                self match
+                    case self: Continue[A] @unchecked =>
+                        continue(self)
+                    case _ =>
+                        done(self.asInstanceOf[O])
+        end extension
+    end Outcome
+
     /** Represents the result of a loop iteration with two state values.
       *
       * @tparam A
@@ -92,6 +106,20 @@ object Loop:
       *   The type of the final value if completing
       */
     opaque type Outcome2[A, B, O] = O | Continue2[A, B]
+
+    object Outcome2:
+        extension [A, B, O](self: Outcome2[A, B, O])
+            inline def reduce[R](
+                inline continue: (A, B) => R,
+                inline done: O => R
+            ): R =
+                self match
+                    case self: Continue2[A, B] @unchecked =>
+                        continue(self._1, self._2)
+                    case _ =>
+                        done(self.asInstanceOf[O])
+        end extension
+    end Outcome2
 
     /** Represents the result of a loop iteration with three state values.
       *
@@ -105,6 +133,20 @@ object Loop:
       *   The type of the final value if completing
       */
     opaque type Outcome3[A, B, C, O] = O | Continue3[A, B, C]
+
+    object Outcome3:
+        extension [A, B, C, O](self: Outcome3[A, B, C, O])
+            inline def reduce[R](
+                inline continue: (A, B, C) => R,
+                inline done: O => R
+            ): R =
+                self match
+                    case self: Continue3[A, B, C] @unchecked =>
+                        continue(self._1, self._2, self._3)
+                    case _ =>
+                        done(self.asInstanceOf[O])
+        end extension
+    end Outcome3
 
     /** Represents the result of a loop iteration with four state values.
       *
@@ -120,6 +162,20 @@ object Loop:
       *   The type of the final value if completing
       */
     opaque type Outcome4[A, B, C, D, O] = O | Continue4[A, B, C, D]
+
+    object Outcome4:
+        extension [A, B, C, D, O](self: Outcome4[A, B, C, D, O])
+            inline def reduce[R](
+                inline continue: (A, B, C, D) => R,
+                inline done: O => R
+            ): R =
+                self match
+                    case self: Continue4[A, B, C, D] @unchecked =>
+                        continue(self._1, self._2, self._3, self._4)
+                    case _ =>
+                        done(self.asInstanceOf[O])
+        end extension
+    end Outcome4
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
@@ -247,8 +303,8 @@ object Loop:
         safepoint: Safepoint
     ): O < S =
         val arrow =
-            Arrow.loop[Outcome[A, O], O, S] { self =>
-                _ match
+            Arrow.loop[Outcome[A, O], O, S] { (self, v) =>
+                v match
                     case next: Continue[A] @unchecked =>
                         self(run(next._1))
                     case done =>
@@ -279,8 +335,8 @@ object Loop:
         safepoint: Safepoint
     ): O < S =
         val arrow =
-            Arrow.loop[Outcome2[A, B, O], O, S] { self =>
-                _ match
+            Arrow.loop[Outcome2[A, B, O], O, S] { (self, v) =>
+                v match
                     case next: Continue2[A, B] @unchecked =>
                         self(run(next._1, next._2))
                     case done =>

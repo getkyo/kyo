@@ -4,9 +4,10 @@ import Arrow.internal.*
 import java.util.ArrayDeque
 import kyo.Frame
 import kyo.Tag
+import kyo.bug
+import kyo.kernel2.internal.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
-import kyo.kernel2.internal.Safepoint
 
 trait ArrowEffect[I[_], O[_]]
 
@@ -20,91 +21,110 @@ object ArrowEffect:
         new Suspend[I, O, E, A]:
             def _frame: Frame = frame
             def _tag          = tag
-            def _input        = input
+            val _input        = input
 
-    inline def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](
-        inline tag: Tag[E],
-        inline v: A < (E & S)
-    )(
-        inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S)
-    ): A < S =
+    // inline def handle[I[_], O[_], E <: ArrowEffect[I, O], A, S](
+    //     inline tag: Tag[E],
+    //     inline v: A < (E & S)
+    // )(
+    //     inline handle: [C] => (I[C], O[C] => A < (E & S)) => A < (E & S)
+    // ): A < S =
 
-        @tailrec def handleLoop(v: A < (E & S)): A < S =
-            v.reduce(
-                kyo =>
-                    val stack = Stack.acquire()
-                    val root  = Stack.load(stack)(kyo)
-                    val cont  = stack.dumpAndRelease()
-                    root match
-                        case kyo: Suspend[I, O, E, A] @unchecked if kyo._tag =:= tag =>
-                            handleLoop(handle(kyo._input, Chain.unsafeEval(_, cont)))
-                        case kyo: Arrow[Any, Any, S] @unchecked =>
-                            AndThen(kyo, Arrow.init(r => handleLoop(Chain.unsafeEval(r, cont))))
-                        case v =>
-                            v.asInstanceOf[A < S]
-                    end match
-                ,
-                v => v
-            )
-        end handleLoop
-        handleLoop(v)
-    end handle
+    //     @tailrec def handleLoop(v: A < (E & S)): A < S =
+    //         v.reduce(
+    //             kyo =>
+    //                 val stack = Stack.acquire()
+    //                 val root  = Stack.load(stack)(kyo)
+    //                 val cont  = stack.dumpAndRelease()
+    //                 root match
+    //                     case kyo: Suspend[I, O, E, A] @unchecked if kyo._tag =:= tag =>
+    //                         handleLoop(handle(kyo._input, Chain.unsafeEval(_, cont)))
+    //                     case kyo: Arrow[Any, Any, S] @unchecked =>
+    //                         AndThen(kyo, Arrow.init(r => handleLoop(Chain.unsafeEval(r, cont))))
+    //                     case v =>
+    //                         v.asInstanceOf[A < S]
+    //                 end match
+    //             ,
+    //             v => v
+    //         )
+    //     end handleLoop
+    //     handleLoop(v)
+    // end handle
 
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline tag: Tag[E],
         inline v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], O[C] => A < (E & S)) => Loop.Outcome[A < (E & S), A < S] < S2
+        inline handle: [C] => (I[C], O[C] => A < (E & S)) => Loop.Outcome[A < (E & S), A] < S2
     )(using Safepoint): A < (S & S2) =
-        Loop(v: A < (E & S)) { v =>
-            v.reduce(
-                kyo =>
-                    val stack = Stack.acquire()
-                    val root  = Stack.load(stack)(kyo)
-                    val cont  = stack.dumpAndRelease()
-                    root match
-                        case kyo: Suspend[I, O, E, A] @unchecked if kyo._tag =:= tag =>
-                            handle(kyo._input, Chain.unsafeEval(_, cont))
-                        case kyo: Arrow[Any, Any, S] @unchecked =>
-                            AndThen(kyo, Arrow.init(r => Loop.continue(Chain.unsafeEval(r, cont))))
-                        case v =>
-                            Loop.done(v.asInstanceOf[A < S])
-                    end match
-                ,
-                value => Loop.done(value: A < S)
-            )
-        }.flatten
-    end handleLoop
-
-    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
-        inline tag: Tag[E],
-        inline v: A < (E & S),
-        inline state: State
-    )(
-        inline handle: [C] => (I[C], State, O[C] => A < (E & S)) => Loop.Outcome2[A < (E & S), State, A < S] < S2
-    )(using Safepoint): A < (S & S2) =
-        Loop(v, state) { (v, state) =>
-            v.reduce(
+        Loop(v) {
+            _.reduce(
                 kyo =>
                     Safepoint.useBuffer[Arrow[Any, Any, Any]] { buffer =>
                         val root = flatten(kyo, buffer)
                         val cont = IArray.unsafeFromArray(buffer.toArray(Chain.emptyArray))
                         root match
                             case kyo: Suspend[I, O, E, A] @unchecked if kyo._tag =:= tag =>
-                                handle(kyo._input, state, Chain.unsafeEval(_, cont))
+                                handle(kyo._input, Chain.unsafeEval(_, cont))
                             case kyo: Arrow[Any, Any, S] @unchecked =>
-                                AndThen(kyo, Arrow.init(r => Loop.continue(Chain.unsafeEval(r, cont), state)))
-                            case v =>
-                                Loop.done(v.asInstanceOf[A < S])
+                                AndThen(kyo, Arrow.init(r => Loop.continue(Chain.unsafeEval(r, cont))))
+                            case _ =>
+                                bug(s"Expected a suspension but found: " + root)
                         end match
-                    }
-                ,
-                value => Loop.done(value: A < S)
+                    },
+                Loop.done(_)
             )
-        }.flatten
+        }
     end handleLoop
 
-    @tailrec private def flatten(v: Any < Any, buffer: ArrayDeque[Arrow[Any, Any, Any]]): Any < Any =
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S, S2](
+        inline tag: Tag[E],
+        inline v: A < (E & S),
+        inline state: State
+    )(
+        inline handle: [C] => (State, I[C], O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), B] < S2,
+        inline done: (State, A) => B = (_: State, v: A) => v
+    )(using Safepoint): B < (S & S2) =
+        Loop(state, v)((state, v) =>
+            v.reduce(
+                kyo =>
+                    Safepoint.useBuffer[Arrow[Any, Any, Any]] { buffer =>
+                        val root = flatten(kyo, buffer)
+                        buffer.size() match
+                            case 1 =>
+                                val cont = buffer.pop().asInstanceOf[Arrow[O[A], A, E & S]]
+                                root match
+                                    case kyo: Suspend[I, O, E, A] @unchecked if kyo._tag =:= tag =>
+                                        handle(state, kyo._input, cont(_))
+                                    case kyo: Suspend[I, O, E, A] @unchecked =>
+                                        AndThen(
+                                            kyo.asInstanceOf[Arrow[Any, Any, Any]],
+                                            Arrow.init(r => Loop.continue(state, cont(r.asInstanceOf)))
+                                        )
+                                    case _ =>
+                                        bug(s"Expected a suspension but found: " + root)
+                                end match
+                            case _ =>
+                                val cont = IArray.unsafeFromArray(buffer.toArray(Chain.emptyArray))
+                                root match
+                                    case kyo: Suspend[I, O, E, A] @unchecked if kyo._tag =:= tag =>
+                                        handle(state, kyo._input, Chain.unsafeEval(_, cont))
+                                    case kyo: Suspend[I, O, E, A] @unchecked =>
+                                        AndThen(
+                                            kyo.asInstanceOf[Arrow[Any, Any, Any]],
+                                            Arrow.init(r => Loop.continue(state, Chain.unsafeEval(r, cont)))
+                                        )
+                                    case _ =>
+                                        bug(s"Expected a suspension but found: " + root)
+                                end match
+                        end match
+                    },
+                value => Loop.done(done(state, value))
+            )
+        )
+    end handleLoop
+
+    @tailrec private def flatten(v: Any, buffer: ArrayDeque[Arrow[Any, Any, Any]]): Any =
         v match
             case Chain(array) =>
                 def loop(idx: Int): Unit =

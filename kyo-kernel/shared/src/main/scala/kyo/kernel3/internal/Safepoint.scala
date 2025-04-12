@@ -1,11 +1,11 @@
-package kyo.kernel2.internal
+package kyo.kernel3.internal
 
 import Safepoint.*
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Frame
 import kyo.isNull
-import kyo.kernel2.*
+import kyo.kernel3.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
@@ -23,7 +23,7 @@ final class Safepoint private () extends Trace.Owner:
     private var interceptor: Interceptor = null
     private val buffer                   = new ArrayDeque[Any]
 
-    private[kernel2] def enter(frame: Frame, value: Any): Boolean =
+    private[kernel3] def enter(frame: Frame, value: Any): Boolean =
         val state    = this.state
         val threadId = Thread.currentThread().getId()
         val proceed =
@@ -36,12 +36,12 @@ final class Safepoint private () extends Trace.Owner:
         proceed
     end enter
 
-    private[kernel2] def exit(): Unit =
+    private[kernel3] def exit(): Unit =
         state = state.decrementDepth
 
-    private[kernel2] def getInterceptor(): Interceptor = interceptor
+    private[kernel3] def getInterceptor(): Interceptor = interceptor
 
-    private[kernel2] def setInterceptor(newInterceptor: Interceptor): Unit =
+    private[kernel3] def setInterceptor(newInterceptor: Interceptor): Unit =
         interceptor = newInterceptor
         state = state.withInterceptor(newInterceptor != null)
 
@@ -53,7 +53,7 @@ end Safepoint
 
 object Safepoint:
 
-    private[kernel2] inline def useBuffer[A](using inline self: Safepoint)[B](inline f: ArrayDeque[A] => B): B =
+    private[kernel3] inline def useBuffer[A](using inline self: Safepoint)[B](inline f: ArrayDeque[A] => B): B =
         val b = self.buffer
         b.clear()
         val r = f(b.asInstanceOf[ArrayDeque[A]])
@@ -63,9 +63,9 @@ object Safepoint:
 
     implicit def get: Safepoint = local.get()
 
-    private[kernel2] opaque type State = Long
+    private[kernel3] opaque type State = Long
 
-    private[kernel2] object State:
+    private[kernel3] object State:
         // Bit allocation:
         // Bits 0-15 (16 bits): depth (0-65535)
         // Bit 16 (1 bit): hasInterceptor flag
@@ -186,7 +186,7 @@ object Safepoint:
     //     ensuring(ensure)(ensureLoop(v))
     // end ensure
 
-    private[kernel2] inline def eval[A](
+    private[kernel3] inline def eval[A](
         inline f: Safepoint ?=> A
     )(using inline frame: Frame): A =
         val self            = Safepoint.get
@@ -197,7 +197,7 @@ object Safepoint:
             self.interceptor = prevInterceptor
     end eval
 
-    // private[kernel2] inline def handle[V, A, S](value: V)(
+    // private[kernel3] inline def handle[V, A, S](value: V)(
     //     inline suspend: Safepoint ?=> A < S,
     //     inline continue: => A < S
     // )(using inline frame: Frame, self: Safepoint): A < S =
@@ -208,7 +208,7 @@ object Safepoint:
     //         finally self.exit()
     // end handle
 
-    // private[kernel2] inline def handle[A, B, S](value: Any)(
+    // private[kernel3] inline def handle[A, B, S](value: Any)(
     //     inline eval: => A,
     //     inline continue: A => B < S,
     //     inline suspend: Safepoint ?=> B < S
@@ -222,7 +222,7 @@ object Safepoint:
     //         continue(a)
     // end handle
 
-    private[kernel2] def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =
+    private[kernel3] def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =
         safepoint.enrich(ex)
 
     private val local =

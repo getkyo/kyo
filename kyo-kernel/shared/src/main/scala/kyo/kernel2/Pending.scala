@@ -14,6 +14,7 @@ import scala.annotation.static
 import scala.annotation.tailrec
 import scala.compiletime.erasedValue
 import scala.language.implicitConversions
+import scala.util.NotGiven
 
 class ttt:
     import `<`.*
@@ -31,12 +32,12 @@ class ttt:
     //     v3 <- ArrowEffect.suspend(Tag[Eff3], 1)
     // yield v1 + v2 + v3
 
-    val a = ArrowEffect.handle(Tag[Eff1], x)([C] => (i, c) => c(i + 1)).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1)
-    val b = ArrowEffect.handle(Tag[Eff2], a)([C] => (i, c) => c(i + 2)) // .map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1)
-    val c =
-        ArrowEffect.handle(Tag[Eff3], b)([C] => (i, c) => c(i + 3)) // .map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1)
+    // val a = ArrowEffect.handle(Tag[Eff1], x)([C] => (i, c) => c(i + 1)).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1)
+    // val b = ArrowEffect.handle(Tag[Eff2], a)([C] => (i, c) => c(i + 2)) // .map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1)
+    // val c =
+    //     ArrowEffect.handle(Tag[Eff3], b)([C] => (i, c) => c(i + 3)) // .map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1)
 
-    println(c.eval)
+    // println(c.eval)
 
     // val a = (1: )
 end ttt
@@ -47,14 +48,18 @@ case class Box[+A](v: A)
 
 object `<`:
 
-    implicit def lift[A, S](v: A): A < S =
+    implicit def lift[A, S](v: A)(using NotGiven[A <:< Any < Nothing]): A < S =
         v match
-            case _: Arrow[?, ?, ?] => Box(v)
-            case _                 => v
+            case _: Arrow[?, ?, ?] =>
+                Box(v)
+            case _: Box[?] =>
+                Box(v)
+            case _ =>
+                v
 
     import Arrow.internal.*
 
-    extension [A, S](inline self: A < S)
+    extension [A, S](self: A < S)
 
         inline def map[B, S2](f: Arrow[A, B, S2])(using Safepoint): B < (S & S2) =
             f(self)
@@ -65,16 +70,26 @@ object `<`:
         inline def flatMap[B, S2](inline f: A => Safepoint ?=> B < S)(using safepoint: Safepoint, inline frame: Frame): B < (S & S2) =
             map(Arrow.init(f(_)))
 
-        inline def eval(using S =:= Any): A =
-            @tailrec def loop(v: A < S): A =
-                v.reduce(loop(_))
+        inline def andThen[B, S2](inline f: Safepoint ?=> B < S2)(using inline frame: Frame): B < (S & S2) =
+            map(_ => f)
+
+        inline def eval(using S =:= Any)(using Safepoint): A =
+            @tailrec def loop(v: A < S)(using Safepoint): A =
+                v match
+                    case kyo: Arrow[Any, A, S] @unchecked =>
+                        loop(kyo(()))
+                    case Box(v) =>
+                        v.asInstanceOf[A]
+                    case v =>
+                        v.asInstanceOf[A]
             loop(self)
         end eval
 
-        private[kyo] inline def reduce(
-            inline pending: Arrow[Any, A, S] => A
-        ): A =
-            reduce(pending, identity)
+        def evalNow: Maybe[A] =
+            self match
+                case _: Arrow[?, ?, ?]       => Absent
+                case self: Box[A] @unchecked => Present(self.v)
+                case _                       => Present(self.asInstanceOf[A])
 
         private[kyo] inline def reduce[B](
             inline pending: Arrow[Any, A, S] => B,
@@ -92,9 +107,10 @@ object `<`:
 
     end extension
 
-    extension [A, S](self: A < S)
-        def flatten[B, S2](using ev: A => B < S2)(using safepoint: Safepoint, frame: Frame): B < (S & S2) =
-            self.map(Arrow.identity.asInstanceOf[Arrow[A, B, S & S2]])
+    extension [A, S, S2](self: A < S < S2)
+
+        def flatten(using Safepoint, Frame): A < (S & S2) =
+            self.map(v => v)
+    end extension
 
 end `<`
-
