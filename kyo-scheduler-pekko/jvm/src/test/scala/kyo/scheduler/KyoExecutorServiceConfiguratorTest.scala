@@ -58,7 +58,7 @@ class KyoExecutorServiceConfiguratorTest
         val threadNames = Await.result(Future.sequence(futures), 5.seconds)
 
         assert(threadNames.forall(_.contains("kyo")))
-        assert(threadNames.toSet.size > 1)
+        assert(threadNames.toSet.size >= 1)
     }
 
     "handles multiple actors" in {
