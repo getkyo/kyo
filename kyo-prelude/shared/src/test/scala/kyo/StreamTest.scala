@@ -60,6 +60,35 @@ class StreamTest extends Test:
         }
     }
 
+    "repeatPresent" - {
+        var i = 0
+
+        def reads: Maybe[Chunk[Int]] =
+            val r = i match
+                case 0 => Maybe.Present(Chunk(1, 2, 3))
+                case 1 => Maybe.Present(Chunk.empty[Int])
+                case 2 => Maybe.Present(Chunk(4, 5, 6))
+                case 3 => Maybe.Present(Chunk(7))
+                case _ => Maybe.Absent
+            i += 1
+            r
+        end reads
+
+        "absent" in {
+            assert(Stream.repeatPresent(Maybe.empty[Chunk[Int]]).run.eval == Seq.empty)
+        }
+
+        "present default resize" in {
+            i = 0
+            assert(Stream.repeatPresent(reads).run.eval == Seq(1, 2, 3, 4, 5, 6, 7))
+        }
+
+        "present resize to 1" in {
+            i = 0
+            assert(Stream.repeatPresent(reads, 1).run.eval == Seq(1, 2, 3, 4, 5, 6, 7))
+        }
+    }
+
     "range" - {
         "empty" in {
             assert(Stream.range(0, 0).run.eval == Seq.empty)

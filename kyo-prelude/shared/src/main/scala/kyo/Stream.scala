@@ -569,14 +569,37 @@ object Stream:
       */
     def init[V, S](v: => Seq[V] < S, chunkSize: Int = DefaultChunkSize)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         Stream[V, S]:
-            v.map { seq =>
-                val chunk: Chunk[V] = Chunk.from(seq)
-                val _chunkSize      = chunkSize max 1
-                Loop(chunk) { (c) =>
-                    if _chunkSize >= c.length then
-                        Emit.valueWith(c)(Loop.done)
-                    else
-                        Emit.valueWith(c.take(_chunkSize))(Loop.continue(c.dropLeft(_chunkSize)))
+            v.map(seq => emitResized(seq, chunkSize))
+
+    private def emitResized[V](seq: Seq[V], chunkSize: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < Emit[Chunk[V]] =
+        val chunk: Chunk[V] = Chunk.from(seq)
+        val _chunkSize      = chunkSize max 1
+        Loop(chunk) { (c) =>
+            if _chunkSize >= c.length then
+                Emit.valueWith(c)(Loop.done)
+            else
+                Emit.valueWith(c.take(_chunkSize))(Loop.continue(c.dropLeft(_chunkSize)))
+        }
+    end emitResized
+
+    /** Creates a stream by repeatedly calling a lazily evaluated function, until the return is absent.
+      *
+      * @param v
+      *   The effect that might return a sequence of values
+      * @param chunkSize
+      *   The size of chunks to emit (default: 4096). Supplying a negative value will result in a chunk size of 1.
+      * @return
+      *   A stream of values from the sequence
+      */
+    def repeatPresent[V, S](v: => Maybe[Seq[V]] < S, chunkSize: Int = DefaultChunkSize)(using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S] =
+        Stream[V, S]:
+            Loop(()) { _ =>
+                v.map {
+                    case Maybe.Present(seq) => emitResized(seq, chunkSize).andThen(Loop.continue(()))
+                    case Maybe.Absent       => Emit.valueWith(Chunk.empty[V])(Loop.done)
                 }
             }
 
