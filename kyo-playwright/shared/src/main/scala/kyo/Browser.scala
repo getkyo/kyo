@@ -100,7 +100,7 @@ object Browser:
       *   Unit
       */
     def goto(url: String)(using Frame): Unit < (Browser & Abort[Nothing]) =
-        Goto(url).suspend.map(handleResponse)
+        Goto(url).suspendWith(handleResponse)
 
     /** Navigates back in the browser history.
       *
@@ -108,7 +108,7 @@ object Browser:
       *   Unit
       */
     def back(using Frame): Unit < (Browser & Abort[Nothing]) =
-        Back.suspend.map(handleResponse)
+        Back.suspendWith(handleResponse)
 
     /** Navigates forward in the browser history.
       *
@@ -116,7 +116,7 @@ object Browser:
       *   Unit
       */
     def forward(using Frame): Unit < (Browser & Abort[Nothing]) =
-        Forward.suspend.map(handleResponse)
+        Forward.suspendWith(handleResponse)
 
     /** Reloads the current page.
       *
@@ -124,7 +124,7 @@ object Browser:
       *   Unit
       */
     def reload(using Frame): Unit < (Browser & Abort[Nothing]) =
-        Reload.suspend.map(handleResponse)
+        Reload.suspendWith(handleResponse)
 
     // Mouse
 
@@ -138,7 +138,7 @@ object Browser:
       *   Unit
       */
     def click(selector: String, clickCount: Int = 1)(using Frame): Unit < Browser =
-        Click(selector, true, clickCount).suspend.unit
+        Click(selector, true, clickCount).suspendDiscard
 
     /** Right-clicks on an element matching the selector.
       *
@@ -150,7 +150,7 @@ object Browser:
       *   Unit
       */
     def clickRight(selector: String, clickCount: Int = 1)(using Frame): Unit < Browser =
-        Click(selector, false, clickCount).suspend.unit
+        Click(selector, false, clickCount).suspendDiscard
 
     /** Double-clicks on an element matching the selector.
       *
@@ -160,7 +160,7 @@ object Browser:
       *   Unit
       */
     def doubleClick(selector: String)(using Frame): Unit < Browser =
-        Click(selector, true, 2).suspend.unit
+        Click(selector, true, 2).suspendDiscard
 
     /** Double-right-clicks on an element matching the selector.
       *
@@ -170,7 +170,7 @@ object Browser:
       *   Unit
       */
     def doubleClickRight(selector: String)(using Frame): Unit < Browser =
-        Click(selector, false, 2).suspend.unit
+        Click(selector, false, 2).suspendDiscard
 
     /** Clicks at specific coordinates.
       *
@@ -186,7 +186,7 @@ object Browser:
       *   Unit
       */
     def clickAt(x: Double, y: Double, clickCount: Int = 1, left: Boolean = true)(using Frame): Unit < Browser =
-        ClickAt(x, y, left, clickCount).suspend.unit
+        ClickAt(x, y, left, clickCount).suspendDiscard
 
     /** Right-clicks at specific coordinates.
       *
@@ -200,7 +200,7 @@ object Browser:
       *   Unit
       */
     def rightClickAt(x: Double, y: Double, clickCount: Int = 1)(using Frame): Unit < Browser =
-        ClickAt(x, y, false, clickCount).suspend.unit
+        ClickAt(x, y, false, clickCount).suspendDiscard
 
     /** Double-clicks at specific coordinates.
       *
@@ -214,7 +214,7 @@ object Browser:
       *   Unit
       */
     def doubleClickAt(x: Double, y: Double, left: Boolean = true)(using Frame): Unit < Browser =
-        ClickAt(x, y, left, 2).suspend.unit
+        ClickAt(x, y, left, 2).suspendDiscard
 
     // Keyboard
 
@@ -226,7 +226,7 @@ object Browser:
       *   Unit
       */
     def hover(selector: String)(using Frame): Unit < Browser =
-        Hover(selector).suspend.unit
+        Hover(selector).suspendDiscard
 
     /** Types text using the keyboard.
       *
@@ -236,7 +236,7 @@ object Browser:
       *   Unit
       */
     def typeText(text: String)(using Frame): Unit < Browser =
-        TypeText(text).suspend.unit
+        TypeText(text).suspendDiscard
 
     /** Presses a key down.
       *
@@ -246,7 +246,7 @@ object Browser:
       *   Unit
       */
     def keyDown(key: String)(using Frame): Unit < Browser =
-        KeyDown(key).suspend.unit
+        KeyDown(key).suspendDiscard
 
     /** Releases a key.
       *
@@ -256,7 +256,7 @@ object Browser:
       *   Unit
       */
     def keyUp(key: String)(using Frame): Unit < Browser =
-        KeyUp(key).suspend.unit
+        KeyUp(key).suspendDiscard
 
     /** Moves the mouse to an element.
       *
@@ -266,7 +266,7 @@ object Browser:
       *   Unit
       */
     def mouseMoveToElement(selector: String)(using Frame): Unit < Browser =
-        MouseMoveToElement(selector).suspend.unit
+        MouseMoveToElement(selector).suspendDiscard
 
     /** Performs a drag and drop operation.
       *
@@ -278,7 +278,7 @@ object Browser:
       *   Unit
       */
     def dragAndDrop(sourceSelector: String, targetSelector: String)(using Frame): Unit < Browser =
-        DragAndDrop(sourceSelector, targetSelector).suspend.unit
+        DragAndDrop(sourceSelector, targetSelector).suspendDiscard
 
     /** Focuses on an element.
       *
@@ -288,7 +288,7 @@ object Browser:
       *   Unit
       */
     def focus(selector: String)(using Frame): Unit < Browser =
-        Focus(selector).suspend.unit
+        Focus(selector).suspendDiscard
 
     // Dialog Handling with simplified methods
 
@@ -298,7 +298,7 @@ object Browser:
       *   Unit
       */
     def dialogAccept()(using Frame): Unit < Browser =
-        DialogAccept.suspend.unit
+        DialogAccept.suspendDiscard
 
     /** Dismisses a dialog (alert, confirm, prompt).
       *
@@ -306,7 +306,7 @@ object Browser:
       *   Unit
       */
     def dialogDismiss()(using Frame): Unit < Browser =
-        DialogDismiss.suspend.unit
+        DialogDismiss.suspendDiscard
 
     /** Fills a prompt dialog with text.
       *
@@ -316,7 +316,7 @@ object Browser:
       *   Unit
       */
     def dialogFill(text: String)(using Frame): Unit < Browser =
-        DialogFill(text).suspend.unit
+        DialogFill(text).suspendDiscard
 
     // Route Handling
 
@@ -334,7 +334,7 @@ object Browser:
       *   Unit
       */
     def reroute(url: String, status: Int = 200, body: String = "", contentType: String = "text/plain")(using Frame): Unit < Browser =
-        Reroute(url, status, body, contentType).suspend.unit
+        Reroute(url, status, body, contentType).suspendDiscard
 
     /** Removes a route for a specified URL.
       *
@@ -344,7 +344,7 @@ object Browser:
       *   Unit
       */
     def unroute(url: String)(using Frame): Unit < Browser =
-        Unroute(url).suspend.unit
+        Unroute(url).suspendDiscard
 
     /** Removes all routes.
       *
@@ -352,7 +352,7 @@ object Browser:
       *   Unit
       */
     def unrouteAll()(using Frame): Unit < Browser =
-        UnrouteAll.suspend.unit
+        UnrouteAll.suspendDiscard
 
     // Forms
 
@@ -366,7 +366,7 @@ object Browser:
       *   Unit
       */
     def fill(selector: String, text: String)(using Frame): Unit < Browser =
-        Fill(selector, text).suspend.unit
+        Fill(selector, text).suspendDiscard
 
     /** Presses a key on a focused element.
       *
@@ -378,7 +378,7 @@ object Browser:
       *   Unit
       */
     def press(selector: String, key: String)(using Frame): Unit < Browser =
-        Press(selector, key).suspend.unit
+        Press(selector, key).suspendDiscard
 
     /** Checks a checkbox or radio button.
       *
@@ -388,7 +388,7 @@ object Browser:
       *   Unit
       */
     def check(selector: String)(using Frame): Unit < Browser =
-        Check(selector).suspend.unit
+        Check(selector).suspendDiscard
 
     /** Unchecks a checkbox.
       *
@@ -398,7 +398,7 @@ object Browser:
       *   Unit
       */
     def uncheck(selector: String)(using Frame): Unit < Browser =
-        Uncheck(selector).suspend.unit
+        Uncheck(selector).suspendDiscard
 
     /** Selects an option from a select element.
       *
@@ -530,7 +530,7 @@ object Browser:
       *   Unit
       */
     def scrollToElement(selector: String)(using Frame): Unit < Browser =
-        ScrollToElement(selector).suspend.unit
+        ScrollToElement(selector).suspendDiscard
 
     /** Scrolls to the bottom of the page.
       *
@@ -538,7 +538,7 @@ object Browser:
       *   Unit
       */
     def scrollToBottom()(using Frame): Unit < Browser =
-        ScrollToBottom.suspend.unit
+        ScrollToBottom.suspendDiscard
 
     /** Scrolls to the top of the page.
       *
@@ -546,7 +546,7 @@ object Browser:
       *   Unit
       */
     def scrollToTop()(using Frame): Unit < Browser =
-        ScrollToTop.suspend.unit
+        ScrollToTop.suspendDiscard
 
     /** Scrolls down by one viewport height with optional overlap.
       *
@@ -556,7 +556,7 @@ object Browser:
       *   Unit
       */
     def scrollToNextPage(overlap: Double = 0.2)(using Frame): Unit < Browser =
-        ScrollToNextPage(overlap).suspend.unit
+        ScrollToNextPage(overlap).suspendDiscard
 
     /** Scrolls up by one viewport height with optional overlap.
       *
@@ -566,7 +566,7 @@ object Browser:
       *   Unit
       */
     def scrollToPreviousPage(overlap: Double = 0.2)(using Frame): Unit < Browser =
-        ScrollToPreviousPage(overlap).suspend.unit
+        ScrollToPreviousPage(overlap).suspendDiscard
 
     // Content
 
@@ -615,7 +615,7 @@ object Browser:
       *   Unit
       */
     def waitForNetworkIdle(millis: Long)(using Frame): Unit < Browser =
-        WaitForNetworkIdle(millis).suspend.unit
+        WaitForNetworkIdle(millis).suspendDiscard
 
     /** Attempts to accept cookies by clicking common cookie consent buttons.
       *
@@ -623,7 +623,7 @@ object Browser:
       *   True if cookies were accepted, false otherwise
       */
     def acceptCookies()(using Frame): Boolean < Browser =
-        AcceptCookies.suspend.map(_ == "OK")
+        AcceptCookies.suspendWith(_ == "OK")
 
     /** Executes JavaScript code in the browser.
       *
@@ -643,7 +643,7 @@ object Browser:
       *   Unit
       */
     def setTimeout(duration: Duration)(using Frame): Unit < Browser =
-        SetTimeout(duration).suspend.unit
+        SetTimeout(duration).suspendDiscard
 
     /** Information about an element's position and dimensions. */
     case class ElementPosition(x: Double, y: Double, width: Double, height: Double, centerX: Double, centerY: Double)
@@ -651,7 +651,9 @@ object Browser:
     /** Base class for browser operations. */
     sealed abstract class Op[+A](private[Browser] val unsafeRun: Page => A):
         def suspend(using Frame): A < Browser                                = ArrowEffect.suspend(Tag[Browser], this)
+        def suspendDiscard(using Frame): Unit < Browser                      = suspendWith(_ => ())
         def suspendWith[B, S](f: A => B < S)(using Frame): B < (Browser & S) = ArrowEffect.suspendWith(Tag[Browser], this)(f)
+    end Op
 
     object Op:
 
