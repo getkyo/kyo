@@ -75,7 +75,7 @@ object Isolate:
       * @tparam Passthrough
       *   Additional effects that will remain pending after isolation
       */
-    sealed abstract class Contextual[Retain, -Passthrough]:
+    sealed abstract class Contextual[Retain, -Passthrough] extends Serializable:
 
         /** Runs a computation with transformed effects.
           *
@@ -173,7 +173,7 @@ object Isolate:
       * @tparam Passthrough
       *   Additional effects that will remain pending after isolation
       */
-    abstract class Stateful[Retain, -Passthrough]:
+    abstract class Stateful[Retain, -Passthrough] extends Serializable:
         self =>
 
         /** The type of state being managed */

@@ -192,7 +192,7 @@ object Result:
     end Success
 
     /** Represents an error in a Result. */
-    sealed abstract class Error[+E]:
+    sealed abstract class Error[+E] extends Serializable:
 
         /** Gets the error value or panic exception.
           *

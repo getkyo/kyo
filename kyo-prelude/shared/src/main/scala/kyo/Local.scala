@@ -35,7 +35,7 @@ import scala.annotation.nowarn
   * @see
   *   [[kyo.Env]] for required dependencies without defaults
   */
-abstract class Local[A]:
+abstract class Local[A] extends Serializable:
 
     /** The default value for this Local. */
     def default: A
@@ -118,7 +118,7 @@ object Local:
         sealed private[kyo] trait State               extends ContextEffect[Map[Local[?], AnyRef]]
         sealed private[kyo] trait NoninheritableState extends ContextEffect[Map[Local[?], AnyRef]] with ContextEffect.Noninheritable
 
-        abstract class Base[A, E <: ContextEffect[Map[Local[?], AnyRef]]] extends Local[A]:
+        sealed abstract class Base[A, E <: ContextEffect[Map[Local[?], AnyRef]]] extends Local[A]:
 
             def tag: Tag[E]
 

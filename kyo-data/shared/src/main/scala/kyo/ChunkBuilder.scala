@@ -11,7 +11,8 @@ import scala.reflect.ClassTag
   * @tparam A
   *   the type of elements in the Chunk being built
   */
-sealed abstract class ChunkBuilder[A] extends ReusableBuilder[A, Chunk.Indexed[A]]
+sealed abstract class ChunkBuilder[A] extends ReusableBuilder[A, Chunk.Indexed[A]] with Serializable
+
 object ChunkBuilder:
 
     /** Creates a new ChunkBuilder with no size hint.

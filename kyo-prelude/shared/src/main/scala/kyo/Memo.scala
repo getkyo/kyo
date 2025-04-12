@@ -14,7 +14,7 @@ object Memo:
 
     // Used to ensure each memoized function
     // has a different key space
-    private[kyo] class MemoIdentity
+    private[kyo] class MemoIdentity extends Serializable
 
     private[kyo] case class Cache(map: Map[(Any, Any), Any]):
         def get[A](input: A, id: MemoIdentity): Maybe[Any] =

@@ -25,7 +25,7 @@ import kyo.kernel.ArrowEffect
   * @tparam S
   *   The type-level set of effects this computation may perform
   */
-sealed abstract private[kernel] class Kyo[+A, -S]
+sealed abstract private[kernel] class Kyo[+A, -S] extends Serializable
 
 /** Base class of suspended computations, separated from Kyo solely to hide its additional type parameters and to avoid variance checking.
   * Contains the actual storage and continuation machinery.

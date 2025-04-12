@@ -9,7 +9,7 @@ object StatsRegistry {
 
     def scope(path: String*): Scope = new Scope(path.reverse.toList)
 
-    class Scope private[kyo] (reversePath: List[String]) {
+    class Scope private[kyo] (reversePath: List[String]) extends Serializable {
 
         def path: List[String] = reversePath.reverse
 
@@ -51,7 +51,7 @@ object StatsRegistry {
         val counterGauges  = new Store[UnsafeCounterGauge]
         lazy val exporters = Collections.newSetFromMap(new ConcurrentHashMap[StatsExporter, java.lang.Boolean])
 
-        class Store[A <: AnyRef] {
+        class Store[A <: AnyRef] extends Serializable {
             val map = new ConcurrentHashMap[List[String], (WeakReference[A], String)]
 
             @tailrec final def get(reversePath: List[String], description: String, init: => A): A = {

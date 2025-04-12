@@ -1,6 +1,6 @@
 package kyo.stats.internal
 
-class UnsafeHistogram(numberOfSignificantValueDigits: Int, highestToLowestValueRatio: Long) {
+class UnsafeHistogram(numberOfSignificantValueDigits: Int, highestToLowestValueRatio: Long) extends Serializable {
 
     val _ = (numberOfSignificantValueDigits, highestToLowestValueRatio)
 

@@ -8,7 +8,7 @@ import kyo.Duration
   * Schedule provides various combinators for creating complex scheduling policies. It can be used to define retry policies, periodic tasks,
   * or any other time-based scheduling logic.
   */
-sealed abstract class Schedule derives CanEqual:
+sealed abstract class Schedule extends Serializable derives CanEqual:
 
     /** Returns the next delay and the updated schedule.
       *

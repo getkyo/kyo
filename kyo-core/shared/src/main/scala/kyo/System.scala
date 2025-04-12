@@ -35,7 +35,7 @@ import java.time.format.DateTimeParseException
   * @see
   *   [[kyo.System.OS]] For supported operating system detection values
   */
-abstract class System:
+abstract class System extends Serializable:
     def unsafe: System.Unsafe
     def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
     def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
@@ -52,7 +52,7 @@ object System:
         case Linux, MacOS, Windows, BSD, Solaris, IBMI, AIX, Unknown
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    abstract class Unsafe extends Serializable:
         def env(name: String)(using AllowUnsafe): Maybe[String]
         def property(name: String)(using AllowUnsafe): Maybe[String]
         def lineSeparator()(using AllowUnsafe): String
@@ -203,7 +203,7 @@ object System:
     def operatingSystem(using Frame): OS < IO = local.use(_.operatingSystem)
 
     /** Abstract class for parsing string values into specific types. */
-    abstract class Parser[E, A]:
+    sealed abstract class Parser[E, A] extends Serializable:
         /** Parses a string value into type A.
           *
           * @param s

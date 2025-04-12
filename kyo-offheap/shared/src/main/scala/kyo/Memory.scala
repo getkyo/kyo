@@ -267,7 +267,7 @@ object Memory:
     end Unsafe
 
     /** Defines how values of type A are laid out in memory. */
-    abstract class Layout[A]:
+    sealed abstract class Layout[A] extends Serializable:
         inline def get(memory: Unsafe[A], offset: Long)(using AllowUnsafe): A
         inline def set(memory: Unsafe[A], offset: Long, value: A)(using AllowUnsafe): Unit
         def size: Long

@@ -312,7 +312,7 @@ object Channel:
         IO.Unsafe(f(Unsafe.init(capacity, access)))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe[A]:
+    sealed abstract class Unsafe[A] extends Serializable:
         def capacity: Int
         def size()(using AllowUnsafe): Result[Closed, Int]
 

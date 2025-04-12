@@ -29,7 +29,7 @@ private[kernel] object TracePool:
 
     private val global = new MpmcArrayQueue[Trace](globalCapacity)
 
-    abstract class Local:
+    abstract class Local extends Serializable:
         final private val pool = new Array[Trace](localCapacity)
         final private var size = 0
 

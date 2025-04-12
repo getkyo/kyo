@@ -1,10 +1,10 @@
 package kyo.stats.internal
 
-class UnsafeGauge(run: () => Double) {
+class UnsafeGauge(run: () => Double) extends Serializable {
     def collect(): Double = run()
 }
 
-class UnsafeCounterGauge(run: () => Long) {
+class UnsafeCounterGauge(run: () => Long) extends Serializable {
     private var last = 0L
     def collect(): Long = {
         val value = run()
