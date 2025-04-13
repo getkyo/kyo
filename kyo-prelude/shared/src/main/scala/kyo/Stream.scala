@@ -580,6 +580,28 @@ object Stream:
                 }
             }
 
+    /** Creates a stream by repeatedly calling a lazily evaluated function, until the return is absent.
+      *
+      * @param v
+      *   The effect that might return a sequence of values
+      * @param chunkSize
+      *   The size of chunks to emit (default: 4096). Supplying a negative value will result in a chunk size of 1.
+      * @return
+      *   A stream of values from the sequence
+      */
+    def repeatPresent[V, S](v: => Maybe[Seq[V]] < S, chunkSize: Int = DefaultChunkSize)(using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S] =
+        Stream[V, S]:
+            Loop(()) { _ =>
+                v.map {
+                    case Maybe.Present(seq) => Emit.valueWith(Chunk.from(seq))(Loop.continue)
+                    case Maybe.Absent       => Emit.valueWith(Chunk.empty[V])(Loop.done)
+                }
+            }
+        .rechunk(chunkSize)
+
     /** Creates a stream of integers from start (inclusive) to end (exclusive).
       *
       * @param start
