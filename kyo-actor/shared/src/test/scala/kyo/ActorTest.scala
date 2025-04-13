@@ -328,10 +328,10 @@ class ActorTest extends Test:
                         }
                     }
                 }
-                _       <- actor.send(1)
-                result  <- Abort.run(actor.await)
-                cleaned <- resourceCleaned.get
-            yield assert(cleaned && result == Result.fail(TestError))
+                _      <- actor.send(1)
+                result <- Abort.run(actor.await)
+                _      <- untilTrue(resourceCleaned.get)
+            yield assert(result == Result.fail(TestError))
             end for
         }
     }
