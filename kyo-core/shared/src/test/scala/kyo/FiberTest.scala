@@ -114,17 +114,17 @@ class FiberTest extends Test:
     }
 
     "race" - {
-        "zero" in runNotJS {
+        "zero" in run {
             typeCheckFailure("Async.race()")(
                 "None of the overloaded alternatives of method race in object Async"
             )
         }
-        "one" in runNotJS {
+        "one" in run {
             Fiber.race(Seq(1)).map(_.get).map { r =>
                 assert(r == 1)
             }
         }
-        "n" in runNotJS {
+        "n" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < IO =
@@ -143,7 +143,7 @@ class FiberTest extends Test:
             }
         }
         "interrupts losers" - {
-            "promise + plain value" in runNotJS {
+            "promise + plain value" in run {
                 for
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
@@ -152,7 +152,7 @@ class FiberTest extends Test:
                     _       <- latch.await
                 yield assert(result == 42)
             }
-            "promise + delayed" in runNotJS {
+            "promise + delayed" in run {
                 for
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
@@ -161,7 +161,7 @@ class FiberTest extends Test:
                     _       <- latch.await
                 yield assert(result == 42)
             }
-            "slow + fast" in runNotJS {
+            "slow + fast" in run {
                 for
                     adder <- LongAdder.init
                     result <-
@@ -716,7 +716,7 @@ class FiberTest extends Test:
             end for
         }
 
-        "preserves original order" in runNotJS {
+        "preserves original order" in run {
             for
                 fiber <- Fiber.gather(10)(Seq(
                     Async.delay(3.millis)(1),
@@ -727,7 +727,7 @@ class FiberTest extends Test:
             yield assert(result == Chunk(1, 2, 3))
         }
 
-        "preserves original order with max limit" in runNotJS {
+        "preserves original order with max limit" in run {
             for
                 fiber <- Fiber.gather(2)(Seq(
                     Async.delay(100.millis)(1),
@@ -738,7 +738,7 @@ class FiberTest extends Test:
             yield assert(result == Chunk(2, 3))
         }
 
-        "handles concurrent completions" in runNotJS {
+        "handles concurrent completions" in run {
             for
                 latch  <- Latch.init(1)
                 fiber  <- Fiber.gather(20)(Seq.fill(20)(latch.await.andThen(42)))
@@ -761,7 +761,7 @@ class FiberTest extends Test:
             end for
         }
 
-        "handles mixed success/failure with exact max" in runNotJS {
+        "handles mixed success/failure with exact max" in run {
             val error = new Exception("test error")
             for
                 fiber <- Fiber.gather(2)(Seq(
@@ -778,7 +778,7 @@ class FiberTest extends Test:
             end for
         }
 
-        "handles race conditions in counter updates" in runNotJS {
+        "handles race conditions in counter updates" in run {
             Loop.repeat(repeats) {
                 for
                     latch1 <- Latch.init(1)
@@ -797,7 +797,7 @@ class FiberTest extends Test:
             }.andThen(succeed)
         }
 
-        "race conditions in error propagation" in runNotJS {
+        "race conditions in error propagation" in run {
             Loop.repeat(50) {
                 for
                     latch <- Latch.init(1)
@@ -853,7 +853,7 @@ class FiberTest extends Test:
             }.andThen(succeed)
         }
 
-        "interrupts all child fibers" in runNotJS {
+        "interrupts all child fibers" in run {
             Loop.repeat(repeats) {
                 for
                     interruptCount <- AtomicInt.init
@@ -877,7 +877,7 @@ class FiberTest extends Test:
             }.andThen(succeed)
         }
 
-        "interrupts remaining fibers when max results reached" in runNotJS {
+        "interrupts remaining fibers when max results reached" in run {
             Loop.repeat(repeats) {
                 for
                     interruptCount <- AtomicInt.init

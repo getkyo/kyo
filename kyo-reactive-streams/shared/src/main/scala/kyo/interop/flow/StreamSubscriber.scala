@@ -266,7 +266,7 @@ end StreamSubscriber
 
 object StreamSubscriber:
 
-    abstract private[flow] class SubscriberDone
+    sealed abstract private[flow] class SubscriberDone
     private[flow] case object SubscriberDone extends SubscriberDone
 
     enum EmitStrategy derives CanEqual:
