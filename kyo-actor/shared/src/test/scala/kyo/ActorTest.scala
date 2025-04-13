@@ -156,7 +156,7 @@ class ActorTest extends Test:
                 assert(events.contains("child2 cleaned up"))
         }
 
-        "child actors are cleaned up when parent fails" in runNotJS {
+        "child actors are cleaned up when parent fails" in run {
             case object ParentError
 
             for
@@ -278,7 +278,7 @@ class ActorTest extends Test:
         }
     }
 
-    "graceful shutdown" in runNotJS {
+    "graceful shutdown" in run {
         for
             started   <- Latch.init(1)
             exit      <- Latch.init(1)
@@ -317,7 +317,7 @@ class ActorTest extends Test:
             yield assert(cleaned)
         }
 
-        "cleans up resources on error" in runNotJS {
+        "cleans up resources on error" in run {
             case object TestError
             for
                 resourceCleaned <- AtomicBoolean.init(false)
@@ -328,10 +328,10 @@ class ActorTest extends Test:
                         }
                     }
                 }
-                _       <- actor.send(1)
-                result  <- Abort.run(actor.await)
-                cleaned <- resourceCleaned.get
-            yield assert(cleaned && result == Result.fail(TestError))
+                _      <- actor.send(1)
+                result <- Abort.run(actor.await)
+                _      <- untilTrue(resourceCleaned.get)
+            yield assert(result == Result.fail(TestError))
             end for
         }
     }
@@ -540,7 +540,7 @@ class ActorTest extends Test:
 
     "multiple receive calls" - {
 
-        "combines receiveMax and receiveAll" in runNotJS {
+        "combines receiveMax and receiveAll" in run {
             for
                 results <- Queue.Unbounded.init[String]()
                 actor <- Actor.run {
