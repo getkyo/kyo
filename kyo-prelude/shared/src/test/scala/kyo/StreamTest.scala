@@ -1,5 +1,7 @@
 package kyo
 
+import zio.test.laws.GenF.chunk
+
 class StreamTest extends Test:
 
     val n = 100000
@@ -61,17 +63,16 @@ class StreamTest extends Test:
     }
 
     "repeatPresent" - {
-        var i = 0
-
-        def reads: Maybe[Chunk[Int]] =
-            val r = i match
-                case 0 => Maybe.Present(Chunk(1, 2, 3))
-                case 1 => Maybe.Present(Chunk.empty[Int])
-                case 2 => Maybe.Present(Chunk(4, 5, 6))
-                case 3 => Maybe.Present(Chunk(7))
-                case _ => Maybe.Absent
-            i += 1
-            r
+        def reads: Maybe[Chunk[Int]] < Var[Int] =
+            for
+                chunk <- Var.use[Int]:
+                    case 0 => Maybe.Present(Chunk(1, 2, 3))
+                    case 1 => Maybe.Present(Chunk.empty[Int])
+                    case 2 => Maybe.Present(Chunk(4, 5, 6))
+                    case 3 => Maybe.Present(Chunk(7))
+                    case _ => Maybe.Absent
+                _ <- Var.update[Int](_ + 1)
+            yield chunk
         end reads
 
         "absent" in {
@@ -79,13 +80,11 @@ class StreamTest extends Test:
         }
 
         "present default resize" in {
-            i = 0
-            assert(Stream.repeatPresent(reads).run.eval == Seq(1, 2, 3, 4, 5, 6, 7))
+            assert(Var.run(0)(Stream.repeatPresent(reads).run).eval == Seq(1, 2, 3, 4, 5, 6, 7))
         }
 
         "present resize to 1" in {
-            i = 0
-            assert(Stream.repeatPresent(reads, 1).run.eval == Seq(1, 2, 3, 4, 5, 6, 7))
+            assert(Var.run(0)(Stream.repeatPresent(reads, 1).run).eval == Seq(1, 2, 3, 4, 5, 6, 7))
         }
     }
 
