@@ -49,20 +49,6 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         else
             Future.successful(assertionSuccess)
 
-    def untilTrue[S](f: => Boolean < S): Boolean < S =
-        def now: Duration = System.currentTimeMillis().millis
-        val start         = now
-        def loop(): Boolean < S =
-            if now - start > timeout then
-                throw new TimeoutException
-            else
-                f.map {
-                    case true  => true
-                    case false => loop()
-                }
-        loop()
-    end untilTrue
-
     def timeout =
         if Platform.isDebugEnabled then
             Duration.Infinity
