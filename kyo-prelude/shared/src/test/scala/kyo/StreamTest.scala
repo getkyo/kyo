@@ -1,7 +1,5 @@
 package kyo
 
-import zio.test.laws.GenF.chunk
-
 class StreamTest extends Test:
 
     val n = 100000
