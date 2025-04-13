@@ -18,21 +18,24 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 Kyo is available on Maven Central in multiple modules:
 
-| Module             | Scala 2 | Scala 3 |    JS    |  Native  | Standalone | Description                       |
-| ------------------ | ------- | ------- | -------- | -------- | ---------- | --------------------------------- |
-| kyo-prelude        |         | ✅      | ✅       | ✅       |            | Effects without `IO`              |
-| kyo-core           |         | ✅      | ✅       | ✅       |            | `Async` and `IO`-based effects    |
-| kyo-direct         |         | ✅      | ✅       | ✅       |            | Direct syntax support             |
-| kyo-combinators    |         | ✅      | ✅       |          |            | ZIO-like effect composition       |
-| kyo-sttp           |         | ✅      | ✅       |          |            | Sttp HTTP Client                  |
-| kyo-tapir          |         | ✅      |          |          |            | Tapir HTTP Server                 |
-| kyo-zio            |         | ✅      |          |          |            | ZIO integration                   |
-| kyo-caliban        |         | ✅      |          |          |            | Caliban GraphQL Server            |
-| kyo-cache          |         | ✅      |          |          |            | Caffeine caching                  |
-| kyo-stats-otel     | ✅      | ✅      |          |          |            | Stats exporter for OpenTelemetry  |
-| kyo-data           |         | ✅      | ✅       | ✅       | ✅         | Low-allocation data types         |
-| kyo-scheduler      | ✅      | ✅      |          | ✅       | ✅         | Reusable adaptive scheduler       |
-| kyo-scheduler-zio  | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for ZIO apps   |
+| Module                | Scala 2 | Scala 3 |    JS    |  Native  | Standalone | Description                         |
+|-----------------------| ------- | ------- | -------- | -------- | ---------- |-------------------------------------|
+| kyo-prelude           |         | ✅      | ✅       | ✅       |            | Effects without `IO`                |
+| kyo-core              |         | ✅      | ✅       | ✅       |            | `Async` and `IO`-based effects      |
+| kyo-direct            |         | ✅      | ✅       | ✅       |            | Direct syntax support               |
+| kyo-combinators       |         | ✅      | ✅       |          |            | ZIO-like effect composition         |
+| kyo-sttp              |         | ✅      | ✅       |          |            | Sttp HTTP Client                    |
+| kyo-tapir             |         | ✅      |          |          |            | Tapir HTTP Server                   |
+| kyo-zio               |         | ✅      |          |          |            | ZIO integration                     |
+| kyo-caliban           |         | ✅      |          |          |            | Caliban GraphQL Server              |
+| kyo-cache             |         | ✅      |          |          |            | Caffeine caching                    |
+| kyo-stats-otel        | ✅      | ✅      |          |          |            | Stats exporter for OpenTelemetry    |
+| kyo-data              |         | ✅      | ✅       | ✅       | ✅         | Low-allocation data types           |
+| kyo-scheduler         | ✅      | ✅      |          | ✅       | ✅         | Reusable adaptive scheduler         |
+| kyo-scheduler-cats    | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for Cats apps    |
+| kyo-scheduler-finagle | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for Finagle apps |
+| kyo-scheduler-pekko   | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for Pekko apps   |
+| kyo-scheduler-zio     | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for ZIO apps     |
 
 > Scala JS and Scala Native artifacts are available only in Scala 3.
 
@@ -41,19 +44,22 @@ The modules marked as `Standalone` are designed to be used independently, withou
 Example sbt configurations:
 
 ```scala 
-libraryDependencies += "io.getkyo" %% "kyo-prelude"       % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-core"          % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-direct"        % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-combinators"   % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-sttp"          % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-tapir"         % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-zio"           % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-caliban"       % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-cache"         % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-stats-otel"    % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-data"          % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-scheduler"     % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-scheduler-zio" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-prelude"           % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-core"              % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-direct"            % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-combinators"       % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-sttp"              % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-tapir"             % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-zio"               % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-caliban"           % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-cache"             % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-stats-otel"        % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-data"              % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-scheduler"         % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-scheduler-cats"    % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-scheduler-finagle" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-scheduler-pekko"   % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-scheduler-zio"     % "<version>"
 ```
 
 For ScalaJS (applicable only to specific modules):
