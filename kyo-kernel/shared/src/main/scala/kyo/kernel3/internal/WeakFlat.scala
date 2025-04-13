@@ -1,6 +1,6 @@
 package kyo.kernel2.internal
 
-import kyo.kernel2.<
+import kyo.kernel3.<
 import scala.annotation.implicitNotFound
 import scala.util.NotGiven
 
