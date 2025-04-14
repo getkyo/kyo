@@ -1,5 +1,7 @@
 package kyo.kernel3
 
+import kyo.Maybe
+import kyo.Absent
 import <.internal.*
 import kyo.Const
 import kyo.Frame
@@ -109,6 +111,22 @@ object `<`:
             def _tag   = Tag[Defer]
             def _input = ()
         end SuspendDefer
+
+        class Handle[I[_], O[_], E <: ArrowEffect[I, O], V, A, S](
+            kyo: Suspend[I, O, E, V, A, E & S],
+            reduce: (A < (E & S)) => Maybe[A < (E & S)]
+        ) extends Suspend[I, O, E, V, A, S]:
+            final def _tag = kyo._tag
+            final def _input = kyo._input
+            def cont: Arrow[O[V], A, S] =
+                Arrow.loop { (self, o) =>
+                    given [A]: CanEqual[A, A] = CanEqual.derived
+                    val curr = kyo.cont(o)
+                    reduce(curr) match
+                        case Absent => Handle(curr, reduce)
+                    ???
+                }
+        end Handle
 
     end internal
 end `<`

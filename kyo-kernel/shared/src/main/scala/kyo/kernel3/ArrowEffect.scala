@@ -59,6 +59,7 @@ object ArrowEffect:
                                 val sus = kyo.asInstanceOf[Suspend[I, O, E, Any, A, E & S]]
                                 self(handle(sus._input, sus.cont))
                             else
+                                // capture kyo + self (arrow)
                                 kyo.updateCont(cont => Arrow.init(v => self(Loop.continue(cont(v)))))
                         case kyo =>
                             kyo.unsafeUnwrap

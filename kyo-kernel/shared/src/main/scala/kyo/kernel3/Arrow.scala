@@ -14,7 +14,10 @@ import scala.compiletime.erasedValue
 import scala.language.implicitConversions
 import scala.util.NotGiven
 
-opaque type Arrow[-A, +B, -S] = ArrowImpl[A, B, S] | Chain[A, B, S]
+
+opaque type ~>[-A, +B <: (Any < Nothing)] = Any
+
+opaque type Arrow[-A, +B, -S] = AbstractArrow[A, B, S] | Chain[A, B, S]
 
 object Arrow:
 
@@ -22,7 +25,7 @@ object Arrow:
 
         inline def apply[S2 <: S](v: A < S2)(using Safepoint): B < S2 =
             self match
-                case self: ArrowImpl[A, B, S] @unchecked =>
+                case self: AbstractArrow[A, B, S] @unchecked =>
                     self(v)
                 case _ =>
                     Chain.eval(v, self)
@@ -52,10 +55,10 @@ object Arrow:
 
     object internal:
 
-        sealed abstract class ArrowImpl[-A, +B, -S]:
+        sealed abstract class AbstractArrow[-A, +B, -S]:
             def apply[S2 <: S](v: A < S2)(using Safepoint): B < S2
 
-        sealed abstract class Lift[-A, +B, -S] extends ArrowImpl[A, B, S]:
+        sealed abstract class Lift[-A, +B, -S] extends AbstractArrow[A, B, S]:
             def _frame: Frame
             final def apply[S2 <: S](v: A < S2)(using safepoint: Safepoint): B < S2 =
                 v match
@@ -72,25 +75,22 @@ object Arrow:
 
             def run(v: A)(using Safepoint): B < S
 
-            override def toString = s"Lift(${_frame.show})"
+            final override def toString = s"Lift(${_frame.show})"
         end Lift
 
-        sealed class Pure
-        case object Pure extends Pure
-
-        class AndThen[-A, B, +C, -S](a: Arrow[A, B, S], b: Arrow[B, C, S]) extends ArrowImpl[A, C, S]:
+        final class AndThen[-A, B, +C, -S](a: Arrow[A, B, S], b: Arrow[B, C, S]) extends AbstractArrow[A, C, S]:
             def apply[S2 <: S](v: A < S2)(using Safepoint) = b(a(v))
 
             override def toString = s"AndThen($a, $b)"
         end AndThen
 
-        opaque type Chain[-A, +B, -S] = Array[ArrowImpl[Any, Any, Any]]
+        opaque type Chain[-A, +B, -S] = Array[AbstractArrow[Any, Any, Any]]
 
         object Chain:
-            val empty: Arrow[Any, Any, Any] = new Array[ArrowImpl[Any, Any, Any]](0)
+            val empty: Arrow[Any, Any, Any] = new Array[AbstractArrow[Any, Any, Any]](0)
 
             def eval[A, B, S](v: A < S, self: Arrow[A, B, S]): B < S =
-                val array = self.asInstanceOf[Array[ArrowImpl[Any, Any, Any]]]
+                val array = self.asInstanceOf[Array[AbstractArrow[Any, Any, Any]]]
                 @tailrec
                 def loop(v: Any, idx: Int): Any =
                     if idx == array.length then
@@ -104,7 +104,7 @@ object Arrow:
                                 else if contSize == 1 then
                                     kyo.andThen(array(idx + 1))
                                 else
-                                    val newArray = new Array[ArrowImpl[Any, Any, Any]](contSize)
+                                    val newArray = new Array[AbstractArrow[Any, Any, Any]](contSize)
                                     System.arraycopy(array, idx + 1, newArray, 1, contSize)
                                     kyo.andThen(newArray)
                                 end if
