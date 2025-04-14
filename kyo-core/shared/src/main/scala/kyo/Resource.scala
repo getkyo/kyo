@@ -40,20 +40,20 @@ object Resource:
         def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO
 
     object Finalizer:
-        sealed abstract class Closeable extends Finalizer:
+        sealed abstract class Awaitable extends Finalizer:
             def close(using Frame): Unit < IO
             def await(using Frame): Unit < Async
 
-        object Closeable:
+        object Awaitable:
             object Unsafe:
-                def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Closeable =
-                    new Closeable:
+                def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Awaitable =
+                    new Awaitable:
                         val queue   = Queue.Unbounded.Unsafe.init[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer)
                         val promise = Promise.Unsafe.init[Nothing, Unit]().safe
 
                         def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO =
                             IO.Unsafe {
-                                if queue.offer(IO(v.unit)).isFailure then
+                                if queue.offer(IO(v.unit)).isError then
                                     Abort.panic(new Closed(
                                         "Finalizer",
                                         frame,
@@ -80,7 +80,7 @@ object Resource:
                         def await(using Frame): Unit < Async = promise.get
                 end init
             end Unsafe
-        end Closeable
+        end Awaitable
     end Finalizer
 
     /** Ensures that the given effect is executed when the resource is released.
@@ -155,10 +155,10 @@ object Resource:
       */
     def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
         IO.Unsafe {
-            val closeable = Finalizer.Closeable.Unsafe.init(closeParallelism)
-            ContextEffect.handle(Tag[Resource], closeable, _ => closeable)(v)
-                .handle(IO.ensure(closeable.close))
-                .map(result => closeable.await.andThen(result))
+            val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
+            ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
+                .handle(IO.ensure(finalizer.close))
+                .map(result => finalizer.await.andThen(result))
         }
 
     given Isolate.Contextual[Resource, Any] = Isolate.Contextual.derive[Resource, Any]
