@@ -53,7 +53,7 @@ object Resource:
 
                         def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO =
                             IO.Unsafe {
-                                if queue.offer(IO(v.unit)).isError then
+                                if !queue.offer(IO(v.unit)).contains(true) then
                                     Abort.panic(new Closed(
                                         "Finalizer",
                                         frame,
