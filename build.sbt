@@ -449,7 +449,7 @@ lazy val `kyo-reactive-streams` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-aeron` =
-    crossProject(JVMPlatform)
+    crossProject(JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-aeron"))
@@ -463,6 +463,7 @@ lazy val `kyo-aeron` =
             )
         )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
 
 lazy val `kyo-sttp` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
