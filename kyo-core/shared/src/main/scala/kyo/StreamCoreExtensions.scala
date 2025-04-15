@@ -2,7 +2,7 @@ package kyo
 
 import kyo.kernel.ArrowEffect
 
-object AsyncStreamExtensions:
+object StreamCoreExtensions:
     val DefaultCollectBufferSize = 1024
 
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[V], Frame) =
@@ -10,7 +10,7 @@ object AsyncStreamExtensions:
             channel.take.map:
                 case Absent => Loop.done
                 case Present(c) =>
-                    Emit.valueWith(c)(Loop.continue(()))
+                    Emit.valueWith(c)(Loop.continue)
         Abort.run(emit).unit
     end emitMaybeChunksFromChannel
 
@@ -38,13 +38,10 @@ object AsyncStreamExtensions:
                     IO.ensure(channel.close):
                         for
                             _ <- Async.run[E, Unit, S](Abort.run {
-                                val somat = Async
-                                    .foreachDiscard(streams)(
-                                        _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
-                                    )
-                                somat
-                            }
-                                .andThen(Abort.run(channel.put(Absent)).unit))
+                                Async.foreachDiscard(streams)(
+                                    _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
+                                )
+                            }.andThen(Abort.run(channel.put(Absent)).unit))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
@@ -193,6 +190,6 @@ object AsyncStreamExtensions:
         ): Stream[V, Abort[E] & S & Async] =
             other.mergeHaltingLeft(stream)(using i1, i2, sct, t, f)
     end extension
-end AsyncStreamExtensions
+end StreamCoreExtensions
 
-export AsyncStreamExtensions.*
+export StreamCoreExtensions.*

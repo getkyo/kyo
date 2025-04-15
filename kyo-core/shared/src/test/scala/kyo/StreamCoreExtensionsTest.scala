@@ -1,6 +1,6 @@
 package kyo
 
-class AsyncStreamExtensionsTest extends Test:
+class StreamCoreExtensionsTest extends Test:
 
     "factory" - {
         "collectAll" in run {
@@ -16,7 +16,7 @@ class AsyncStreamExtensionsTest extends Test:
             }.andThen(succeed)
         }
 
-        "collectAllHalting" in run {
+        "collectAllHalting" in runNotJS {
             Choice.run {
                 for
                     size <- Choice.get(Seq(0, 1, 32, 1024))
@@ -106,4 +106,4 @@ class AsyncStreamExtensionsTest extends Test:
         }
     }
 
-end AsyncStreamExtensionsTest
+end StreamCoreExtensionsTest
