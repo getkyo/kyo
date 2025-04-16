@@ -94,7 +94,7 @@ lazy val kyoJVM = project
         name := "kyoJVM",
         `kyo-settings`,
         commands += Command.command("testOnlyUntilFailed") { state =>
-            "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"echo\"" :: "testOnlyUntilFailed" :: state
+            "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"producing stream\"" :: "testOnlyUntilFailed" :: state
         }
     )
     .disablePlugins(MimaPlugin)
@@ -566,6 +566,9 @@ lazy val `kyo-grpc-core` =
         .in(file("kyo-grpc") / "core")
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
+        .settings(
+            libraryDependencies += "org.scalamock" %% "scalamock" % "7.3.0" % Test
+        )
         .jvmSettings(
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
