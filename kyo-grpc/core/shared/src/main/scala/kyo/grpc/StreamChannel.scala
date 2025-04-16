@@ -13,6 +13,7 @@ import kyo.kernel.Loop.Outcome
 class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], private val _completed: AtomicBoolean)(using initFrame: Frame):
 
     def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
+        println("put")
         putResult(Result.succeed(value))
 
     private def putResult(value: Result[E, A])(using Frame): Unit < (Abort[Closed] & Async) =

@@ -10,22 +10,16 @@ class ResponseStreamObserver[Response](
 )(using Frame, AllowUnsafe) extends StreamObserver[Response]:
 
     override def onNext(response: Response): Unit =
-        // TODO: Remove this.
-        println(s"ResponseStreamObserver.onNext: $response")
         val put = responseChannel.put(response)
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(put).getOrThrow
     end onNext
 
     override def onError(t: Throwable): Unit =
-        // TODO: Remove this.
-        println(s"ResponseStreamObserver.onError: $t")
         val fail = responseChannel.fail(StreamNotifier.throwableToStatusException(t))
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(fail).getOrThrow
     end onError
 
     override def onCompleted(): Unit =
-        // TODO: Remove this.
-        print("ResponseStreamObserver.onCompleted")
         val close = responseChannel.complete
         Abort.run(IO.Unsafe.run(close)).eval.getOrThrow
     end onCompleted
