@@ -60,6 +60,32 @@ class StreamTest extends Test:
         }
     }
 
+    "repeatPresent" - {
+        def reads: Maybe[Chunk[Int]] < Var[Int] =
+            for
+                chunk <- Var.use[Int]:
+                    case 0 => Maybe.Present(Chunk(1, 2, 3))
+                    case 1 => Maybe.Present(Chunk.empty[Int])
+                    case 2 => Maybe.Present(Chunk(4, 5, 6))
+                    case 3 => Maybe.Present(Chunk(7))
+                    case _ => Maybe.Absent
+                _ <- Var.update[Int](_ + 1)
+            yield chunk
+        end reads
+
+        "absent" in {
+            assert(Stream.repeatPresent(Maybe.empty[Chunk[Int]]).run.eval == Seq.empty)
+        }
+
+        "present default resize" in {
+            assert(Var.run(0)(Stream.repeatPresent(reads).run).eval == Seq(1, 2, 3, 4, 5, 6, 7))
+        }
+
+        "present resize to 1" in {
+            assert(Var.run(0)(Stream.repeatPresent(reads, 1).run).eval == Seq(1, 2, 3, 4, 5, 6, 7))
+        }
+    }
+
     "range" - {
         "empty" in {
             assert(Stream.range(0, 0).run.eval == Seq.empty)
@@ -338,6 +364,96 @@ class StreamTest extends Test:
             val result            = Var.run(false)(Stream.init(1 to n).filter(predicate).run).eval
             assert(
                 result.size > 0 && result.forall(_ % 2 == 0) && result.forall(i => !(i % 3 == 0))
+            )
+        }
+    }
+
+    "collect" - {
+        "non-empty" in {
+            assert(
+                Stream.init(Seq(None, Some(2), None)).collect(Maybe.fromOption(_)).run.eval ==
+                    Seq(2)
+            )
+        }
+
+        "all in" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collect(Present(_)).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "all out" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collect[Int](_ => Absent).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(1 to n).collect(v => if v % 2 == 0 then Present(v) else Absent).run.eval.size ==
+                    n / 2
+            )
+        }
+
+        "with effects" in {
+            def predicate(v: Int) =
+                Var.update[Boolean](!_).map(if _ then Present(v) else Absent)
+            val result = Var.run(false)(Stream.init(1 to 10).collect(predicate).run).eval
+            assert(
+                result == (1 to 10 by 2)
+            )
+        }
+    }
+
+    "collectWhile" - {
+        "take none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectWhile(i => if i < 0 then Present(i + 1) else Absent).run.eval == Seq.empty
+            )
+        }
+
+        "take some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhile(i => if i < 4 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take some even if subsequent elements pass predicate" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhile(i => if i != 4 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhile(i => if i < 10 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4, 5, 6)
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).collectWhile(i => Present(i + 1)).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "with effects" in {
+            val stream = Stream.init(Seq(1, 2, 3, 4, 5))
+            val collected = stream.collectWhile { v =>
+                Var.update[Boolean](!_).map(if _ then Present(v * 2) else Absent)
+            }.run
+            assert(Var.run(false)(collected).eval == Seq(2))
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).collectWhile(i => Present(i)).run.eval ==
+                    Seq.fill(n)(1)
             )
         }
     }
@@ -724,7 +840,7 @@ class StreamTest extends Test:
                 Env.use[Int] { multiplier =>
                     sum += i * multiplier
                 }
-            }.pipe(Env.run(2)).map { _ =>
+            }.handle(Env.run(2)).map { _ =>
                 assert(sum == 30)
             }
         }
@@ -768,7 +884,7 @@ class StreamTest extends Test:
                 Env.use[Int] { multiplier =>
                     sum += chunk.foldLeft(0)(_ + _) * multiplier
                 }
-            }.pipe(Env.run(2)).map { _ =>
+            }.handle(Env.run(2)).map { _ =>
                 assert(sum == 30)
             }
         }
@@ -807,6 +923,22 @@ class StreamTest extends Test:
             Env.use[Seq[Int]](seq => Stream.init(seq))
         Env.run(Seq(1, 2, 3))(stream.map(_.run)).eval
         succeed
+    }
+
+    "splitAt" - {
+        "split under length" in run {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAt(4).map: (chunk, restStream) =>
+                assert(chunk == Chunk(0, 1, 2, 3))
+                assert(restStream.run.eval == Seq(4, 5, 6, 7, 8, 9))
+        }
+
+        "split over length" in run {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAt(12).map: (chunk, restStream) =>
+                assert(chunk == Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+                assert(restStream.run.eval == Seq())
+        }
     }
 
     "edge cases" - {
@@ -936,6 +1068,44 @@ class StreamTest extends Test:
             }
             assert(result.eval == Result.fail("Value 4 exceeds limit 3"))
         }
+    }
+
+    "chunking" - {
+        val chunkSize: Int = 64
+
+        def maintains(ops: ((Stream[Int, Any] => Stream[Int, Any]), String)*): Unit =
+            val streamSize: Int = 513
+            for (transform, opName) <- ops do
+                s"$opName maintains chunks" in {
+                    val base     = Stream.range(0, streamSize, chunkSize = chunkSize)
+                    val expected = chunkSizes(base).eval
+
+                    val transformed = transform(base)
+                    val actual      = chunkSizes(transformed).eval
+
+                    assert(actual == expected)
+                }
+            end for
+        end maintains
+
+        maintains(
+            (_.map(identity), "map"),
+            (_.map(Kyo.lift), "map (kyo)"),
+            (_.mapChunk(identity), "mapChunk"),
+            (_.mapChunk(Kyo.lift), "mapChunk (kyo)"),
+            (_.tap(identity), "tap"),
+            (_.tapChunk(identity), "tapChunk"),
+            (_.take(Int.MaxValue), "take"),
+            (_.takeWhile(_ => true), "takeWhile"),
+            (_.takeWhile(_ => Kyo.lift(true)), "takeWhile (kyo)"),
+            (_.dropWhile(_ => false), "dropWhile"),
+            (_.dropWhile(_ => Kyo.lift(false)), "dropWhile (kyo)"),
+            (_.filter(_ => true), "filter"),
+            (_.filter(_ => Kyo.lift(true)), "filter (kyo)"),
+            (_.changes, "changes"),
+            (_.rechunk(chunkSize), "rechunk"),
+            (_.flatMapChunk(c => Stream.init(c)), "flatMapChunk")
+        )
     }
 
 end StreamTest

@@ -24,6 +24,17 @@ import scala.language.implicitConversions
   * The pending type has a single fundamental operation - the monadic bind, which is exposed as both `map` and `flatMap` (for
   * for-comprehension support). Plain values are automatically lifted into the effect context, which means `map` can serve as both `map` and
   * `flatMap`. This allows writing effectful code typically without having to distinguish map from flatMap or manually lifting values.
+  *
+  * Effects are typically handled using their specific `run` methods, such as `Abort.run(computation)` or `Env.run(config)(computation)`.
+  * Each effect provides its own handling mechanism that processes the computation and removes that effect from the type signature.
+  *
+  * The `handle` method offers an alternative approach that enables passing a computation to one or more transformation functions. For
+  * example, instead of `Abort.run(computation)`, one can write `computation.handle(Abort.run)`. The multi-parameter version enables
+  * chaining transformations: `computation.handle(Abort.run, Env.run(config))`. This can be useful when composing multiple effect handlers.
+  *
+  * Beyond effect handlers, `handle` can be used with any function that takes a computation as input. For example,
+  * `computation.handle(Abort.run, _.map(_ + 1))` handles `Abort` and then applies a transformation. While `handle` supports arbitrary
+  * functions, it is primarily designed for effect handling .
   */
 opaque type <[+A, -S] = A | Kyo[A, S]
 
@@ -121,64 +132,111 @@ object `<`:
             unitLoop(v)
         end unit
 
-        /** Applies a sequence of transformations to this computation.
+        /** Applies a transformation to this computation.
+          *
+          * The `handle` method provides a convenient way to pass a computation to a transformation function. It's primarily designed for
+          * effect handling, allowing a more fluent API style compared to the traditional approach of passing the computation to a handler
+          * function.
+          *
+          * For example, instead of:
+          * ```
+          * Env.run(1)(Abort.run(computation))
+          * ```
+          * You can write:
+          * ```
+          * computation.handle(Abort.run, Env.run(1))
+          * ```
+          *
+          * While `handle` can be used with any function that processes a computation, its main purpose is to facilitate effect handling and
+          * composition of multiple handlers. The multi-parameter versions of `handle` enable chaining transformations in a readable
+          * sequential style.
+          *
+          * @param f
+          *   The transformation function to apply
+          * @return
+          *   The result of applying the transformation
           */
-        inline def pipe[B](inline f: (=> A < S) => B)(
+        inline def handle[B](inline f: (=> A < S) => B)(
             using inline flat: WeakFlat[A]
         ): B =
-            def pipe1 = v
-            f(pipe1)
-        end pipe
+            def handle1 = v
+            f(handle1)
+        end handle
 
-        /** Applies a sequence of transformations to this computation.
+        /** Applies two transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying both transformations
           */
-        inline def pipe[B, C](
+        inline def handle[B, C](
             inline f1: A < S => B,
             inline f2: (=> B) => C
         )(using inline flat: WeakFlat[A]): C =
-            def pipe2 = v.pipe(f1)
-            f2(pipe2)
-        end pipe
+            def handle2 = v.handle(f1)
+            f2(handle2)
+        end handle
 
-        /** Applies a sequence of transformations to this computation.
+        /** Applies three transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
           */
-        inline def pipe[B, C, D](
+        inline def handle[B, C, D](
             inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D
         )(using inline flat: WeakFlat[A]): D =
-            def pipe3 = v.pipe(f1, f2)
-            f3(pipe3)
-        end pipe
+            def handle3 = v.handle(f1, f2)
+            f3(handle3)
+        end handle
 
-        /** Applies a sequence of transformations to this computation.
+        /** Applies four transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
           */
-        inline def pipe[B, C, D, E](
+        inline def handle[B, C, D, E](
             inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E
         )(using inline flat: WeakFlat[A]): E =
-            def pipe4 = v.pipe(f1, f2, f3)
-            f4(pipe4)
-        end pipe
+            def handle4 = v.handle(f1, f2, f3)
+            f4(handle4)
+        end handle
 
-        /** Applies a sequence of transformations to this computation.
+        /** Applies five transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
           */
-        inline def pipe[B, C, D, E, F](
+        inline def handle[B, C, D, E, F](
             inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
             inline f5: (=> E) => F
         )(using inline flat: WeakFlat[A]): F =
-            def pipe5 = v.pipe(f1, f2, f3, f4)
-            f5(pipe5)
-        end pipe
+            def handle5 = v.handle(f1, f2, f3, f4)
+            f5(handle5)
+        end handle
 
-        /** Applies a sequence of transformations to this computation.
+        /** Applies six transformations to this computation in sequence.
+          *
+          * Enables chaining multiple effect handlers or transformations in a readable sequential style.
+          *
+          * @return
+          *   The result after applying all transformations in sequence
           */
-        inline def pipe[B, C, D, E, F, G](
+        inline def handle[B, C, D, E, F, G](
             inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
@@ -186,9 +244,75 @@ object `<`:
             inline f5: (=> E) => F,
             inline f6: (=> F) => G
         )(using inline flat: WeakFlat[A]): G =
-            def pipe6 = v.pipe(f1, f2, f3, f4, f5)
-            f6(pipe6)
-        end pipe
+            def handle6 = v.handle(f1, f2, f3, f4, f5)
+            f6(handle6)
+        end handle
+
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def handle[B, C, D, E, F, G, H](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H
+        )(using inline flat: WeakFlat[A]): H =
+            def handle7 = v.handle(f1, f2, f3, f4, f5, f6)
+            f7(handle7)
+        end handle
+
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def handle[B, C, D, E, F, G, H, I](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H,
+            inline f8: (=> H) => I
+        )(using inline flat: WeakFlat[A]): I =
+            def handle8 = v.handle(f1, f2, f3, f4, f5, f6, f7)
+            f8(handle8)
+        end handle
+
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def handle[B, C, D, E, F, G, H, I, J](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H,
+            inline f8: (=> H) => I,
+            inline f9: (=> I) => J
+        )(using inline flat: WeakFlat[A]): J =
+            def handle9 = v.handle(f1, f2, f3, f4, f5, f6, f7, f8)
+            f9(handle9)
+        end handle
+
+        /** Applies a sequence of transformations to this computation.
+          */
+        inline def handle[B, C, D, E, F, G, H, I, J, K](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G,
+            inline f7: (=> G) => H,
+            inline f8: (=> H) => I,
+            inline f9: (=> I) => J,
+            inline f10: (=> J) => K
+        )(using inline flat: WeakFlat[A]): K =
+            def handle10 = v.handle(f1, f2, f3, f4, f5, f6, f7, f8, f9)
+            f10(handle10)
+        end handle
 
         private[kyo] inline def evalNow(using inline flat: Flat[A]): Maybe[A] =
             v match

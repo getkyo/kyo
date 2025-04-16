@@ -1,11 +1,10 @@
 package kyo
 
-import scala.annotation.nowarn
 import scala.language.implicitConversions
 
 /** Provides Text representation of a type. Needed for customizing how to display opaque types as alternative to toString
   */
-abstract class Render[A]:
+abstract class Render[A] extends Serializable:
     def asText(value: A): Text
     final def asString(value: A): String = asText(value).show
 

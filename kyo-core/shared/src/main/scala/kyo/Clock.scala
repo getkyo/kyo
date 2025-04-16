@@ -11,25 +11,80 @@ import kyo.scheduler.util.Threads
 import scala.annotation.tailrec
 import scala.collection.mutable.PriorityQueue
 
-/** A clock that provides time-related operations.
+/** A clock that provides time-related operations and utilities for managing temporal aspects of computations.
+  *
+  * Clock offers a comprehensive set of functionality for:
+  *   - Accessing current time (both wall-clock via `now` and monotonic via `nowMonotonic`)
+  *   - Measuring elapsed time with `stopwatch` and the `Stopwatch` class
+  *   - Setting deadlines with `deadline` and checking timeouts with `isOverdue`
+  *   - Controlling execution timing with `sleep` for suspending execution
+  *   - Scheduling recurring tasks with `repeatWithDelay` and `repeatAtInterval`
+  *   - Controlling time flow for testing with `withTimeShift` and `withTimeControl`
+  *
+  * The Clock API has both stateful methods (bound to a specific Clock instance) and stateless methods (using the local Clock in context).
+  * This design allows most code to use the simpler stateless API while still supporting custom Clock implementations when needed.
+  *
+  * A Clock instance can be provided to computations using `Clock.let(clock)(computation)`, and time-based testing is supported through
+  * `Clock.withTimeControl` and `Clock.withTimeShift` for precise temporal control during tests.
+  *
+  * All time-related operations in Clock are effect-based, properly tracking side effects in the type system. Operations like `now` and
+  * `nowMonotonic` are wrapped in IO effects, while time-suspending operations like `sleep` are wrapped in Async effects.
+  *
+  * The scheduling methods offer different execution patterns: `repeatWithDelay` waits for a specified duration after each task completes
+  * before executing again (ensuring a minimum gap between executions), while `repeatAtInterval` aims to execute tasks at fixed time
+  * intervals regardless of how long each task takes (maintaining a consistent execution schedule).
+  *
+  * @see
+  *   [[kyo.Clock.Stopwatch]] For measuring elapsed time
+  * @see
+  *   [[kyo.Clock.Deadline]] For tracking time boundaries and timeouts
+  * @see
+  *   [[kyo.Clock.TimeControl]] For manipulating time in tests
+  * @see
+  *   [[kyo.Clock.withTimeControl]] For executing code with precise temporal control
+  * @see
+  *   [[kyo.Clock.repeatWithDelay]] For scheduling tasks with delays between completions
+  * @see
+  *   [[kyo.Clock.repeatAtInterval]] For scheduling tasks at fixed time intervals
   */
 final case class Clock(unsafe: Clock.Unsafe):
 
     /** Gets the current time as an Instant.
       *
+      * This method returns the current wall-clock time, which corresponds to actual calendar time. Use this method when you need:
+      *   - Human-readable timestamps for logs, reports, or user interfaces
+      *   - Date/time calculations related to real-world time (dates, time zones, etc.)
+      *   - Time values that will be persisted or communicated outside the application
+      *
+      * Note: Wall-clock time can jump forward or backward due to NTP adjustments, leap seconds, daylight saving time changes, or manual
+      * clock adjustments. Therefore, it should NOT be used for measuring elapsed time between events or for timing operations.
+      *
       * @return
-      *   The current time
+      *   The current wall-clock time as an Instant
+      * @see
+      *   [[nowMonotonic]] for measuring elapsed time between events
       */
     def now(using Frame): Instant < IO = IO.Unsafe(unsafe.now())
 
-    /** Gets the current monotonic time as a Duration. Unlike `now`, this is guaranteed to be strictly monotonic and suitable for measuring
-      * elapsed time.
+    /** Gets the current monotonic time as a Duration.
+      *
+      * This method returns a strictly monotonically increasing time value, guaranteed to always move forward. Use this method when you
+      * need:
+      *   - Measuring elapsed time between operations
+      *   - Calculating timeouts and deadlines
+      *   - Performance timing or benchmarking
+      *   - Any scenario where consistent time progression is critical
+      *
+      * Unlike [[now]], monotonic time is immune to system clock adjustments, daylight saving time changes, or leap seconds, making it the
+      * correct choice for duration calculations and time-based algorithm logic.
       *
       * Returns a Duration rather than an Instant because monotonic time represents the time elapsed since some arbitrary starting point
       * (usually system boot), not a specific point in calendar time.
       *
       * @return
       *   The current monotonic time as a Duration since system start
+      * @see
+      *   [[now]] for calendar time/date operations
       */
     def nowMonotonic(using Frame): Duration < IO = IO.Unsafe(unsafe.nowMonotonic())
 
@@ -58,7 +113,13 @@ end Clock
 /** Companion object for creating and managing Clock instances. */
 object Clock:
 
-    /** A stopwatch for measuring elapsed time. */
+    /** A stopwatch for measuring elapsed time with high precision.
+      *
+      * Stopwatch captures monotonic time when created and provides a way to query the duration since that point. It uses monotonic time
+      * internally, making it immune to system clock adjustments and suitable for performance monitoring, benchmarking, and execution
+      * timing. Unlike raw timestamp differences, Stopwatch ensures reliable measurements even during system time changes or daylight saving
+      * adjustments.
+      */
     final case class Stopwatch private[Clock] (unsafe: Stopwatch.Unsafe):
         /** Gets the elapsed time since the stopwatch was created.
           *
@@ -70,13 +131,18 @@ object Clock:
 
     object Stopwatch:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-        final class Unsafe(start: Duration, clock: Clock.Unsafe):
+        final class Unsafe(start: Duration, clock: Clock.Unsafe) extends Serializable:
             def elapsed()(using AllowUnsafe): Duration = clock.nowMonotonic() - start
             def safe: Stopwatch                        = Stopwatch(this)
         end Unsafe
     end Stopwatch
 
-    /** A deadline for checking remaining time or if it's overdue. */
+    /** A deadline for tracking time boundaries and detecting timeouts.
+      *
+      * Deadline represents a point in time by which something should occur, providing methods to check remaining time or determine if the
+      * deadline has passed. It handles both finite and infinite time boundaries, simplifying timeout implementation and scheduling of
+      * time-sensitive operations. Deadlines use monotonic time internally for consistent behavior regardless of system clock adjustments.
+      */
     final case class Deadline private[Clock] (unsafe: Deadline.Unsafe):
         /** Gets the time left until the deadline.
           *
@@ -95,7 +161,7 @@ object Clock:
 
     object Deadline:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-        final class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe):
+        final class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe) extends Serializable:
 
             def timeLeft()(using AllowUnsafe): Duration =
                 endInstant.map(_ - clock.now()).getOrElse(Duration.Infinity)
@@ -516,7 +582,7 @@ object Clock:
         }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe:
+    sealed abstract class Unsafe:
 
         def now()(using AllowUnsafe): Instant
 

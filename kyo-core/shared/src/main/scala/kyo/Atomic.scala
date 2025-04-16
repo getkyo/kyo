@@ -1,8 +1,17 @@
 package kyo
 
-import java.util.concurrent.atomic as j
+import scala.annotation.nowarn
 
-/** A wrapper for Java's AtomicInteger.
+/** A thread-safe atomic integer with effect-based operations.
+  *
+  * AtomicInt provides a wrapper around platform-specific atomic integer implementations (such as java.util.concurrent.atomic.AtomicInteger
+  * on the JVM) with a consistent effect-based API. It supports atomic operations like get, set, increment, decrement, and compare-and-set.
+  *
+  * This class guarantees atomicity for all operations, making it suitable for concurrent programming scenarios where multiple threads may
+  * access and modify the same value.
+  *
+  * @see
+  *   [[LongAdder]] Alternative optimized for high contention with better write performance but slower reads
   */
 final case class AtomicInt private (unsafe: AtomicInt.Unsafe):
 
@@ -91,6 +100,22 @@ final case class AtomicInt private (unsafe: AtomicInt.Unsafe):
       */
     inline def addAndGet(v: Int)(using inline frame: Frame): Int < IO = IO.Unsafe(unsafe.addAndGet(v))
 
+    /** Atomically updates the current value using the given function and returns the old value.
+      * @param f
+      *   The function to apply to the current value
+      * @return
+      *   The previous value
+      */
+    inline def getAndUpdate(inline f: Int => Int)(using inline frame: Frame): Int < IO = IO.Unsafe(unsafe.getAndUpdate(f))
+
+    /** Atomically updates the current value using the given function and returns the updated value.
+      * @param f
+      *   The function to apply to the current value
+      * @return
+      *   The updated value
+      */
+    inline def updateAndGet(inline f: Int => Int)(using inline frame: Frame): Int < IO = IO.Unsafe(unsafe.updateAndGet(f))
+
     /** Returns a string representation of the current value.
       * @return
       *   A string representation of the atomic integer
@@ -136,7 +161,7 @@ object AtomicInt:
         IO.Unsafe(f(AtomicInt(Unsafe.init(initialValue))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    opaque type Unsafe = j.AtomicInteger
+    opaque type Unsafe = java.util.concurrent.atomic.AtomicInteger
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
@@ -144,7 +169,7 @@ object AtomicInt:
 
         def init(using AllowUnsafe): Unsafe = init(0)
 
-        def init(v: Int)(using AllowUnsafe): Unsafe = new j.AtomicInteger(v)
+        def init(v: Int)(using AllowUnsafe): Unsafe = new java.util.concurrent.atomic.AtomicInteger(v)
 
         extension (self: Unsafe)
             inline def get()(using inline allow: AllowUnsafe): Int                                   = self.get()
@@ -158,12 +183,25 @@ object AtomicInt:
             inline def getAndDecrement()(using inline allow: AllowUnsafe): Int                       = self.getAndDecrement()
             inline def getAndAdd(v: Int)(using inline allow: AllowUnsafe): Int                       = self.getAndAdd(v)
             inline def addAndGet(v: Int)(using inline allow: AllowUnsafe): Int                       = self.addAndGet(v)
-            inline def safe: AtomicInt                                                               = AtomicInt(self)
+            @nowarn("msg=anonymous")
+            inline def getAndUpdate(inline f: Int => Int)(using inline allow: AllowUnsafe): Int = self.getAndUpdate(f(_))
+            @nowarn("msg=anonymous")
+            inline def updateAndGet(inline f: Int => Int)(using inline allow: AllowUnsafe): Int = self.updateAndGet(f(_))
+            inline def safe: AtomicInt                                                          = AtomicInt(self)
         end extension
     end Unsafe
 end AtomicInt
 
-/** A wrapper for Java's AtomicLong.
+/** A thread-safe atomic long integer with effect-based operations.
+  *
+  * AtomicLong provides a wrapper around platform-specific atomic long implementations (such as java.util.concurrent.atomic.AtomicLong on
+  * the JVM) with a consistent effect-based API. It supports atomic operations like get, set, increment, decrement, and compare-and-set.
+  *
+  * This class guarantees atomicity for all operations, making it suitable for concurrent programming scenarios where multiple threads may
+  * access and modify the same value.
+  *
+  * @see
+  *   [[LongAdder]] Alternative optimized for high contention with better write performance but slower reads
   */
 final case class AtomicLong private (unsafe: AtomicLong.Unsafe):
     /** Gets the current value.
@@ -252,6 +290,22 @@ final case class AtomicLong private (unsafe: AtomicLong.Unsafe):
       */
     inline def addAndGet(v: Long)(using inline frame: Frame): Long < IO = IO.Unsafe(unsafe.addAndGet(v))
 
+    /** Atomically updates the current value using the given function and returns the old value.
+      * @param f
+      *   The function to apply to the current value
+      * @return
+      *   The previous value
+      */
+    inline def getAndUpdate(inline f: Long => Long)(using inline frame: Frame): Long < IO = IO.Unsafe(unsafe.getAndUpdate(f(_)))
+
+    /** Atomically updates the current value using the given function and returns the updated value.
+      * @param f
+      *   The function to apply to the current value
+      * @return
+      *   The updated value
+      */
+    inline def updateAndGet(inline f: Long => Long)(using inline frame: Frame): Long < IO = IO.Unsafe(unsafe.updateAndGet(f(_)))
+
     /** Returns a string representation of the current value.
       * @return
       *   A string representation of the atomic long
@@ -298,7 +352,7 @@ object AtomicLong:
         IO.Unsafe(f(AtomicLong(Unsafe.init(initialValue))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    opaque type Unsafe = j.AtomicLong
+    opaque type Unsafe = java.util.concurrent.atomic.AtomicLong
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
@@ -306,7 +360,7 @@ object AtomicLong:
 
         def init(using AllowUnsafe): Unsafe = init(0)
 
-        def init(v: Long)(using AllowUnsafe): Unsafe = new j.AtomicLong(v)
+        def init(v: Long)(using AllowUnsafe): Unsafe = new java.util.concurrent.atomic.AtomicLong(v)
 
         extension (self: Unsafe)
             inline def get()(using inline allow: AllowUnsafe): Long                                    = self.get()
@@ -320,12 +374,23 @@ object AtomicLong:
             inline def getAndDecrement()(using inline allow: AllowUnsafe): Long                        = self.getAndDecrement()
             inline def getAndAdd(v: Long)(using inline allow: AllowUnsafe): Long                       = self.getAndAdd(v)
             inline def addAndGet(v: Long)(using inline allow: AllowUnsafe): Long                       = self.addAndGet(v)
-            inline def safe: AtomicLong                                                                = AtomicLong(self)
+            @nowarn("msg=anonymous")
+            inline def getAndUpdate(inline f: Long => Long)(using inline allow: AllowUnsafe): Long = self.getAndUpdate(f(_))
+            @nowarn("msg=anonymous")
+            inline def updateAndGet(inline f: Long => Long)(using inline allow: AllowUnsafe): Long = self.updateAndGet(f(_))
+            inline def safe: AtomicLong                                                            = AtomicLong(self)
         end extension
     end Unsafe
 end AtomicLong
 
-/** A wrapper for Java's AtomicBoolean.
+/** A thread-safe atomic boolean with effect-based operations.
+  *
+  * AtomicBoolean provides a wrapper around platform-specific atomic boolean implementations (such as
+  * java.util.concurrent.atomic.AtomicBoolean on the JVM) with a consistent effect-based API. It supports atomic operations like get, set,
+  * and compare-and-set.
+  *
+  * This class guarantees atomicity for all operations, making it suitable for concurrent programming scenarios where multiple threads may
+  * access and modify the same boolean value.
   */
 final case class AtomicBoolean private (unsafe: AtomicBoolean.Unsafe):
     /** Gets the current value.
@@ -420,7 +485,7 @@ object AtomicBoolean:
         IO.Unsafe(f(AtomicBoolean(Unsafe.init(initialValue))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    opaque type Unsafe = j.AtomicBoolean
+    opaque type Unsafe = java.util.concurrent.atomic.AtomicBoolean
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
@@ -428,7 +493,7 @@ object AtomicBoolean:
 
         def init(using AllowUnsafe): Unsafe = init(false)
 
-        def init(v: Boolean)(using AllowUnsafe): Unsafe = new j.AtomicBoolean(v)
+        def init(v: Boolean)(using AllowUnsafe): Unsafe = new java.util.concurrent.atomic.AtomicBoolean(v)
 
         extension (self: Unsafe)
             inline def get()(using inline allow: AllowUnsafe): Boolean                 = self.get()
@@ -442,7 +507,14 @@ object AtomicBoolean:
     end Unsafe
 end AtomicBoolean
 
-/** A wrapper for Java's AtomicReference.
+/** A thread-safe atomic reference with effect-based operations.
+  *
+  * AtomicRef provides a wrapper around platform-specific atomic reference implementations (such as
+  * java.util.concurrent.atomic.AtomicReference on the JVM) with a consistent effect-based API. It supports atomic operations like get, set,
+  * and compare-and-set.
+  *
+  * This class guarantees atomicity for all operations, making it suitable for concurrent programming scenarios where multiple threads may
+  * access and modify the same reference.
   *
   * @tparam A
   *   The type of the referenced value
@@ -494,11 +566,13 @@ final case class AtomicRef[A] private (unsafe: AtomicRef.Unsafe[A]):
       */
     inline def compareAndSet(curr: A, next: A)(using inline frame: Frame): Boolean < IO = IO.Unsafe(unsafe.compareAndSet(curr, next))
 
-    /** Atomically updates the current value using the given function.
+    /** Atomically updates the current value using the given function and returns the old value.
       * @param f
       *   The function to apply to the current value
+      * @return
+      *   The previous value
       */
-    inline def update[S](f: A => A)(using inline frame: Frame): Unit < IO = updateAndGet(f).unit
+    inline def getAndUpdate(inline f: A => A)(using inline frame: Frame): A < IO = IO.Unsafe(unsafe.getAndUpdate(f(_)))
 
     /** Atomically updates the current value using the given function and returns the updated value.
       * @param f
@@ -506,7 +580,7 @@ final case class AtomicRef[A] private (unsafe: AtomicRef.Unsafe[A]):
       * @return
       *   The updated value
       */
-    inline def updateAndGet[S](f: A => A)(using inline frame: Frame): A < IO = IO.Unsafe(unsafe.updateAndGet(f(_)))
+    inline def updateAndGet(inline f: A => A)(using inline frame: Frame): A < IO = IO.Unsafe(unsafe.updateAndGet(f(_)))
 
     /** Returns a string representation of the current value.
       * @return
@@ -542,13 +616,13 @@ object AtomicRef:
     inline def initWith[A, B, S](initialValue: A)(inline f: AtomicRef[A] => B < S)(using inline frame: Frame): B < (S & IO) =
         IO.Unsafe(f(AtomicRef(Unsafe.init(initialValue))))
 
-    opaque type Unsafe[A] = j.AtomicReference[A]
+    opaque type Unsafe[A] = java.util.concurrent.atomic.AtomicReference[A]
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given [A]: Flat[Unsafe[A]] = Flat.unsafe.bypass
 
-        def init[A](v: A)(using AllowUnsafe): Unsafe[A] = new j.AtomicReference(v)
+        def init[A](v: A)(using AllowUnsafe): Unsafe[A] = new java.util.concurrent.atomic.AtomicReference(v)
 
         extension [A](self: Unsafe[A])
             inline def get()(using inline allow: AllowUnsafe): A                                 = self.get()
@@ -556,9 +630,11 @@ object AtomicRef:
             inline def lazySet(v: A)(using inline allow: AllowUnsafe): Unit                      = self.lazySet(v)
             inline def getAndSet(v: A)(using inline allow: AllowUnsafe): A                       = self.getAndSet(v)
             inline def compareAndSet(curr: A, next: A)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
-            def update[S](f: A => A)(using AllowUnsafe): Unit                                    = discard(self.updateAndGet(f(_)))
-            def updateAndGet[S](f: A => A)(using AllowUnsafe): A                                 = self.updateAndGet(f(_))
-            inline def safe: AtomicRef[A]                                                        = AtomicRef(self)
+            @nowarn("msg=anonymous")
+            inline def getAndUpdate(inline f: A => A)(using inline allow: AllowUnsafe): A = self.getAndUpdate(f(_))
+            @nowarn("msg=anonymous")
+            inline def updateAndGet(inline f: A => A)(using inline allow: AllowUnsafe): A = self.updateAndGet(f(_))
+            inline def safe: AtomicRef[A]                                                 = AtomicRef(self)
         end extension
     end Unsafe
 end AtomicRef

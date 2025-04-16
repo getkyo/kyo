@@ -30,7 +30,7 @@ class ResourceTest extends Test:
         val r1 = TestResource(1)
         val r2 = TestResource(2)
         Resource.acquire(r1()).map(_ => assert(r1.closes == 0))
-            .pipe(Resource.run)
+            .handle(Resource.run)
             .map { _ =>
                 assert(r1.closes == 1)
                 assert(r2.closes == 0)
@@ -47,16 +47,18 @@ class ResourceTest extends Test:
             Resource.acquire(r1()).map { _ =>
                 assert(r1.closes == 0)
                 Env.get[Int]
-            }.pipe(Resource.run)
-                .pipe(IO.Unsafe.run)
+            }.handle(Resource.run)
+                .handle(IO.Unsafe.run)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
         assert(r2.acquires == 0)
         Async.runAndBlock(timeout)(r)
-            .pipe(Env.run(1))
-            .pipe(Abort.run(_))
-            .pipe(IO.Unsafe.evalOrThrow)
+            .handle(
+                Env.run(1),
+                Abort.run,
+                IO.Unsafe.evalOrThrow
+            )
         assert(r1.closes == 1)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -67,7 +69,7 @@ class ResourceTest extends Test:
         val r1 = TestResource(1)
         val r2 = TestResource(2)
         Resource.acquire(r1()).map(_ => Resource.acquire(r2()))
-            .pipe(Resource.run)
+            .handle(Resource.run)
             .map { _ =>
                 assert(r1.closes == 1)
                 assert(r2.closes == 1)
@@ -86,7 +88,7 @@ class ResourceTest extends Test:
                 r2 <- Resource.acquire(r2())
                 i2 = r2.id * 5
             yield i1 + i2
-        io.pipe(Resource.run)
+        io.handle(Resource.run)
             .map { r =>
                 assert(r == 13)
                 assert(r1.closes == 1)
@@ -108,16 +110,18 @@ class ResourceTest extends Test:
                 i2 <- Env.get[Int].map(_ * r2.id)
             yield i1 + i2
         val r =
-            io.pipe(Resource.run)
-                .pipe(IO.Unsafe.run)
+            io.handle(Resource.run)
+                .handle(IO.Unsafe.run)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
         assert(r2.acquires == 0)
-        r.pipe(Env.run(3))
-            .pipe(Async.runAndBlock(timeout))
-            .pipe(Abort.run(_))
-            .pipe(IO.Unsafe.evalOrThrow)
+        r.handle(Env.run(3))
+            .handle(
+                Async.runAndBlock(timeout),
+                Abort.run,
+                IO.Unsafe.evalOrThrow
+            )
         assert(r1.closes == 1)
         assert(r2.closes == 1)
         assert(r1.acquires == 1)
@@ -127,9 +131,10 @@ class ResourceTest extends Test:
     "nested" in run {
         val r1 = TestResource(1)
         Resource.acquire(r1())
-            .pipe(Resource.run)
-            .pipe(Resource.run)
-            .map { r =>
+            .handle(
+                Resource.run,
+                Resource.run
+            ).map { r =>
                 assert(r == r1)
                 assert(r1.acquires == 1)
                 assert(r1.closes == 1)
@@ -144,10 +149,11 @@ class ResourceTest extends Test:
             yield
                 assert(closeCount == 0)
                 r
-        io.pipe(Resource.run)
-            .pipe(Async.runAndBlock(timeout))
-            .pipe(Abort.run(_))
-            .map { finalizedResource =>
+        io.handle(Resource.run)
+            .handle(
+                Async.runAndBlock(timeout),
+                Abort.run
+            ).map { finalizedResource =>
                 finalizedResource.foldError(_.closes.get.map(i => assert(i == 1)), _ => ???)
             }
     }
@@ -157,10 +163,11 @@ class ResourceTest extends Test:
         "ensure" taggedAs jvmOnly in run {
             var closes = 0
             Resource.ensure(Async.run(closes += 1).map(_.get).unit)
-                .pipe(Resource.run)
-                .pipe(Async.runAndBlock(timeout))
-                .pipe(Abort.run(_))
-                .map { _ =>
+                .handle(
+                    Resource.run,
+                    Async.runAndBlock(timeout),
+                    Abort.run
+                ).map { _ =>
                     assert(closes == 1)
                 }
         }
@@ -176,11 +183,12 @@ class ResourceTest extends Test:
                     closes += 1
                 }.map(_.get)
             Resource.acquireRelease(acquire)(release)
-                .pipe(Resource.run)
-                .pipe(Async.runAndBlock(timeout))
-                .pipe(Abort.run[Timeout](_))
-                .pipe(Abort.run[Absent](_))
-                .map { _ =>
+                .handle(
+                    Resource.run,
+                    Async.runAndBlock(timeout),
+                    Abort.run[Timeout],
+                    Abort.run[Absent]
+                ).map { _ =>
                     assert(closes == 1)
                 }
         }
@@ -188,10 +196,11 @@ class ResourceTest extends Test:
         "acquire" taggedAs jvmOnly in run {
             val r = TestResource(1)
             Resource.acquire(Async.run(r).map(_.get))
-                .pipe(Resource.run)
-                .pipe(Async.runAndBlock(timeout))
-                .pipe(Abort.run(_))
-                .map { _ =>
+                .handle(
+                    Resource.run,
+                    Async.runAndBlock(timeout),
+                    Abort.run
+                ).map { _ =>
                     assert(r.closes == 1)
                 }
         }
@@ -203,8 +212,8 @@ class ResourceTest extends Test:
         "acquire fails" taggedAs jvmOnly in run {
             val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => Kyo.unit)
             Resource.run(io)
-                .pipe(Async.runAndBlock(timeout))
-                .pipe(Abort.run(_))
+                .handle(Async.runAndBlock(timeout))
+                .handle(Abort.run)
                 .map {
                     case Result.Panic(t) => assert(t eq TestException)
                     case _               => fail("Expected panic")
@@ -221,9 +230,10 @@ class ResourceTest extends Test:
                 }
             }
             Resource.run(io)
-                .pipe(Async.runAndBlock(timeout))
-                .pipe(Abort.run(_))
-                .map { _ =>
+                .handle(
+                    Async.runAndBlock(timeout),
+                    Abort.run
+                ).map { _ =>
                     assert(acquired && released)
                 }
         }
@@ -259,10 +269,10 @@ class ResourceTest extends Test:
                 def makeResource(id: Int) =
                     Resource.acquireRelease(IO(id))(_ => latch.release)
 
-                val resources = Kyo.collect((1 to 3).map(makeResource))
+                val resources = Kyo.foreach(1 to 3)(makeResource)
 
                 for
-                    close <- Async.run(resources.pipe(Resource.run(3)))
+                    close <- Async.run(resources.handle(Resource.run(3)))
                     _     <- latch.await
                     ids   <- close.get
                 yield assert(ids == (1 to 3))
@@ -283,10 +293,10 @@ class ResourceTest extends Test:
                             ()
                     }
 
-                val resources = Kyo.collect((1 to 10).map(makeResource))
+                val resources = Kyo.foreach(1 to 10)(makeResource)
 
                 for
-                    close <- Async.run(resources.pipe(Resource.run(3)))
+                    close <- Async.run(resources.handle(Resource.run(3)))
                     ids   <- close.get
                 yield assert(ids == (1 to 10))
                 end for

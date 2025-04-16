@@ -14,13 +14,14 @@ import java.nio.file.*
 import java.nio.file.Files as JFiles
 import java.nio.file.Path as JPath
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.regex.Pattern
 import kyo.*
 import kyo.Tag
 import scala.io.*
 import scala.jdk.CollectionConverters.*
 import scala.jdk.StreamConverters.*
 
-class Path private (val path: List[String]) derives CanEqual:
+final class Path private (val path: List[String]) extends Serializable derives CanEqual:
 
     def toJava: JPath               = Paths.get(path.mkString(File.separator))
     lazy val parts: List[Path.Part] = path
@@ -36,7 +37,10 @@ class Path private (val path: List[String]) derives CanEqual:
     def readAll(extension: String)(using Frame): Seq[(String, String)] < IO =
         list(extension).map { paths =>
             Kyo.foreach(paths) { p =>
-                p.read.map(content => p.toJava.getName(0).toString() -> content)
+                p.read.map { content =>
+                    val j = p.toJava
+                    j.getName(j.getNameCount() - 1).toString() -> content
+                }
             }
         }
 
@@ -349,6 +353,7 @@ class Path private (val path: List[String]) derives CanEqual:
 end Path
 
 object Path:
+    private val empty = new Path(Nil)
 
     type Part = String | Path
 
@@ -360,7 +365,7 @@ object Path:
         }
         val javaPath       = if flattened.isEmpty then Paths.get("") else Paths.get(flattened.head, flattened.tail*)
         val normalizedPath = javaPath.normalize().toString
-        new Path(if normalizedPath.isEmpty then Nil else normalizedPath.split(File.separator).toList)
+        if normalizedPath.isEmpty then empty else new Path(normalizedPath.split(Pattern.quote(File.separator)).toList)
     end apply
 
     def apply(path: Part*): Path =

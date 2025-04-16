@@ -3,12 +3,32 @@ package kyo
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 
-/** A Meter is an abstract class that represents a mechanism for controlling concurrency and rate limiting.
+/** A synchronization primitive that controls concurrency and rate limiting with configurable admission policies.
   *
-  * Meters can be configured to be reentrant or non-reentrant. Reentrant meters allow nested calls from the same fiber, while non-reentrant
-  * meters will block or fail on nested calls.
+  * Meter provides a structured mechanism for controlling access to shared resources, acting as a gatekeeper for concurrent operations. It
+  * supports different concurrency control models through its factory methods:
+  *   - `initMutex`: Creates a binary semaphore allowing only one operation at a time, ideal for protecting critical sections
+  *   - `initSemaphore`: Creates a counter-based control limiting concurrent operations, balancing throughput with resource constraints
+  *   - `initRateLimiter`: Creates a time-based control limiting operations to a specified rate, preventing overload while maintaining
+  *     throughput
+  *
+  * All Meter implementations can be configured as reentrant (default) or non-reentrant:
+  *   - Reentrant meters allow nested calls from the same fiber, avoiding deadlocks in recursive scenarios
+  *   - Non-reentrant meters block nested calls from the same fiber, enforcing stricter concurrency guarantees
+  *
+  * Meters can be combined into pipelines with `Meter.pipeline`, creating composite admission policies that enforce multiple constraints.
+  * This allows building complex access control patterns like "limit to 10 concurrent operations but no more than 100 per second."
+  *
+  * @see
+  *   [[kyo.Meter.initMutex]] For creating mutual exclusion controls
+  * @see
+  *   [[kyo.Meter.initSemaphore]] For creating concurrent operation limiters
+  * @see
+  *   [[kyo.Meter.initRateLimiter]] For creating time-based rate limiters
+  * @see
+  *   [[kyo.Meter.pipeline]] For combining multiple meters into a composite control
   */
-abstract class Meter:
+abstract class Meter private[kyo] ():
     self =>
 
     /** Runs an effect after acquiring a permit.
@@ -205,7 +225,7 @@ object Meter:
       *   A Meter effect that represents the pipeline of all input Meters.
       */
     def pipeline[S](meters: Seq[Meter < (IO & S)])(using Frame): Meter < (IO & S) =
-        Kyo.collect(meters).map { seq =>
+        Kyo.collectAll(meters).map { seq =>
             val meters = seq.toIndexedSeq
             new Meter:
                 def availablePermits(using Frame) =
@@ -246,9 +266,9 @@ object Meter:
             end new
         }
 
-    private val acquiredMeters = Local.initIsolated(Set.empty[Meter])
+    private val acquiredMeters = Local.initNoninheritable(Set.empty[Meter])
 
-    abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
+    sealed abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
 
         // MinValue => closed
         // >= 0     => # of permits

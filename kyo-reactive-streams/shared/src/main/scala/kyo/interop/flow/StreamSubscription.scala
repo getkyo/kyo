@@ -4,15 +4,13 @@ import StreamSubscription.*
 import java.util.concurrent.Flow.*
 import kyo.*
 import kyo.kernel.ArrowEffect
-import kyo.kernel.Boundary
-import kyo.scheduler.IOPromise
-import kyo.scheduler.IOTask
 
-final private[kyo] class StreamSubscription[V, Ctx](
-    private val stream: Stream[V, Ctx],
+final private[kyo] class StreamSubscription[V, S](
+    private val stream: Stream[V, S & IO],
     subscriber: Subscriber[? >: V]
 )(
     using
+    Isolate.Contextual[S, IO],
     AllowUnsafe,
     Frame
 ) extends Subscription:
@@ -29,10 +27,10 @@ final private[kyo] class StreamSubscription[V, Ctx](
         discard(requestChannel.close())
     end cancel
 
-    private[interop] inline def subscribe(using Frame): Unit < IO = IO(subscriber.onSubscribe(this))
+    private[interop] def subscribe(using Frame): Unit < IO = IO(subscriber.onSubscribe(this))
 
     private[interop] def poll(using Tag[Poll[Chunk[V]]], Frame): StreamComplete < (Async & Poll[Chunk[V]] & Abort[StreamCanceled]) =
-        inline def loopPoll(requesting: Long): (Chunk[V] | StreamComplete) < (IO & Poll[Chunk[V]]) =
+        def loopPoll(requesting: Long): (Chunk[V] | StreamComplete) < (IO & Poll[Chunk[V]]) =
             Loop[Long, Chunk[V] | StreamComplete, IO & Poll[Chunk[V]]](requesting): requesting =>
                 Poll.andMap:
                     case Present(values) =>
@@ -65,11 +63,9 @@ final private[kyo] class StreamSubscription[V, Ctx](
         using
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]],
-        Frame,
-        Boundary[Ctx, IO & Abort[StreamCanceled]]
-    ): Fiber[StreamCanceled, StreamComplete] < (IO & Ctx) =
-        Async
-            ._run[StreamCanceled, StreamComplete, Ctx](Poll.run(stream.emit)(poll).map(_._2))
+        Frame
+    ): Fiber[StreamCanceled, StreamComplete] < (IO & S) =
+        Async.run[StreamCanceled, StreamComplete, S](Poll.run(stream.emit)(poll).map(_._2))
             .map { fiber =>
                 fiber.onComplete {
                     case Result.Success(StreamComplete) => IO(subscriber.onComplete())
@@ -88,65 +84,42 @@ object StreamSubscription:
     type StreamCanceled = StreamCanceled.type
     case object StreamCanceled
 
-    inline def subscribe[V, Ctx](
-        stream: Stream[V, Ctx],
+    def subscribe[V, S](
+        using Isolate.Contextual[S, IO]
+    )(
+        stream: Stream[V, S & IO],
         subscriber: Subscriber[? >: V]
     )(
         using
         Frame,
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
-    ): StreamSubscription[V, Ctx] < (IO & Ctx & Resource) =
-        _subscribe(stream, subscriber)
-
-    private[kyo] inline def _subscribe[V, Ctx](
-        stream: Stream[V, Ctx],
-        subscriber: Subscriber[? >: V]
-    )(
-        using
-        Frame,
-        Boundary[Ctx, IO],
-        Tag[Emit[Chunk[V]]],
-        Tag[Poll[Chunk[V]]]
-    ): StreamSubscription[V, Ctx] < (IO & Ctx & Resource) =
+    ): StreamSubscription[V, S] < (IO & S & Resource) =
         for
-            subscription <- IO.Unsafe(new StreamSubscription[V, Ctx](stream, subscriber))
+            subscription <- IO.Unsafe(new StreamSubscription[V, S](stream, subscriber))
             _            <- subscription.subscribe
             _            <- Resource.acquireRelease(subscription.consume)(_.interrupt.unit)
         yield subscription
 
     object Unsafe:
-        inline def subscribe[V, Ctx](
-            stream: Stream[V, Ctx],
+        def subscribe[V, S](
+            using Isolate.Contextual[S, IO]
+        )(
+            stream: Stream[V, S & IO],
             subscriber: Subscriber[? >: V]
         )(
-            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & Ctx)) => Unit
+            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & S)) => Unit
         )(
             using
             AllowUnsafe,
             Frame,
             Tag[Emit[Chunk[V]]],
             Tag[Poll[Chunk[V]]]
-        ): StreamSubscription[V, Ctx] =
-            _subscribe(stream, subscriber)(subscribeCallback)
-
-        private[kyo] inline def _subscribe[V, Ctx](
-            stream: Stream[V, Ctx],
-            subscriber: Subscriber[? >: V]
-        )(
-            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & Ctx)) => Unit
-        )(
-            using
-            AllowUnsafe,
-            Boundary[Ctx, IO],
-            Frame,
-            Tag[Emit[Chunk[V]]],
-            Tag[Poll[Chunk[V]]]
-        ): StreamSubscription[V, Ctx] =
-            val subscription = new StreamSubscription[V, Ctx](stream, subscriber)
+        ): StreamSubscription[V, S] =
+            val subscription = new StreamSubscription[V, S](stream, subscriber)
             subscribeCallback(subscription.subscribe.andThen(subscription.consume))
             subscription
-        end _subscribe
+        end subscribe
     end Unsafe
 
 end StreamSubscription

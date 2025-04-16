@@ -56,7 +56,8 @@ end TRef
   */
 final private class TRefImpl[A] private[kyo] (initialState: Write[A])
     extends AtomicInteger(0) // Atomic super class to keep the lock state
-    with TRef[A]:
+    with TRef[A]
+    with Serializable:
 
     @volatile private var currentState = initialState
 
@@ -76,7 +77,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                         else
                             // Append Read to the log and return value
                             val entry = Read(state.tid, state.value)
-                            Var.setAndThen(log.put(this, entry))(f(state.value))
+                            Var.setWith(log.put(this, entry))(f(state.value))
                         end if
                     }
             end match

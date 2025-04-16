@@ -4,10 +4,35 @@ import java.util.concurrent.atomic.AtomicReference
 import org.jctools.queues.*
 import scala.annotation.tailrec
 
-/** A thread-safe queue implementation based on JCTools.
+/** A high-performance, thread-safe queue with configurable concurrency patterns.
   *
-  * This queue provides various concurrency-safe operations and supports different access patterns (MPMC, MPSC, SPMC, SPSC) using JCTools'
-  * efficient non-blocking data structures under the hood.
+  * Queue provides a comprehensive foundation for concurrent data transfer with customizable concurrency patterns (see [[kyo.Access]]).
+  * Unlike Channel which focuses on fiber-aware communication, Queue directly exposes a lower-level interface optimized for raw throughput
+  * and minimal synchronization overhead.
+  *
+  * Key features:
+  *   - Non-blocking, lock-free implementation (using JCTools on the JVM, with platform-specific implementations elsewhere)
+  *   - Different specialized implementations for various producer-consumer patterns
+  *   - Bounded capacity (`Queue.init`) with clear backpressure semantics
+  *   - Unbounded variants with different overflow strategies:
+  *     - Regular unbounded (`Queue.Unbounded.init`): grows as needed without bounds
+  *     - Dropping (`Queue.Unbounded.initDropping`): discards new elements when full
+  *     - Sliding (`Queue.Unbounded.initSliding`): discards oldest elements when full
+  *   - Safe concurrent access with proper failure handling
+  *
+  * The standard Queue has fixed capacity (bounded), providing natural backpressure. For scenarios requiring dynamic sizing, Queue.Unbounded
+  * offers strategies that either grow indefinitely or handle overflow by dropping elements, ensuring operations like offer/poll remain
+  * non-blocking even under high load.
+  *
+  * WARNING: Unbounded queues can lead to memory exhaustion if producers consistently outpace consumers. In production systems, bounded
+  * queues or overflow strategies (dropping/sliding) are generally safer choices unless you can guarantee bounded growth.
+  *
+  * @see
+  *   [[kyo.Channel]] For a higher-level, fiber-aware communication primitive
+  * @see
+  *   [[kyo.Access]] For available producer-consumer access patterns
+  * @see
+  *   [[kyo.Queue.Unbounded]] For dynamically-sized queue variant
   *
   * @tparam A
   *   the type of elements in the queue
@@ -304,7 +329,7 @@ object Queue:
     end Unbounded
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe[A]:
+    sealed abstract class Unsafe[A] extends Serializable:
         def capacity: Int
         def size()(using AllowUnsafe): Result[Closed, Int]
         def empty()(using AllowUnsafe): Result[Closed, Boolean]
@@ -322,7 +347,7 @@ object Queue:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
-        abstract private class Closeable[A](initFrame: Frame) extends Unsafe[A]:
+        sealed abstract private class Closeable[A](initFrame: Frame) extends Unsafe[A]:
             import AllowUnsafe.embrace.danger
             final protected val _closed = AtomicRef.Unsafe.init(Maybe.empty[Result.Error[Closed]])
 

@@ -65,28 +65,6 @@ extension (kyoObject: Kyo.type)
     def attempt[A, S](effect: => A < S)(using Flat[A], Frame): A < (S & Abort[Throwable]) =
         Abort.catching[Throwable](effect)
 
-    /** Collects elements from a sequence using a partial function and returns a new sequence.
-      *
-      * @param sequence
-      *   The sequence to collect elements from
-      * @param useElement
-      *   A partial function to apply to each element of the sequence
-      * @return
-      *   A new sequence with elements collected using the partial function
-      */
-    def collect[A, S, A1](sequence: Seq[A])(useElement: PartialFunction[A, A1 < S])(using Frame): Seq[A1] < S =
-        Kyo.collect(sequence.collect(useElement))
-
-    /** Prints a message to the console.
-      *
-      * @param message
-      *   The message to print
-      * @return
-      *   An effect that prints the message to the console
-      */
-    def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
-        Console.printLine(message)
-
     /** Emits a value
       *
       * @param value
@@ -122,7 +100,7 @@ extension (kyoObject: Kyo.type)
         flat: Flat[A1],
         frame: Frame
     ): Seq[A1] < (Abort[E] & Async & Ctx) =
-        Async.parallelUnbounded[E, A1, Ctx](sequence.map(useElement))
+        Async.collectAll[E, A1, Ctx](sequence.map(useElement))
 
     /** Applies a function to each element in parallel and discards the results.
       *
@@ -437,7 +415,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that traverses the sequence of effects and collects the results
       */
     def traverse[A, S](sequence: Seq[A < S])(using Frame): Seq[A] < S =
-        Kyo.collect(sequence)
+        Kyo.collectAll(sequence)
 
     /** Traverses a sequence of effects and discards the results.
       *
@@ -447,7 +425,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that traverses the sequence of effects and discards the results
       */
     def traverseDiscard[A, S](sequence: Seq[A < S])(using Frame): Unit < S =
-        Kyo.collectDiscard(sequence)
+        Kyo.collectAllDiscard(sequence)
 
     /** Traverses a sequence of effects in parallel and collects the results.
       *

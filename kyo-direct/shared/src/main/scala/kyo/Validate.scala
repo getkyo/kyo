@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Ansi.*
 import scala.quoted.*
-import scala.util.control.NonFatal
 
 private[kyo] object Validate:
     def apply(expr: Expr[Any])(using Quotes): Unit =

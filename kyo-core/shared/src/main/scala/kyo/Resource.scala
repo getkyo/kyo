@@ -1,21 +1,87 @@
 package kyo
 
-import java.io.Closeable
 import kyo.Tag
 import kyo.kernel.ContextEffect
 
-/** An effect representing resources that can be acquired and released safely.
+/** A structured effect for safe acquisition and finalization of resources.
   *
-  * Resources are typically used for managing external entities that need proper cleanup, such as file handles, network connections, or
-  * database connections. The Resource effect ensures that acquired resources are properly released when they are no longer needed, even in
-  * the presence of errors or exceptions.
+  * Resource provides a principled mechanism for working with entities that require proper cleanup, ensuring resources are released in a
+  * deterministic manner even in the presence of errors or interruptions. This effect is particularly valuable for managing external
+  * dependencies with lifecycle requirements such as file handles, network connections, database sessions, or any action that needs a
+  * corresponding cleanup step.
+  *
+  * Key features:
+  *   - Automatic resource finalization through `Resource.run` when computations complete or fail
+  *   - Compositional API allowing resource dependencies to be built up safely with `acquireRelease` and `acquire`
+  *   - Support for parallel cleanup through configurable concurrency levels with `run(closeParallelism)(...)`
+  *   - Declarative cleanup registration using `Resource.ensure` for custom finalizers
+  *
+  * The Resource effect follows the bracket pattern (acquire-use-release) but with improved interruption handling and parallel cleanup
+  * capabilities. Resource finalizers registered with `ensure` are guaranteed to run exactly once when the associated scope completes, with
+  * failures in finalizers logged rather than thrown to avoid masking the primary computation result.
+  *
+  * Typically, you would use `acquireRelease` to pair resource acquisition with its cleanup function, then compose multiple resources
+  * together before running the combined effect with `Resource.run`.
+  *
+  * @see
+  *   [[kyo.Resource.acquireRelease]] For creating resources with custom acquire and release functions
+  * @see
+  *   [[kyo.Resource.acquire]] For creating resources from Java Closeables
+  * @see
+  *   [[kyo.Resource.ensure]] For registering cleanup actions
+  * @see
+  *   [[kyo.Resource.run]] For executing resource-managed computations
   */
 sealed trait Resource extends ContextEffect[Resource.Finalizer]
 
 object Resource:
-
     /** Represents a finalizer for a resource. */
-    case class Finalizer(createdAt: Frame, queue: Queue.Unbounded[Unit < (Async & Abort[Throwable])])
+    sealed abstract class Finalizer:
+        def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO
+
+    object Finalizer:
+        sealed abstract class Awaitable extends Finalizer:
+            def close(using Frame): Unit < IO
+            def await(using Frame): Unit < Async
+
+        object Awaitable:
+            object Unsafe:
+                def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Awaitable =
+                    new Awaitable:
+                        val queue   = Queue.Unbounded.Unsafe.init[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer)
+                        val promise = Promise.Unsafe.init[Nothing, Unit]().safe
+
+                        def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO =
+                            IO.Unsafe {
+                                if !queue.offer(IO(v.unit)).contains(true) then
+                                    Abort.panic(new Closed(
+                                        "Finalizer",
+                                        frame,
+                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Resource.run' call."
+                                    ))
+                                else ()
+                            }
+                        end ensure
+
+                        def close(using Frame): Unit < IO =
+                            IO.Unsafe {
+                                queue.close() match
+                                    case Absent =>
+                                        Abort.panic(new Closed("Resource finalizer queue already closed.", frame))
+                                    case Present(tasks) =>
+                                        Async.foreachDiscard(tasks, parallelism) { task =>
+                                            Abort.run[Throwable](task)
+                                                .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
+                                        }
+                                            .handle(Async.run[Nothing, Unit, Any])
+                                            .map(promise.becomeDiscard)
+                            }
+
+                        def await(using Frame): Unit < Async = promise.get
+                end init
+            end Unsafe
+        end Awaitable
+    end Finalizer
 
     /** Ensures that the given effect is executed when the resource is released.
       *
@@ -27,18 +93,7 @@ object Resource:
       *   A unit value wrapped in Resource and IO effects.
       */
     def ensure(v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
-        ContextEffect.suspendWith(Tag[Resource]) { finalizer =>
-            Abort.run(finalizer.queue.offer(IO(v.unit))).map {
-                case Result.Success(_) => ()
-                case _ =>
-                    throw new Closed(
-                        "Finalizer",
-                        finalizer.createdAt,
-                        "The finalizer queue is already closed. This may happen if " +
-                            "a background fiber escapes the scope of a 'Resource.run' call."
-                    )
-            }
-        }
+        ContextEffect.suspendWith(Tag[Resource])(_.ensure(IO(v.unit)))
 
     /** Acquires a resource and provides a release function.
       *
@@ -65,7 +120,7 @@ object Resource:
       * @return
       *   The acquired Closeable resource wrapped in Resource, IO, and S effects.
       */
-    def acquire[A <: Closeable, S](resource: A < S)(using Frame): A < (Resource & IO & S) =
+    def acquire[A <: java.io.Closeable, S](resource: A < S)(using Frame): A < (Resource & IO & S) =
         acquireRelease(resource)(r => IO(r.close()))
 
     /** Runs a resource-managed effect with default parallelism of 1.
@@ -99,28 +154,13 @@ object Resource:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
-        Queue.Unbounded.initWith[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer) { q =>
-            Promise.initWith[Nothing, Unit] { p =>
-                val finalizer = Finalizer(frame, q)
-                def close: Unit < IO =
-                    q.close.map {
-                        case Absent =>
-                            bug("Resource finalizer queue already closed.")
-                        case Present(tasks) =>
-                            Async.parallel(closeParallelism) {
-                                tasks.map { task =>
-                                    Abort.run[Throwable](task)
-                                        .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
-                                }
-                            }
-                                .unit
-                                .pipe(Async.run)
-                                .map(p.becomeDiscard)
-                    }
-                ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
-                    .pipe(IO.ensure(close))
-                    .map(result => p.get.andThen(result))
-            }
+        IO.Unsafe {
+            val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
+            ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
+                .handle(IO.ensure(finalizer.close))
+                .map(result => finalizer.await.andThen(result))
         }
+
+    given Isolate.Contextual[Resource, Any] = Isolate.Contextual.derive[Resource, Any]
 
 end Resource

@@ -47,7 +47,7 @@ object NettyKyoServerInterpreter:
                 else
                     f
             import AllowUnsafe.embrace.danger
-            IO.Unsafe.evalOrThrow(Async.run(exec).unit)
+            val _ = IO.Unsafe.evalOrThrow(Async.run(exec))
         end apply
     end KyoRunAsync
 end NettyKyoServerInterpreter

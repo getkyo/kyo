@@ -3,10 +3,27 @@ package kyo
 import kyo.Tag
 import kyo.kernel.*
 
-/** The Choice effect represents branching computations with multiple possible outcomes.
+/** Represents non-deterministic computations with multiple possible outcomes.
   *
-  * Choice allows for expressing computations that can take different paths or produce multiple results. It's useful for modeling scenarios
-  * where there are multiple options or branches to be explored in a computation.
+  * The `Choice` effect enables branching computations where multiple paths can be explored simultaneously. Unlike traditional control flow
+  * that follows a single execution path, Choice allows expressing alternative possibilities that can be collected and processed together.
+  *
+  * Choice is valuable for scenarios requiring exploration of multiple alternatives, such as parsing with backtracking, search algorithms,
+  * or any computation where you need to model decisions with multiple valid options. When combined with other effects like `Parse`, it
+  * becomes especially powerful for expressing complex branching logic.
+  *
+  * The primary operations include introducing choice points with `get`, evaluating functions across alternatives with `eval`, and pruning
+  * invalid paths with `drop`. Computations using Choice can be collected with `run`, which gathers all successful outcomes into a single
+  * sequence.
+  *
+  * @see
+  *   [[kyo.Choice.get]] for introducing choice points from sequences
+  * @see
+  *   [[kyo.Choice.eval]] for applying functions to multiple alternatives
+  * @see
+  *   [[kyo.Choice.drop]] for terminating unsuccessful computation branches
+  * @see
+  *   [[kyo.Choice.run]] for collecting all possible outcomes
   */
 sealed trait Choice extends ArrowEffect[Seq, Id]
 

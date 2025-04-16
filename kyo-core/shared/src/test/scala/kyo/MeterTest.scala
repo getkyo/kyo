@@ -3,19 +3,19 @@ package kyo
 class MeterTest extends Test:
 
     "mutex" - {
-        "ok" in runNotJS {
+        "ok" in run {
             for
                 t <- Meter.initMutex
                 v <- t.run(2)
             yield assert(v == 2)
         }
 
-        "run" in runNotJS {
+        "run" in run {
             for
                 t  <- Meter.initMutex
                 p  <- Promise.init[Nothing, Int]
                 b1 <- Promise.init[Nothing, Unit]
-                f1 <- Async.run(t.run(b1.complete(Result.unit).map(_ => p.block(Duration.Infinity))))
+                f1 <- Async.run(t.run(b1.complete(Result.unit).map(_ => p.getResult)))
                 _  <- b1.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
@@ -34,12 +34,12 @@ class MeterTest extends Test:
             yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1 == Result.succeed(1) && v2 == 2 && a3 == 1 && w3 == 0)
         }
 
-        "tryRun" in runNotJS {
+        "tryRun" in run {
             for
                 sem <- Meter.initMutex
                 p   <- Promise.init[Nothing, Int]
                 b1  <- Promise.init[Nothing, Unit]
-                f1  <- Async.run(sem.tryRun(b1.complete(Result.unit).map(_ => p.block(Duration.Infinity))))
+                f1  <- Async.run(sem.tryRun(b1.complete(Result.unit).map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
@@ -52,7 +52,7 @@ class MeterTest extends Test:
     }
 
     "semaphore" - {
-        "ok" in runNotJS {
+        "ok" in run {
             for
                 t  <- Meter.initSemaphore(2)
                 v1 <- t.run(2)
@@ -60,15 +60,15 @@ class MeterTest extends Test:
             yield assert(v1 == 2 && v2 == 3)
         }
 
-        "run" in runNotJS {
+        "run" in run {
             for
                 t  <- Meter.initSemaphore(2)
                 p  <- Promise.init[Nothing, Int]
                 b1 <- Promise.init[Nothing, Unit]
-                f1 <- Async.run(t.run(b1.complete(Result.unit).map(_ => p.block(Duration.Infinity))))
+                f1 <- Async.run(t.run(b1.complete(Result.unit).map(_ => p.getResult)))
                 _  <- b1.get
                 b2 <- Promise.init[Nothing, Unit]
-                f2 <- Async.run(t.run(b2.complete(Result.unit).map(_ => p.block(Duration.Infinity))))
+                f2 <- Async.run(t.run(b2.complete(Result.unit).map(_ => p.getResult)))
                 _  <- b2.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
@@ -90,17 +90,17 @@ class MeterTest extends Test:
                 v1 == Result.succeed(1) && v2 == Result.succeed(1) && v3 == 2 && a3 == 2 && w3 == 0)
         }
 
-        "tryRun" in runNotJS {
+        "tryRun" in run {
             for
                 sem <- Meter.initSemaphore(2)
                 p   <- Promise.init[Nothing, Int]
                 b1  <- Promise.init[Nothing, Unit]
-                f1  <- Async.run(sem.tryRun(b1.complete(Result.unit).map(_ => p.block(Duration.Infinity))))
+                f1  <- Async.run(sem.tryRun(b1.complete(Result.unit).map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
                 b2  <- Promise.init[Nothing, Unit]
-                f2  <- Async.run(sem.tryRun(b2.complete(Result.unit).map(_ => p.block(Duration.Infinity))))
+                f2  <- Async.run(sem.tryRun(b2.complete(Result.unit).map(_ => p.getResult)))
                 _   <- b2.get
                 a2  <- sem.availablePermits
                 w2  <- sem.pendingWaiters
@@ -123,9 +123,9 @@ class MeterTest extends Test:
                     meter   <- Meter.initSemaphore(size)
                     counter <- AtomicInt.init(0)
                     results <-
-                        Async.parallelUnbounded((1 to 100).map(_ =>
+                        Async.foreach(1 to 100, 100)(_ =>
                             Abort.run(meter.run(counter.incrementAndGet))
-                        ))
+                        )
                     count   <- counter.get
                     permits <- meter.availablePermits
                 yield
@@ -133,7 +133,7 @@ class MeterTest extends Test:
                     assert(count == 100)
                     assert(permits == size)
                 )
-                    .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .andThen(succeed)
             }
 
@@ -144,9 +144,9 @@ class MeterTest extends Test:
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFiber <- Async.run(
-                        latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ =>
+                        latch.await.andThen(Async.fill(100, 100)(
                             Abort.run(meter.run(counter.incrementAndGet))
-                        )))
+                        ))
                     )
                     closeFiber <- Async.run(latch.await.andThen(meter.close))
                     _          <- latch.release
@@ -160,7 +160,7 @@ class MeterTest extends Test:
                     assert(count <= 100)
                     assert(available.isFailure)
                 )
-                    .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .andThen(succeed)
             }
 
@@ -172,39 +172,37 @@ class MeterTest extends Test:
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFibers <- Kyo.foreach(1 to 100)(_ =>
-                        started.release.andThen(
-                            Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
-                        )
+                        Async.run(started.release.andThen(latch.await.andThen(meter.run(counter.incrementAndGet))))
                     )
-                    interruptFiber <- Async.run(latch.await.andThen(Async.parallelUnbounded(
-                        runFibers.take(50).map(_.interrupt(panic))
-                    )))
+                    interruptFiber <- Async.run(latch.await.andThen(
+                        Async.foreach(runFibers.take(50), 50)(_.interrupt(panic))
+                    ))
                     _           <- started.await
                     _           <- latch.release
                     interrupted <- interruptFiber.get
                     completed   <- Kyo.foreach(runFibers)(_.getResult)
                     count       <- counter.get
                 yield assert(interrupted.count(identity) + completed.count(_.isSuccess) == 100))
-                    .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .andThen(succeed)
             }
         }
     }
 
     def loop(meter: Meter, counter: AtomicInt): Unit < (Async & Abort[Closed]) =
-        meter.run(counter.incrementAndGet).map(_ => loop(meter, counter))
+        Async.yieldWith(meter.run(counter.incrementAndGet).map(_ => loop(meter, counter)))
 
     val panic = Result.Panic(new Exception)
 
     "rate limiter" - {
-        "ok" in runNotJS {
+        "ok" in run {
             for
                 t  <- Meter.initRateLimiter(2, 1.milli)
                 v1 <- t.run(2)
                 v2 <- t.run(3)
             yield assert(v1 == 2 && v2 == 3)
         }
-        "one loop" in runNotJS {
+        "one loop" in run {
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
@@ -214,7 +212,7 @@ class MeterTest extends Test:
                 v1      <- counter.get
             yield assert(v1 >= 2 && v1 <= 200)
         }
-        "two loops" in runNotJS {
+        "two loops" in run {
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
@@ -226,7 +224,7 @@ class MeterTest extends Test:
                 v1      <- counter.get
             yield assert(v1 >= 2 && v1 <= 200)
         }
-        "replenish doesn't overflow" in runNotJS {
+        "replenish doesn't overflow" in run {
             for
                 meter     <- Meter.initRateLimiter(5, 5.millis)
                 _         <- Async.sleep(32.millis)
@@ -237,7 +235,7 @@ class MeterTest extends Test:
 
     "pipeline" - {
 
-        "run" in runNotJS {
+        "run" in run {
             for
                 meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.milli), Meter.initMutex)
                 counter <- AtomicInt.init(0)
@@ -250,22 +248,19 @@ class MeterTest extends Test:
             yield assert(v1 >= 0 && v1 < 200)
         }
 
-        "tryRun" in runNotJS {
+        "tryRun" in run {
             for
-                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 100.millis), Meter.initMutex)
-                counter <- AtomicInt.init(0)
-                f1      <- Async.run(loop(meter, counter))
-                _       <- Async.sleep(5.millis)
-                _       <- untilTrue(meter.availablePermits.map(_ == 0))
-                r       <- meter.tryRun(())
-                _       <- f1.interrupt(panic)
-            yield assert(r.isEmpty)
+                meter <- Meter.pipeline(Meter.initRateLimiter(2, 10.millis), Meter.initMutex)
+                f1    <- Async.run(meter.run(Async.never))
+                _     <- untilTrue(meter.tryRun(()).map(_.isEmpty))
+                _     <- f1.interrupt(panic)
+            yield succeed
         }
     }
 
     "reentrancy" - {
         "mutex" - {
-            "reentrant by default" in runNotJS {
+            "reentrant by default" in run {
                 for
                     mutex <- Meter.initMutex
                     result <- mutex.run {
@@ -276,7 +271,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in runNotJS {
+            "non-reentrant" in run {
                 for
                     meter  <- Meter.initMutex(reentrant = false)
                     p      <- Promise.init[Nothing, Int]
@@ -288,7 +283,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runNotJS {
+            "nested forked fiber can't reenter" in run {
                 for
                     meter <- Meter.initMutex
                     (done, result) <- meter.run {
@@ -307,7 +302,7 @@ class MeterTest extends Test:
         }
 
         "semaphore" - {
-            "reentrant by default" in runNotJS {
+            "reentrant by default" in run {
                 for
                     sem <- Meter.initSemaphore(1)
                     result <- sem.run {
@@ -318,7 +313,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in runNotJS {
+            "non-reentrant" in run {
                 for
                     meter  <- Meter.initSemaphore(1, reentrant = false)
                     p      <- Promise.init[Nothing, Int]
@@ -330,7 +325,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runNotJS {
+            "nested forked fiber can't reenter" in run {
                 for
                     meter <- Meter.initSemaphore(1)
                     (done, result) <- meter.run {
@@ -349,7 +344,7 @@ class MeterTest extends Test:
         }
 
         "rate limiter" - {
-            "reentrant by default" in runNotJS {
+            "reentrant by default" in run {
                 for
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     result <- rateLimiter.run {
@@ -360,7 +355,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in runNotJS {
+            "non-reentrant" in run {
                 for
                     meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
                     p      <- Promise.init[Nothing, Int]
@@ -372,7 +367,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runNotJS {
+            "nested forked fiber can't reenter" in run {
                 for
                     meter <- Meter.initRateLimiter(1, 60.seconds)
                     (done, result) <- meter.run {
@@ -391,7 +386,7 @@ class MeterTest extends Test:
         }
 
         "pipeline" - {
-            "reentrant when all components are reentrant" in runNotJS {
+            "reentrant when all components are reentrant" in run {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)
@@ -405,7 +400,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant when any component is non-reentrant" in runNotJS {
+            "non-reentrant when any component is non-reentrant" in run {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1, reentrant = false)
@@ -422,7 +417,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runNotJS {
+            "nested forked fiber can't reenter" in run {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)

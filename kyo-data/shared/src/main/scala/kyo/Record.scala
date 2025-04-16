@@ -1,16 +1,17 @@
 package kyo
 
 import Record.*
+import kyo.internal.ForSome2
 import kyo.internal.Inliner
 import kyo.internal.TypeIntersection
 import scala.annotation.implicitNotFound
 import scala.compiletime.constValue
 import scala.compiletime.erasedValue
+import scala.compiletime.error
 import scala.compiletime.summonInline
 import scala.deriving.Mirror
 import scala.language.dynamics
 import scala.language.implicitConversions
-import scala.util.NotGiven
 
 /** A type-safe, immutable record structure that maps field names to values. Records solve the common need to work with flexible key-value
   * structures while maintaining type safety at compile time. Unlike traditional maps or case classes, Records allow dynamic field
@@ -73,7 +74,6 @@ import scala.util.NotGiven
   *
   *   - Nested records cannot be created directly
   *   - Tag derivation for Records is not currently supported
-  *   - CanEqual and Render instances are not provided for Records
   */
 final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
 
@@ -126,13 +126,38 @@ object Record:
       */
     val empty: Record[Any] = Record[Any](Map())
 
+    private def unsafeFrom[Fields: AsFields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
+
+    inline def stage[Fields]: StageOps[Fields] = new StageOps[Fields](())
+
+    class StageOps[Fields](dummy: Unit) extends AnyVal:
+        /** Applies `StageAs` logic to each field. Called on a record type `n1 ~ v1 & ... & nk ~ vk`, returns a new record of type
+          * `n1 ~ F[n1, v1] & ... & nk ~ F[nk, vk]`.
+          */
+        inline def apply[F[_, _]](as: StageAs[F])(using
+            asFields: AsFields[Fields],
+            ev: TypeIntersection[Fields]
+        ): Record[ev.Map[~.Map[F]]] =
+            unsafeFrom(TypeIntersection.inlineAll[Fields](as).view.map {
+                case (f, g) => (f.unwrap: Field[?, ?], g.unwrap)
+            }.toMap)
+    end StageOps
+
     given [Fields]: Flat[Record[Fields]] = Flat.unsafe.bypass
 
-    final infix class ~[Name <: String, Value] private ()
+    final infix class ~[Name <: String, Value] private () extends Serializable
 
     object `~`:
         given [Name <: String, Value](using CanEqual[Value, Value]): CanEqual[Name ~ Value, Name ~ Value] =
             CanEqual.derived
+
+        type Map[F[_, _]] = [x] =>> x match
+            case n ~ v => n ~ F[n, v]
+
+        type MapValue[F[_]] = Map[[n, v] =>> F[v]]
+
+        type MapName[F[_]] = Map[[n, v] =>> F[n]]
+    end `~`
 
     /** Creates a Record from a product type (case class or tuple).
       */
@@ -239,6 +264,8 @@ object Record:
       */
     opaque type AsField[Name <: String, Value] = Field[Name, Value]
 
+    private[kyo] type AsFieldAny[n, v] = AsField[n & String, v]
+
     object AsField:
         inline given [N <: String, V](using tag: Tag[V]): AsField[N, V] =
             Field(constValue[N], tag)
@@ -281,7 +308,7 @@ object Record:
     end RenderInliner
 
     inline given [Fields: TypeIntersection]: Render[Record[Fields]] =
-        val insts = TypeIntersection.inlineAll[Fields, (String, Render[?])](RenderInliner).toMap
+        val insts = TypeIntersection.inlineAll[Fields](RenderInliner).toMap
         Render.from: (value: Record[Fields]) =>
             value.toMap.foldLeft(Vector[String]()) { case (acc, (field, value)) =>
                 insts.get(field.name) match
@@ -291,13 +318,36 @@ object Record:
                 end match
             }.mkString(" & ")
     end given
+
+    trait StageAs[F[_, _]] extends Inliner[(ForSome2[AsFieldAny], ForSome2[F])]:
+        inline def stage[Name <: String, Value](field: Field[Name, Value]): F[Name, Value]
+
+        override inline def apply[T]: (ForSome2[AsFieldAny], ForSome2[F]) =
+            inline erasedValue[T] match
+                case _: (n ~ v) =>
+                    val name    = constValue[n]
+                    val prevTag = summonInline[Tag[v]]
+                    val nextTag = summonInline[Tag[F[n, v]]]
+
+                    (
+                        ForSome2.of[AsFieldAny](Field(name, nextTag)),
+                        ForSome2(stage[n, v](Field(name, prevTag)))
+                    )
+        end apply
+    end StageAs
 end Record
 
 object AsFieldsInternal:
-    private type HasAsField[Field] =
-        Field match
-            case name ~ value => AsField[name, value]
+    private object AsFieldInliner extends Inliner[ForSome2[AsFieldAny]]:
+        inline def apply[T]: ForSome2[AsFieldAny] =
+            inline erasedValue[T] match
+                case _: (n ~ v) =>
+                    ForSome2.of[AsFieldAny](summonInline[AsField[n, v]])
+                case _ => error("Given type doesn't match to expected field shape: Name ~ Value")
+    end AsFieldInliner
 
     inline def summonAsField[Fields](using ev: TypeIntersection[Fields]): Set[Field[?, ?]] =
-        TypeIntersection.summonAll[Fields, HasAsField].map(Record.AsField.toField).toSet
+        TypeIntersection.inlineAll[Fields](AsFieldInliner).map { x =>
+            Record.AsField.toField(x.unwrap)
+        }.toSet
 end AsFieldsInternal

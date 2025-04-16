@@ -8,8 +8,20 @@ import scala.util.NotGiven
 
 /** Represents a stream of values of type `V` with effects of type `S`.
   *
-  * A `Stream` is a lazy sequence of values that can be processed and transformed. It encapsulates an effect that, when executed, emits
-  * chunks of values.
+  * Stream provides a high-level abstraction for working with sequences of values that can be processed and transformed lazily. It
+  * encapsulates an effect that, when executed, emits chunks of values, combining the benefits of both push and pull-based streaming models
+  * while hiding their complexity.
+  *
+  * Streams are built with rich transformation capabilities including mapping, filtering, folding, and concatenation. The implementation
+  * uses chunked processing for efficiency, enabling optimized operations on batches of data rather than individual elements. The lazy
+  * nature of Stream means values are only produced when needed and consumed downstream.
+  *
+  * Internally, Stream uses the Emit effect to produce chunks of values and can be connected with Poll for controlled consumption. This
+  * design provides automatic flow control and backpressure, ensuring producers don't overwhelm consumers. Streams can be run to collect all
+  * values or processed incrementally with operations like foreach and fold.
+  *
+  * The Stream abstraction is particularly valuable for data processing pipelines, event streams, or any scenario requiring transformation
+  * of potentially infinite sequences of values.
   *
   * @tparam V
   *   The type of values in the stream
@@ -18,8 +30,19 @@ import scala.util.NotGiven
   *
   * @param v
   *   The effect that produces acknowledgments and emits chunks of values
+  *
+  * @see
+  *   [[kyo.Stream.map]], [[kyo.Stream.filter]], [[kyo.Stream.flatMap]] for transforming streams
+  * @see
+  *   [[kyo.Stream.concat]], [[kyo.Stream.take]], [[kyo.Stream.drop]] for stream composition and slicing
+  * @see
+  *   [[kyo.Stream.run]], [[kyo.Stream.foreach]], [[kyo.Stream.fold]] for consuming streams
+  * @see
+  *   [[kyo.Emit]] for the underlying push-based emission mechanism
+  * @see
+  *   [[kyo.Poll]] for pull-based consumption with backpressure
   */
-sealed abstract class Stream[V, -S]:
+sealed abstract class Stream[V, -S] extends Serializable:
 
     /** Returns the effect that produces acknowledgments and emits chunks of values. */
     def emit: Unit < (Emit[Chunk[V]] & S)
@@ -210,7 +233,7 @@ sealed abstract class Stream[V, -S]:
                         val c   = input.take(state)
                         val nst = state - c.size
                         Emit.valueWith(c)(
-                            (nst, if nst <= 0 then Kyo.pure[Unit, S & Emit[Chunk[V]]](()) else cont(()))
+                            (nst, if nst <= 0 then Kyo.unit else cont(()))
                     )
             ))
         end if
@@ -252,7 +275,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
                 (input, state, cont) =>
-                    if !state then (false, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
+                    if !state then (false, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
                     else if input.isEmpty then (state, cont(()))
                     else
                         val c = input.takeWhile(f)
@@ -271,7 +294,7 @@ sealed abstract class Stream[V, -S]:
         Stream[V, S & S2](ArrowEffect.handleState(tag, true, emit)(
             [C] =>
                 (input, state, cont) =>
-                    if !state then (false, Kyo.pure[Unit, Emit[Chunk[V]] & S](()))
+                    if !state then (false, Kyo.lift[Unit, Emit[Chunk[V]] & S](()))
                     else
                         Kyo.takeWhile(input)(f).map { c =>
                             Emit.valueWith(c)((c.size == input.size, cont(())))
@@ -327,6 +350,85 @@ sealed abstract class Stream[V, -S]:
                     val c = input.filter(f)
                     if c.isEmpty then ((), cont(()))
                     else Emit.valueWith(c)(((), cont(())))
+        ))
+
+    /** Transform the stream with a partial function, filtering out values for which the partial function is undefined. Combines the
+      * functionality of map and filter.
+      *
+      * @param f
+      *   Partial function transforming V to V2
+      * @return
+      *   A new stream containing transformed elements
+      */
+    def collect[V2, S2](f: V => Maybe[V2] < S2)(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2] =
+        Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    Kyo.collect(input)(f).map: c =>
+                        Emit.valueWith(c)(((), cont(())))
+        ))
+
+    def collect[V2](f: V => Maybe[V2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.map(f).collect({ case Present(v) => v })
+                    if c.isEmpty then ((), cont(()))
+                    else Emit.valueWith(c)(((), cont(())))
+        ))
+
+    /** Transform the stream with a partial function, terminating the stream when the first element is encountered for which the partial
+      * function is undefined. Combines the functionality of map and takeWhile.
+      *
+      * @param f
+      *   Partial function transforming V to V2
+      * @return
+      *   A new stream containing transformed elements
+      */
+    def collectWhile[V2, S2](f: V => Maybe[V2] < S2)(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2] =
+        Stream[V2, S & S2](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    Kyo.foreach(input)(f)
+                        .map(_.takeWhile(_.isDefined)
+                            .collect({ case Present(v) => v }))
+                        .map: c =>
+                            if c.isEmpty && c.size != input.size then ((), Kyo.unit)
+                            else
+                                Emit.valueWith(c):
+                                    if c.size != input.size then ((), Kyo.unit)
+                                    else ((), cont(()))
+        ))
+
+    def collectWhile[V2](f: V => Maybe[V2])(using
+        tag: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        discr: Stream.Dummy,
+        frame: Frame
+    ): Stream[V2, S] =
+        Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
+            [C] =>
+                (input, _, cont) =>
+                    val c = input.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
+                    if c.isEmpty && c.size != input.size then ((), Kyo.unit)
+                    else
+                        Emit.valueWith(c):
+                            if c.size != input.size then ((), Kyo.unit)
+                            else ((), cont(()))
+                    end if
         ))
 
     /** Emits only elements that are different from their predecessor.
@@ -491,6 +593,36 @@ sealed abstract class Stream[V, -S]:
             done = (state, _) => state.flattenChunk
         )
 
+    /** Split the stream into a chunk that contains the first n elements of the stream, and the rest of the stream as a new stream.
+      *
+      * @param n
+      *   The number of elements to take
+      * @return
+      *   A tuple containing chunk of the first n elements and the rest of the stream
+      */
+    def splitAt(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): (Chunk[V], Stream[V, S]) < S =
+        val emptyEmit = Maybe.empty[Unit < (Emit[Chunk[V]] & S)]
+        ArrowEffect.handleState(tag, (Chunk.empty[V], emptyEmit), emit)(
+            handle = [C] =>
+                (input, state, cont) =>
+                    val (chunk, _)    = state
+                    val appendedChunk = chunk.concat(input)
+                    if (appendedChunk.size) < n then
+                        (appendedChunk -> emptyEmit, cont(()))
+                    else
+                        val (taken, rest) = appendedChunk.splitAt(n)
+                        val restEmit      = Maybe.Present(Emit.valueWith(rest)(cont(())))
+                        (taken -> restEmit, Kyo.unit)
+                    end if
+            ,
+            done = (state, _) =>
+                val (chunk, lastEmit) = state
+                lastEmit match
+                    case Maybe.Present(emit) => (chunk, Stream(emit))
+                    case Maybe.Absent        => (chunk, Stream.empty)
+                end match
+        )
+    end splitAt
 end Stream
 
 object Stream:
@@ -526,6 +658,28 @@ object Stream:
                         Emit.valueWith(c.take(_chunkSize))(Loop.continue(c.dropLeft(_chunkSize)))
                 }
             }
+
+    /** Creates a stream by repeatedly calling a lazily evaluated function, until the return is absent.
+      *
+      * @param v
+      *   The effect that might return a sequence of values
+      * @param chunkSize
+      *   The size of chunks to emit (default: 4096). Supplying a negative value will result in a chunk size of 1.
+      * @return
+      *   A stream of values from the sequence
+      */
+    def repeatPresent[V, S](v: => Maybe[Seq[V]] < S, chunkSize: Int = DefaultChunkSize)(using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S] =
+        Stream[V, S]:
+            Loop(()) { _ =>
+                v.map {
+                    case Maybe.Present(seq) => Emit.valueWith(Chunk.from(seq))(Loop.continue)
+                    case Maybe.Absent       => Emit.valueWith(Chunk.empty[V])(Loop.done)
+                }
+            }
+        .rechunk(chunkSize)
 
     /** Creates a stream of integers from start (inclusive) to end (exclusive).
       *
@@ -569,7 +723,7 @@ object Stream:
 
     /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
       */
-    sealed class Dummy
+    sealed class Dummy extends Serializable
     object Dummy:
         given Dummy = new Dummy {}
 

@@ -6,7 +6,7 @@ import org.typelevel.scalacoptions.ScalaVersion
 import protocbridge.Target
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version   = "3.6.2"
+val scala3Version   = "3.6.4"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
@@ -62,7 +62,11 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
+    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    Test / forkOptions := (Test / forkOptions).value
+        .withOutputStrategy(
+            OutputStrategy.CustomOutput(java.io.OutputStream.nullOutputStream)
+        )
 )
 
 Global / onLoad := {
@@ -124,8 +128,10 @@ lazy val kyoJVM = project
         `kyo-zio`.jvm,
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
+        `kyo-playwright`.jvm,
         `kyo-examples`.jvm,
         `kyo-monix`.jvm,
+        `kyo-actor`.jvm,
         `kyo-grpc`.jvm
     )
 
@@ -150,6 +156,7 @@ lazy val kyoJS = project
         `kyo-zio`.js,
         `kyo-cats`.js,
         `kyo-combinators`.js,
+        `kyo-actor`.js,
 	`kyo-grpc`.js
     )
 
@@ -167,9 +174,11 @@ lazy val kyoNative = project
         `kyo-stats-registry`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
+        `kyo-offheap`.native,
         `kyo-direct`.native,
         `kyo-combinators`.native,
-        `kyo-sttp`.native
+        `kyo-sttp`.native,
+        `kyo-actor`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -340,13 +349,17 @@ lazy val `kyo-core` =
         )
 
 lazy val `kyo-offheap` =
-    crossProject(JVMPlatform)
+    crossProject(JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(
+            `native-settings`,
+            Compile / doc / sources := Seq.empty
+        )
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -367,6 +380,17 @@ lazy val `kyo-stm` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stm"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-actor` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -680,6 +704,18 @@ lazy val `kyo-combinators` =
         .settings(`kyo-settings`)
         .jsSettings(`js-settings`)
         .nativeSettings(`native-settings`)
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-playwright` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-playwright"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.51.0"
+        )
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-examples` =

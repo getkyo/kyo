@@ -141,7 +141,7 @@ class TChunkTest extends Test:
         "concurrent modifications" in run {
             for
                 chunk  <- TChunk.init[Int]
-                _      <- Async.parallelUnbounded((1 to 100).map(i => STM.run(chunk.append(i))))
+                _      <- Async.foreach(1 to 100, 100)(i => STM.run(chunk.append(i)))
                 result <- STM.run(chunk.snapshot)
             yield
                 assert(result.toSet == (1 to 100).toSet)
@@ -191,13 +191,13 @@ class TChunkTest extends Test:
             (for
                 size     <- Choice.get(Seq(1, 10, 100))
                 chunk    <- TChunk.init[Int]()
-                _        <- Async.parallelUnbounded((1 to size).map(i => STM.run(chunk.append(i))))
+                _        <- Async.foreach(1 to size, size)(i => STM.run(chunk.append(i)))
                 snapshot <- STM.run(chunk.snapshot)
             yield assert(
                 snapshot.length == size &&
                     snapshot.toSet == (1 to size).toSet
             ))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -208,17 +208,15 @@ class TChunkTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
-                _ <- Async.parallelUnbounded(
-                    (1 to 5).map(_ =>
-                        STM.run(chunk.filter(_ % 2 == 0))
-                    )
+                _ <- Async.fill(5, 5)(
+                    STM.run(chunk.filter(_ % 2 == 0))
                 )
                 snapshot <- STM.run(chunk.snapshot)
             yield assert(
                 snapshot.forall(_ % 2 == 0) &&
                     snapshot.length == size / 2
             ))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -229,22 +227,20 @@ class TChunkTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
-                _ <- Async.parallelUnbounded(
-                    (1 to 5).map(_ =>
-                        STM.run {
-                            for
-                                midpoint <- chunk.size.map(_ / 2)
-                                _        <- chunk.slice(0, midpoint)
-                            yield ()
-                        }
-                    )
+                _ <- Async.fill(5, 5)(
+                    STM.run {
+                        for
+                            midpoint <- chunk.size.map(_ / 2)
+                            _        <- chunk.slice(0, midpoint)
+                        yield ()
+                    }
                 )
                 snapshot <- STM.run(chunk.snapshot)
             yield assert(
                 snapshot.length <= size / 2 &&
                     snapshot.toSet.subsetOf((1 to size).toSet)
             ))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -255,10 +251,8 @@ class TChunkTest extends Test:
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
                 }
-                _ <- Async.parallelUnbounded(
-                    (1 to 5).map(_ =>
-                        STM.run(chunk.compact)
-                    )
+                _ <- Async.fill(5, 5)(
+                    STM.run(chunk.compact)
                 )
                 snapshot <- STM.run(chunk.snapshot)
             yield assert(
@@ -266,7 +260,7 @@ class TChunkTest extends Test:
                     snapshot.length == size &&
                     snapshot.toSet == (1 to size).toSet
             ))
-                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
     }

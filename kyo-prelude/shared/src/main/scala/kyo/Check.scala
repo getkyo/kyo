@@ -3,15 +3,31 @@ package kyo
 import Ansi.*
 import kyo.kernel.*
 
-/** Represents a failed check condition.
+/** Validation effect for asserting conditions during computation.
   *
-  * `CheckFailed` is an exception that is thrown when a condition in a `Check` effect fails. It contains information about the failure,
-  * including a custom message and the frame where the failure occurred.
+  * The `Check` effect provides a functional alternative to traditional assertions, enabling runtime validation of conditions within the Kyo
+  * effect system. Unlike exceptions that immediately halt execution, checks can be collected, transformed, or handled in various ways
+  * without disrupting the control flow.
   *
-  * @param message
-  *   The custom message describing the failed condition
-  * @param frame
-  *   The [[Frame]] where the check failure occurred
+  * Checks create a `CheckFailed` instance when a condition isn't met, capturing both a message and the frame location where the failure
+  * occurred. This rich error context makes debugging easier by providing precise information about what failed and where.
+  *
+  * Three handling strategies give flexibility in how validation failures are processed:
+  *   - Collecting all failures for later inspection
+  *   - Converting failures to the `Abort` effect for immediate error propagation
+  *   - Discarding failures for non-critical validations
+  *
+  * The effect supports parallel computations where it can accumulate multiple failures across branches rather than short-circuiting on the
+  * first error, enabling more comprehensive validation reporting.
+  *
+  * @see
+  *   [[kyo.Check.require]] for creating conditional checks
+  * @see
+  *   [[kyo.Check.runChunk]] for collecting all failures during execution
+  * @see
+  *   [[kyo.Check.runAbort]] for converting failures to the Abort effect
+  * @see
+  *   [[kyo.Check.runDiscard]] for ignoring check failures
   */
 final class CheckFailed(val message: String, val frame: Frame) extends AssertionError(message):
     override def getMessage() = frame.render("Check failed! ".red.bold + message)
@@ -88,51 +104,32 @@ object Check:
             [C] => (_, cont) => cont(())
         )
 
-    object isolate:
+    /** Default isolate that accumulates and re-emits failures.
+      *
+      * When the isolation ends, accumulates any check failures that occurred during the isolated computation with failures from the outer
+      * context. This allows building up a complete set of failed checks.
+      *
+      * Important: Note that `Check.runAbort(Async.parallel(computation1, computation2))` will only short circuit once both computations
+      * finish and the isolate re-emits values to restore its state.
+      */
+    given isolate: Isolate.Stateful[Check, Any] with
 
-        /** Creates an isolate that combines check failures.
-          *
-          * When the isolation ends, accumulates any check failures that occurred during the isolated computation with failures from the
-          * outer context. This allows building up a complete set of failed checks.
-          *
-          * @return
-          *   An isolate that accumulates check failures
-          */
-        val merge: Isolate[Check] =
-            new Isolate[Check]:
-                type State = Chunk[CheckFailed]
+        type State = Chunk[CheckFailed]
 
-                def use[A, S2](f: State => A < S2)(using Frame) = f(Chunk.empty)
+        type Transform[A] = (State, A)
 
-                def resume[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
-                    Check.runChunk(v)
+        given flatTransform[A: Flat]: Flat[(State, A)] = Flat.derive
 
-                def restore[A: Flat, S2](state: Chunk[CheckFailed], v: A < S2)(using Frame) =
-                    Kyo.foreach(state)(check => Check.require(false, check.message)(using check.frame)).andThen(v)
-            end new
-        end merge
+        def capture[A: Flat, S2](f: State => A < S2)(using Frame) =
+            f(Chunk.empty)
 
-        /** Creates an isolate that contains check failures.
-          *
-          * Allows checks to fail within the isolated computation without propagating those failures to the outer context. The failures are
-          * discarded when isolation ends.
-          *
-          * @return
-          *   An isolate that contains check failures
-          */
-        val discard: Isolate[Check] =
-            new Isolate[Check]:
-                type State = Chunk[CheckFailed]
+        def isolate[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
+            Check.runChunk(v)
 
-                def use[A, S2](f: State => A < S2)(using Frame) = f(Chunk.empty)
-
-                def resume[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
-                    Check.runChunk(v)
-
-                def restore[A: Flat, S2](state: Chunk[CheckFailed], v: A < S2)(using Frame) =
-                    v
-            end new
-        end discard
+        def restore[A: Flat, S2](v: (Chunk[CheckFailed], A) < S2)(using Frame) =
+            v.map { (state, r) =>
+                Kyo.foreachDiscard(state)(check => Check.require(false, check.message)(using check.frame)).andThen(r)
+            }
     end isolate
 
 end Check

@@ -14,7 +14,7 @@ object Memo:
 
     // Used to ensure each memoized function
     // has a different key space
-    private[kyo] class MemoIdentity
+    private[kyo] class MemoIdentity extends Serializable
 
     private[kyo] case class Cache(map: Map[(Any, Any), Any]):
         def get[A](input: A, id: MemoIdentity): Maybe[Any] =
@@ -58,39 +58,11 @@ object Memo:
     def run[A: Flat, S](v: A < (Memo & S))(using Frame): A < S =
         Var.run(empty)(v)
 
-    object isolate:
+    /** Default isolate that combines memoization caches.
+      *
+      * When the isolation ends, merges any cached results from the isolated computation with the outer cache using the later result on
+      * conflicts. This allows memoized results computed in isolation to be reused later.
+      */
+    given isolate: Isolate.Stateful[Memo, Any] = Var.isolate.merge[Cache]((a, b) => Cache(a.map ++ b.map))
 
-        /** Creates an isolate that combines memoization caches.
-          *
-          * When the isolation ends, merges any cached results from the isolated computation with the outer cache using the later result on
-          * conflicts. This allows memoized results computed in isolation to be reused later.
-          *
-          * @return
-          *   An isolate that preserves memoized results
-          */
-        val merge: Isolate[Memo] =
-            Var.isolate.merge[Memo.Cache]((m1, m2) => Cache(m1.map ++ m2.map))
-
-        /** Creates an isolate that overwrites the memoization cache.
-          *
-          * When the isolation ends, replaces the outer cache with the cache from the isolated computation. Earlier cached results are
-          * discarded in favor of any new results computed in isolation.
-          *
-          * @return
-          *   An isolate that updates the cache with isolated results
-          */
-        val update: Isolate[Memo] =
-            Var.isolate.update[Memo.Cache]
-
-        /** Creates an isolate that provides a temporary cache.
-          *
-          * Allows the isolated computation to build and use its own memoization cache, but discards that cache when isolation ends. Results
-          * are only cached within the isolation boundary.
-          *
-          * @return
-          *   An isolate that discards the isolated cache
-          */
-        val discard: Isolate[Memo] =
-            Var.isolate.discard[Memo.Cache]
-    end isolate
 end Memo

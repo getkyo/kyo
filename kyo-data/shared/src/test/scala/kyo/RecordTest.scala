@@ -1,8 +1,8 @@
 package kyo
 
 import Record.Field
-import kyo.Record.AsRecord.FieldsOf
 import kyo.internal.TypeIntersection
+import scala.compiletime.summonInline
 
 class RecordTest extends Test:
 
@@ -281,6 +281,41 @@ class RecordTest extends Test:
             typeCheckFailure("""
                 compacted.age
             """)("""Invalid field access: ("age" : String)""")
+        }
+    }
+
+    "stage" - {
+        case class AsColumn[A](typ: String)
+
+        object AsColumn:
+            given AsColumn[Int]    = AsColumn("bigint")
+            given AsColumn[String] = AsColumn("text")
+
+        case class Column[A](name: String)(using AsColumn[A]) derives CanEqual
+
+        object ColumnInline extends Record.StageAs[[n, v] =>> Column[v]]:
+            inline def stage[Name <: String, Value](field: Field[Name, Value]): Column[Value] =
+                Column[Value](field.name)(using summonInline[AsColumn[Value]])
+
+        "build record if all inlined" in {
+            type Person = "name" ~ String & "age" ~ Int
+
+            val columns = Record.stage[Person](ColumnInline)
+            val result = "name" ~ Column[String]("name") &
+                "age" ~ Column[Int]("age")
+
+            assert(columns.name == Column[String]("name"))
+            assert(columns.age == Column[Int]("age"))
+            assert(columns == result)
+        }
+
+        "compile error when inlining failed" in {
+            class Role()
+            type Person = "name" ~ String & "age" ~ Int & "role" ~ Role
+
+            typeCheckFailure("""
+                Record.stage[Person](ColumnInline)
+            """)("""No given instance of type AsColumn[Role] was found""")
         }
     }
 
@@ -609,25 +644,23 @@ class RecordTest extends Test:
         }
 
         "AsFields behavior" - {
-            import Record.AsFields
-
-            val error = "No given instance of type kyo.AsFieldsInternal.HasAsField"
+            val error = "Given type doesn't match to expected field shape: Name ~ Value"
 
             "summoning AsFields instance" in {
                 typeCheckFailure("""
-                    summon[AsFields[Int & "name" ~ String & "age" ~ Int]]
+                    summon[Record.AsFields[Int & "name" ~ String & "age" ~ Int]]
                 """)(error)
             }
 
             "AsFields with multiple raw types" in {
                 typeCheckFailure("""
-                    AsFields[Int & Boolean & "value" ~ String & String]
+                    Record.AsFields[Int & Boolean & "value" ~ String & String]
                 """)(error)
             }
 
             "AsFields with duplicate field names" in {
                 typeCheckFailure("""
-                   AsFields[Int & "value" ~ String & "value" ~ Int]
+                   Record.AsFields[Int & "value" ~ String & "value" ~ Int]
                 """)(error)
             }
 

@@ -20,24 +20,56 @@ import scala.util.control.NonFatal
   * Most application code can work exclusively with Async, with the IO/Async distinction becoming relevant primarily in library code or
   * performance-critical sections where precise control over execution characteristics is needed.
   *
+  * Note: For collection operations, Async provides concurrent execution variants of the `Kyo` companion object sequential operations. These
+  * operations use a bounded concurrency model to prevent resource exhaustion, defaulting to twice the number of available processors. This
+  * can be overridden per operation when needed. On platforms like the JVM, these operations may execute in parallel using multiple threads.
+  * On single-threaded platforms like JavaScript, operations will be interleaved concurrently but not execute in parallel.
+  *
   * This effect includes IO in its effect set to handle both async and sync execution in a single effect.
   *
   * @see
-  *   [[Async.run]] for running asynchronous computations
+  *   [[Async.run]] for executing asynchronous computations and obtaining a Fiber
   * @see
-  *   [[Async.Fiber]] for managing asynchronous tasks
+  *   [[Fiber]] for the low-level primitive that powers async execution (primarily for library authors)
   * @see
-  *   [[Async.Promise]] for creating and managing promises
+  *   [[Async.race]] for racing multiple computations and getting the first result
   * @see
-  *   [[Async.parallel]] for running computations in parallel
+  *   [[Async.gather]] for concurrently executing multiple computations and collecting their sucessful results
   * @see
-  *   [[Async.race]] for racing multiple computations
+  *   [[Async.foreach]], [[Async.collect]], and their variants for concurrent collection processing with bounded concurrency
   */
 opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
 object Async:
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
+
+    /** Default concurrency level for collection operations.
+      *
+      * This value determines the maximum number of concurrent operations that can run in parallel for collection processing methods like
+      * foreach, collect, and their variants. It defaults to twice the number of available processors.
+      *
+      * This default can be overridden in two ways:
+      *   1. Per operation by passing an explicit concurrency parameter
+      *   2. Globally by setting the "kyo.async.concurrency.default" system property
+      *
+      * Example of setting the system property:
+      * ```
+      * java -Dkyo.async.concurrency.default=4 MyApp
+      * ```
+      *
+      * Consider adjusting this based on:
+      *   - Nature of operations (CPU vs IO bound)
+      *   - Available system resources
+      *   - Specific performance requirements
+      *
+      * Note: This only affects collection processing methods. Operations like race and gather run with unbounded concurrency.
+      */
+    val defaultConcurrency =
+        import AllowUnsafe.embrace.danger
+        given Frame = Frame.internal
+        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
+    end defaultConcurrency
 
     /** Convenience method for suspending computations in an Async effect.
       *
@@ -73,17 +105,12 @@ object Async:
       * @return
       *   A Fiber representing the running computation
       */
-    inline def run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
-        using frame: Frame
-    ): Fiber[E, A] < (IO & Ctx) =
-        _run(v)
-
-    private[kyo] inline def _run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
-        using
-        boundary: Boundary[Ctx, IO & Abort[E]],
-        frame: Frame
-    ): Fiber[E, A] < (IO & Ctx) =
-        boundary((trace, context) => Fiber.fromTask(IOTask(v, trace, context)))
+    def run[E, A: Flat, S](
+        using isolate: Isolate.Contextual[S, IO]
+    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
+        isolate.runInternal((trace, context) =>
+            Fiber.fromTask(IOTask(v, trace, context))
+        )
 
     /** Runs an asynchronous computation and blocks until completion or timeout.
       *
@@ -94,17 +121,12 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    inline def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+    def runAndBlock[E, A: Flat, S](
+        using isolate: Isolate.Contextual[S, IO]
+    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
-    ): A < (Abort[E | Timeout] & IO & Ctx) =
-        _runAndBlock(timeout)(v)
-
-    private def _runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
-        using
-        boundary: Boundary[Ctx, IO & Abort[E | Timeout]],
-        frame: Frame
-    ): A < (Abort[E | Timeout] & IO & Ctx) =
-        _run(v).map { fiber =>
+    ): A < (Abort[E | Timeout] & IO & S) =
+        run(v).map { fiber =>
             fiber.block(timeout).map(Abort.get(_))
         }
 
@@ -119,39 +141,13 @@ object Async:
       * @return
       *   The result of the computation, which can still be interrupted
       */
-    inline def mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
+    def mask[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
-    ): A < (Abort[E] & Async & Ctx) =
-        _mask(v)
-
-    private def _mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
-    ): A < (Abort[E] & Async & Ctx) =
-        _run(v).map(_.mask.map(_.get))
-
-    /** Runs an async computation with interrupt masking and state isolation.
-      *
-      * @param isolate
-      *   Controls state propagation during masked execution
-      * @param v
-      *   The computation to mask
-      * @return
-      *   The computation result
-      */
-    inline def mask[E, A: Flat, S, Ctx](isolate: Isolate[S])(v: => A < (Abort[E] & Async & S & Ctx))(
-        using frame: Frame
-    ): A < (Abort[E] & Async & S & Ctx) =
-        _mask(isolate)(v)
-
-    private def _mask[E, A: Flat, S, Ctx](isolate: Isolate[S])(v: => A < (Abort[E] & Async & S & Ctx))(
-        using
-        boundary: Boundary[Ctx, S & Async & Abort[E]],
-        frame: Frame
-    ): A < (Abort[E] & Async & S & Ctx) =
-        isolate.use { state =>
-            _mask(isolate.resume(state, v)).map(isolate.restore(_, _))
+    ): A < (Abort[E] & Async & S) =
+        isolate.capture { state =>
+            Async.run(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
         }
 
     /** Creates a computation that never completes.
@@ -160,6 +156,30 @@ object Async:
       *   A computation that never completes
       */
     def never[E, A](using Frame): A < Async = Fiber.never[Nothing, A].get
+
+    /** Yields control to the scheduler, allowing other fibers to execute.
+      *
+      * Primarily useful in JavaScript environments for CPU-intensive loops without async operations, as JS lacks automatic preemption. On
+      * JVM/Native platforms, this is less necessary since they use automatic time-slice preemption between threads.
+      *
+      * @return
+      *   Unit wrapped in an Async effect
+      */
+    def yieldNow(using Frame): Unit < Async =
+        Async.run(()).map(_.get)
+
+    /** Yields control to the scheduler and then executes the provided computation.
+      *
+      * Recommended for JavaScript environments to prevent event loop starvation in CPU-intensive operations. On JVM/Native platforms,
+      * automatic preemption makes this less critical.
+      *
+      * @param f
+      *   The computation to execute after yielding
+      * @return
+      *   The result of the computation wrapped in an Async effect
+      */
+    def yieldWith[A, S](f: => A < S)(using Frame): A < (Async & S) =
+        Async.run(()).map(_.use(_ => f))
 
     /** Delays execution of a computation by a specified duration.
       *
@@ -191,100 +211,48 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    inline def timeout[E, A: Flat, Ctx](after: Duration)(v: => A < (Abort[E] & Async & Ctx))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & Async & Ctx) =
-        _timeout(after)(v)
-
-    private def _timeout[E, A: Flat, Ctx](after: Duration)(v: => A < (Abort[E] & Async & Ctx))(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E | Timeout]],
-        frame: Frame
-    ): A < (Abort[E | Timeout] & Async & Ctx) =
-        if !after.isFinite then v
+    def timeout[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
+        if after == Duration.Zero then Abort.fail(Timeout())
+        else if !after.isFinite then v
         else
-            boundary { (trace, context) =>
-                Clock.use { clock =>
-                    IO.Unsafe {
-                        val sleepFiber = clock.unsafe.sleep(after)
-                        val task       = IOTask[Ctx, E | Timeout, A](v, trace, context)
-                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Failure(Timeout()))))
-                        task.onComplete(_ => discard(sleepFiber.interrupt()))
-                        Async.get(task)
+            isolate.capture { state =>
+                Async.run(isolate.isolate(state, v)).map { task =>
+                    Clock.use { clock =>
+                        IO.Unsafe {
+                            val sleepFiber = clock.unsafe.sleep(after)
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout()))))
+                            task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
+                            isolate.restore(task.get)
+                        }
                     }
                 }
             }
-
-    /** Runs a computation with timeout and state isolation.
-      *
-      * @param after
-      *   The timeout duration
-      * @param isolate
-      *   Controls state propagation during execution
-      * @param v
-      *   The computation to timeout
-      * @return
-      *   The result or Timeout error
-      */
-    inline def timeout[E, A: Flat, S, Ctx](after: Duration, isolate: Isolate[S])(v: => A < (Abort[E] & Async & S & Ctx))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & Async & S & Ctx) =
-        _timeout(after, isolate)(v)
-
-    private def _timeout[E, A: Flat, S, Ctx](after: Duration, isolate: Isolate[S])(v: => A < (Abort[E] & Async & S & Ctx))(
-        using
-        boundary: Boundary[Ctx, S & Async & Abort[E | Timeout]],
-        frame: Frame
-    ): A < (Abort[E | Timeout] & Async & S & Ctx) =
-        isolate.use { state =>
-            _timeout(after)(isolate.resume(state, v)).map(isolate.restore(_, _))
-        }
+        end if
+    end timeout
 
     /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
       * are interrupted.
       *
-      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+      * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
+      * platforms supporting parallel execution (like JVM), computations may run in parallel.
       *
       * @param seq
       *   The sequence of computations to race
       * @return
       *   The result of the first computation to complete
       */
-    inline def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def race[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
-    ): A < (Abort[E] & Async & Ctx) =
-        _race(seq)
-
-    private def _race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
-    ): A < (Abort[E] & Async & Ctx) =
-        if seq.isEmpty then seq(0)
-        else Fiber._race(seq).map(_.get)
-
-    /** Races computations with state isolation, returning first to complete.
-      *
-      * @param isolate
-      *   Controls state propagation during race
-      * @param seq
-      *   Computations to race
-      * @return
-      *   First successful result
-      */
-    inline def race[E, A: Flat, S, Ctx](isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
-        using frame: Frame
-    ): A < (Abort[E] & Async & S & Ctx) =
-        _race(isolate)(seq)
-
-    private def _race[E, A: Flat, S, Ctx](isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
-        using
-        boundary: Boundary[Ctx, S & Async & Abort[E]],
-        frame: Frame
-    ): A < (Abort[E] & Async & S & Ctx) =
-        isolate.use { state =>
-            _race(seq.map(isolate.resume(state, _))).map(isolate.restore(_, _))
+    ): A < (Abort[E] & Async & S) =
+        require(iterable.nonEmpty, "Can't race an empty collection.")
+        isolate.capture { state =>
+            Fiber.race(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
         }
+    end race
 
     /** Races two or more computations and returns the result of the first to complete.
       *
@@ -295,36 +263,17 @@ object Async:
       * @return
       *   The result of the first computation to complete
       */
-    inline def race[E, A: Flat, Ctx](
-        first: A < (Abort[E] & Async & Ctx),
-        rest: A < (Abort[E] & Async & Ctx)*
+    def race[E, A: Flat, S](
+        using Isolate.Stateful[S, Abort[E] & Async]
+    )(
+        first: A < (Abort[E] & Async & S),
+        rest: A < (Abort[E] & Async & S)*
     )(
         using frame: Frame
-    ): A < (Abort[E] & Async & Ctx) =
-        race[E, A, Ctx](first +: rest)
+    ): A < (Abort[E] & Async & S) =
+        race[E, A, S](first +: rest)
 
-    /** Races multiple computations with state isolation.
-      *
-      * @param isolate
-      *   Controls state propagation during race
-      * @param first
-      *   First computation to race
-      * @param rest
-      *   Additional computations to race
-      * @return
-      *   First successful result
-      */
-    inline def race[E, A: Flat, S, Ctx](isolate: Isolate[S])(
-        first: A < (Abort[E] & Async & S & Ctx),
-        rest: A < (Abort[E] & Async & S & Ctx)*
-    )(
-        using frame: Frame
-    ): A < (Abort[E] & Async & S & Ctx) =
-        race[E, A, S, Ctx](isolate)(first +: rest)
-
-    /** Concurrently executes effects and collects their successful results.
-      *
-      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+    /** Concurrently executes two or more computations and collects their successful results.
       *
       * Similar to the sequence-based gather, but accepts varargs input.
       *
@@ -335,17 +284,15 @@ object Async:
       * @return
       *   Successful results as a Chunk
       */
-    inline def gather[E, A: Flat, Ctx](
-        first: A < (Abort[E] & Async & Ctx),
-        rest: A < (Abort[E] & Async & Ctx)*
+    def gather[E, A: Flat, S](
+        using Isolate.Stateful[S, Abort[E] & Async]
     )(
-        using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & Ctx) =
+        first: A < (Abort[E] & Async & S),
+        rest: A < (Abort[E] & Async & S)*
+    )(using frame: Frame): Chunk[A] < (Abort[E] & Async & S) =
         gather(first +: rest)
 
-    /** Concurrently executes effects and collects up to `max` successful results.
-      *
-      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+    /** Concurrently executes two or more and collects up to `max` successful results.
       *
       * Similar to the sequence-based gather with max, but accepts varargs input.
       *
@@ -358,84 +305,23 @@ object Async:
       * @return
       *   Successful results as a Chunk (size <= max)
       */
-    inline def gather[E, A: Flat, Ctx](max: Int)(
-        first: A < (Abort[E] & Async & Ctx),
-        rest: A < (Abort[E] & Async & Ctx)*
+    def gather[E, A: Flat, S](
+        using Isolate.Stateful[S, Abort[E] & Async]
+    )(max: Int)(
+        first: A < (Abort[E] & Async & S),
+        rest: A < (Abort[E] & Async & S)*
     )(
         using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & Ctx) =
+    ): Chunk[A] < (Abort[E] & Async & S) =
         gather(max)(first +: rest)
 
-    /** Concurrently executes effects and collects their successful results.
+    /** Concurrently executes computations and collects successful results.
       *
-      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
-      *
-      * Executes all effects concurrently and returns successful results in completion order. If all computations fail, the last encountered
-      * error is propagated. The operation completes when all effects have either succeeded or failed.
-      *
-      * @tparam Ctx
-      *   Context requirements
-      * @param seq
-      *   Sequence of effects to execute
-      * @return
-      *   Successful results as a Chunk
-      */
-    inline def gather[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & Ctx) =
-        _gather(seq.size)(seq)
-
-    /** Concurrently executes effects and collects up to `max` successful results.
-      *
-      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
-      *
-      * Similar to `gather`, but completes early once the specified number of `max` successful results is reached. If not enough successes
-      * occur and all remaining computations fail, the last encountered error is propagated.
+      * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
+      * platforms supporting parallel execution (like JVM), computations may run in parallel.
       *
       * @param max
       *   Maximum number of successful results to collect
-      * @param seq
-      *   Sequence of effects to execute
-      * @return
-      *   Successful results as a Chunk (size <= max)
-      */
-    inline def gather[E, A: Flat, Ctx](max: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & Ctx) =
-        _gather(max)(seq)
-
-    private def _gather[E, A: Flat, Ctx](max: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & Ctx) =
-        Fiber._gather(max)(seq.size, seq).map(_.get)
-
-    /** Concurrently executes effects with state isolation and collects their successful results.
-      *
-      * @param isolate
-      *   Controls state propagation during execution
-      * @param first
-      *   First effect to execute
-      * @param rest
-      *   Rest of the effects to execute
-      * @return
-      *   Successful results as a Chunk
-      */
-    inline def gather[E, A: Flat, S, Ctx](isolate: Isolate[S])(
-        first: A < (Abort[E] & Async & S & Ctx),
-        rest: A < (Abort[E] & Async & S & Ctx)*
-    )(
-        using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
-        gather(isolate)(first +: rest)
-
-    /** Concurrently executes effects with state isolation and collects up to `max` successful results.
-      *
-      * @param max
-      *   Maximum number of successful results to collect
-      * @param isolate
-      *   Controls state propagation during execution
       * @param first
       *   First effect to execute
       * @param rest
@@ -443,299 +329,396 @@ object Async:
       * @return
       *   Successful results as a Chunk (size <= max)
       */
-    inline def gather[E, A: Flat, S, Ctx](max: Int, isolate: Isolate[S])(
-        first: A < (Abort[E] & Async & S & Ctx),
-        rest: A < (Abort[E] & Async & S & Ctx)*
-    )(
+    def gather[E, A: Flat, S](
+        using Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
-        gather(max, isolate)(first +: rest)
+    ): Chunk[A] < (Abort[E] & Async & S) =
+        gather(iterable.size)(iterable)
 
-    /** Concurrently executes effects with state isolation and collects their successful results.
+    /** Concurrently executes computations and collects up to `max` successful results.
       *
-      * @param isolate
-      *   Controls state propagation during execution
-      * @param seq
-      *   Sequence of effects to execute
-      * @return
-      *   Successful results as a Chunk
-      */
-    inline def gather[E, A: Flat, S, Ctx](isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
-        using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
-        gather(seq.size, isolate)(seq)
-
-    /** Concurrently executes effects with state isolation and collects up to `max` successful results.
+      * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
+      * platforms supporting parallel execution (like JVM), computations may run in parallel.
       *
       * @param max
       *   Maximum number of successful results to collect
-      * @param isolate
-      *   Controls state propagation during execution
-      * @param seq
-      *   Sequence of effects to execute
+      * @param first
+      *   First effect to execute
+      * @param rest
+      *   Rest of the effects to execute
       * @return
       *   Successful results as a Chunk (size <= max)
       */
-    inline def gather[E, A: Flat, S, Ctx](max: Int, isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
+    def gather[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
-    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
-        isolate.use { state =>
-            _gather(max)(seq.map(isolate.resume(state, _))).map { results =>
-                Kyo.collect(results.map((state, result) => isolate.restore(state, result)))
-            }
+    ): Chunk[A] < (Abort[E] & Async & S) =
+        isolate.capture { state =>
+            Fiber.gather(max)(iterable.map(isolate.isolate(state, _)))
+                .map(_.use(chunk => Kyo.collectAll(chunk.map(isolate.restore))))
         }
 
-    /** Runs multiple computations in parallel with unlimited parallelism and returns their results.
-      *
-      * Unlike [[parallel]], this method starts all computations immediately without any concurrency control. This can lead to resource
-      * exhaustion if the input sequence is large. Consider using [[parallel]] instead, which allows you to control the level of
-      * concurrency.
-      *
-      * If any computation fails or is interrupted, all other computations are interrupted.
+    /** Executes a sequence of computations with indexed access, using bounded concurrency.
       *
       * @param seq
-      *   The sequence of computations to run in parallel
+      *   The sequence of elements to process
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
+      * @param f
+      *   Function that takes an index and element, returning a computation
       * @return
-      *   A sequence containing the results of all computations in their original order
+      *   Chunk containing results in the original sequence order
       */
-    inline def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using frame: Frame
-    ): Seq[A] < (Abort[E] & Async & Ctx) =
-        _parallelUnbounded(seq)
+    def foreachIndexed[E, A, B: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(f: (Int, A) => B < (Abort[E] & Async & S))(using
+        Frame
+    ): Chunk[B] < (Abort[E] & Async & S) =
+        if concurrency <= 1 then
+            Kyo.foreachIndexed(iterable.toSeq)(f)
+        else
+            iterable.size match
+                case 0 => Chunk.empty
+                case 1 => f(0, iterable.head).map(Chunk(_))
+                case size if size <= concurrency =>
+                    isolate.capture { state =>
+                        Fiber.foreachIndexed(iterable)((idx, v) => isolate.isolate(state, f(idx, v)))
+                            .map(_.use(r => Kyo.foreach(r)(isolate.restore)))
+                    }
+                case size =>
+                    isolate.capture { state =>
+                        val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
+                        Fiber.foreachIndexed(iterable.grouped(groupSize).toSeq)((idx, group) =>
+                            Kyo.foreachIndexed(group.toSeq)((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
+                        ).map(_.use(r => Kyo.foreach(r.flattenChunk)(isolate.restore)))
+                    }
 
-    private def _parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
-    ): Seq[A] < (Abort[E] & Async & Ctx) =
-        seq.size match
-            case 0 => Seq.empty
-            case 1 => seq(0).map(Seq(_))
-            case _ => Fiber._parallelUnbounded(seq).map(_.get)
-        end match
-    end _parallelUnbounded
-
-    /** Runs computations in parallel with unlimited concurrency and state isolation.
+    /** Executes a sequence of computations using bounded concurrency.
       *
-      * @param isolate
-      *   Controls state propagation during parallel execution
       * @param seq
-      *   Computations to run in parallel
+      *   The sequence of elements to process
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
+      * @param f
+      *   Function that processes each element
       * @return
-      *   Results in original order
+      *   Chunk containing results in the original sequence order
       */
-    inline def parallelUnbounded[E, A: Flat, S, Ctx](isolate: Isolate[S], seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
-        using frame: Frame
-    ): Seq[A] < (Abort[E] & Async & S & Ctx) =
-        _parallelUnbounded(isolate, seq)
+    def foreach[E, A, B: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
+        f: A => B < (Abort[E] & Async & S)
+    )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
+        foreachIndexed(iterable, concurrency)((_, v) => f(v))
 
-    private def _parallelUnbounded[E, A: Flat, S, Ctx](isolate: Isolate[S], seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
-        using
-        boundary: Boundary[Ctx, S & Async & Abort[E]],
-        frame: Frame
-    ): Seq[A] < (Abort[E] & Async & S & Ctx) =
-        isolate.use { state =>
-            _parallelUnbounded(seq.map(isolate.resume(state, _))).map { results =>
-                Kyo.collect(results.map((state, result) => isolate.restore(state, result)))
-            }
-        }
-
-    /** Runs multiple computations in parallel with a specified level of parallelism and returns their results.
+    /** Executes a sequence of computations in parallel, discarding the results.
       *
-      * This method allows you to execute a sequence of computations with controlled parallelism by grouping them into batches. The
-      * computations are divided into groups based on the parallelism parameter. Each group is assigned to a new fiber, and the computations
-      * within each fiber are processed sequentially.
-      *
-      * For example, with a parallelism of 2 and 6 tasks, there will be 2 fibers, each processing 3 tasks sequentially. The group size is
-      * calculated as ceil(n/parallelism) where n is the total number of computations.
-      *
-      * If any computation fails or is interrupted, all other computations are interrupted.
-      *
-      * @param parallelism
-      *   The maximum number of computations to run concurrently
       * @param seq
-      *   The sequence of computations to run in parallel
-      * @return
-      *   A sequence containing the results of all computations in their original order
+      *   The sequence of elements to process
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to defaultConcurrency)
+      * @param f
+      *   Function that processes each element
       */
-    inline def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using frame: Frame
-    ): Seq[A] < (Abort[E] & Async & Ctx) =
-        _parallel(parallelism)(seq)
+    def foreachDiscard[E, A, B: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
+        f: A => B < (Abort[E] & Async & S)
+    )(using Frame): Unit < (Abort[E] & Async & S) =
+        foreach(iterable, concurrency)(f).unit
 
-    private def _parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
-    ): Seq[A] < (Abort[E] & Async & Ctx) =
-        seq.size match
-            case 0 => Seq.empty
-            case 1 => seq(0).map(Seq(_))
-            case n => Fiber._parallel(parallelism)(seq).map(_.get)
-
-    /** Runs computations in parallel with controlled concurrency and state isolation.
+    /** Filters elements from a sequence using bounded concurrency.
       *
-      * @param parallelism
-      *   Maximum concurrent computations
-      * @param isolate
-      *   Controls state propagation during parallel execution
       * @param seq
-      *   Computations to run in parallel
+      *   The sequence to filter
+      * @param concurrency
+      *   Maximum number of concurrent predicate evaluations (defaults to [[defaultConcurrency]])
+      * @param f
+      *   Predicate function returning true for elements to keep
       * @return
-      *   Results in original order
+      *   Chunk containing only elements that satisfied the predicate
       */
-    inline def parallel[E, A: Flat, S, Ctx](parallelism: Int, isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
-        using frame: Frame
-    ): Seq[A] < (Abort[E] & Async & S & Ctx) =
-        _parallel(parallelism, isolate)(seq)
+    def filter[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
+        f: A => Boolean < (Abort[E] & Async & S)
+    )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
+        collect(iterable, concurrency)(v => f(v).map(Maybe.when(_)(v)))
 
-    private def _parallel[E, A: Flat, S, Ctx](parallelism: Int, isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
-        using
-        boundary: Boundary[Ctx, S & Async & Abort[E]],
-        frame: Frame
-    ): Seq[A] < (Abort[E] & Async & S & Ctx) =
-        isolate.use { state =>
-            _parallel(parallelism)(seq.map(isolate.resume(state, _))).map { results =>
-                Kyo.collect(results.map((state, result) => isolate.restore(state, result)))
-            }
-        }
-
-    /** Runs two computations in parallel and returns their results as a tuple.
+    /** Transforms and filters elements from a sequence using bounded concurrency.
       *
-      * @param v1
-      *   The first computation
-      * @param v2
-      *   The second computation
+      * @param seq
+      *   The sequence to process
+      * @param concurrency
+      *   Maximum number of concurrent evaluations (defaults to [[defaultConcurrency]])
+      * @param f
+      *   Function that returns Some with transformed value for elements to keep, None for elements to filter out
       * @return
-      *   A tuple containing the results of both computations
+      *   Chunk containing transformed values for elements that weren't filtered
       */
-    inline def parallel[E, A1: Flat, A2: Flat, Ctx](
-        v1: A1 < (Abort[E] & Async & Ctx),
-        v2: A2 < (Abort[E] & Async & Ctx)
+    def collect[E, A, B: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
+        f: A => Maybe[B] < (Abort[E] & Async & S)
+    )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
+        foreach(iterable, concurrency)(f).map(_.flatten)
+
+    /** Executes a sequence of computations using bounded concurrency.
+      *
+      * @param seq
+      *   The sequence of computations to execute
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
+      * @return
+      *   Chunk containing results in the original sequence order
+      */
+    def collectAll[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using
+        Frame
+    ): Chunk[A] < (Abort[E] & Async & S) =
+        foreach(iterable, concurrency)(identity)
+
+    /** Executes a sequence of computations in parallel, discarding their results.
+      *
+      * @param seq
+      *   The sequence of computations to execute
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to defaultConcurrency)
+      */
+    def collectAllDiscard[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using Frame): Unit < (Abort[E] & Async & S) =
+        foreachDiscard(iterable, concurrency)(identity)
+
+    /** Repeats a computation n times in parallel.
+      *
+      * @param n
+      *   Number of times to repeat the computation
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to defaultConcurrency)
+      * @param f
+      *   The computation to repeat
+      * @return
+      *   Chunk containing results of all iterations
+      */
+    def fill[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(n: Int, concurrency: Int = defaultConcurrency)(
+        f: => A < (Abort[E] & Async & S)
+    )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
+        fillIndexed(n, concurrency)(_ => f)
+
+    /** Repeats a computation n times in parallel with index access.
+      *
+      * Similar to `fill`, but provides the current index to the computation function. This is useful when the computation needs to know
+      * which iteration it's processing.
+      *
+      * @param n
+      *   Number of times to repeat the computation
+      * @param concurrency
+      *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
+      * @param f
+      *   Function that takes the current index (0 to n-1) and returns a computation
+      * @return
+      *   Chunk containing results of all iterations in index order
+      */
+    def fillIndexed[E, A: Flat, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(n: Int, concurrency: Int = defaultConcurrency)(
+        f: Int => A < (Abort[E] & Async & S)
+    )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
+        foreach(0 until n, concurrency)(f)
+
+    /** Executes two computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S)
     )(
         using frame: Frame
-    ): (A1, A2) < (Abort[E] & Async & Ctx) =
-        parallelUnbounded(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
+    ): (A1, A2) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2), 2)(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
 
-    /** Runs two computations in parallel with state isolation.
-      *
-      * @param isolate
-      *   Controls state propagation during parallel execution
-      * @param v1
-      *   First computation
-      * @param v2
-      *   Second computation
-      * @return
-      *   Tuple of results
+    /** Executes three computations in parallel and returns their results as a tuple.
       */
-    inline def parallel[E, A1: Flat, A2: Flat, S, Ctx](isolate: Isolate[S])(
-        v1: A1 < (Abort[E] & Async & S & Ctx),
-        v2: A2 < (Abort[E] & Async & S & Ctx)
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S)
     )(
         using frame: Frame
-    ): (A1, A2) < (Abort[E] & Async & S & Ctx) =
-        parallelUnbounded(isolate, Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
-            (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
-        }
-
-    /** Runs three computations in parallel and returns their results as a tuple.
-      *
-      * @param v1
-      *   The first computation
-      * @param v2
-      *   The second computation
-      * @param v3
-      *   The third computation
-      * @return
-      *   A tuple containing the results of all three computations
-      */
-    inline def parallel[E, A1: Flat, A2: Flat, A3: Flat, Ctx](
-        v1: A1 < (Abort[E] & Async & Ctx),
-        v2: A2 < (Abort[E] & Async & Ctx),
-        v3: A3 < (Abort[E] & Async & Ctx)
-    )(
-        using frame: Frame
-    ): (A1, A2, A3) < (Abort[E] & Async & Ctx) =
-        parallelUnbounded(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
+    ): (A1, A2, A3) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3), 3)(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
         }
 
-    /** Runs three computations in parallel with state isolation.
-      *
-      * @param isolate
-      *   Controls state propagation during parallel execution
-      * @param v1
-      *   First computation
-      * @param v2
-      *   Second computation
-      * @param v3
-      *   Third computation
-      * @return
-      *   Tuple of results
+    /** Executes four computations in parallel and returns their results as a tuple.
       */
-    inline def parallel[E, A1: Flat, A2: Flat, A3: Flat, S, Ctx](isolate: Isolate[S])(
-        v1: A1 < (Abort[E] & Async & Ctx),
-        v2: A2 < (Abort[E] & Async & Ctx),
-        v3: A3 < (Abort[E] & Async & Ctx)
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S)
     )(
         using frame: Frame
-    ): (A1, A2, A3) < (Abort[E] & Async & Ctx) =
-        parallelUnbounded(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
-            (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
-        }
-
-    /** Runs four computations in parallel and returns their results as a tuple.
-      *
-      * @param v1
-      *   The first computation
-      * @param v2
-      *   The second computation
-      * @param v3
-      *   The third computation
-      * @param v4
-      *   The fourth computation
-      * @return
-      *   A tuple containing the results of all four computations
-      */
-    inline def parallel[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, Ctx](
-        v1: A1 < (Abort[E] & Async & Ctx),
-        v2: A2 < (Abort[E] & Async & Ctx),
-        v3: A3 < (Abort[E] & Async & Ctx),
-        v4: A4 < (Abort[E] & Async & Ctx)
-    )(
-        using frame: Frame
-    ): (A1, A2, A3, A4) < (Abort[E] & Async & Ctx) =
-        parallelUnbounded(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
+    ): (A1, A2, A3, A4) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4), 4)(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
-    /** Runs four computations in parallel with state isolation.
-      *
-      * @param isolate
-      *   Controls state propagation during parallel execution
-      * @param v1
-      *   First computation
-      * @param v2
-      *   Second computation
-      * @param v3
-      *   Third computation
-      * @param v4
-      *   Fourth computation
-      * @return
-      *   Tuple of results
+    /** Executes five computations in parallel and returns their results as a tuple.
       */
-    inline def parallel[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, S, Ctx](isolate: Isolate[S])(
-        v1: A1 < (Abort[E] & Async & S & Ctx),
-        v2: A2 < (Abort[E] & Async & S & Ctx),
-        v3: A3 < (Abort[E] & Async & S & Ctx),
-        v4: A4 < (Abort[E] & Async & S & Ctx)
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S)
     )(
         using frame: Frame
-    ): (A1, A2, A3, A4) < (Abort[E] & Async & S & Ctx) =
-        parallelUnbounded(isolate, Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
-            (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
+    ): (A1, A2, A3, A4, A5) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5), 5)(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4], s(4).asInstanceOf[A5])
+        }
+
+    /** Executes six computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S),
+        v6: A6 < (Abort[E] & Async & S)
+    )(
+        using frame: Frame
+    ): (A1, A2, A3, A4, A5, A6) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5, v6), 6)(using Flat.unsafe.bypass).map { s =>
+            (
+                s(0).asInstanceOf[A1],
+                s(1).asInstanceOf[A2],
+                s(2).asInstanceOf[A3],
+                s(3).asInstanceOf[A4],
+                s(4).asInstanceOf[A5],
+                s(5).asInstanceOf[A6]
+            )
+        }
+
+    /** Executes seven computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S),
+        v6: A6 < (Abort[E] & Async & S),
+        v7: A7 < (Abort[E] & Async & S)
+    )(
+        using frame: Frame
+    ): (A1, A2, A3, A4, A5, A6, A7) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7), 7)(using Flat.unsafe.bypass).map { s =>
+            (
+                s(0).asInstanceOf[A1],
+                s(1).asInstanceOf[A2],
+                s(2).asInstanceOf[A3],
+                s(3).asInstanceOf[A4],
+                s(4).asInstanceOf[A5],
+                s(5).asInstanceOf[A6],
+                s(6).asInstanceOf[A7]
+            )
+        }
+
+    /** Executes eight computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S),
+        v6: A6 < (Abort[E] & Async & S),
+        v7: A7 < (Abort[E] & Async & S),
+        v8: A8 < (Abort[E] & Async & S)
+    )(
+        using frame: Frame
+    ): (A1, A2, A3, A4, A5, A6, A7, A8) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8), 8)(using Flat.unsafe.bypass).map { s =>
+            (
+                s(0).asInstanceOf[A1],
+                s(1).asInstanceOf[A2],
+                s(2).asInstanceOf[A3],
+                s(3).asInstanceOf[A4],
+                s(4).asInstanceOf[A5],
+                s(5).asInstanceOf[A6],
+                s(6).asInstanceOf[A7],
+                s(7).asInstanceOf[A8]
+            )
+        }
+
+    /** Executes nine computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, A9: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S),
+        v6: A6 < (Abort[E] & Async & S),
+        v7: A7 < (Abort[E] & Async & S),
+        v8: A8 < (Abort[E] & Async & S),
+        v9: A9 < (Abort[E] & Async & S)
+    )(
+        using frame: Frame
+    ): (A1, A2, A3, A4, A5, A6, A7, A8, A9) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9), 9)(using Flat.unsafe.bypass).map { s =>
+            (
+                s(0).asInstanceOf[A1],
+                s(1).asInstanceOf[A2],
+                s(2).asInstanceOf[A3],
+                s(3).asInstanceOf[A4],
+                s(4).asInstanceOf[A5],
+                s(5).asInstanceOf[A6],
+                s(6).asInstanceOf[A7],
+                s(7).asInstanceOf[A8],
+                s(8).asInstanceOf[A9]
+            )
+        }
+
+    /** Executes ten computations in parallel and returns their results as a tuple.
+      */
+    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, A9: Flat, A10: Flat, S](
+        v1: A1 < (Abort[E] & Async & S),
+        v2: A2 < (Abort[E] & Async & S),
+        v3: A3 < (Abort[E] & Async & S),
+        v4: A4 < (Abort[E] & Async & S),
+        v5: A5 < (Abort[E] & Async & S),
+        v6: A6 < (Abort[E] & Async & S),
+        v7: A7 < (Abort[E] & Async & S),
+        v8: A8 < (Abort[E] & Async & S),
+        v9: A9 < (Abort[E] & Async & S),
+        v10: A10 < (Abort[E] & Async & S)
+    )(
+        using frame: Frame
+    ): (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) < (Abort[E] & Async & S) =
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9, v10), 10)(using Flat.unsafe.bypass).map { s =>
+            (
+                s(0).asInstanceOf[A1],
+                s(1).asInstanceOf[A2],
+                s(2).asInstanceOf[A3],
+                s(3).asInstanceOf[A4],
+                s(4).asInstanceOf[A5],
+                s(5).asInstanceOf[A6],
+                s(6).asInstanceOf[A7],
+                s(7).asInstanceOf[A8],
+                s(8).asInstanceOf[A9],
+                s(9).asInstanceOf[A10]
+            )
         }
 
     /** Creates a memoized version of a computation.
@@ -773,7 +756,7 @@ object Async:
                                         promise.completeDiscard(r)
                                         Abort.get(r)
                                     }
-                                }.pipe(IO.ensure {
+                                }.handle(IO.ensure {
                                     IO.Unsafe {
                                         if !promise.done() then
                                             ref.set(Absent)

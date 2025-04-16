@@ -2,10 +2,8 @@ package kyo
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.util.zip.CRC32
-import java.util.zip.DataFormatException
 import java.util.zip.Deflater
 import java.util.zip.DeflaterInputStream
 import java.util.zip.GZIPInputStream

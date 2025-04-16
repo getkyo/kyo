@@ -160,29 +160,29 @@ class PendingTest extends Test:
         }
     }
 
-    "pipe" - {
+    "handle" - {
         "applies a function to a pure value" in {
-            val result = (5: Int < Any).pipe(_.map(_ + 1))
+            val result = (5: Int < Any).handle(_.map(_ + 1))
             assert(result.eval == 6)
         }
 
         "applies a function to an effectful value" in {
             val effect: Int < TestEffect = TestEffect(1)
-            val result                   = effect.pipe(v => TestEffect.run(v))
+            val result                   = effect.handle(v => TestEffect.run(v))
             assert(result.eval == 2)
         }
 
         "allows chaining of operations" in {
             val effect: Int < TestEffect = TestEffect(1)
             val result = effect
-                .pipe(v => v.map(_ * 2))
-                .pipe(v => TestEffect.run(v))
+                .handle(v => v.map(_ * 2))
+                .handle(v => TestEffect.run(v))
             assert(result.eval == 4)
         }
 
         "works with functions that return effects" in {
             val effect: Int < TestEffect = TestEffect(1)
-            val result = effect.pipe { v =>
+            val result = effect.handle { v =>
                 TestEffect.run(v).map { x =>
                     TestEffect.run(TestEffect(1))
                 }
@@ -192,17 +192,17 @@ class PendingTest extends Test:
 
         "works with identity function" in {
             val effect: Int < TestEffect = TestEffect(1)
-            val result                   = effect.pipe(identity)
+            val result                   = effect.handle(identity)
             assert(TestEffect.run(result).eval == 2)
         }
 
         "can produce a value instead of a computation" in {
-            val result: Int = TestEffect(1).pipe(TestEffect.run).pipe(_.eval)
+            val result: Int = TestEffect(1).handle(TestEffect.run).handle(_.eval)
             assert(result == 2)
         }
 
         "works with two functions" in {
-            val result = (5: Int < Any).pipe(
+            val result = (5: Int < Any).handle(
                 _.map(_ + 1),
                 _.map(_ * 2)
             )
@@ -210,7 +210,7 @@ class PendingTest extends Test:
         }
 
         "works with three functions" in {
-            val result = (5: Int < Any).pipe(
+            val result = (5: Int < Any).handle(
                 _.map(_ + 1),
                 _.map(_ * 2),
                 _.map(_.toString)
@@ -219,7 +219,7 @@ class PendingTest extends Test:
         }
 
         "works with four functions" in {
-            val result = (5: Int < Any).pipe(
+            val result = (5: Int < Any).handle(
                 _.map(_ + 1),
                 _.map(_ * 2),
                 _.map(_.toString),
@@ -229,7 +229,7 @@ class PendingTest extends Test:
         }
 
         "works with five functions" in {
-            val result = (5: Int < Any).pipe(
+            val result = (5: Int < Any).handle(
                 _.map(_ + 1),
                 _.map(_ * 2),
                 _.map(_.toString),
@@ -240,7 +240,7 @@ class PendingTest extends Test:
         }
 
         "works with six functions" in {
-            val result = (5: Int < Any).pipe(
+            val result = (5: Int < Any).handle(
                 _.map(_ + 1),
                 _.map(_ * 2),
                 _.map(_.toString),
@@ -250,6 +250,64 @@ class PendingTest extends Test:
             )
             assert(result.eval == "Yes")
         }
+
+        "works with seven functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase)
+            )
+            assert(result.eval == "yes")
+        }
+
+        "works with eight functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length)
+            )
+            assert(result.eval == 3)
+        }
+
+        "works with nine functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2)
+            )
+            assert(result.eval == 6)
+        }
+
+        "works with ten functions" in {
+            val result = (5: Int < Any).handle(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No"),
+                _.map(_.toLowerCase),
+                _.map(_.length),
+                _.map(_ * 2),
+                _.map(_ > 5)
+            )
+            assert(result.eval == true)
+        }
     }
 
     "only 'flatten' is available for nested computations" in {
@@ -258,7 +316,7 @@ class PendingTest extends Test:
             typeCheckFailure("effect.map(_ => 1))")(error)
             typeCheckFailure("effect.andThen(1)")(error)
             typeCheckFailure("effect.flatMap(_ => 1)")(error)
-            typeCheckFailure("effect.pipe(_ => 1)")(error)
+            typeCheckFailure("effect.handle(_ => 1)")(error)
             typeCheckFailure("effect.unit")("value unit is not a member of Unit < S < S")
             effect.flatten
         end test

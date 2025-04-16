@@ -5,17 +5,38 @@ import kyo.Tag
 import kyo.kernel.*
 import scala.annotation.nowarn
 
-/** Represents a local value that can be accessed and modified within a specific scope.
+/** Represents a context value with a default that can be modified within scopes.
   *
-  * Local provides a way to manage thread-local-like state in a functional manner. There are two types of locals: regular and isolated.
+  * `Local` provides functionality similar to thread-local variables in a functional context. Unlike `Env`, a `Local` value always has a
+  * default and doesn't create a pending effect that must be satisfied. This makes it more suitable for optional contextual values that can
+  * fall back to reasonable defaults when not explicitly provided.
   *
-  * Regular locals behave similarly to inheritable thread locals, where child fibers inherit the value from their parent fiber. Isolated
-  * locals, on the other hand, are similar to non-inheritable thread locals, where child fibers always start with the default value.
+  * Values in a `Local` can be temporarily modified within specific computation scopes using methods like `let` or `update`. These
+  * modifications only affect the specified scope and automatically revert when the computation exits that scope. This scoping behavior
+  * makes `Local` ideal for contextual information that varies within different parts of your application.
+  *
+  * `Local` comes in two variants: regular (inheritable) and non-inheritable. Regular locals pass their values across asynchronous
+  * boundaries, similar to inheritable thread locals, while non-inheritable locals do not, starting with the default value in new async
+  * contexts.
+  *
+  * This effect useful for managing request context information, tracing and logging context, temporary configuration overrides, and user or
+  * tenant context. Choose `Local` when you have context that always has a sensible default value and may need to be modified temporarily.
+  * For required dependencies that must be explicitly provided, `Env` would be the more appropriate choice.
   *
   * @tparam A
   *   The type of the local value
+  *
+  * @see
+  *   [[kyo.Local.init]], [[kyo.Local.initNoninheritable]] for creating Local instances
+  * @see
+  *   [[kyo.Local#get]], [[kyo.Local#use]] for retrieving values
+  * @see
+  *   [[kyo.Local#let]], [[kyo.Local#update]] for modifying values within scopes
+  * @see
+  *   [[kyo.Env]] for required dependencies without defaults
   */
-abstract class Local[A]:
+abstract class Local[A] extends Serializable:
+
     /** The default value for this Local. */
     def default: A
 
@@ -76,10 +97,10 @@ object Local:
             def tag             = Tag[State]
             lazy val default: A = defaultValue
 
-    /** Creates a new isolated Local instance with the given default value.
+    /** Creates a new non-inheritable Local instance with the given default value.
       *
-      * Isolated locals are similar to non-inheritable thread locals, where child fibers always start with the default value and do not
-      * inherit from their parent fiber.
+      * It's similar to Java's non-inheritable thread locals, where child fibers always start with the default value and do not inherit from
+      * their parent fiber.
       *
       * @param defaultValue
       *   The default value for the Local
@@ -87,17 +108,17 @@ object Local:
       *   A new isolated Local instance
       */
     @nowarn("msg=anonymous")
-    inline def initIsolated[A](inline defaultValue: A): Local[A] =
-        new Base[A, IsolatedState]:
-            def tag             = Tag[IsolatedState]
+    inline def initNoninheritable[A](inline defaultValue: A): Local[A] =
+        new Base[A, NoninheritableState]:
+            def tag             = Tag[NoninheritableState]
             lazy val default: A = defaultValue
 
     object internal:
 
-        sealed private[kyo] trait State         extends ContextEffect[Map[Local[?], AnyRef]]
-        sealed private[kyo] trait IsolatedState extends ContextEffect[Map[Local[?], AnyRef]] with ContextEffect.Isolated
+        sealed private[kyo] trait State               extends ContextEffect[Map[Local[?], AnyRef]]
+        sealed private[kyo] trait NoninheritableState extends ContextEffect[Map[Local[?], AnyRef]] with ContextEffect.Noninheritable
 
-        abstract class Base[A, E <: ContextEffect[Map[Local[?], AnyRef]]] extends Local[A]:
+        sealed abstract class Base[A, E <: ContextEffect[Map[Local[?], AnyRef]]] extends Local[A]:
 
             def tag: Tag[E]
 
