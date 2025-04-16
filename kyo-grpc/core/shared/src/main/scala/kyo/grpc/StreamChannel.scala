@@ -10,13 +10,17 @@ import kyo.kernel.Loop.Outcome
   * @see
   *   https://github.com/getkyo/kyo/issues/721.
   */
-class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], private val _completed: AtomicBoolean):
+class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], private val _completed: AtomicBoolean)(using initFrame: Frame):
 
     def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
         putResult(Result.succeed(value))
 
-    def putResult(value: Result[E, A])(using Frame): Unit < (Abort[Closed] & Async) =
-        channel.put(value)
+    private def putResult(value: Result[E, A])(using Frame): Unit < (Abort[Closed] & Async) =
+        for
+            completed <- _completed.get
+            _ <- Abort.when(completed)(Closed("StreamChannel", initFrame))
+            _ <- channel.put(value)
+        yield ()
 
     def fail(e: E)(using Frame): Unit < (Abort[Closed] & Async) =
         for
