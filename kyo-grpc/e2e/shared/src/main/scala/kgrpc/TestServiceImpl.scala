@@ -13,7 +13,7 @@ object TestServiceImpl extends TestService:
         request match
             case Request.Empty => Abort.fail(Status.INVALID_ARGUMENT.asException())
             case nonEmpty: Request.NonEmpty => nonEmpty match
-                    case Say(message, _, _)     => Kyo.pure(Echo(message))
+                    case Say(message, _, _)     => Kyo.lift(Echo(message))
                     case Cancel(code, _, _, _)  => Abort.fail(Status.fromCodeValue(code).asException)
                     case Fail(message, _, _, _) => Abort.panic(new Exception(message))
 
@@ -26,12 +26,12 @@ object TestServiceImpl extends TestService:
                     case Cancel(code, _, true, _) =>
                         Abort.fail(Status.fromCodeValue(code).asException)
                     case Cancel(code, after, _, _) =>
-                        val echos = (after to 1 by -1).map(n => Kyo.pure(Echo(s"Cancelling in $n")))
+                        val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Cancelling in $n")))
                         stream(echos :+ Abort.fail(Status.fromCodeValue(code).asException))
                     case Fail(message, _, true, _) =>
                         Abort.panic(new Exception(message))
                     case Fail(message, after, _, _) =>
-                        val echos = (after to 1 by -1).map(n => Kyo.pure(Echo(s"Failing in $n")))
+                        val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Failing in $n")))
                         stream(echos :+ Abort.panic(new Exception(message)))
 
     override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
@@ -53,7 +53,7 @@ object TestServiceImpl extends TestService:
 
     private def stream(responses: Seq[Response < GrpcResponse]): Stream[Response, GrpcResponse] =
         // TODO: Tidy up.
-        val a: Chunk[Response] < GrpcResponse                = Kyo.collect(responses)
+        val a: Chunk[Response] < GrpcResponse                = Kyo.collectAll(responses)
         val b: Unit < (Emit[Chunk[Response]] & GrpcResponse) = a.map(c => Emit.value(c))
         Stream(b)
 //        Stream(Kyo.collect(responses).map: r =>

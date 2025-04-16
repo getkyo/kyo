@@ -79,7 +79,8 @@ class StreamChannel[A: Tag, E](private val channel: Channel[Result[E, A]], priva
                         // TODO: Can we avoid the extra Chunk allocation here?
                         results = Chunk(head).concat(tail)
                         // TODO: Should be easier to fold Result[E, A] to A < Abort[E]
-                        chunk <- Kyo.collect(results.map(_.foldOrThrow(identity, Abort.fail)))
+                        successes = results.map[A < Abort[E]](_.foldOrThrow(identity, Abort.fail))
+                        chunk <- Kyo.collectAll(successes)
                     yield Emit.valueWith(chunk)(Loop.continue(()))
     end emitChunks
 
