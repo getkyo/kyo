@@ -707,9 +707,6 @@ lazy val readme =
             `kyo-caliban`,
             `kyo-combinators`
         )
-        .settings(
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
-        )
 
 lazy val `native-settings` = Seq(
     fork                                        := false,
