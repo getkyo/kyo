@@ -341,16 +341,14 @@ class ClockTest extends Test:
         "with time control" in runNotJS {
             Clock.withTimeControl { control =>
                 for
-                    running  <- AtomicBoolean.init(false)
-                    queue    <- Queue.Unbounded.init[Instant]()
-                    task     <- Clock.repeatAtInterval(5.millis)(running.set(true).andThen(Clock.now.map(queue.add)))
-                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
-                    _        <- queue.drain
-                    _        <- Loop.repeat(10)(control.advance(1.milli))
+                    channel  <- Channel.init[Instant](10)
+                    task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.offer))
+                    _        <- Loop.repeat(10)(control.advance(1.milli).andThen(IO(Thread.sleep(1))))
                     _        <- task.interrupt
-                    instants <- queue.drain
+                    instants <- channel.close
                 yield
-                    intervals(instants).foreach(v => assert(v == 5.millis))
+                    assert(instants.nonEmpty)
+                    intervals(instants.get).foreach(v => assert(v == 1.millis))
                     succeed
             }
         }
