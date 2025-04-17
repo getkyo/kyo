@@ -12,6 +12,9 @@ class HttpClientContentionBench
     lazy val catsClient =
         import cats.effect.*
         import cats.effect.unsafe.implicits.global
+        import org.typelevel.log4cats.LoggerFactory
+        import org.typelevel.log4cats.slf4j.Slf4jFactory
+        given LoggerFactory[IO] = Slf4jFactory.create[IO]
         EmberClientBuilder.default[IO].build.allocated.unsafeRunSync()._1
     end catsClient
 
