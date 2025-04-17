@@ -8,7 +8,7 @@ case class TestTask(
     @volatile var preemptions = 0
     override def doPreempt(): Unit =
         _preempt()
-    def run(startMillis: Long, clock: InternalClock) =
+    def run(startMillis: Long, clock: InternalClock, deadline: Long) =
         try {
             val r = _run()
             if (r == Task.Preempted)

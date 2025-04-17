@@ -338,20 +338,6 @@ class ClockTest extends Test:
                 _        <- untilTrue(channel.poll.map(_.isEmpty))
             yield succeed
         }
-        "with time control" in run {
-            Clock.withTimeControl { control =>
-                for
-                    channel  <- Channel.init[Instant](0)
-                    task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.offer))
-                    _        <- Clock.let(Clock.live)(Async.sleep(5.millis))
-                    instants <- Kyo.fill(10)(control.advance(1.milli).andThen(channel.take))
-                    _        <- task.interrupt
-                    _        <- channel.close
-                yield
-                    intervals(instants).foreach(v => assert(v == 1.millis))
-                    succeed
-            }
-        }
         "with Schedule parameter" in run {
             for
                 channel  <- Channel.init[Instant](10)

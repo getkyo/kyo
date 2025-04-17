@@ -157,30 +157,6 @@ object Async:
       */
     def never[E, A](using Frame): A < Async = Fiber.never[Nothing, A].get
 
-    /** Yields control to the scheduler, allowing other fibers to execute.
-      *
-      * Primarily useful in JavaScript environments for CPU-intensive loops without async operations, as JS lacks automatic preemption. On
-      * JVM/Native platforms, this is less necessary since they use automatic time-slice preemption between threads.
-      *
-      * @return
-      *   Unit wrapped in an Async effect
-      */
-    def yieldNow(using Frame): Unit < Async =
-        Async.run(()).map(_.get)
-
-    /** Yields control to the scheduler and then executes the provided computation.
-      *
-      * Recommended for JavaScript environments to prevent event loop starvation in CPU-intensive operations. On JVM/Native platforms,
-      * automatic preemption makes this less critical.
-      *
-      * @param f
-      *   The computation to execute after yielding
-      * @return
-      *   The result of the computation wrapped in an Async effect
-      */
-    def yieldWith[A, S](f: => A < S)(using Frame): A < (Async & S) =
-        Async.run(()).map(_.use(_ => f))
-
     /** Delays execution of a computation by a specified duration.
       *
       * @param d
