@@ -126,7 +126,6 @@ lazy val kyoJVM = project
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
         `kyo-examples`.jvm,
-        `kyo-monix`.jvm,
         `kyo-actor`.jvm
     )
 
@@ -554,18 +553,6 @@ lazy val `kyo-cats` =
         )
         .jsSettings(
             `js-settings`
-        )
-        .jvmSettings(mimaCheck(false))
-
-lazy val `kyo-monix` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-monix"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "io.monix" %% "monix" % "3.4.1"
         )
         .jvmSettings(mimaCheck(false))
 
