@@ -343,7 +343,7 @@ class ClockTest extends Test:
                 for
                     channel  <- Channel.init[Instant](0)
                     task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.offer))
-                    _        <- Loop.repeat(10)(control.advance(1.milli))
+                    _        <- Clock.let(Clock.live)(Async.sleep(5.millis))
                     instants <- Kyo.fill(10)(control.advance(1.milli).andThen(channel.take))
                     _        <- task.interrupt
                     _        <- channel.close
