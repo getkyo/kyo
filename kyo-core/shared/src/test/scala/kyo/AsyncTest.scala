@@ -552,7 +552,7 @@ class AsyncTest extends Test:
                 result <- Async.run(Async.timeout(1.millis)(fiber.get))
                 result <- fiber.getResult
                 _      <- untilTrue(flag.get)
-            yield assert(result.isFailure)
+            yield assert(result.isPanic)
         }
     }
 

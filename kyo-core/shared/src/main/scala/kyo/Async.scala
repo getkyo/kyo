@@ -155,7 +155,7 @@ object Async:
       * @return
       *   A computation that never completes
       */
-    def never[E, A](using Frame): A < Async = Fiber.never[Nothing, A].get
+    def never[A](using Frame): A < Async = Fiber.never[Nothing, A].get
 
     /** Yields control to the scheduler, allowing other fibers to execute.
       *
@@ -782,10 +782,14 @@ object Async:
     def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
         Fiber.fromFuture(f).map(_.get)
 
-    private[kyo] def get[E, A](v: IOPromise[E, A])(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
+    private[kyo] def get[E, A](v: IOPromise[? <: E, ? <: A])(
+        using
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): A < (reduce.SReduced & Async) =
         reduce(use(v)(identity))
 
-    private[kyo] def use[E, A, B, S](v: IOPromise[E, A])(f: A => B < S)(
+    private[kyo] def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(
         using
         reduce: Reducible[Abort[E]],
         frame: Frame
