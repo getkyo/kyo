@@ -107,8 +107,8 @@ class AsyncTest extends Test:
 
     "interrupt" - {
 
-        def loop(ref: AtomicInt): Unit < Async =
-            Async.yieldWith(ref.incrementAndGet.map(_ => loop(ref)))
+        def loop(ref: AtomicInt): Unit < IO =
+            ref.incrementAndGet.map(_ => loop(ref))
 
         def runLoop(started: Latch, done: Latch) =
             Resource.run {
@@ -157,8 +157,8 @@ class AsyncTest extends Test:
         "multiple" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < Async =
-                Async.yieldNow.andThen {
+            def loop(i: Int, s: String): String < IO =
+                IO {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -251,7 +251,7 @@ class AsyncTest extends Test:
 
     "interrupt" in run {
         def loop(ref: AtomicInt): Unit < Async =
-            Async.yieldWith(ref.incrementAndGet.map(_ => loop(ref)))
+            ref.incrementAndGet.map(_ => loop(ref))
 
         def task(started: Latch, done: Latch): Unit < Async =
             Resource.run {
@@ -1377,38 +1377,6 @@ class AsyncTest extends Test:
                 waiters <- fiber.waiters
                 _       <- exit.release
             yield assert(waiters == 1)
-        }
-    }
-
-    "yield" - {
-        "yieldNow suspends and resumes execution" in run {
-            for
-                counter <- AtomicInt.init(0)
-                result  <- Async.yieldNow.andThen(counter.incrementAndGet)
-                count   <- counter.get
-            yield
-                assert(result == 1)
-                assert(count == 1)
-        }
-
-        "yieldWith executes computation after yielding" in run {
-            for
-                counter <- AtomicInt.init(0)
-                result  <- Async.yieldWith(counter.incrementAndGet)
-                count   <- counter.get
-            yield
-                assert(result == 1)
-                assert(count == 1)
-        }
-
-        "stack safety with multiple yields" in run {
-            def loop(i: Int): Int < Async =
-                if i <= 0 then 0
-                else Async.yieldNow.andThen(loop(i - 1).map(_ + 1))
-
-            loop(1000).map { result =>
-                assert(result == 1000)
-            }
         }
     }
 

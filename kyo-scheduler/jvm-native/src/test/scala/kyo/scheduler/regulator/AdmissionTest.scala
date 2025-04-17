@@ -135,7 +135,7 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions {
                 probes += 1
                 if (probes % 2 == 0)
                     timer.currentNanos += jitter * 1000000
-                task.run(0, null)
+                task.run(0, null, Long.MaxValue)
                 ()
             },
             () => timer.currentNanos / 1000000,

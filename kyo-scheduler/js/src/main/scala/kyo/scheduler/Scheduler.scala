@@ -1,5 +1,6 @@
 package kyo.scheduler
 
+import kyo.scheduler.util.Flag
 import org.scalajs.macrotaskexecutor.MacrotaskExecutor
 
 object Scheduler {
@@ -8,11 +9,13 @@ object Scheduler {
 
 class Scheduler {
 
-    private val clock = new InternalClock()
+    private val timeSlice = Flag("timeSliceMs", 10)
+    private val clock     = new InternalClock()
 
     def schedule(t: Task): Unit =
         MacrotaskExecutor.execute { () =>
-            if (t.run(clock.currentMillis(), clock) == Task.Preempted)
+            val now = clock.currentMillis()
+            if (t.run(now, clock, now + timeSlice) == Task.Preempted)
                 schedule(t)
         }
 

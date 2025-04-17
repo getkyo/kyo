@@ -187,7 +187,7 @@ final class Admission(
       */
     final private class ProbeTask extends Task {
         val start = nowMillis.getAsLong()
-        def run(startMillis: Long, clock: InternalClock) = {
+        def run(startMillis: Long, clock: InternalClock, deadline: Long) = {
             // Record the scheduling delay
             measure(nowMillis.getAsLong() - start)
             Task.Done

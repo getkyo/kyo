@@ -72,7 +72,7 @@ class KyoFinagleSchedulerService extends FinagleSchedulerService {
 
                                 val saved = Local.save()
 
-                                def run(startMillis: Long, clock: InternalClock): Task.Result = {
+                                def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
                                     val current = Local.save()
                                     if (current ne saved) Local.restore(saved)
                                     try {
