@@ -141,6 +141,10 @@ class ResourceTest extends Test:
             }
     }
 
+    "empty run" in run {
+        Resource.run("a").map(s => assert(s == "a"))
+    }
+
     "effectful acquireRelease" taggedAs jvmOnly in run {
         val io =
             for
