@@ -341,8 +341,9 @@ class ClockTest extends Test:
         "with time control" in run {
             Clock.withTimeControl { control =>
                 for
-                    channel  <- Channel.init[Instant](10)
+                    channel  <- Channel.init[Instant](0)
                     task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.offer))
+                    _        <- Loop.repeat(10)(control.advance(1.milli))
                     instants <- Kyo.fill(10)(control.advance(1.milli).andThen(channel.take))
                     _        <- task.interrupt
                     _        <- channel.close
