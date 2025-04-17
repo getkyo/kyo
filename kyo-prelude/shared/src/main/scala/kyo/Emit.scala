@@ -177,7 +177,7 @@ object Emit:
           * @return
           *   An isolate that preserves emitted values
           */
-        def merge[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+        def merge[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
             new Isolate.Stateful[Emit[V], Any]:
 
                 type State = Chunk[V]
@@ -210,7 +210,7 @@ object Emit:
           * @return
           *   An isolate that discards emitted values
           */
-        def discard[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+        def discard[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
             new Isolate.Stateful[Emit[V], Any]:
 
                 type State = Chunk[V]

@@ -148,6 +148,8 @@ object Env:
     given isolate[V]: Isolate.Contextual[Env[V], Any] = cachedIsolate.asInstanceOf[Isolate.Contextual[Env[V], Any]]
 
     given eliminateEnv: Reducible.Eliminable[Env[Any]] with {}
-    private inline def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
+
+    private val cachedErasedTag = Tag.deriveDynamic[Env[Any]]
+    private def erasedTag[R]    = cachedErasedTag.asInstanceOf[Tag[Env[R]]]
 
 end Env

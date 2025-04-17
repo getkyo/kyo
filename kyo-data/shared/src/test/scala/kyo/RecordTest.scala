@@ -219,13 +219,13 @@ class RecordTest extends Test:
         "type tag behavior" in {
             val record = "num" ~ 42
             val field  = record.fields.head
-            assert(field.tag == Tag[Int])
+            assert(field.tag =:= Tag[Int])
         }
 
         "handle generic types" in {
             val record = "list" ~ List(1, 2, 3)
             val field  = record.fields.head
-            assert(field.tag == Tag[List[Int]])
+            assert(field.tag =:= Tag[List[Int]])
         }
 
         "handle recursive types" in {

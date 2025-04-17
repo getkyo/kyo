@@ -8,7 +8,7 @@ opaque type Text >: String = String | Op
 object Text:
 
     /** Creates a Tag instance for Text type */
-    given Tag[Text] = Tag.fromRaw("kyo.Text")
+    given Tag[Text] = Tag[String | Op]
 
     /** Creates a new Text from a String
       *

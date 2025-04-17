@@ -40,9 +40,6 @@ opaque type Parse <: (Var[Parse.State] & Choice & Abort[ParseFailed]) = Var[Pars
 
 object Parse:
 
-    // avoids splicing the derived tag on each use
-    private given Tag[Var[State]] = Tag[Var[State]]
-
     /** Aspect that modifies how text is read and parsed. This is the core parsing aspect that other parsing operations build upon. It takes
       * the current text input and a parsing function, allowing for preprocessing of input or postprocessing of results.
       *

@@ -28,10 +28,10 @@ class KyoTest extends Test:
 
     "toString" in run {
         assert(TestEffect1(1).map(_ + 1).toString() ==
-            "Kyo(Tag[kyo.KyoTest.TestEffect1], Input(1), KyoTest.scala:30:41, assert(TestEffect1(1).map(_ + 1))")
+            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:30:41, assert(TestEffect1(1).map(_ + 1))")
         assert(
             TestEffect1(1).map(_ + 1).map(_ + 2).toString() ==
-                "Kyo(Tag[kyo.KyoTest.TestEffect1], Input(1), KyoTest.scala:33:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
+                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:33:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
         )
     }
 

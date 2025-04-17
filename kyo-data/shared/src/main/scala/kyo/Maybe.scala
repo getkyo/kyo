@@ -2,6 +2,7 @@ package kyo
 
 import Maybe.*
 import Maybe.internal.*
+import scala.language.implicitConversions
 
 /** Represents an optional value that can be either Present or Absent.
   *
@@ -16,7 +17,9 @@ export Maybe.Present
 /** Companion object for Maybe type */
 object Maybe:
     inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
-    given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
+    implicit def toIterableOnce[A](v: Maybe[A]): IterableOnce[A]                       = v.iterator
+
+    inline given [A]: Tag[Maybe[A]] = Tag[Absent | Present[A]]
 
     given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with
         given CanEqual[Absent, MaybeA] = CanEqual.derived
@@ -79,6 +82,8 @@ object Maybe:
     /** Represents a defined value in a Maybe. */
     opaque type Present[+A] = A | PresentAbsent
     object Present:
+        inline given [A]: Tag[Present[A]] = Tag[A | PresentAbsent]
+
         /** Creates a Present instance.
           *
           * @param v
