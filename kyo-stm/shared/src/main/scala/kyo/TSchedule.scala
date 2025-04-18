@@ -12,8 +12,6 @@ opaque type TSchedule = TRef[Maybe[(Duration, Schedule)]]
 
 object TSchedule:
 
-    given Flat[TSchedule] = Flat.derive[TRef[Maybe[(Duration, Schedule)]]]
-
     /** Creates a new TSchedule with the given schedule.
       *
       * @param schedule

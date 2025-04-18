@@ -188,7 +188,7 @@ object Abort:
       */
     inline def runWith[E](
         using Frame
-    )[A: Flat, S, ER, B, S2](
+    )[A, S, ER, B, S2](
         v: => A < (Abort[E | ER] & S)
     )(
         continue: Result[E, A] => B < S2
@@ -240,7 +240,7 @@ object Abort:
       */
     def run[E](
         using Frame
-    )[A: Flat, S, ER](v: => A < (Abort[E | ER] & S))(
+    )[A, S, ER](v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
         reduce: Reducible[Abort[ER]]
@@ -262,10 +262,8 @@ object Abort:
       */
     def runPartial[E](
         using Frame
-    )[A: Flat, S, ER](v: => A < (Abort[E | ER] & S))(
-        using
-        ct: SafeClassTag[E],
-        f2: Flat[Result.Partial[E, A]]
+    )[A, S, ER](v: => A < (Abort[E | ER] & S))(
+        using ct: SafeClassTag[E]
     ): Result.Partial[E, A] < (S & Abort[ER]) =
         Abort.runWith[E](v):
             case panic: Panic                    => Abort.error(panic)
@@ -286,9 +284,7 @@ object Abort:
       */
     def runPartialOrThrow[E, A, S](v: => A < (Abort[E] & S))(
         using
-        fl: Flat[A],
         ct: SafeClassTag[E],
-        f2: Flat[Result.Partial[E, A]],
         frame: Frame
     ): Result.Partial[E, A] < S =
         Abort.runWith[E](v):
@@ -309,7 +305,7 @@ object Abort:
       */
     def recover[E](
         using Frame
-    )[A: Flat, B: Flat, S, ER](onFail: E => B < S)(v: => A < (Abort[E | ER] & S))(
+    )[A, B, S, ER](onFail: E => B < S)(v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
         reduce: Reducible[Abort[ER]]
@@ -335,7 +331,7 @@ object Abort:
       */
     def recover[E](
         using Frame
-    )[A: Flat, B: Flat, S, ER](onFail: E => B < S, onPanic: Throwable => B < S)(v: => A < (Abort[E | ER] & S))(
+    )[A, B, S, ER](onFail: E => B < S, onPanic: Throwable => B < S)(v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
         reduce: Reducible[Abort[ER]]
@@ -357,7 +353,6 @@ object Abort:
       */
     def recoverOrThrow[A, E, B, S](onFail: E => B < S)(v: => A < (Abort[E] & S))(
         using
-        fl: Flat[A],
         frame: Frame,
         ct: SafeClassTag[E]
     ): (A | B) < S =
@@ -382,7 +377,7 @@ object Abort:
       */
     def fold[E](
         using Frame
-    )[A: Flat, B: Flat, S, ER](
+    )[A, B, S, ER](
         onSuccess: A => B < S,
         onFail: E => B < S
     )(v: => A < (Abort[E | ER] & S))(using ct: SafeClassTag[E]): B < (S & Abort[ER]) =
@@ -408,7 +403,7 @@ object Abort:
       */
     def fold[E](
         using Frame
-    )[A: Flat, B: Flat, S, ER](
+    )[A, B, S, ER](
         onSuccess: A => B < S,
         onFail: E => B < S,
         onPanic: Throwable => B < S
@@ -438,7 +433,6 @@ object Abort:
       */
     def foldOrThrow[A, B, E, S](onSuccess: A => B < S, onFail: E => B < S)(v: => A < (Abort[E] & S))(
         using
-        fl: Flat[A],
         frame: Frame,
         ct: SafeClassTag[E]
     ): B < S =
@@ -557,7 +551,7 @@ object Abort:
           */
         inline def run[V <: Singleton](
             using Frame
-        )[A: Flat, S](v: => A < (Abort[V] & S)): Result[V, A] < S =
+        )[A, S](v: => A < (Abort[V] & S)): Result[V, A] < S =
             Abort.run(v)
 
     end literal

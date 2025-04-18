@@ -26,7 +26,7 @@ object Requests:
           * @return
           *   The response wrapped in an effect
           */
-        def send[A: Flat](r: Request[A, Any]): Response[A] < (Async & Abort[FailedRequest])
+        def send[A](r: Request[A, Any]): Response[A] < (Async & Abort[FailedRequest])
 
         /** Wraps the Backend with a meter
           *
@@ -37,7 +37,7 @@ object Requests:
           */
         def withMeter(m: Meter)(using Frame): Backend =
             new Backend:
-                def send[A: Flat](r: Request[A, Any]) =
+                def send[A](r: Request[A, Any]) =
                     Abort.run(m.run(self.send(r))).map(r => Abort.get(r.mapFailure(FailedRequest(_))))
     end Backend
 

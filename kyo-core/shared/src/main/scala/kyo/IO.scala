@@ -109,7 +109,7 @@ object IO:
           * @throws Throwable
           *   If the evaluation results in an error
           */
-        def evalOrThrow[A: Flat](v: A < (IO & Abort[Throwable]))(using Frame, AllowUnsafe): A =
+        def evalOrThrow[A](v: A < (IO & Abort[Throwable]))(using Frame, AllowUnsafe): A =
             Abort.run(v).eval.getOrThrow
 
         /** Runs an IO effect, evaluating it and its side effects.
@@ -131,7 +131,7 @@ object IO:
           * @return
           *   The result of the IO effect after executing its side effects.
           */
-        def run[E, A: Flat, S](v: => A < (IO & Abort[E] & S))(using Frame, AllowUnsafe): A < (S & Abort[E]) =
+        def run[E, A, S](v: => A < (IO & Abort[E] & S))(using Frame, AllowUnsafe): A < (S & Abort[E]) =
             v
 
     end Unsafe

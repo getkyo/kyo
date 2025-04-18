@@ -34,8 +34,6 @@ export Memory.Arena
 
 object Memory:
 
-    given [A]: Flat[Memory[A]] = Flat.derive
-
     /** Initializes a new memory segment of the specified size for type A.
       *
       * @tparam A
@@ -190,7 +188,7 @@ object Memory:
           * @return
           *   The result of the operation
           */
-        def run[A: Flat, S](f: A < (Arena & S))(using Frame): A < (IO & S) =
+        def run[A, S](f: A < (Arena & S))(using Frame): A < (IO & S) =
             IO {
                 val arena = JArena.ofShared()
                 IO.ensure(IO(arena.close))(Env.run(arena)(f))

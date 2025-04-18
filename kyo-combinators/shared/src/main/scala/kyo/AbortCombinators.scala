@@ -16,7 +16,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def result(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         fr: Frame
     ): Result[E, A] < S =
         Abort.run[E](effect)
@@ -29,7 +28,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def resultPartial(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         fr: Frame
     ): Result.Partial[E, A] < (Abort[Nothing] & S) =
         Abort.runPartial(effect)
@@ -42,7 +40,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def resultPartialOrThrow(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         fr: Frame
     ): Result.Partial[E, A] < S =
         Abort.runPartialOrThrow(effect)
@@ -58,7 +55,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         ct: SafeClassTag[E],
         ct1: SafeClassTag[E1],
-        fl: Flat[A],
         fr: Frame
     ): A < (Abort[E1] & S & S1) =
         effect.recover(e => fn(e).map(Kyo.fail))
@@ -73,7 +69,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def abortToChoiceDrop(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         fr: Frame
     ): A < (S & Choice) =
         effect.result.map(e => Choice.get(e.foldError(List(_), _ => Nil)))
@@ -86,7 +81,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def abortToAbsent(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         fr: Frame
     ): A < (S & Abort[Absent]) =
         effect.result.map {
@@ -105,7 +99,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         ng: NotGiven[E <:< Throwable],
         ct: SafeClassTag[E],
-        fl: Flat[A],
         fr: Frame
     ): A < (S & Abort[Throwable]) =
         effect.result.map {
@@ -123,7 +116,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def recover[A1 >: A, S1](fn: E => A1 < S1)(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         fr: Frame
     ): A1 < (S & S1 & Abort[Nothing]) =
         effect.result.map {
@@ -152,8 +144,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     )(
         using
         ct: SafeClassTag[E],
-        fl1: Flat[A],
-        fl2: Flat[B],
         fr: Frame
     ): B < (Abort[Nothing] & S & S1) =
         Abort.fold[E](onSuccess, onFail)(effect)
@@ -181,8 +171,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     )(
         using
         ct: SafeClassTag[E],
-        fl1: Flat[A],
-        fl2: Flat[B],
         fr: Frame
     ): B < (S & S1) =
         Abort.fold[E](onSuccess, onFail, onPanic)(effect)
@@ -207,8 +195,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     )(
         using
         ct: SafeClassTag[E],
-        fl1: Flat[A],
-        fl2: Flat[B],
         fr: Frame
     ): B < (S & S1) =
         Abort.foldOrThrow(onSuccess, onFail)(effect)
@@ -221,7 +207,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def recoverSome[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         frame: Frame
     ): A1 < (S & S1 & Abort[E]) =
         effect.result.map {
@@ -241,7 +226,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         cta: SafeClassTag[A],
         cte: SafeClassTag[E],
-        fl: Flat[A],
         frame: Frame
     ): E < (S & Abort[A]) =
         val handled: Result[E, A] < S = effect.result
@@ -256,7 +240,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def orPanic(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         frame: Frame
     ): A < (Abort[Nothing] & S) =
         Abort.run[E](effect).map:
@@ -274,7 +257,6 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def orThrow(
         using
         ct: SafeClassTag[E],
-        fl: Flat[A],
         frame: Frame
     ): A < S =
         Abort.run[E](effect).map:
@@ -291,7 +273,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and Abort[E] effects
       */
-    def retry(schedule: Schedule)(using Flat[A], SafeClassTag[E], Frame): A < (S & Async & Abort[E]) =
+    def retry(schedule: Schedule)(using SafeClassTag[E], Frame): A < (S & Async & Abort[E]) =
         Retry[E](schedule)(effect)
 
     /** Performs this computation repeatedly with a limit in case of failures.
@@ -301,7 +283,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and Abort[E] effects
       */
-    def retry(n: Int)(using Flat[A], SafeClassTag[E], Frame): A < (S & Abort[E]) =
+    def retry(n: Int)(using SafeClassTag[E], Frame): A < (S & Abort[E]) =
         Loop(n): i =>
             Abort.fold[E](
                 (result: A) => Loop.done[Int, A](result),
@@ -320,7 +302,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and no Abort[E]
       */
-    def retryForever(using Flat[A], SafeClassTag[E], Frame): A < S =
+    def retryForever(using SafeClassTag[E], Frame): A < S =
         Loop(()): _ =>
             Abort.fold[E](
                 (result: A) => Loop.done[Unit, A](result),
@@ -341,7 +323,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
         reduce: Reducible[Abort[ER]],
-        flat: Flat[A],
         frame: Frame
     ): Result[E1, A] < (S & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
@@ -355,7 +336,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
-        fl: Flat[A],
         frame: Frame
     ): Result.Partial[E1, A] < (S & Abort[ER]) =
         Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
@@ -373,7 +353,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ct: SafeClassTag[E1],
         ct1: SafeClassTag[E2],
         reduce: Reducible[Abort[ER]],
-        fl: Flat[A],
         fr: Frame
     ): A < (Abort[E2] & reduce.SReduced & S & S1) =
         recover(e => fn(e).map(Kyo.fail))
@@ -388,7 +367,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
         ct: SafeClassTag[E1],
-        f: Flat[A],
         frame: Frame
     ): [A1 >: A, S1] => (E1 => A1 < S1) => A1 < (S & S1 & reduce.SReduced) =
         [A1 >: A, S1] =>
@@ -420,8 +398,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ct: SafeClassTag[E1],
         ev: E => E1 | ER,
-        fl1: Flat[A],
-        fl2: Flat[B],
         fr: Frame
     ): B < (S & S1 & Abort[ER]) =
         Abort.fold[E1](onSuccess, onFail)(effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
@@ -451,8 +427,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ct: SafeClassTag[E1],
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
-        fl1: Flat[A],
-        fl2: Flat[B],
         fr: Frame
     ): B < (S & S1 & reduce.SReduced) =
         Abort.fold[E1](onSuccess, onFail, onPanic)(effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
@@ -466,7 +440,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
-        f: Flat[A],
         frame: Frame
     ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Abort[E]) =
         [A1 >: A, S1] =>
@@ -487,7 +460,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
         reduce: Reducible[Abort[ER]],
-        flat: Flat[A],
         frame: Frame
     ): A < (S & reduce.SReduced & Choice) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.foldError(List(_), _ => Nil)))
@@ -502,7 +474,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
         reduce: Reducible[Abort[ER]],
-        flat: Flat[A],
         frame: Frame
     ): A < (S & reduce.SReduced & Abort[Absent]) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
@@ -523,7 +494,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
         reduce: Reducible[Abort[ER]],
-        fl: Flat[A],
         fr: Frame
     ): A < (S & Abort[Throwable] & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
@@ -543,7 +513,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
         ct: SafeClassTag[E1],
-        f: Flat[A],
         frame: Frame
     ): E1 < (S & reduce.SReduced & Abort[A]) =
         val handled = Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
@@ -559,7 +528,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
-        fl: Flat[A],
         frame: Frame
     ): A < (S & Abort[ER]) =
         Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
@@ -578,7 +546,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     def retry[ER](schedule: Schedule)(
         using
         E => E1 | ER,
-        Flat[A],
         SafeClassTag[E1],
         Frame
     ): A < (S & Async & Abort[E1 | ER]) =
@@ -594,7 +561,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     def retry[ER](n: Int)(
         using
         E => E1 | ER,
-        Flat[A],
         SafeClassTag[E1],
         Frame
     ): A < (S & Abort[E1 | ER]) =
@@ -621,7 +587,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     def retryForever[ER](
         using
         E => E1 | ER,
-        Flat[A],
         SafeClassTag[E1],
         SafeClassTag[E1 | ER],
         Frame
