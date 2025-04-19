@@ -384,7 +384,7 @@ object Actor:
       * @return
       *   A new Actor instance in an async effect
       */
-    def run[E, A: Tag, B: Flat, S](
+    def run[E, A: Tag, B, S](
         using Isolate.Contextual[S, IO]
     )(behavior: B < (Context[A] & Abort[E] & S))(
         using
@@ -424,7 +424,7 @@ object Actor:
       * @return
       *   A new Actor instance in an async effect
       */
-    def run[E, A: Tag, B: Flat, S](
+    def run[E, A: Tag, B, S](
         using Isolate.Contextual[S, IO]
     )(capacity: Int)(behavior: B < (Context[A] & Abort[E] & S))(
         using

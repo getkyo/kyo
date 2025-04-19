@@ -37,7 +37,7 @@ object Cats:
       * @return
       *   A cats.effect.IO that, when run, will execute the Kyo effect
       */
-    def run[A: Flat](v: => A < (Abort[Throwable] & Async))(using frame: Frame): CatsIO[A] =
+    def run[A](v: => A < (Abort[Throwable] & Async))(using frame: Frame): CatsIO[A] =
         CatsIO.defer {
             import AllowUnsafe.embrace.danger
             Async.run(v).map { fiber =>

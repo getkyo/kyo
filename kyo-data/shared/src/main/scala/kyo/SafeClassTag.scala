@@ -22,7 +22,6 @@ opaque type SafeClassTag[A] >: SafeClassTag.Element = Class[?] | SafeClassTag.El
 
 object SafeClassTag:
     inline given [A, B]: CanEqual[SafeClassTag[A], SafeClassTag[B]] = CanEqual.derived
-    inline given [A]: Flat[SafeClassTag[A]]                         = Flat.unsafe.bypass
 
     sealed trait Element
 

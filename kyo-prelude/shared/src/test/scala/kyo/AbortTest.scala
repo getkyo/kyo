@@ -1287,4 +1287,47 @@ class AbortTest extends Test:
         }
     }
 
+    "effect nesting" - {
+        "basic nesting with flatten and recovery" in {
+            val success = Kyo.lift(5: Int < Abort[String])
+            val failure = Kyo.lift(Abort.fail("outer failure"))
+
+            val comp = Abort.run(success.flatten).map(_.foldError(_ == 5, _ => false))
+            assert(comp.eval)
+
+            val comp2 = Abort.run(failure.flatten).map(_.foldError(_ => false, _ == Result.fail("outer failure")))
+            assert(comp2.eval)
+        }
+
+        "multi-level" in {
+
+            val deep   = Kyo.lift(Abort.fail(42))
+            val result = Abort.run[Int](Abort.run[String](deep.flatten.flatten))
+            assert(result.eval.foldError(_ => false, _ == Result.fail(42)))
+
+            val stringError = Kyo.lift(Abort.fail("error"): Int < Abort[String])
+            val intError    = Kyo.lift(Abort.fail(404): Int < Abort[Int])
+
+            assert(Abort.run[String](stringError.flatten).eval.foldError(_ => false, _ == Result.fail("error")))
+            assert(Abort.run[Int](intError.flatten).eval.foldError(_ => false, _ == Result.fail(404)))
+        }
+
+        "with other effects" in {
+            val local = Local.init("default")
+            val combined = Kyo.lift {
+                local.let("custom") {
+                    Choice.get(Seq(1, 2)).flatMap { n =>
+                        if n % 2 == 0 then n * 10
+                        else Abort.fail(s"odd: $n")
+                    }
+                }
+            }
+
+            val results = Choice.run(Abort.run(combined.flatten)).eval
+            assert(results.length == 2)
+            assert(results(0) == Result.fail("odd: 1"))
+            assert(results(1) == Result.succeed(20))
+        }
+    }
+
 end AbortTest

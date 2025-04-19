@@ -3101,7 +3101,7 @@ val c: String < (Async & Abort[FailedRequest]) =
 // Implementing a custom mock backend
 val backend: Backend =
     new Backend:
-        def send[T: Flat](r: Request[T, Any]) =
+        def send[T](r: Request[T, Any]) =
             Response.ok(Right("mocked")).asInstanceOf[Response[T]]
 
 // Use the custom backend
@@ -3347,7 +3347,7 @@ val api = graphQL(RootResolver(Query(42)))
 
 // runner for our CustomEffects
 val runner = new Runner[CustomEffects]:
-    def apply[T: Flat](v: T < CustomEffects): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
+    def apply[T](v: T < CustomEffects): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
 
 val d = Resolvers.run(runner) { Resolvers.get(api) }
 ```
@@ -3355,51 +3355,6 @@ val d = Resolvers.run(runner) { Resolvers.get(api) }
 ### AIs: LLM Abstractions via OpenAI
 
 Coming soon..
-
-## Restrictions
-
-### Nested Effects
-
-In addition recursion, Kyo's unboxed representation of computations in certain scenario introduces a restriction where it's not possible to handle effects of computations with nested effects like `Int < IO < IO`.
-
-```scala
-import kyo.*
-
-// An example computation with
-// nested effects
-val a: Int < IO < Abort[Absent] =
-    Abort.get(Some(IO(1)))
-
-// Can't handle a effects of a
-// computation with nested effects
-
-// Abort.run(a)
-// Compilation failure:
-//   Method doesn't accept nested Kyo computations.
-//   Cannot prove 'scala.Int < kyo.IO' isn't nested. This error can be reported an unsupported pending effect is passed to a method. If that's not the case, provide an implicit evidence 'kyo.Flat[scala.Int < kyo.IO]'.
-
-// Use `flatten` before handling
-Abort.run(a.flatten)
-```
-
-Kyo performs checks at compilation time to ensure that nested effects are not used. This includes generic methods where the type system cannot confirm whether the computation is nested:
-
-```scala
-import kyo.*
-
-// def test[T](v: T < Abort[Absent]) =
-//   Abort.run(v)
-// Compilation failure:
-//   Method doesn't accept nested Kyo computations.
-//   Cannot prove 'T' isn't nested. This error can be reported an unsupported pending effect is passed to a method. If that's not the case, provide an implicit evidence 'kyo.Flat[T]'.
-
-// It's possible to provide an implicit
-// evidence of `Flat` to resolve
-def test[T](v: T < Abort[Absent])(using Flat[T]) =
-    Abort.run(v)
-```
-
-All APIs that trigger effect handling have this restriction, which includes not only methods that handle effects directly but also methods that use effect handling internally.
 
 ## ZIO-like Combinators
 

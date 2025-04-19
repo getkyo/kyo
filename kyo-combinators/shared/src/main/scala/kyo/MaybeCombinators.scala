@@ -13,7 +13,7 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Absent] effect handled
       */
-    def maybe(using Flat[A], Frame): Maybe[A] < S =
+    def maybe(using Frame): Maybe[A] < S =
         Abort.run[Absent](effect).map {
             case Result.Failure(_) => Absent
             case Result.Panic(e)   => throw e
@@ -25,7 +25,7 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Choice
       */
-    def absentToChoice(using Flat[A], Frame): A < (S & Choice) =
+    def absentToChoice(using Frame): A < (S & Choice) =
         effect.forAbort[Absent].toChoiceDrop
 
     /** Handles Abort[Absent], aborting in Absent cases with NoSuchElementException exceptions
@@ -33,7 +33,7 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
       * @return
       *   A computation that aborts with Maybe.Empty when its Choice effect is reduced to an empty sequence
       */
-    def absentToThrowable(using Flat[A], Frame): A < (S & Abort[NoSuchElementException]) =
+    def absentToThrowable(using Frame): A < (S & Abort[NoSuchElementException]) =
         for
             res <- effect.forAbort[Absent].result
         yield res match
@@ -46,7 +46,7 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Abort[E]
       */
-    def absentToFailure(failure: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
+    def absentToFailure(failure: => E)(using Frame): A < (S & Abort[E]) =
         for
             res <- effect.forAbort[Absent].result
         yield res match

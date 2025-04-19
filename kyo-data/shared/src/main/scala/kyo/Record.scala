@@ -143,8 +143,6 @@ object Record:
             }.toMap)
     end StageOps
 
-    given [Fields]: Flat[Record[Fields]] = Flat.unsafe.bypass
-
     final infix class ~[Name <: String, Value] private () extends Serializable
 
     object `~`:

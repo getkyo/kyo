@@ -35,7 +35,7 @@ object Browser:
       * @return
       *   The result of the operations
       */
-    def run[A: Flat, S](v: A < (Browser & S))(using Frame): A < (IO & S) =
+    def run[A, S](v: A < (Browser & S))(using Frame): A < (IO & S) =
         run(defaultTimeout)(v)
 
     /** Runs browser operations with a specified timeout.
@@ -47,7 +47,7 @@ object Browser:
       * @return
       *   The result of the operations
       */
-    def run[A: Flat, S](timeout: Duration)(v: A < (Browser & S))(using Frame): A < (IO & S) =
+    def run[A, S](timeout: Duration)(v: A < (Browser & S))(using Frame): A < (IO & S) =
         IO {
             val playwright = Playwright.create()
             IO.ensure(playwright.close) {
@@ -66,7 +66,7 @@ object Browser:
       * @return
       *   The result of the operations
       */
-    def run[A: Flat, S](page: Page, timeout: Duration = defaultTimeout)(v: A < (Browser & S))(using Frame): A < (IO & S) =
+    def run[A, S](page: Page, timeout: Duration = defaultTimeout)(v: A < (Browser & S))(using Frame): A < (IO & S) =
         IO {
             page.setDefaultTimeout(timeout.toMillis.toDouble)
             page.setDefaultNavigationTimeout(timeout.toMillis.toDouble)

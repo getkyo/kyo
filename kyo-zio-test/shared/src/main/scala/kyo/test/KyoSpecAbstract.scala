@@ -21,7 +21,7 @@ abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
 
     def spec: Spec[Environment, Any]
 
-    protected def run[In: Flat](v: => In < S)(using Frame): ZIO[Environment, Throwable, In]
+    protected def run[In](v: => In < S)(using Frame): ZIO[Environment, Throwable, In]
 
     final def test[In](label: String)(assertion: => In)(using
         tc: TestConstructor[Nothing, In],
@@ -37,7 +37,7 @@ abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
     ): Spec[sc.OutEnvironment, sc.OutError] =
         zio.test.suite(label)(specs*)
 
-    given KyoTestConstructor[S1 >: S, A <: TestResult: Flat](using Frame): TestConstructor.WithOut[Any, A < S1, Spec[Any, Throwable]] =
+    given KyoTestConstructor[S1 >: S, A <: TestResult](using Frame): TestConstructor.WithOut[Any, A < S1, Spec[Any, Throwable]] =
         new TestConstructor[Any, A < S1]:
             type Out = Spec[Any, Throwable]
             def apply(
@@ -50,7 +50,7 @@ abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
                         .annotate(trace, sl :: Nil)
                 )
 
-    given KyoCheckConstructor[S1 >: S, A <: TestResult: Flat](using Frame): CheckConstructor.WithOut[Any, A < S1, Any, Throwable] =
+    given KyoCheckConstructor[S1 >: S, A <: TestResult](using Frame): CheckConstructor.WithOut[Any, A < S1, Any, Throwable] =
         new CheckConstructor[Any, A < S1]:
             type OutEnvironment = Any
             type OutError       = Throwable

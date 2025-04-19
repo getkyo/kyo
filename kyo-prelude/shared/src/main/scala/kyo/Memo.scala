@@ -55,7 +55,7 @@ object Memo:
             }
     end apply
 
-    def run[A: Flat, S](v: A < (Memo & S))(using Frame): A < S =
+    def run[A, S](v: A < (Memo & S))(using Frame): A < S =
         Var.run(empty)(v)
 
     /** Default isolate that combines memoization caches.

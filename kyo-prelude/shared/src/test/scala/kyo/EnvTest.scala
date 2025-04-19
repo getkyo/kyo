@@ -408,4 +408,35 @@ class EnvTest extends Test:
         }
     }
 
+    "effect nesting" - {
+        case class Config(value: String)
+        case class User(name: String)
+
+        "nested environment access patterns" in {
+            val outerAccess = Env.run(Config("outer")) {
+                Kyo.lift(Env.get[Config]).flatten
+            }
+            assert(outerAccess.eval.value == "outer")
+
+            val shadowed = Env.run(Config("outer")) {
+                Env.run(Config("inner")) {
+                    Kyo.lift(Env.get[Config].map(_.value)).flatten
+                }
+            }
+            assert(shadowed.eval == "inner")
+        }
+
+        "transforming nested environment values" in {
+            val nested = Env.get[User].map(user =>
+                Kyo.lift(Env.get[Config].map(config => s"${user.name}@${config.value}"))
+            )
+
+            val result = nested.flatten.handle(Env.run(Config("example.com"))).handle(Env.run(User("alice")))
+            assert(result.eval == "alice@example.com")
+
+            val result2 = nested.map(_.handle(Env.run(Config("example.ai")))).handle(Env.run(User("josh")))
+            assert(result2.eval == "josh@example.ai")
+        }
+    }
+
 end EnvTest

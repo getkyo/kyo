@@ -9,7 +9,7 @@ import scala.concurrent.Future
 
 class SafepointTest extends Test:
 
-    def fork[A: Flat](f: => A < Any): A < Any =
+    def fork[A](f: => A < Any): A < Any =
         Effect.defer {
             val future = Future(f.eval)
             Await.result(future, timeout.toScala): A

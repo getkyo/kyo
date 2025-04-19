@@ -37,11 +37,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that can be completed by the given register function
       */
-    def async[A](register: (A < Async => Unit) => Any < Async)(
-        using
-        Flat[A],
-        Frame
-    ): A < Async =
+    def async[A](register: (A < Async => Unit) => Any < Async)(using Frame): A < Async =
         for
             promise <- Promise.init[Nothing, A]
             registerFn = (eff: A < Async) =>
@@ -62,7 +58,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles any exceptions that occur
       */
-    def attempt[A, S](effect: => A < S)(using Flat[A], Frame): A < (S & Abort[Throwable]) =
+    def attempt[A, S](effect: => A < S)(using Frame): A < (S & Abort[Throwable]) =
         Abort.catching[Throwable](effect)
 
     /** Emits a value
@@ -96,9 +92,7 @@ extension (kyoObject: Kyo.type)
       *   A new sequence with elements collected using the function
       */
     inline def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
-        using
-        flat: Flat[A1],
-        frame: Frame
+        using frame: Frame
     ): Seq[A1] < (Abort[E] & Async & Ctx) =
         Async.collectAll[E, A1, Ctx](sequence.map(useElement))
 
@@ -112,9 +106,7 @@ extension (kyoObject: Kyo.type)
       *   Discards the results of the function application and returns Unit
       */
     inline def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
-        using
-        flat: Flat[A1],
-        frame: Frame
+        using frame: Frame
     ): Unit < (Abort[E] & Async & Ctx) =
         foreachPar(sequence)(useElement).unit
 
@@ -175,7 +167,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Future to Async.
       */
-    def fromFuture[A: Flat](future: => Future[A])(using Frame): A < (Async & Abort[Throwable]) =
+    def fromFuture[A](future: => Future[A])(using Frame): A < (Async & Abort[Throwable]) =
         Async.fromFuture(future)
 
     /** Creates an effect from a Promise[A] and handles the Promise to Async.
@@ -185,7 +177,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Promise to Async.
       */
-    def fromPromiseScala[A: Flat](promise: => scala.concurrent.Promise[A])(using Frame): A < (Async & Abort[Throwable]) =
+    def fromPromiseScala[A](promise: => scala.concurrent.Promise[A])(using Frame): A < (Async & Abort[Throwable]) =
         fromFuture(promise.future)
 
     /** Creates an effect from a sequence and handles the sequence to Choice.
@@ -338,7 +330,6 @@ extension (kyoObject: Kyo.type)
         using
         reduce: Reducible[Env[ER]],
         t: Tag[E],
-        fl: Flat[A],
         frame: Frame
     ): A < (SA & reduce.SReduced) =
         Env.run(dependency)(effect)
@@ -401,10 +392,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that suspends the given effect and handles any exceptions that occur to Abort[Throwable]
       */
-    def suspendAttempt[A, S](effect: => A < S)(using
-        Flat[A],
-        Frame
-    ): A < (S & IO & Abort[Throwable]) =
+    def suspendAttempt[A, S](effect: => A < S)(using Frame): A < (S & IO & Abort[Throwable]) =
         IO(Abort.catching[Throwable](effect))
 
     /** Traverses a sequence of effects and collects the results.
@@ -436,7 +424,7 @@ extension (kyoObject: Kyo.type)
       */
     def traversePar[A](
         sequence: => Seq[A < Async]
-    )(using Flat[A], Frame): Seq[A] < Async =
+    )(using Frame): Seq[A] < Async =
         foreachPar(sequence)(identity)
 
     /** Traverses a sequence of effects in parallel and discards the results.
@@ -448,6 +436,6 @@ extension (kyoObject: Kyo.type)
       */
     def traverseParDiscard[A](
         sequence: => Seq[A < Async]
-    )(using Flat[A], Frame): Unit < Async =
+    )(using Frame): Unit < Async =
         foreachPar(sequence)(identity).unit
 end extension

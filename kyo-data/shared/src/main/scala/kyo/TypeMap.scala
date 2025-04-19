@@ -12,7 +12,6 @@ import scala.collection.immutable.TreeSeqMap
 opaque type TypeMap[+A] = TreeSeqMap[Tag[Any], Any]
 
 object TypeMap:
-    inline given [A]: Flat[TypeMap[A]] = Flat.unsafe.bypass
 
     extension [A](self: TypeMap[A])
 

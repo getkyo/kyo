@@ -423,7 +423,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatWithDelay[E, A: Flat, S](
+    def repeatWithDelay[E, A, S](
         startAfter: Duration,
         delay: Duration,
         state: A
@@ -457,7 +457,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatWithDelay[E, A: Flat, S](
+    def repeatWithDelay[E, A, S](
         delaySchedule: Schedule,
         state: A
     )(
@@ -525,7 +525,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatAtInterval[E, A: Flat, S](
+    def repeatAtInterval[E, A, S](
         startAfter: Duration,
         interval: Duration,
         state: A
@@ -559,7 +559,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatAtInterval[E, A: Flat, S](
+    def repeatAtInterval[E, A, S](
         intervalSchedule: Schedule,
         state: A
     )(

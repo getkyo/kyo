@@ -12,7 +12,7 @@ import Result.Error
 abstract class KyoApp extends KyoAppPlatformSpecific:
     override def timeout: Duration = Duration.Infinity
 
-    override protected def handle[A: Flat](v: A < (Async & Resource & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
+    override protected def handle[A](v: A < (Async & Resource & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
         Resource.run(v)
     end handle
 end KyoApp
@@ -29,7 +29,7 @@ object KyoApp:
     abstract class Base[S]:
         protected def timeout: Duration
 
-        protected def handle[A: Flat](v: A < S)(using Frame): A < (Async & Abort[Throwable])
+        protected def handle[A](v: A < S)(using Frame): A < (Async & Abort[Throwable])
 
         final protected def args: Array[String] = _args
 
@@ -42,7 +42,7 @@ object KyoApp:
             for proc <- initCode do proc()
         end main
 
-        protected def run[A: Flat](v: => A < S)(using Frame): Unit
+        protected def run[A](v: => A < S)(using Frame): Unit
 
         protected def exit(code: Int): Unit = kernel.Platform.exit(code)
 
@@ -67,14 +67,12 @@ object KyoApp:
           *   The maximum duration to wait for the effect to complete.
           * @param v
           *   The effect to run.
-          * @param ev
-          *   Evidence that A is Flat.
           * @param frame
           *   The implicit Frame.
           * @return
           *   A Result containing either the computed value or a failure.
           */
-        def runAndBlock[A: Flat](timeout: Duration)(
+        def runAndBlock[A](timeout: Duration)(
             v: A < (Async & Resource & Abort[Throwable])
         )(using Frame, AllowUnsafe): Result[Throwable, A] =
             Abort.run(IO.Unsafe.run(Async.runAndBlock(timeout)(Resource.run(v)))).eval

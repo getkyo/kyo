@@ -10,8 +10,6 @@ opaque type TChunk[A] = TRef[Chunk[A]]
 
 object TChunk:
 
-    given [A]: Flat[TChunk[A]] = Flat.derive[TRef[Chunk[A]]]
-
     /** Creates a new empty TChunk.
       *
       * @return

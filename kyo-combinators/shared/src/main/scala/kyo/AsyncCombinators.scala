@@ -14,9 +14,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces the result of this computation with Async effect
       */
     inline def fork(
-        using
-        flat: Flat[A],
-        frame: Frame
+        using frame: Frame
     ): Fiber[E, A] < (IO & Ctx) =
         Async.run(effect)
 
@@ -28,9 +26,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces the result of this computation with Async and Resource effects
       */
     inline def forkScoped(
-        using
-        flat: Flat[A],
-        frame: Frame
+        using frame: Frame
     ): Fiber[E, A] < (IO & Ctx & Resource) =
         Kyo.acquireRelease(Async.run(effect))(_.interrupt.unit)
 
@@ -48,8 +44,6 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         s2: Isolate.Contextual[Ctx1, IO]
     )(next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        f: Flat[A],
-        f1: Flat[A1],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
@@ -75,8 +69,6 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         s2: Isolate.Contextual[Ctx1, IO]
     )(
         using
-        f: Flat[A],
-        f1: Flat[A1],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
@@ -102,8 +94,6 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         s2: Isolate.Contextual[Ctx1, IO]
     )(next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        f: Flat[A],
-        f1: Flat[A1],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
@@ -132,6 +122,6 @@ extension [A, E, S](fiber: Fiber[E, A] < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def awaitCompletion(using Flat[A], Frame): Unit < (S & Async) =
+    def awaitCompletion(using Frame): Unit < (S & Async) =
         fiber.map(_.getResult.unit)
 end extension

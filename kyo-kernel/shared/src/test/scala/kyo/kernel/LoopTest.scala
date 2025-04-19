@@ -640,41 +640,6 @@ class LoopTest extends Test:
         assert(count == 10000)
     }
 
-    "flat evidences" - {
-        "Outcome" in {
-            implicitly[Flat[Loop.Outcome[Int, String]]]
-            implicitly[Flat[Loop.Outcome[String, Int]]]
-            implicitly[Flat[Loop.Outcome[Int, Maybe[String]]]]
-            succeed
-        }
-
-        "Outcome2" in {
-            implicitly[Flat[Loop.Outcome2[Int, String, Boolean]]]
-            implicitly[Flat[Loop.Outcome2[String, Int, Maybe[Boolean]]]]
-            succeed
-        }
-
-        "Outcome3" in {
-            implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Double]]]
-            implicitly[Flat[Loop.Outcome3[String, Int, Boolean, Maybe[Double]]]]
-            succeed
-        }
-
-        "Outcome4" in {
-            implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Long]]]
-            implicitly[Flat[Loop.Outcome4[String, Int, Boolean, Double, Maybe[Long]]]]
-            succeed
-        }
-
-        "should not compile for non-Flat output types" in {
-            val error = "This error can be reported an unsupported pending effect is passed to a method"
-            typeCheckFailure("implicitly[Flat[Loop.Outcome[Int, Int < Any]]]")(error)
-            typeCheckFailure("implicitly[Flat[Loop.Outcome2[Int, String, Int < Any]]]")(error)
-            typeCheckFailure("implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Int < Any]]]")(error)
-            typeCheckFailure("implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Int < Any]]]")(error)
-        }
-    }
-
     "whileTrue" - {
         "continues while condition is true" in {
             var counter = 0

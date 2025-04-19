@@ -25,9 +25,6 @@ sealed abstract class TTable[Fields]:
     /** The type of record IDs for this table. Represented as an opaque Int subtype to provide type safety. */
     type Id <: Int
 
-    object Id:
-        given Flat[Id] = Flat.derive
-
     /** Converts a raw Int to the table's ID type. Should only be used internally by the implementation.
       *
       * @param id

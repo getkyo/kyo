@@ -706,7 +706,6 @@ object Result:
     end internal
 
     inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Result[E, A], Result[E, A]] = CanEqual.derived
-    inline given [E, A: Flat]: Flat[Result[E, A]]                                              = Flat.unsafe.bypass
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
 
     given [E, A, ResultEA <: Result[E, A]](using re: Render[E], ra: Render[A]): Render[ResultEA] with
@@ -738,7 +737,6 @@ object Result:
     object Partial:
         inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Partial[E, A]] = CanEqual.derived
         inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Partial[E, A], Result[E, A]]  = CanEqual.derived
-        inline given [E, A: Flat]: Flat[Partial[E, A]]                                               = Flat.unsafe.bypass
 
         extension [E, A](self: Partial[E, A])
             inline def foldPartial[B](inline onSuccess: A => B, inline onFailure: E => B): B =

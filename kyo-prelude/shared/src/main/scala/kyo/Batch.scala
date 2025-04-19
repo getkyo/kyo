@@ -122,7 +122,7 @@ object Batch:
       * @return
       *   A sequence of results from executing the batched operations
       */
-    def run[A: Flat, S](v: A < (Batch & S))(using Frame): Chunk[A] < S =
+    def run[A, S](v: A < (Batch & S))(using Frame): Chunk[A] < S =
         // An item can be a final value (`A`),
         // a sequence from `Batch.eval` (`ToExpand`),
         // or a call to a source (`Expanded`).

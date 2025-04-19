@@ -75,7 +75,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last execution
       */
-    def repeatAtInterval(intervalSchedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
+    def repeatAtInterval(intervalSchedule: Schedule)(using Frame): A < (S & Async) =
         Clock.use { clock =>
             Loop(intervalSchedule) { schedule =>
                 clock.now.map { now =>
@@ -97,7 +97,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def repeatAtInterval(backoff: Int => Duration, limit: Int)(using Flat[A], Frame): A < (S & Async) =
+    def repeatAtInterval(backoff: Int => Duration, limit: Int)(using Frame): A < (S & Async) =
         Loop.indexed { i =>
             if i >= limit then effect.map(Loop.done)
             else effect.delay(backoff(i)).andThen(Loop.continue)
@@ -110,7 +110,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last execution
       */
-    def repeat(limit: Int)(using Flat[A], Frame): A < S =
+    def repeat(limit: Int)(using Frame): A < S =
         Loop.indexed { i =>
             if i >= limit then effect.map(Loop.done)
             else effect.andThen(Loop.continue)
@@ -123,7 +123,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
-    def repeatWhile[S1](fn: A => Boolean < S1)(using Flat[A], Frame): A < (S & S1) =
+    def repeatWhile[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1) =
         Loop(()): _ =>
             effect.map: a =>
                 fn(a).map: test =>
@@ -139,7 +139,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
-    def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using Flat[A], Frame): A < (S & S1 & Async) =
+    def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using Frame): A < (S & S1 & Async) =
         Loop.indexed: i =>
             effect.map: a =>
                 fn(a, i).map:
@@ -155,7 +155,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the first execution where the condition becomes true
       */
-    def repeatUntil[S1](fn: A => Boolean < S1)(using Flat[A], Frame): A < (S & S1 & Async) =
+    def repeatUntil[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1 & Async) =
         Loop(()): _ =>
             effect.map: a =>
                 fn(a).map: test =>
@@ -171,10 +171,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the first execution where the condition becomes true
       */
-    def repeatUntil[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using
-        Flat[A],
-        Frame
-    ): A < (S & S1 & Async) =
+    def repeatUntil[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using Frame): A < (S & S1 & Async) =
         Loop.indexed: i =>
             effect.map: a =>
                 fn(a, i).map:
@@ -209,7 +206,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Abort[Throwable] effect
       */
-    def unpanic(using Flat[A], Frame): A < (S & Abort[Throwable]) =
+    def unpanic(using Frame): A < (S & Abort[Throwable]) =
         Abort.run[Throwable](effect).map:
             case Result.Success(v) => v
             case Result.Error(ex)  => Abort.fail(ex)

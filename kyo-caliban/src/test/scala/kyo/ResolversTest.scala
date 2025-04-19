@@ -66,7 +66,7 @@ class ResolverTest extends Test:
             yield v + s.length
         )))
         val layer = ZLayer.succeed(new Runner[Environment]:
-            def apply[A: Flat](v: A < Environment): Task[A] = ZIOs.run(Env.run("kyo")(Var.run(0)(v))))
+            def apply[A](v: A < Environment): Task[A] = ZIOs.run(Env.run("kyo")(Var.run(0)(v))))
         for
             interpreter <- api.interpreter
             res         <- interpreter.execute("{ k }").provide(layer)
@@ -121,7 +121,7 @@ class ResolverTest extends Test:
             yield v + s.length
         )))
         val runner = new Runner[Environment]:
-            def apply[A: Flat](v: A < Environment): Task[A] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
+            def apply[A](v: A < Environment): Task[A] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
 
         ZIOs.run {
             for

@@ -165,8 +165,6 @@ object AtomicInt:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        given Flat[Unsafe] = Flat.unsafe.bypass
-
         def init(using AllowUnsafe): Unsafe = init(0)
 
         def init(v: Int)(using AllowUnsafe): Unsafe = new java.util.concurrent.atomic.AtomicInteger(v)
@@ -356,8 +354,6 @@ object AtomicLong:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        given Flat[Unsafe] = Flat.unsafe.bypass
-
         def init(using AllowUnsafe): Unsafe = init(0)
 
         def init(v: Long)(using AllowUnsafe): Unsafe = new java.util.concurrent.atomic.AtomicLong(v)
@@ -489,8 +485,6 @@ object AtomicBoolean:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        given Flat[Unsafe] = Flat.unsafe.bypass
-
         def init(using AllowUnsafe): Unsafe = init(false)
 
         def init(v: Boolean)(using AllowUnsafe): Unsafe = new java.util.concurrent.atomic.AtomicBoolean(v)
@@ -620,8 +614,6 @@ object AtomicRef:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        given [A]: Flat[Unsafe[A]] = Flat.unsafe.bypass
-
         def init[A](v: A)(using AllowUnsafe): Unsafe[A] = new java.util.concurrent.atomic.AtomicReference(v)
 
         extension [A](self: Unsafe[A])

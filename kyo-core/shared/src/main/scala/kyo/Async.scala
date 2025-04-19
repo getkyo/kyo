@@ -105,7 +105,7 @@ object Async:
       * @return
       *   A Fiber representing the running computation
       */
-    def run[E, A: Flat, S](
+    def run[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
     )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
         isolate.runInternal((trace, context) =>
@@ -121,7 +121,7 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    def runAndBlock[E, A: Flat, S](
+    def runAndBlock[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
     )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
@@ -141,7 +141,7 @@ object Async:
       * @return
       *   The result of the computation, which can still be interrupted
       */
-    def mask[E, A: Flat, S](
+    def mask[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
@@ -187,7 +187,7 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    def timeout[E, A: Flat, S](
+    def timeout[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
         if after == Duration.Zero then Abort.fail(Timeout())
@@ -219,7 +219,7 @@ object Async:
       * @return
       *   The result of the first computation to complete
       */
-    def race[E, A: Flat, S](
+    def race[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
@@ -239,7 +239,7 @@ object Async:
       * @return
       *   The result of the first computation to complete
       */
-    def race[E, A: Flat, S](
+    def race[E, A, S](
         using Isolate.Stateful[S, Abort[E] & Async]
     )(
         first: A < (Abort[E] & Async & S),
@@ -260,7 +260,7 @@ object Async:
       * @return
       *   Successful results as a Chunk
       */
-    def gather[E, A: Flat, S](
+    def gather[E, A, S](
         using Isolate.Stateful[S, Abort[E] & Async]
     )(
         first: A < (Abort[E] & Async & S),
@@ -281,7 +281,7 @@ object Async:
       * @return
       *   Successful results as a Chunk (size <= max)
       */
-    def gather[E, A: Flat, S](
+    def gather[E, A, S](
         using Isolate.Stateful[S, Abort[E] & Async]
     )(max: Int)(
         first: A < (Abort[E] & Async & S),
@@ -305,7 +305,7 @@ object Async:
       * @return
       *   Successful results as a Chunk (size <= max)
       */
-    def gather[E, A: Flat, S](
+    def gather[E, A, S](
         using Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
@@ -326,7 +326,7 @@ object Async:
       * @return
       *   Successful results as a Chunk (size <= max)
       */
-    def gather[E, A: Flat, S](
+    def gather[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
@@ -347,7 +347,7 @@ object Async:
       * @return
       *   Chunk containing results in the original sequence order
       */
-    def foreachIndexed[E, A, B: Flat, S](
+    def foreachIndexed[E, A, B, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(f: (Int, A) => B < (Abort[E] & Async & S))(using
         Frame
@@ -382,7 +382,7 @@ object Async:
       * @return
       *   Chunk containing results in the original sequence order
       */
-    def foreach[E, A, B: Flat, S](
+    def foreach[E, A, B, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
@@ -398,7 +398,7 @@ object Async:
       * @param f
       *   Function that processes each element
       */
-    def foreachDiscard[E, A, B: Flat, S](
+    def foreachDiscard[E, A, B, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
@@ -416,7 +416,7 @@ object Async:
       * @return
       *   Chunk containing only elements that satisfied the predicate
       */
-    def filter[E, A: Flat, S](
+    def filter[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Boolean < (Abort[E] & Async & S)
@@ -434,7 +434,7 @@ object Async:
       * @return
       *   Chunk containing transformed values for elements that weren't filtered
       */
-    def collect[E, A, B: Flat, S](
+    def collect[E, A, B, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Maybe[B] < (Abort[E] & Async & S)
@@ -450,7 +450,7 @@ object Async:
       * @return
       *   Chunk containing results in the original sequence order
       */
-    def collectAll[E, A: Flat, S](
+    def collectAll[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using
         Frame
@@ -464,7 +464,7 @@ object Async:
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to defaultConcurrency)
       */
-    def collectAllDiscard[E, A: Flat, S](
+    def collectAllDiscard[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using Frame): Unit < (Abort[E] & Async & S) =
         foreachDiscard(iterable, concurrency)(identity)
@@ -480,7 +480,7 @@ object Async:
       * @return
       *   Chunk containing results of all iterations
       */
-    def fill[E, A: Flat, S](
+    def fill[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(n: Int, concurrency: Int = defaultConcurrency)(
         f: => A < (Abort[E] & Async & S)
@@ -501,7 +501,7 @@ object Async:
       * @return
       *   Chunk containing results of all iterations in index order
       */
-    def fillIndexed[E, A: Flat, S](
+    def fillIndexed[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(n: Int, concurrency: Int = defaultConcurrency)(
         f: Int => A < (Abort[E] & Async & S)
@@ -510,32 +510,32 @@ object Async:
 
     /** Executes two computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, S](
+    inline def zip[E, A1, A2, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S)
     )(
         using frame: Frame
     ): (A1, A2) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2), 2)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2), 2).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
 
     /** Executes three computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, S](
+    inline def zip[E, A1, A2, A3, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S)
     )(
         using frame: Frame
     ): (A1, A2, A3) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3), 3)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3), 3).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
         }
 
     /** Executes four computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, S](
+    inline def zip[E, A1, A2, A3, A4, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S),
@@ -543,13 +543,13 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4), 4)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4), 4).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
     /** Executes five computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, S](
+    inline def zip[E, A1, A2, A3, A4, A5, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S),
@@ -558,13 +558,13 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5), 5)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5), 5).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4], s(4).asInstanceOf[A5])
         }
 
     /** Executes six computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, S](
+    inline def zip[E, A1, A2, A3, A4, A5, A6, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S),
@@ -574,7 +574,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6), 6)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6), 6).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -587,7 +587,7 @@ object Async:
 
     /** Executes seven computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, S](
+    inline def zip[E, A1, A2, A3, A4, A5, A6, A7, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S),
@@ -598,7 +598,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6, A7) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7), 7)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7), 7).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -612,7 +612,7 @@ object Async:
 
     /** Executes eight computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, S](
+    inline def zip[E, A1, A2, A3, A4, A5, A6, A7, A8, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S),
@@ -624,7 +624,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6, A7, A8) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8), 8)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8), 8).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -639,7 +639,7 @@ object Async:
 
     /** Executes nine computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, A9: Flat, S](
+    inline def zip[E, A1, A2, A3, A4, A5, A6, A7, A8, A9, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S),
@@ -652,7 +652,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6, A7, A8, A9) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9), 9)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9), 9).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -668,7 +668,7 @@ object Async:
 
     /** Executes ten computations in parallel and returns their results as a tuple.
       */
-    inline def zip[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, A5: Flat, A6: Flat, A7: Flat, A8: Flat, A9: Flat, A10: Flat, S](
+    inline def zip[E, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, S](
         v1: A1 < (Abort[E] & Async & S),
         v2: A2 < (Abort[E] & Async & S),
         v3: A3 < (Abort[E] & Async & S),
@@ -682,7 +682,7 @@ object Async:
     )(
         using frame: Frame
     ): (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) < (Abort[E] & Async & S) =
-        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9, v10), 10)(using Flat.unsafe.bypass).map { s =>
+        collectAll(Seq(v1, v2, v3, v4, v5, v6, v7, v8, v9, v10), 10).map { s =>
             (
                 s(0).asInstanceOf[A1],
                 s(1).asInstanceOf[A2],
@@ -713,36 +713,34 @@ object Async:
       * @param v
       *   The computation to memoize
       * @return
-      *   A function that returns the memoized computation result
+      *   A nested computation that returns the memoized result
       */
-    def memoize[A: Flat, S](v: A < S)(using Frame): (() => A < (S & Async)) < Async =
+    def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < IO =
         IO.Unsafe {
             val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Nothing, A]])
-            () =>
-                @tailrec def loop(): A < (S & Async) =
-                    ref.get() match
-                        case Present(v) => v.safe.get
-                        case Absent =>
-                            val promise = Promise.Unsafe.init[Nothing, A]()
-                            if ref.compareAndSet(Absent, Present(promise)) then
-                                Abort.run(v).map { r =>
-                                    IO.Unsafe {
-                                        if !r.isSuccess then
-                                            ref.set(Absent)
-                                        promise.completeDiscard(r)
-                                        Abort.get(r)
-                                    }
-                                }.handle(IO.ensure {
-                                    IO.Unsafe {
-                                        if !promise.done() then
-                                            ref.set(Absent)
-                                    }
-                                })
-                            else
-                                loop()
-                            end if
-                loop()
-
+            @tailrec def loop(): A < (S & Async) =
+                ref.get() match
+                    case Present(v) => v.safe.get
+                    case Absent =>
+                        val promise = Promise.Unsafe.init[Nothing, A]()
+                        if ref.compareAndSet(Absent, Present(promise)) then
+                            Abort.run(v).map { r =>
+                                IO.Unsafe {
+                                    if !r.isSuccess then
+                                        ref.set(Absent)
+                                    promise.completeDiscard(r)
+                                    Abort.get(r)
+                                }
+                            }.handle(IO.ensure {
+                                IO.Unsafe {
+                                    if !promise.done() then
+                                        ref.set(Absent)
+                                }
+                            })
+                        else
+                            loop()
+                        end if
+            Kyo.lift(IO(loop()))
         }
 
     /** Converts a Future to an asynchronous computation.

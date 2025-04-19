@@ -1174,9 +1174,9 @@ class AsyncTest extends Test:
                 memoized <- Async.memoize {
                     counter.incrementAndGet.map(_ => 42)
                 }
-                v1    <- memoized()
-                v2    <- memoized()
-                v3    <- memoized()
+                v1    <- memoized
+                v2    <- memoized
+                v3    <- memoized
                 count <- counter.get
             yield
                 assert(v1 == 42)
@@ -1194,9 +1194,9 @@ class AsyncTest extends Test:
                         else 42
                     }
                 }
-                r1    <- Abort.run(memoized())
-                v2    <- memoized()
-                v3    <- memoized()
+                r1    <- Abort.run(memoized)
+                v2    <- memoized
+                v3    <- memoized
                 count <- counter.get
             yield
                 assert(r1.isPanic)
@@ -1214,9 +1214,9 @@ class AsyncTest extends Test:
                         count <- counter.incrementAndGet
                     yield count
                 }
-                v1    <- memoized()
-                v2    <- memoized()
-                v3    <- memoized()
+                v1    <- memoized
+                v2    <- memoized
+                v3    <- memoized
                 count <- counter.get
             yield
                 assert(v1 == 1)
@@ -1235,9 +1235,9 @@ class AsyncTest extends Test:
                     yield count
                 }
                 results <- Async.zip(
-                    memoized(),
-                    memoized(),
-                    memoized()
+                    memoized,
+                    memoized,
+                    memoized
                 )
                 count <- counter.get
             yield
@@ -1262,11 +1262,11 @@ class AsyncTest extends Test:
                         yield count
                     }
                 }
-                fiber <- Async.run(memoized())
+                fiber <- Async.run(memoized)
                 _     <- started.await
                 _     <- fiber.interrupt
                 _     <- done.await
-                v2    <- memoized()
+                v2    <- memoized
                 count <- counter.get
             yield
                 assert(v2 == 1)
@@ -1377,6 +1377,38 @@ class AsyncTest extends Test:
                 waiters <- fiber.waiters
                 _       <- exit.release
             yield assert(waiters == 1)
+        }
+    }
+
+    "effect nesting" - {
+        "basic nesting and cancellation" in run {
+            val nested =
+                Async.sleep(1.millis).andThen {
+                    Kyo.lift(Async.sleep(1.millis).andThen(42))
+                }
+
+            for
+                res1 <- nested.flatten.handle(Async.run).map(_.get)
+                res2 <- nested.map(_.handle(Async.run)).handle(Async.run).map(_.get).map(_.get)
+            yield
+                assert(res1 == 42)
+                assert(res2 == 42)
+            end for
+        }
+
+        "parallel composition" in run {
+            val nested = Kyo.lift {
+                val comp1 = Async.sleep(1.millis).andThen(1)
+                val comp2 = Async.sleep(1.millis).andThen(2)
+
+                Async.zip(comp1, comp2).map { case (a, b) =>
+                    Kyo.lift(Async.sleep(5.millis).andThen(a + b))
+                }
+            }
+
+            nested.flatten.flatten.map { result =>
+                assert(result == 3)
+            }
         }
     }
 

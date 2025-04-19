@@ -16,7 +16,6 @@ export Maybe.Present
 /** Companion object for Maybe type */
 object Maybe:
     inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
-    inline given [A: Flat]: Flat[Maybe[A]]                                             = Flat.unsafe.bypass
     given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
     given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with

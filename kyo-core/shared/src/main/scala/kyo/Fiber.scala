@@ -40,8 +40,6 @@ opaque type Fiber[+E, +A] = IOPromise[? <: E, ? <: A]
 
 object Fiber extends FiberPlatformSpecific:
 
-    inline given [E, A]: Flat[Fiber[E, A]] = Flat.unsafe.bypass
-
     private val _unit  = IOPromise(Result.unit).mask()
     private val _never = IOPromise[Nothing, Unit]().mask()
 
@@ -196,7 +194,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A new Fiber with the mapped result
           */
-        def map[B: Flat](f: A => B < IO)(using Frame): Fiber[E, B] < IO =
+        def map[B](f: A => B < IO)(using Frame): Fiber[E, B] < IO =
             IO.Unsafe(Unsafe.map(self)((r => IO.Unsafe.evalOrThrow(f(r)))))
 
         /** Flat maps the result of the Fiber.
@@ -219,7 +217,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A new Fiber with the mapped Result
           */
-        def mapResult[E2, B: Flat](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
+        def mapResult[E2, B](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
             IO.Unsafe(Unsafe.mapResult(self)(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Creates a new Fiber that runs with interrupt masking.
@@ -296,7 +294,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with the result of the first Fiber to complete
       */
-    private[kyo] def race[E, A: Flat, S](
+    private[kyo] def race[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): Fiber[E, A] < (IO & S) =
         IO.Unsafe {
@@ -335,7 +333,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   Fiber containing successful results as a Chunk (size <= max)
       */
-    private[kyo] def gather[E, A: Flat, S](
+    private[kyo] def gather[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
     )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
@@ -477,7 +475,7 @@ object Fiber extends FiberPlatformSpecific:
             loop(0, items - 1)
     end quickSort
 
-    private[kyo] def foreachIndexed[A, B: Flat, E, S](
+    private[kyo] def foreachIndexed[A, B, E, S](
         using isolate: Isolate.Contextual[S, IO]
     )(iterable: Iterable[A])(f: (Int, A) => B < (Abort[E] & Async & S))(
         using frame: Frame
@@ -516,8 +514,6 @@ object Fiber extends FiberPlatformSpecific:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
-
         def init[E, A](result: Result[E, A])(using AllowUnsafe): Unsafe[E, A] = IOPromise(result)
 
         def fromFuture[A](f: => Future[A])(using AllowUnsafe): Unsafe[Throwable, A] =
@@ -585,8 +581,6 @@ object Fiber extends FiberPlatformSpecific:
     opaque type Promise[E, A] <: Fiber[E, A] = IOPromise[E, A]
 
     object Promise:
-        inline given [E, A]: Flat[Promise[E, A]] = Flat.unsafe.bypass
-
         private[kyo] inline def fromTask[E, A](inline ioTask: IOTask[?, E, A]): Promise[E, A] = ioTask
 
         /** Initializes a new Promise.
@@ -663,8 +657,6 @@ object Fiber extends FiberPlatformSpecific:
 
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         object Unsafe:
-            inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
-
             def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
 
             def initMasked[E, A]()(using AllowUnsafe): Unsafe[E, A] =

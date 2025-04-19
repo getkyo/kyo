@@ -60,7 +60,7 @@ object Topic:
       * @return
       *   The computation result within Async context
       */
-    def run[A: Flat, S](v: A < (Topic & S))(using Frame): A < (Async & S) =
+    def run[A, S](v: A < (Topic & S))(using Frame): A < (Async & S) =
         IO {
             val driver = MediaDriver.launchEmbedded()
             IO.ensure(driver.close()) {
@@ -80,7 +80,7 @@ object Topic:
       * @return
       *   The computation result within Async context
       */
-    def run[A: Flat, S](driver: MediaDriver)(v: A < (Topic & S))(using Frame): A < (Async & S) =
+    def run[A, S](driver: MediaDriver)(v: A < (Topic & S))(using Frame): A < (Async & S) =
         IO {
             val aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName(driver.aeronDirectoryName()))
             IO.ensure(aeron.close()) {
@@ -100,7 +100,7 @@ object Topic:
       * @return
       *   The computation result within Async context
       */
-    def run[A: Flat, S](aeron: Aeron)(v: A < (Topic & S))(using Frame): A < (Async & S) =
+    def run[A, S](aeron: Aeron)(v: A < (Topic & S))(using Frame): A < (Async & S) =
         Env.run(aeron)(v)
 
     /** Publishes a stream of messages to a specified Aeron URI.

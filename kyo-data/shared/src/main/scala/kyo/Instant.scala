@@ -15,7 +15,6 @@ opaque type Instant = JInstant
 object Instant:
 
     inline given CanEqual[Instant, Instant] = CanEqual.derived
-    inline given Flat[Instant]              = Flat.unsafe.bypass
 
     given Ordering[Instant] with
         def compare(x: Instant, y: Instant): Int = x.compareTo(y)
