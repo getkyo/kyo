@@ -85,10 +85,10 @@ object Check:
       *   A tuple of collected failures and the computation result
       */
     def runChunk[A: Flat, S](v: A < (Check & S))(using Frame): (Chunk[CheckFailed], A) < S =
-        ArrowEffect.handleState(Tag[Check], Chunk.empty[CheckFailed], v)(
+        ArrowEffect.handleLoop(Tag[Check], Chunk.empty[CheckFailed], v)(
             handle = [C] =>
                 (input, state, cont) =>
-                    (state.append(input), cont(())),
+                    Loop.continue(state.append(input), cont(())),
             done = (state, result) => (state, result)
         )
 

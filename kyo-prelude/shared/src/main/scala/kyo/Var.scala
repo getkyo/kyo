@@ -144,17 +144,17 @@ object Var:
     private[kyo] inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
     )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
-        ArrowEffect.handleState(tag, state, v)(
+        ArrowEffect.handleLoop(tag, state, v)(
             [C] =>
                 (input, state, cont) =>
                     input match
                         case input: Get.type =>
-                            (state, cont(state))
+                            Loop.continue(state, cont(state))
                         case input: Update[V] @unchecked =>
                             val nst = input(state)
-                            (nst, cont(nst))
+                            Loop.continue(nst, cont(nst))
                         case input: V @unchecked =>
-                            (input, cont(state)),
+                            Loop.continue(input, cont(state)),
             done = f
         )
 
