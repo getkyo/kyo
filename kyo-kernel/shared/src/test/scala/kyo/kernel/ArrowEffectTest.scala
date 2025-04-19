@@ -72,8 +72,8 @@ class ArrowEffectTest extends Test:
                     s2 <- testEffect1(43)
                 yield (s1, s2)
 
-            val result = ArrowEffect.handleState(Tag[TestEffect1], 0, effect)(
-                [C] => (input, state, cont) => (state + 1, cont((input + state).toString))
+            val result = ArrowEffect.handleLoop(Tag[TestEffect1], 0, effect)(
+                [C] => (input, state, cont) => Loop.continue(state + 1, cont((input + state).toString))
             )
 
             assert(result.eval == ("42", "44"))
@@ -252,8 +252,8 @@ class ArrowEffectTest extends Test:
                     b <- customEffect(List(4, 5, 6))
                 yield (a, b)
 
-            val result = ArrowEffect.handleState(Tag[CustomEffect], 0, effect)(
-                [C] => (input, state, cont) => (state + 1, cont(Some(input(state))))
+            val result = ArrowEffect.handleLoop(Tag[CustomEffect], 0, effect)(
+                [C] => (input, state, cont) => Loop.continue(state + 1, cont(Some(input(state))))
             )
             assert(result.eval == (Some(1), Some(5)))
         }
