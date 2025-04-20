@@ -3,6 +3,7 @@ package kyo
 import kernel.Loop
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
+import scala.collection.immutable.LinearSeq
 
 /** Object containing utility functions for working with Kyo effects.
   *
@@ -143,140 +144,153 @@ object Kyo:
             )
         )
 
-    /** Applies an effect-producing function to each element of a sequence.
+    /** Applies an effect-producing function to each element of an `IterableOnce`.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing function to apply to each element
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreach[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Chunk[B] < S =
-        seq.knownSize match
+    def foreach[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Chunk[B] < S =
+        source.knownSize match
             case 0 => Chunk.empty
-            case 1 => f(seq(0)).map(Chunk(_))
+            case 1 =>
+                val head = source.iterator.next()
+                f(head).map(Chunk.single(_))
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq, Chunk.empty[B]) { (seq, acc) =>
-                            seq match
-                                case Nil          => Loop.done(acc)
-                                case head :: tail => f(head).map(u => Loop.continue(tail, acc.append(u)))
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        val size    = indexed.size
-                        Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[B]): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else f(seq.head).map(u => Loop.continue(seq.tail, acc.append(u)))
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
-                            else f(indexed(idx)).map(u => Loop.continue(acc.append(u)))
-                        }
-                end match
+                            else f(indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
+                    case other =>
+                        Loop(IterableExtractor(other), Chunk.empty[B]): (extractor, acc) =>
+                            extractor match
+                                case IterableExtractor(head, tail) => f(head).map(u => Loop.continue(tail, acc.append(u)))
+                                case _                             => Loop.done(acc)
     end foreach
 
     /** Applies an effect-producing function to each element of a sequence along with its index.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing function to apply to each element and its index
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreachIndexed[A, B, S, S2](seq: Seq[A])(f: Safepoint ?=> (Int, A) => B < S2)(using Frame, Safepoint): Chunk[B] < (S & S2) =
-        seq.knownSize match
+    def foreachIndexed[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Chunk[B] < S =
+        source.knownSize match
             case 0 => Chunk.empty
-            case 1 => f(0, seq(0)).map(Chunk(_))
+            case 1 =>
+                val head = source.iterator.next()
+                f(0, head).map(Chunk.single(_))
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop.indexed(seq, Chunk.empty[B]) { (idx, seq, acc) =>
-                            seq match
-                                case Nil          => Loop.done(acc)
-                                case head :: tail => f(idx, head).map(u => Loop.continue(tail, acc.append(u)))
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        val size    = indexed.size
-                        Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop.indexed(linearSeq, Chunk.empty[B]): (idx, seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else f(idx, seq.head).map(u => Loop.continue(seq.tail, acc.append(u)))
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
-                            else f(idx, indexed(idx)).map(u => Loop.continue(acc.append(u)))
-                        }
-                end match
+                            else f(idx, indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
+                    case other =>
+                        Loop.indexed(IterableExtractor(source), Chunk.empty[B]): (idx, extractor, acc) =>
+                            extractor match
+                                case IterableExtractor(head, tail) => f(idx, head).map(u => Loop.continue(tail, acc.append(u)))
+                                case _                             => Loop.done(acc)
     end foreachIndexed
 
-    /** Applies an effect-producing function to each element of a sequence, discarding the results.
+    /** Applies an effect-producing function to each element of an `IterableOnce`, discarding the results.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing function to apply to each element
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
-        seq.knownSize match
+    def foreachDiscard[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
+        source.knownSize match
             case 0 =>
-            case 1 => f(seq(0)).unit
+            case 1 =>
+                val head = source.iterator.next()
+                f(head).unit
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq) {
-                            case Nil          => Loop.done
-                            case head :: tail => f(head).andThen(Loop.continue(tail))
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        Loop.indexed { idx =>
-                            if idx == indexed.size then Loop.done
-                            else f(indexed(idx)).andThen(Loop.continue)
-                        }
-                end match
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq): (seq) =>
+                            if seq.isEmpty then Loop.done
+                            else f(seq.head).andThen(Loop.continue(seq.tail))
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed: idx =>
+                            if idx == size then Loop.done
+                            else f(indexedSeq(idx)).andThen(Loop.continue)
+                    case other =>
+                        Loop(IterableExtractor(other)): (extractor) =>
+                            extractor match
+                                case IterableExtractor(head, tail) => f(head).andThen(Loop.continue(tail))
+                                case _                             => Loop.done
         end match
     end foreachDiscard
 
-    /** Filters elements of a sequence based on an effect-producing predicate.
+    /** Filters elements of an `IterableOnce` based on an effect-producing predicate.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing predicate function
       * @return
       *   A new effect that produces a Chunk of filtered elements
       */
-    def filter[A, S](seq: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
-        seq.knownSize match
+    def filter[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+        source.knownSize match
             case 0 => Chunk.empty
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq, Chunk.empty[A]) { (seq, acc) =>
-                            seq match
-                                case Nil => Loop.done(acc)
-                                case head :: tail =>
-                                    f(head).map {
-                                        case true  => Loop.continue(tail, acc.append(head))
-                                        case false => Loop.continue(tail, acc)
-                                    }
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
-                            if idx == indexed.size then Loop.done(acc)
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[A]): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
                             else
-                                val curr = indexed(idx)
-                                f(curr).map {
+                                val head = seq.head
+                                f(head).map:
+                                    case true  => Loop.continue(seq.tail, acc.append(head))
+                                    case false => Loop.continue(seq.tail, acc)
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed(Chunk.empty[A]): (idx, acc) =>
+                            if idx == size then Loop.done(acc)
+                            else
+                                val curr = indexedSeq(idx)
+                                f(curr).map:
                                     case true  => Loop.continue(acc.append(curr))
                                     case false => Loop.continue(acc)
-                                }
-                        }
+                    case other =>
+                        Loop(IterableExtractor(other), Chunk.empty[A]): (extractor, acc) =>
+                            extractor match
+                                case IterableExtractor(head, tail) =>
+                                    f(head).map:
+                                        case true  => Loop.continue(tail, acc.append(head))
+                                        case false => Loop.continue(tail, acc)
+                                case _ => Loop.done(acc)
                 end match
+        end match
     end filter
 
-    /** Folds over a sequence with an effect-producing function.
+    /** Folds over an `IterableOnce` with an effect-producing function.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param acc
       *   The initial accumulator value
       * @param f
@@ -284,241 +298,256 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[A, B, S](seq: Seq[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
-        seq.knownSize match
+    def foldLeft[A, B, S](source: IterableOnce[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
+        source.knownSize match
             case 0 => acc
-            case 1 => f(acc, seq(0))
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq, acc) { (seq, acc) =>
-                            seq match
-                                case Nil          => Loop.done(acc)
-                                case head :: tail => f(acc, head).map(Loop.continue(tail, _))
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        Loop.indexed(acc) { (idx, acc) =>
-                            if idx == indexed.size then Loop.done(acc)
-                            else f(acc, indexed(idx)).map(Loop.continue(_))
-                        }
-                end match
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, acc): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else f(acc, seq.head).map(Loop.continue(seq.tail, _))
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed(acc): (idx, acc) =>
+                            if idx == size then Loop.done(acc)
+                            else f(acc, indexedSeq(idx)).map(Loop.continue(_))
+                    case other =>
+                        Loop(IterableExtractor(other), acc): (extractor, acc) =>
+                            extractor match
+                                case IterableExtractor(head, tail) => f(acc, head).map(Loop.continue(tail, _))
+                                case _                             => Loop.done(acc)
         end match
     end foldLeft
 
-    /** Collects and transforms elements from a sequence using an effect-producing function that returns Maybe values.
+    /** Collects and transforms elements from an `IterableOnce` using an effect-producing function that returns Maybe values.
       *
-      * This method applies the given function to each element in the sequence and collects only the Present values into a Chunk. It's
+      * This method applies the given function to each element in the `IterableOnce` and collects only the Present values into a Chunk. It's
       * similar to a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing function that returns Maybe values
       * @return
       *   A new effect that produces a Chunk containing only the Present values after transformation
       */
-    def collect[A, B, S](seq: Seq[A])(f: A => Maybe[B] < S)(using Frame, Safepoint): Chunk[B] < S =
-        seq.knownSize match
+    def collect[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Chunk[B] < S =
+        source.knownSize match
             case 0 => Chunk.empty
-            case 1 =>
-                f(seq(0)).map {
-                    case Absent     => Chunk.empty
-                    case Present(v) => Chunk(v)
-                }
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq, Chunk.empty[B]) { (seq, acc) =>
-                            seq match
-                                case Nil => Loop.done(acc)
-                                case head :: tail =>
-                                    f(head).map {
-                                        case Absent     => Loop.continue(tail, acc)
-                                        case Present(v) => Loop.continue(tail, acc.append(v))
-                                    }
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        val size    = indexed.size
-                        Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[B]): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else
+                                f(seq.head).map:
+                                    case Absent     => Loop.continue(seq.tail, acc)
+                                    case Present(v) => Loop.continue(seq.tail, acc.append(v))
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else
-                                f(indexed(idx)).map {
+                                f(indexedSeq(idx)).map:
                                     case Absent     => Loop.continue(acc)
                                     case Present(v) => Loop.continue(acc.append(v))
-                                }
-                        }
-                end match
+                    case other =>
+                        Loop(IterableExtractor(other), Chunk.empty[B]): (extractor, acc) =>
+                            extractor match
+                                case IterableExtractor(head, tail) =>
+                                    f(head).map:
+                                        case Absent     => Loop.continue(tail, acc)
+                                        case Present(v) => Loop.continue(tail, acc.append(v))
+                                case _ => Loop.done(acc)
+    end collect
 
-    /** Collects the results of a sequence of effects into a single effect.
+    /** Collects the results of an `IterableOnce` of effects into a single effect.
       *
-      * @param seq
-      *   The sequence of effects
+      * @param source
+      *   The `IterableOnce` of effects
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collectAll[A, S](seq: Seq[A < S])(using Frame, Safepoint): Chunk[A] < S =
-        seq.knownSize match
+    def collectAll[A, S](source: IterableOnce[A < S])(using Frame, Safepoint): Chunk[A] < S =
+        source.knownSize match
             case 0 => Chunk.empty
-            case 1 => seq(0).map(Chunk(_))
+            case 1 => source.iterator.next().map(Chunk.single(_))
             case _ =>
-                seq match
-                    case seq: List[A < S] =>
-                        Loop(seq, Chunk.empty[A]) { (seq, acc) =>
-                            seq match
-                                case Nil          => Loop.done(acc)
-                                case head :: tail => head.map(u => Loop.continue(tail, acc.append(u)))
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        val size    = indexed.size
-                        Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
+                source match
+                    case linearSeq: LinearSeq[A < S] =>
+                        Loop(linearSeq, Chunk.empty[A]): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else
+                                seq.head.map(u => Loop.continue(seq.tail, acc.append(u)))
+                    case indexedSeq: IndexedSeq[A < S] =>
+                        val size = indexedSeq.length
+                        Loop.indexed(Chunk.empty[A]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
-                            else indexed(idx).map(u => Loop.continue(acc.append(u)))
-                        }
-                end match
+                            else
+                                indexedSeq(idx).map(u => Loop.continue(acc.append(u)))
+                    case other =>
+                        Loop(IterableExtractor(other), Chunk.empty[A]): (extractor, acc) =>
+                            extractor match
+                                case IterableExtractor(head, tail) =>
+                                    head.map(u => Loop.continue(tail, acc.append(u)))
+                                case _ => Loop.done(acc)
     end collectAll
 
-    /** Collects the results of a sequence of effects, discarding the results.
+    /** Collects the results of an `IterableOnce` of effects, discarding the results.
       *
-      * @param seq
-      *   The sequence of effects
+      * @param source
+      *   The `IterableOnce` of effects
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[A, S](seq: Seq[A < S])(using Frame, Safepoint): Unit < S =
-        seq.knownSize match
+    def collectAllDiscard[A, S](source: IterableOnce[A < S])(using Frame, Safepoint): Unit < S =
+        source.knownSize match
             case 0 =>
-            case 1 => seq(0).unit
+            case 1 => source.iterator.next().unit
             case _ =>
-                seq match
-                    case seq: List[A < S] =>
-                        Loop(seq) { seq =>
-                            seq match
-                                case Nil          => Loop.done
-                                case head :: tail => head.map(_ => Loop.continue(tail))
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        Loop.indexed { idx =>
-                            if idx == indexed.size then Loop.done
-                            else indexed(idx).map(_ => Loop.continue)
-                        }
-                end match
+                source match
+                    case linearSeq: LinearSeq[A < S] =>
+                        Loop(linearSeq): seq =>
+                            if seq.isEmpty then Loop.done
+                            else
+                                seq.head.andThen(Loop.continue(seq.tail))
+                    case indexedSeq: IndexedSeq[A < S] =>
+                        val size = indexedSeq.length
+                        Loop.indexed: idx =>
+                            if idx == size then Loop.done
+                            else
+                                indexedSeq(idx).andThen(Loop.continue)
+                    case other =>
+                        Loop(IterableExtractor(other)): extractor =>
+                            extractor match
+                                case IterableExtractor(head, tail) =>
+                                    head.andThen(Loop.continue(tail))
+                                case _ => Loop.done
     end collectAllDiscard
 
-    /** Finds the first element in a sequence that satisfies a predicate.
+    /** Finds the first element in an `IterableOnce` that satisfies a predicate.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing predicate function
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
-        seq.knownSize match
+    def findFirst[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+        source.knownSize match
             case 0 => Maybe.empty
-            case 1 => f(seq(0))
+            case 1 =>
+                val head = source.iterator.next()
+                f(head)
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq) { seq =>
-                            seq match
-                                case Nil => Loop.done(Maybe.empty)
-                                case head :: tail =>
-                                    f(head).map {
-                                        case Absent     => Loop.continue(tail)
-                                        case Present(v) => Loop.done(Maybe(v))
-                                    }
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        Loop.indexed { idx =>
-                            if idx == indexed.size then Loop.done(Maybe.empty)
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq): seq =>
+                            if seq.isEmpty then Loop.done(Maybe.empty)
                             else
-                                f(indexed(idx)).map {
+                                f(seq.head).map:
+                                    case Absent     => Loop.continue(seq.tail)
+                                    case Present(v) => Loop.done(Maybe(v))
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed: idx =>
+                            if idx == size then Loop.done(Maybe.empty)
+                            else
+                                f(indexedSeq(idx)).map:
                                     case Absent     => Loop.continue
                                     case Present(v) => Loop.done(Maybe(v))
-                                }
-                        }
-                end match
+                    case other =>
+                        Loop(IterableExtractor(other)): extractor =>
+                            extractor match
+                                case IterableExtractor(head, tail) =>
+                                    f(head).map:
+                                        case Absent     => Loop.continue(tail)
+                                        case Present(v) => Loop.done(Maybe(v))
+                                case _ => Loop.done(Maybe.empty)
     end findFirst
 
-    /** Takes elements from a sequence while a predicate holds true.
+    /** Takes elements from an `IterableOnce` while a predicate holds true.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing predicate function
       * @return
       *   A new effect that produces a Chunk of taken elements
       */
-    def takeWhile[A, S](seq: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
-        seq.knownSize match
+    def takeWhile[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+        source.knownSize match
             case 0 => Chunk.empty
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq, Chunk.empty[A]) { (seq, acc) =>
-                            seq match
-                                case Nil => Loop.done(acc)
-                                case head :: tail =>
-                                    f(head).map {
-                                        case true  => Loop.continue(tail, acc.append(head))
-                                        case false => Loop.done(acc)
-                                    }
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
-                            if idx == indexed.size then Loop.done(acc)
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[A]): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
                             else
-                                val curr = indexed(idx)
-                                f(curr).map {
+                                val curr = seq.head
+                                f(curr).map:
+                                    case true  => Loop.continue(seq.tail, acc.append(curr))
+                                    case false => Loop.done(acc)
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed(Chunk.empty[A]): (idx, acc) =>
+                            if idx == size then Loop.done(acc)
+                            else
+                                val curr = indexedSeq(idx)
+                                f(curr).map:
                                     case true  => Loop.continue(acc.append(curr))
                                     case false => Loop.done(acc)
-                                }
-                        }
-                end match
+                    case other =>
+                        Loop(IterableExtractor(other), Chunk.empty[A]): (extractor, acc) =>
+                            extractor match
+                                case IterableExtractor(head, tail) =>
+                                    f(head).map:
+                                        case true  => Loop.continue(tail, acc.append(head))
+                                        case false => Loop.done(acc)
+                                case _ => Loop.done(acc)
     end takeWhile
 
-    /** Drops elements from a sequence while a predicate holds true.
+    /** Drops elements from an `IterableOnce` while a predicate holds true.
       *
-      * @param seq
-      *   The input sequence
+      * @param source
+      *   The input `IterableOnce`
       * @param f
       *   The effect-producing predicate function
       * @return
       *   A new effect that produces a Chunk of remaining elements
       */
-    def dropWhile[A, S](seq: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
-        seq.knownSize match
+    def dropWhile[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+        source.knownSize match
             case 0 => Chunk.empty
             case _ =>
-                seq match
-                    case seq: List[A] =>
-                        Loop(seq) { seq =>
-                            seq match
-                                case Nil => Loop.done(Chunk.empty)
-                                case head :: tail =>
-                                    f(head).map {
-                                        case true  => Loop.continue(tail)
-                                        case false => Loop.done(Chunk.from(tail))
-                                    }
-                        }
-                    case seq =>
-                        val indexed = toIndexed(seq)
-                        Loop.indexed { idx =>
-                            if idx == indexed.size then Loop.done(Chunk.empty)
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq): seq =>
+                            if seq.isEmpty then Loop.done(Chunk.empty)
                             else
-                                val curr = indexed(idx)
-                                f(curr).map {
+                                val curr = seq.head
+                                f(curr).map:
+                                    case true  => Loop.continue(seq.tail)
+                                    case false => Loop.done(Chunk.from(seq.tail))
+                    case indexedSeq: IndexedSeq[A] =>
+                        val size = indexedSeq.length
+                        Loop.indexed: idx =>
+                            if idx == size then Loop.done(Chunk.empty)
+                            else
+                                val curr = indexedSeq(idx)
+                                f(curr).map:
                                     case true  => Loop.continue
-                                    case false => Loop.done(Chunk.from(indexed.drop(idx)))
-                                }
-                        }
+                                    case false => Loop.done(Chunk.from(indexedSeq.drop(idx)))
+                    case other =>
+                        Loop(IterableExtractor(other)): extractor =>
+                            extractor match
+                                case IterableExtractor(head, tail) =>
+                                    f(head).map:
+                                        case true  => Loop.continue(tail)
+                                        case false => Loop.done(extractor.toChunk)
+                                case _ => Loop.done(Chunk.empty)
                 end match
     end dropWhile
 
@@ -532,14 +561,42 @@ object Kyo:
       *   A new effect that produces a Chunk of repeated values
       */
     def fill[A, S](n: Int)(v: Safepoint ?=> A < S)(using Frame, Safepoint): Chunk[A] < S =
-        Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
-            if idx == n then Loop.done(acc)
-            else v.map(t => Loop.continue(acc.append(t)))
+        Loop.indexed(Chunk.newBuilder[A]) { (idx, builder) =>
+            if idx == n then Loop.done(builder.result())
+            else v.map(t => Loop.continue(builder.addOne(t)))
         }
 
-    private def toIndexed[A](seq: Seq[A]): Seq[A] =
-        seq match
-            case seq: IndexedSeq[A] => seq
-            case seq                => Chunk.from(seq)
+    /** A minimal wrapper that can lazily and immutably extract elements from an `IterableOnce[A]`. The implementation is closely modelled
+      * after `LazyList`, stripped down to bare metals.
+      */
+    final private class IterableExtractor[A](private var maybeIterator: Maybe[Iterator[A]]):
+        private lazy val _extract: Maybe[(A, IterableExtractor[A])] =
+            maybeIterator match
+                case Absent => Absent
+                case Present(iterator) =>
+                    if iterator.hasNext then
+                        val next = iterator.next()
+                        maybeIterator = Absent
+                        Maybe(next -> new IterableExtractor(Present(iterator)))
+                    else
+                        Absent
+                    end if
+            end match
+        end _extract
 
+        def extract: Maybe[(A, IterableExtractor[A])] = _extract
+
+        def toChunk(using Frame): Chunk[A] =
+            val effect = Loop(this, Chunk.empty[A]): (extractor, acc) =>
+                extractor.extract match
+                    case Present((head, tail)) => Loop.continue(tail, acc.append(head))
+                    case _                     => Loop.done(acc)
+            effect.eval
+        end toChunk
+    end IterableExtractor
+
+    private[Kyo] object IterableExtractor:
+        def apply[A](source: IterableOnce[A]): IterableExtractor[A]                        = new IterableExtractor(Present(source.iterator))
+        def unapply[A](extractor: IterableExtractor[A]): Option[(A, IterableExtractor[A])] = extractor.extract.toOption
+    end IterableExtractor
 end Kyo
