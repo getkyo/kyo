@@ -1,5 +1,7 @@
 package kyo
 
+import scala.annotation.nowarn
+
 /** A thread-safe atomic integer with effect-based operations.
   *
   * AtomicInt provides a wrapper around platform-specific atomic integer implementations (such as java.util.concurrent.atomic.AtomicInteger
@@ -181,9 +183,11 @@ object AtomicInt:
             inline def getAndDecrement()(using inline allow: AllowUnsafe): Int                       = self.getAndDecrement()
             inline def getAndAdd(v: Int)(using inline allow: AllowUnsafe): Int                       = self.getAndAdd(v)
             inline def addAndGet(v: Int)(using inline allow: AllowUnsafe): Int                       = self.addAndGet(v)
-            inline def getAndUpdate(inline f: Int => Int)(using inline allow: AllowUnsafe): Int      = self.getAndUpdate(f(_))
-            inline def updateAndGet(inline f: Int => Int)(using inline allow: AllowUnsafe): Int      = self.updateAndGet(f(_))
-            inline def safe: AtomicInt                                                               = AtomicInt(self)
+            @nowarn("msg=anonymous")
+            inline def getAndUpdate(inline f: Int => Int)(using inline allow: AllowUnsafe): Int = self.getAndUpdate(f(_))
+            @nowarn("msg=anonymous")
+            inline def updateAndGet(inline f: Int => Int)(using inline allow: AllowUnsafe): Int = self.updateAndGet(f(_))
+            inline def safe: AtomicInt                                                          = AtomicInt(self)
         end extension
     end Unsafe
 end AtomicInt
@@ -370,9 +374,11 @@ object AtomicLong:
             inline def getAndDecrement()(using inline allow: AllowUnsafe): Long                        = self.getAndDecrement()
             inline def getAndAdd(v: Long)(using inline allow: AllowUnsafe): Long                       = self.getAndAdd(v)
             inline def addAndGet(v: Long)(using inline allow: AllowUnsafe): Long                       = self.addAndGet(v)
-            inline def getAndUpdate(inline f: Long => Long)(using inline allow: AllowUnsafe): Long     = self.getAndUpdate(f(_))
-            inline def updateAndGet(inline f: Long => Long)(using inline allow: AllowUnsafe): Long     = self.updateAndGet(f(_))
-            inline def safe: AtomicLong                                                                = AtomicLong(self)
+            @nowarn("msg=anonymous")
+            inline def getAndUpdate(inline f: Long => Long)(using inline allow: AllowUnsafe): Long = self.getAndUpdate(f(_))
+            @nowarn("msg=anonymous")
+            inline def updateAndGet(inline f: Long => Long)(using inline allow: AllowUnsafe): Long = self.updateAndGet(f(_))
+            inline def safe: AtomicLong                                                            = AtomicLong(self)
         end extension
     end Unsafe
 end AtomicLong
@@ -624,9 +630,11 @@ object AtomicRef:
             inline def lazySet(v: A)(using inline allow: AllowUnsafe): Unit                      = self.lazySet(v)
             inline def getAndSet(v: A)(using inline allow: AllowUnsafe): A                       = self.getAndSet(v)
             inline def compareAndSet(curr: A, next: A)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
-            inline def getAndUpdate(inline f: A => A)(using inline allow: AllowUnsafe): A        = self.getAndUpdate(f(_))
-            inline def updateAndGet(inline f: A => A)(using inline allow: AllowUnsafe): A        = self.updateAndGet(f(_))
-            inline def safe: AtomicRef[A]                                                        = AtomicRef(self)
+            @nowarn("msg=anonymous")
+            inline def getAndUpdate(inline f: A => A)(using inline allow: AllowUnsafe): A = self.getAndUpdate(f(_))
+            @nowarn("msg=anonymous")
+            inline def updateAndGet(inline f: A => A)(using inline allow: AllowUnsafe): A = self.updateAndGet(f(_))
+            inline def safe: AtomicRef[A]                                                 = AtomicRef(self)
         end extension
     end Unsafe
 end AtomicRef

@@ -13,7 +13,7 @@ trait Task {
     protected def shouldPreempt(): Boolean =
         state < 0
 
-    def run(startMillis: Long, clock: InternalClock): Task.Result
+    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result
 
     protected def runtime(): Int = {
         val state = this.state
@@ -43,7 +43,7 @@ object Task {
 
     def apply(runnable: Runnable): Task =
         new Task {
-            def run(startMillis: Long, clock: InternalClock) = {
+            def run(startMillis: Long, clock: InternalClock, deadline: Long) = {
                 runnable.run()
                 Task.Done
             }
@@ -55,7 +55,7 @@ object Task {
     def apply(r: => Unit, runtime: Int): Task = {
         val t =
             new Task {
-                def run(startMillis: Long, clock: InternalClock) = {
+                def run(startMillis: Long, clock: InternalClock, deadline: Long) = {
                     r
                     Task.Done
                 }

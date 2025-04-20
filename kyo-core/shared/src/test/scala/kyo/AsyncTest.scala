@@ -117,7 +117,7 @@ class AsyncTest extends Test:
                 }
             }
 
-        "one fiber" in runNotJS {
+        "one fiber" in run {
             for
                 started     <- Latch.init(1)
                 done        <- Latch.init(1)
@@ -127,7 +127,7 @@ class AsyncTest extends Test:
                 _           <- done.await
             yield assert(interrupted)
         }
-        "multiple fibers" in runNotJS {
+        "multiple fibers" in run {
             for
                 started      <- Latch.init(3)
                 done         <- Latch.init(3)
@@ -144,17 +144,17 @@ class AsyncTest extends Test:
     }
 
     "race" - {
-        "zero" in runNotJS {
+        "zero" in run {
             typeCheckFailure("Async.race()")(
                 "None of the overloaded alternatives of method race in object Async"
             )
         }
-        "one" in runNotJS {
+        "one" in run {
             Async.race(1).map { r =>
                 assert(r == 1)
             }
         }
-        "multiple" in runNotJS {
+        "multiple" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < IO =
@@ -172,7 +172,7 @@ class AsyncTest extends Test:
                 assert(bc.get() <= Int.MaxValue)
             }
         }
-        "waits for the first success" in runNotJS {
+        "waits for the first success" in run {
             val ex = new Exception
             Async.race(
                 Async.sleep(1.milli).andThen(42),
@@ -181,7 +181,7 @@ class AsyncTest extends Test:
                 assert(r == 42)
             }
         }
-        "returns the last failure if all fibers fail" in runNotJS {
+        "returns the last failure if all fibers fail" in run {
             val ex1 = new Exception
             val ex2 = new Exception
             val race =
@@ -193,7 +193,7 @@ class AsyncTest extends Test:
                 r => assert(r == Result.panic(ex1))
             }
         }
-        "never" in runNotJS {
+        "never" in run {
             Async.race(Async.never, 1).map { r =>
                 assert(r == 1)
             }
@@ -249,23 +249,24 @@ class AsyncTest extends Test:
         yield assert(v1 + v2 + v3 + l.sum == 15)
     }
 
-    "interrupt" in runNotJS {
-        def loop(ref: AtomicInt): Unit < IO =
+    "interrupt" in run {
+        def loop(ref: AtomicInt): Unit < Async =
             ref.incrementAndGet.map(_ => loop(ref))
 
-        def task(l: Latch): Unit < Async =
-            Resource.run[Unit, IO] {
-                Resource.ensure(l.release).map { _ =>
-                    AtomicInt.init(0).map(loop)
+        def task(started: Latch, done: Latch): Unit < Async =
+            Resource.run {
+                Resource.ensure(done.release).map { _ =>
+                    started.release.andThen(AtomicInt.init(0).map(loop))
                 }
             }
 
         for
-            l           <- Latch.init(1)
-            fiber       <- Async.run(task(l))
-            _           <- Async.sleep(10.millis)
+            started     <- Latch.init(1)
+            done        <- Latch.init(1)
+            fiber       <- Async.run(task(started, done))
+            _           <- started.await
             interrupted <- fiber.interrupt(panic)
-            _           <- l.await
+            _           <- done.await
         yield assert(interrupted)
         end for
     }
@@ -543,17 +544,15 @@ class AsyncTest extends Test:
             yield assert(result == 42)
         }
 
-        "interrupts computation" in runNotJS {
+        "interrupts computation" in run {
             for
-                flag  <- AtomicBoolean.init(false)
-                fiber <- Promise.init[Nothing, Int]
-                _     <- fiber.onInterrupt(_ => flag.set(true))
-                // TODO Boundary inference issue
-                v = Async.timeout(1.millis)(fiber.get)
-                result <- Async.run(v)
+                flag   <- AtomicBoolean.init(false)
+                fiber  <- Promise.init[Nothing, Int]
+                _      <- fiber.onInterrupt(_ => flag.set(true))
+                result <- Async.run(Async.timeout(1.millis)(fiber.get))
                 result <- fiber.getResult
                 _      <- untilTrue(flag.get)
-            yield assert(result.isFailure)
+            yield assert(result.isPanic)
         }
     }
 

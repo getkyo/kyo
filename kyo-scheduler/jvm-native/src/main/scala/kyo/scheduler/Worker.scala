@@ -254,7 +254,7 @@ abstract private class Worker(
         val start = clock.currentMillis()
         taskStartMs = start
         try
-            task.run(start, clock)
+            task.run(start, clock, Long.MaxValue)
         catch {
             case ex if NonFatal(ex) =>
                 val thread = Thread.currentThread()
