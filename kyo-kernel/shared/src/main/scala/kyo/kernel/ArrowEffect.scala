@@ -22,18 +22,18 @@ import scala.util.control.NonFatal
   * @tparam Output
   *   The output type constructor - what results the function produces
   *
-  * ArrowEffect provides two main kinds of handling methods with distinct capabilities:
-  *   - handle: Basic handler that doesn't allow introducing new effects during handling
-  *   - handleLoop: Enhanced handler that explicitly allows introducing new effects (via S2 type parameter) during handling:
-  *     - Without state: When you need to add effects but not state between occurrences
-  *     - With state: When you need both new effects and state maintenance between occurrences
-  *
   * Every use of an ArrowEffect creates a suspended function call. This suspended call contains all the information needed to perform the
   * operation, but doesn't specify how to perform it.
   *
   * A handler then provides the actual function implementation that determines what happens when that suspended call is executed. Each
   * handler takes two parameters: an input value of type I[C] that contains the input of the operation, and a continuation function
   * representing the remainder of the computation from the point where the effect was suspended to the point where it's being handled.
+  *
+  * ArrowEffect provides two main kinds of handling methods with distinct capabilities:
+  *   - handle: Basic handler that doesn't allow introducing new effects during handling
+  *   - handleLoop: Enhanced handler that explicitly allows introducing new effects (via S2 type parameter) during handling:
+  *     - Without state: When you need to add effects but not state between occurrences
+  *     - With state: When you need both new effects and state maintenance between occurrences
   *
   * When defining concrete effects, ArrowEffect is commonly used with two special type constructors: Const and Id. The Const[X] type
   * constructor ignores its type parameter and always returns X, while Id[X] simply returns X unchanged. For instance, an effect that needs
