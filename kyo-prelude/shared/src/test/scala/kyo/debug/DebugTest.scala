@@ -174,8 +174,6 @@ class DebugTest extends Test:
             testOutput(
                 "DebugTest.scala:54:28",
                 "undefined",
-                "DebugTest.scala:55:36",
-                "Seq(Seq(6))",
                 "DebugTest.scala:57:10",
                 "Seq(6)"
             ) {
