@@ -226,7 +226,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                             import kyo.AllowUnsafe.embrace.danger
                             if isNull(result) then
                                 if deadline.isOverdue() then
-                                    return Result.fail(Timeout())
+                                    // TODO: Get frame from Pending
+                                    return Result.fail(Timeout(Maybe.empty))
                                 val timeLeft = deadline.timeLeft()
                                 if !timeLeft.isFinite then
                                     LockSupport.park(this)

@@ -336,6 +336,14 @@ object `<`:
                 case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] => Maybe.empty
                 case v                                 => Maybe(v.unsafeGet)
 
+        private[kyo] inline def suspendedFrame: Maybe[Frame] =
+            inline v match
+                case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] => Maybe(kyo.frame)
+                case Nested(kyo)                       => kyo.suspendedFrame
+                case _                                 => Maybe.empty
+            end match
+        end suspendedFrame
+
     end extension
 
     extension [A, S](v: A < S)
