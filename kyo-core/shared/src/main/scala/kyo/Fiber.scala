@@ -316,7 +316,7 @@ object Fiber extends FiberPlatformSpecific:
                     fiber.onComplete(state)
                 }
                 state
-            }
+            }(frame) // TODO
         }
 
     /** Concurrently executes effects and collects up to `max` successful results.
@@ -410,7 +410,7 @@ object Fiber extends FiberPlatformSpecific:
                         fiber.onComplete(state(idx, _))
                     }
                     state
-                }
+                }(frame) // TODO
             }
         end if
     end gather
@@ -507,7 +507,7 @@ object Fiber extends FiberPlatformSpecific:
                             fiber.onComplete(state(idx, _))
                         }
                         state
-                    }
+                    }(frame) // TODO
                 }
 
     opaque type Unsafe[+E, +A] = IOPromise[? <: E, ? <: A]

@@ -107,10 +107,10 @@ object Async:
       */
     def run[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(v: A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
+    )(v: A < (Abort[E] & Async & S)): Fiber[E, A] < (IO & S) =
         isolate.runInternal((trace, context) =>
             Fiber.fromTask(IOTask(v, trace, context))
-        )
+        )(v.suspendedFrame.getOrElse(Frame.internal))
 
     /** Runs an asynchronous computation and blocks until completion or timeout.
       *
