@@ -37,7 +37,7 @@ object Retry:
       * @return
       *   The result of the operation, or an abort if all retries fail
       */
-    def apply[E: SafeClassTag](using Frame)[A: Flat, S](v: => A < (Abort[E] & S)): A < (Async & Abort[E] & S) =
+    def apply[E: SafeClassTag](using Frame)[A, S](v: => A < (Abort[E] & S)): A < (Async & Abort[E] & S) =
         apply(defaultSchedule)(v)
 
     /** Retries an operation using a custom policy builder.
@@ -49,7 +49,7 @@ object Retry:
       * @return
       *   The result of the operation, or an abort if all retries fail.
       */
-    def apply[E: SafeClassTag](using Frame)[A: Flat, S](schedule: Schedule)(v: => A < (Abort[E] & S)): A < (Async & Abort[E] & S) =
+    def apply[E: SafeClassTag](using Frame)[A, S](schedule: Schedule)(v: => A < (Abort[E] & S)): A < (Async & Abort[E] & S) =
         Abort.run[E](v).map {
             case Result.Success(value) => value
             case result: Result.Failure[E] @unchecked =>

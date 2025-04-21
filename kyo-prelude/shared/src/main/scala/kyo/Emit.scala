@@ -68,7 +68,7 @@ object Emit:
       * @return
       *   A tuple of the collected values and the result of the computation
       */
-    def run[V](using Frame)[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): (Chunk[V], A) < S =
+    def run[V](using Frame)[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): (Chunk[V], A) < S =
         ArrowEffect.handleState(tag, Chunk.empty[V], v)(
             handle = [C] => (input, state, cont) => (state.append(input), cont(())),
             done = (state, res) => (state, res)
@@ -87,7 +87,7 @@ object Emit:
       */
     def runFold[V](
         using Frame
-    )[A, S, B: Flat, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(using tag: Tag[Emit[V]]): (A, B) < (S & S2) =
+    )[A, S, B, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(using tag: Tag[Emit[V]]): (A, B) < (S & S2) =
         ArrowEffect.handleState(tag, acc, v)(
             handle = [C] =>
                 (input, state, cont) =>
@@ -104,7 +104,7 @@ object Emit:
       */
     def runDiscard[V](
         using Frame
-    )[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): A < S =
+    )[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): A < S =
         ArrowEffect.handle(tag, v)(
             handle = [C] => (input, cont) => cont(())
         )
@@ -120,7 +120,7 @@ object Emit:
       */
     def runForeach[V](
         using Frame
-    )[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Any < S2)(using tag: Tag[Emit[V]]): A < (S & S2) =
+    )[A, S, S2](v: A < (Emit[V] & S))(f: V => Any < S2)(using tag: Tag[Emit[V]]): A < (S & S2) =
         ArrowEffect.handle(tag, v)(
             [C] => (input, cont) => f(input).map(_ => cont(()))
         )
@@ -134,7 +134,7 @@ object Emit:
       * @return
       *   The result of the computation
       */
-    def runWhile[V](using Frame)[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Boolean < S2)(using tag: Tag[Emit[V]]): A < (S & S2) =
+    def runWhile[V](using Frame)[A, S, S2](v: A < (Emit[V] & S))(f: V => Boolean < S2)(using tag: Tag[Emit[V]]): A < (S & S2) =
         ArrowEffect.handleState(tag, true, v)(
             [C] => (input, cond, cont) => if cond then f(input).map(c => (c, cont(()))) else (cond, cont(()))
         )
@@ -148,7 +148,7 @@ object Emit:
       *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
       *   - A continuation function that returns the remaining computation
       */
-    def runFirst[V](using Frame)[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): (Maybe[V], () => A < (Emit[V] & S)) < S =
+    def runFirst[V](using Frame)[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): (Maybe[V], () => A < (Emit[V] & S)) < S =
         ArrowEffect.handleFirst(tag, v)(
             handle = [C] =>
                 (input, cont) =>
@@ -179,15 +179,13 @@ object Emit:
 
                 type Transform[A] = (Chunk[V], A)
 
-                given flatTransform[A: Flat]: Flat[(Chunk[V], A)] = Flat.derive
-
-                def capture[A: Flat, S](f: State => A < S)(using Frame) =
+                def capture[A, S](f: State => A < S)(using Frame) =
                     f(Chunk.empty)
 
-                def isolate[A: Flat, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
+                def isolate[A, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
                     Emit.run(v)
 
-                def restore[A: Flat, S](v: (Chunk[V], A) < S)(using Frame) =
+                def restore[A, S](v: (Chunk[V], A) < S)(using Frame) =
                     v.map { (state, result) =>
                         Loop(state: Seq[V]) {
                             case Seq() => Loop.done(result)
@@ -214,15 +212,13 @@ object Emit:
 
                 type Transform[A] = A
 
-                given flatTransform[A: Flat]: Flat[Transform[A]] = Flat.derive
-
-                def capture[A: Flat, S](f: State => A < S)(using Frame) =
+                def capture[A, S](f: State => A < S)(using Frame) =
                     f(Chunk.empty)
 
-                def isolate[A: Flat, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
+                def isolate[A, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
                     Emit.runDiscard(v)
 
-                def restore[A: Flat, S](v: A < S)(using Frame) =
+                def restore[A, S](v: A < S)(using Frame) =
                     v
     end isolate
 

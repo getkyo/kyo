@@ -7,7 +7,7 @@ class RequestsTest extends Test:
 
     class TestBackend extends Requests.Backend:
         var calls = 0
-        def send[A: Flat](r: Request[A, Any]) =
+        def send[A](r: Request[A, Any]) =
             calls += 1
             Response.ok(Right("mocked")).asInstanceOf[Response[A]]
     end TestBackend

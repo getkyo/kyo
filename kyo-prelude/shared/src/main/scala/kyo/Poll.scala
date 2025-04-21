@@ -136,7 +136,7 @@ object Poll:
       * @return
       *   The result of running the Poll computation with the provided values
       */
-    def run[V, A: Flat, S](inputs: Chunk[V])(v: A < (Poll[V] & S))(
+    def run[V, A, S](inputs: Chunk[V])(v: A < (Poll[V] & S))(
         using
         tag: Tag[Poll[V]],
         frame: Frame
@@ -158,7 +158,7 @@ object Poll:
       */
     def runFirst[V](
         using Frame
-    )[A: Flat, S](v: A < (Poll[V] & S))(using tag: Tag[Poll[V]]): Either[A, Maybe[V] => A < (Poll[V] & S)] < S =
+    )[A, S](v: A < (Poll[V] & S))(using tag: Tag[Poll[V]]): Either[A, Maybe[V] => A < (Poll[V] & S)] < S =
         ArrowEffect.handleFirst(tag, v)(
             handle = [C] =>
                 (input, cont) =>
@@ -188,7 +188,7 @@ object Poll:
       * @return
       *   A tuple containing results from both the emitter and poller
       */
-    def run[V, A: Flat, B: Flat, S, S2](emit: A < (Emit[V] & S))(poll: B < (Poll[V] & S2))(
+    def run[V, A, B, S, S2](emit: A < (Emit[V] & S))(poll: B < (Poll[V] & S2))(
         using
         emitTag: Tag[Emit[V]],
         pollTag: Tag[Poll[V]],

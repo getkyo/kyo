@@ -21,7 +21,7 @@ class Cache(private[kyo] val store: Store) extends Serializable:
       * @tparam A
       *   The input type
       * @tparam B
-      *   The output type (must have a Flat instance)
+      *   The output type
       * @tparam S
       *   The effect type
       * @param f
@@ -29,7 +29,7 @@ class Cache(private[kyo] val store: Store) extends Serializable:
       * @return
       *   A memoized version of the input function
       */
-    def memo[A, B: Flat, S](
+    def memo[A, B, S](
         f: A => B < S
     )(using Frame): A => B < (Async & S) =
         (v: A) =>
@@ -71,13 +71,13 @@ class Cache(private[kyo] val store: Store) extends Serializable:
       * @tparam S
       *   The effect type
       * @tparam B
-      *   The output type (must have a Flat instance)
+      *   The output type
       * @param f
       *   The function to memoize
       * @return
       *   A memoized version of the input function
       */
-    def memo2[T1, T2, S, B: Flat](
+    def memo2[T1, T2, S, B](
         f: (T1, T2) => B < S
     )(using Frame): (T1, T2) => B < (Async & S) =
         val m = memo[(T1, T2), B, S](f.tupled)
@@ -95,13 +95,13 @@ class Cache(private[kyo] val store: Store) extends Serializable:
       * @tparam S
       *   The effect type
       * @tparam B
-      *   The output type (must have a Flat instance)
+      *   The output type
       * @param f
       *   The function to memoize
       * @return
       *   A memoized version of the input function
       */
-    def memo3[T1, T2, T3, S, B: Flat](
+    def memo3[T1, T2, T3, S, B](
         f: (T1, T2, T3) => B < S
     )(using Frame): (T1, T2, T3) => B < (Async & S) =
         val m = memo[(T1, T2, T3), B, S](f.tupled)
@@ -121,13 +121,13 @@ class Cache(private[kyo] val store: Store) extends Serializable:
       * @tparam S
       *   The effect type
       * @tparam B
-      *   The output type (must have a Flat instance)
+      *   The output type
       * @param f
       *   The function to memoize
       * @return
       *   A memoized version of the input function
       */
-    def memo4[T1, T2, T3, T4, S, B: Flat](
+    def memo4[T1, T2, T3, T4, S, B](
         f: (T1, T2, T3, T4) => B < S
     )(using Frame): (T1, T2, T3, T4) => B < (Async & S) =
         val m = memo[(T1, T2, T3, T4), B, S](f.tupled)

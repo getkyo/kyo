@@ -110,7 +110,6 @@ object LongAdder:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        given Flat[Unsafe]                    = Flat.unsafe.bypass
         def init()(using AllowUnsafe): Unsafe = new j.LongAdder
 
         extension (self: Unsafe)
@@ -215,8 +214,6 @@ object DoubleAdder:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        given Flat[Unsafe] = Flat.unsafe.bypass
-
         def init()(using AllowUnsafe): Unsafe = new j.DoubleAdder
 
         extension (self: Unsafe)

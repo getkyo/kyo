@@ -10,7 +10,7 @@ object PlatformBackend:
 
     def apply(backend: SttpBackend[KyoSttpMonad.M, WebSockets])(using Frame): Backend =
         new Backend:
-            def send[A: Flat](r: Request[A, Any]) =
+            def send[A](r: Request[A, Any]) =
                 r.send(backend)
 
     def apply(client: HttpClient)(using Frame): Backend =
@@ -19,6 +19,6 @@ object PlatformBackend:
     val default =
         new Backend:
             val b = HttpClientKyoBackend()
-            def send[A: Flat](r: Request[A, Any]) =
+            def send[A](r: Request[A, Any]) =
                 r.send(b)
 end PlatformBackend

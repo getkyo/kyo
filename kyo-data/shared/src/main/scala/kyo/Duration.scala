@@ -17,7 +17,6 @@ object Duration:
     opaque type Value = Long
 
     inline given CanEqual[Duration, Duration] = CanEqual.derived
-    inline given Flat[Duration]               = Flat.unsafe.bypass
 
     /** Exception thrown for invalid duration parsing. */
     class InvalidDuration(message: Text)(using Frame) extends KyoException(message)
