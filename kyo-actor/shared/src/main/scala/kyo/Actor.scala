@@ -452,7 +452,7 @@ object Actor:
                     IO.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
                     Env.run(_subject),        // Provide the actor's Subject to the environment so it can be accessed via Actor.self
                     Resource.run,             // Close used resources
-                    Async.run                 // Start the actor's processing loop in an async context
+                    Async.run(_)              // Start the actor's processing loop in an async context
                 )
             _ <- Resource.ensure(mailbox.close) // Registers a finalizer in the outer scope to provide the actor hierarchy behavior
         yield new Actor[E, A, B](_subject, _consumer):

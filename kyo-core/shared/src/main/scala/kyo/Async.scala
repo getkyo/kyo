@@ -107,7 +107,7 @@ object Async:
       */
     def run[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
+    )(v: A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
         isolate.runInternal((trace, context) =>
             Fiber.fromTask(IOTask(v, trace, context))
         )
@@ -123,7 +123,7 @@ object Async:
       */
     def runAndBlock[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
-    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
+    )(timeout: Duration)(v: A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E | Timeout] & IO & S) =
         run(v).map { fiber =>
@@ -143,7 +143,7 @@ object Async:
       */
     def mask[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
-    )(v: => A < (Abort[E] & Async & S))(
+    )(v: A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         isolate.capture { state =>
@@ -483,7 +483,7 @@ object Async:
     def fill[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(n: Int, concurrency: Int = defaultConcurrency)(
-        f: => A < (Abort[E] & Async & S)
+        f: A < (Abort[E] & Async & S)
     )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
         fillIndexed(n, concurrency)(_ => f)
 
