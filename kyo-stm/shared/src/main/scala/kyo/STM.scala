@@ -70,7 +70,7 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A: Flat, S](
+    def run[E, A, S](
         using Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
     )(v: A < (STM & Abort[E] & Async & S))(using frame: Frame): A < (S & Async & Abort[E | FailedTransaction]) =
         run(defaultRetrySchedule)(v)
@@ -84,7 +84,7 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A: Flat, S](
+    def run[E, A, S](
         using isolate: Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
     )(retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async & S))(
         using frame: Frame
@@ -93,7 +93,7 @@ object STM:
             isolate.restore(run(retrySchedule)(isolate.isolate(st, v)))
         }
 
-    private def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
+    private def run[E, A](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
         using Frame
     ): A < (Async & Abort[E | FailedTransaction]) =
         TID.useIO {

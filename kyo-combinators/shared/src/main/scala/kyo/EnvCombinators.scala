@@ -18,7 +18,6 @@ extension [A, S, E](effect: A < (S & Env[E]))
     def provideValue[E1 >: E, ER](dependency: E1)(
         using
         ev: E => E1 & ER,
-        flat: Flat[A],
         reduce: Reducible[Env[ER]],
         tag: Tag[E1],
         frame: Frame
@@ -35,7 +34,6 @@ extension [A, S, E](effect: A < (S & Env[E]))
     inline def provideLayer[S1, E1 >: E, ER](layer: Layer[E1, S1])(
         using
         ev: E => E1 & ER,
-        flat: Flat[A],
         reduce: Reducible[Env[ER]],
         tag: Tag[E1],
         frame: Frame

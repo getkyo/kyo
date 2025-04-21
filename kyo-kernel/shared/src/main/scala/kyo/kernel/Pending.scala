@@ -56,8 +56,6 @@ object `<`:
         inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using
             inline _frame: Frame,
-            inline flatA: WeakFlat[A],
-            inline flatB: WeakFlat[B],
             inline safepoint: Safepoint
         ): B < (S & S2) =
             @nowarn("msg=anonymous") def mapLoop(v: A < S)(using Safepoint): B < (S & S2) =
@@ -68,7 +66,7 @@ object `<`:
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 mapLoop(kyo(v, context))
                     case v =>
-                        val value = v.asInstanceOf[A]
+                        val value = v.unsafeGet
                         Safepoint.handle(value)(
                             suspend = mapLoop(value),
                             continue = f(value)
@@ -87,12 +85,23 @@ object `<`:
           *   A computation producing the final result
           */
         inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(
-            using
-            inline frame: Frame,
-            inline flatA: WeakFlat[A],
-            inline flatB: WeakFlat[B]
+            using inline _frame: Frame
         ): B < (S & S2) =
-            map(v => f(v))
+            @nowarn("msg=anonymous") def flatMapLoop(v: A < S)(using Safepoint): B < (S & S2) =
+                v match
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
+                            def frame = _frame
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                flatMapLoop(kyo(v, context))
+                    case v =>
+                        val value = v.unsafeGet
+                        Safepoint.handle(value)(
+                            suspend = flatMapLoop(value),
+                            continue = f(value)
+                        )
+            flatMapLoop(v)
+        end flatMap
 
         /** Executes this computation, discards its result, and then executes another computation.
           *
@@ -102,12 +111,23 @@ object `<`:
           *   A computation producing the second result
           */
         inline def andThen[B, S2](inline f: Safepoint ?=> B < S2)(
-            using
-            inline frame: Frame,
-            inline flatA: WeakFlat[A],
-            inline flatB: WeakFlat[B]
+            using inline _frame: Frame
         ): B < (S & S2) =
-            map(_ => f)
+            @nowarn("msg=anonymous") def andThenLoop(v: A < S)(using Safepoint): B < (S & S2) =
+                v match
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
+                            def frame = _frame
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                andThenLoop(kyo(v, context))
+                    case v =>
+                        val value = v.unsafeGet
+                        Safepoint.handle(value)(
+                            suspend = andThenLoop(value),
+                            continue = f
+                        )
+            andThenLoop(v)
+        end andThen
 
         /** Executes this computation and discards its result.
           *
@@ -117,7 +137,6 @@ object `<`:
         inline def unit(
             using
             inline _frame: Frame,
-            inline flat: WeakFlat[A],
             inline safepoint: Safepoint
         ): Unit < S =
             @nowarn("msg=anonymous") def unitLoop(v: A < S)(using Safepoint): Unit < S =
@@ -156,9 +175,7 @@ object `<`:
           * @return
           *   The result of applying the transformation
           */
-        inline def handle[B](inline f: (=> A < S) => B)(
-            using inline flat: WeakFlat[A]
-        ): B =
+        inline def handle[B](inline f: (=> A < S) => B): B =
             def handle1 = v
             f(handle1)
         end handle
@@ -173,7 +190,7 @@ object `<`:
         inline def handle[B, C](
             inline f1: A < S => B,
             inline f2: (=> B) => C
-        )(using inline flat: WeakFlat[A]): C =
+        ): C =
             def handle2 = v.handle(f1)
             f2(handle2)
         end handle
@@ -189,7 +206,7 @@ object `<`:
             inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D
-        )(using inline flat: WeakFlat[A]): D =
+        ): D =
             def handle3 = v.handle(f1, f2)
             f3(handle3)
         end handle
@@ -206,7 +223,7 @@ object `<`:
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E
-        )(using inline flat: WeakFlat[A]): E =
+        ): E =
             def handle4 = v.handle(f1, f2, f3)
             f4(handle4)
         end handle
@@ -224,7 +241,7 @@ object `<`:
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
             inline f5: (=> E) => F
-        )(using inline flat: WeakFlat[A]): F =
+        ): F =
             def handle5 = v.handle(f1, f2, f3, f4)
             f5(handle5)
         end handle
@@ -243,7 +260,7 @@ object `<`:
             inline f4: (=> D) => E,
             inline f5: (=> E) => F,
             inline f6: (=> F) => G
-        )(using inline flat: WeakFlat[A]): G =
+        ): G =
             def handle6 = v.handle(f1, f2, f3, f4, f5)
             f6(handle6)
         end handle
@@ -258,7 +275,7 @@ object `<`:
             inline f5: (=> E) => F,
             inline f6: (=> F) => G,
             inline f7: (=> G) => H
-        )(using inline flat: WeakFlat[A]): H =
+        ): H =
             def handle7 = v.handle(f1, f2, f3, f4, f5, f6)
             f7(handle7)
         end handle
@@ -274,7 +291,7 @@ object `<`:
             inline f6: (=> F) => G,
             inline f7: (=> G) => H,
             inline f8: (=> H) => I
-        )(using inline flat: WeakFlat[A]): I =
+        ): I =
             def handle8 = v.handle(f1, f2, f3, f4, f5, f6, f7)
             f8(handle8)
         end handle
@@ -291,7 +308,7 @@ object `<`:
             inline f7: (=> G) => H,
             inline f8: (=> H) => I,
             inline f9: (=> I) => J
-        )(using inline flat: WeakFlat[A]): J =
+        ): J =
             def handle9 = v.handle(f1, f2, f3, f4, f5, f6, f7, f8)
             f9(handle9)
         end handle
@@ -309,16 +326,23 @@ object `<`:
             inline f8: (=> H) => I,
             inline f9: (=> I) => J,
             inline f10: (=> J) => K
-        )(using inline flat: WeakFlat[A]): K =
+        ): K =
             def handle10 = v.handle(f1, f2, f3, f4, f5, f6, f7, f8, f9)
             f10(handle10)
         end handle
 
-        private[kyo] inline def evalNow(using inline flat: Flat[A]): Maybe[A] =
+        private[kyo] inline def evalNow: Maybe[A] =
             v match
-                case kyo: Kyo[?, ?] => Maybe.empty
-                case v              => Maybe(v.asInstanceOf[A])
+                case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] => Maybe.empty
+                case v                                 => Maybe(v.unsafeGet)
 
+    end extension
+
+    extension [A, S](v: A < S)
+        private[kyo] def unsafeGet: A =
+            v match
+                case Nested(v) => v.asInstanceOf[A]
+                case _         => v.asInstanceOf[A]
     end extension
 
     extension [A, S, S2](v: A < S < S2)
@@ -336,7 +360,7 @@ object `<`:
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 flattenLoop(kyo(v, context))
                     case v =>
-                        v.asInstanceOf[A]
+                        v.unsafeGet
             flattenLoop(v)
     end extension
 
@@ -352,16 +376,16 @@ object `<`:
           * @throws IllegalStateException
           *   if unhandled effects remain in the computation
           */
-        inline def eval(using inline frame: Frame, inline flat: Flat[A]): A =
+        inline def eval(using inline frame: Frame): A =
             @tailrec def evalLoop(kyo: A < Any)(using Safepoint): A =
                 kyo match
                     case kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any] @unchecked
                         if kyo.tag =:= Tag[Defer] =>
                         evalLoop(kyo((), Context.empty))
-                    case kyo: Kyo[A, Any] @unchecked =>
+                    case kyo: KyoSuspend[?, ?, ?, ?, A, Any] @unchecked =>
                         bug.failTag(kyo, Tag[Any])
                     case v =>
-                        v.asInstanceOf[A]
+                        v.unsafeGet
                 end match
             end evalLoop
             Safepoint.eval(evalLoop(v))
@@ -370,8 +394,25 @@ object `<`:
 
     implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
 
-    /** Converts a plain value to an effectful computation. */
-    implicit inline def lift[A, S](v: A)(using inline flat: WeakFlat[A]): A < S = v
+    /** Implicitly converts a plain value to an effectful computation.
+      *
+      * This conversion is a critical part of the effect system's ergonomics. It handles two key cases:
+      *
+      *   1. When the input is already a Kyo effect instance, it wraps it in a Nested container to prevent unsound flattening and maintain
+      *      proper effect composition.
+      *   2. When the input is a regular value, it lifts it directly into the effect context through type casting.
+      *
+      * The WeakFlat constraint avoids unexpected lifting when the pending effect set of computations don't match.
+      *
+      * @param v
+      *   The value to lift into the effect context
+      * @return
+      *   A computation in the effect context
+      */
+    implicit def lift[A: WeakFlat, S](v: A): A < S =
+        v match
+            case kyo: Kyo[?, ?] => Nested(kyo)
+            case _              => v.asInstanceOf[A < S]
 
     /** Converts a pure single-argument function to an effectful computation. */
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(

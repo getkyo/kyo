@@ -1,7 +1,6 @@
 package kyo.kernel
 
 import kyo.Ansi.*
-import kyo.Flat
 import kyo.Frame
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
@@ -102,7 +101,7 @@ object Isolate:
                                     def apply(v: OX[Any], context: Context)(using Safepoint) =
                                         loop(kyo(v, context))
                             case _ =>
-                                v.asInstanceOf[A]
+                                v.unsafeGet
                     loop(v)
                 end apply
 
@@ -182,35 +181,32 @@ object Isolate:
         /** How state is transformed during isolated execution */
         type Transform[_]
 
-        /** Evidence that transformed state can be properly handled */
-        given flatTransform[A: Flat]: Flat[Transform[A]]
-
         /** Runs a computation with full state lifecycle management.
           *
           * Convenience method that composes capture, isolate and restore to handle the complete state lifecycle.
           */
-        final def run[A: Flat, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
+        final def run[A, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
             capture(state => restore(isolate(state, v)))
 
         /** Phase 1: Capture Initial State
           *
           * Obtains the initial state that will be managed during isolation. This begins the isolation process by capturing current state.
           */
-        def capture[A: Flat, S](f: State => A < S)(using Frame): A < (S & Retain & Passthrough)
+        def capture[A, S](f: State => A < S)(using Frame): A < (S & Retain & Passthrough)
 
         /** Phase 2: Isolated Execution
           *
           * Executes a computation with isolated state. The computation runs with a transformed copy of the state, preventing effects from
           * leaking.
           */
-        def isolate[A: Flat, S](state: State, v: A < (S & Retain))(using Frame): Transform[A] < (S & Passthrough)
+        def isolate[A, S](state: State, v: A < (S & Retain))(using Frame): Transform[A] < (S & Passthrough)
 
         /** Phase 3: State Restoration
           *
           * Restores/merges state after isolated execution completes. Determines how transformed state is propagated back to the outer
           * context.
           */
-        def restore[A: Flat, S](v: Transform[A] < S)(using Frame): A < (S & Retain & Passthrough)
+        def restore[A, S](v: Transform[A] < S)(using Frame): A < (S & Retain & Passthrough)
 
         /** Applies this isolate to a computation that requires it.
           *
@@ -239,16 +235,14 @@ object Isolate:
             new Stateful[Retain & R2, Passthrough & P2]:
                 type State        = (self.State, next.State)
                 type Transform[A] = self.Transform[next.Transform[A]]
-                given flatTransform[A: Flat]: Flat[Transform[A]] = self.flatTransform(using next.flatTransform)
-
-                def capture[A: Flat, S2](f: State => A < S2)(using Frame) =
+                def capture[A, S2](f: State => A < S2)(using Frame) =
                     self.capture(s1 => next.capture(s2 => f((s1, s2))))
 
-                def isolate[A: Flat, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
-                    self.isolate(state._1, next.isolate(state._2, v))(using Flat.unsafe.bypass)
+                def isolate[A, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
+                    self.isolate(state._1, next.isolate(state._2, v))
 
-                def restore[A: Flat, S2](v: self.Transform[next.Transform[A]] < S2)(using Frame) =
-                    next.restore(self.restore(v)(using Flat.unsafe.bypass))
+                def restore[A, S2](v: self.Transform[next.Transform[A]] < S2)(using Frame) =
+                    next.restore(self.restore(v))
             end new
         end andThen
     end Stateful
@@ -260,11 +254,10 @@ object Isolate:
             new Stateful[Any, Any]:
                 type State        = Unit
                 type Transform[A] = A
-                given flatTransform[A: Flat]: Flat[A]                                 = Flat.derive[A]
-                def capture[A: Flat, S2](f: State => A < S2)(using Frame)             = f(())
-                def isolate[A: Flat, S2](state: Unit, v: A < (Any & S2))(using Frame) = v
-                def restore[A: Flat, S2](v: A < S2)(using Frame)                      = v
-                override def andThen[R2, P2](next: Stateful[R2, P2])                  = next
+                def capture[A, S2](f: State => A < S2)(using Frame)             = f(())
+                def isolate[A, S2](state: Unit, v: A < (Any & S2))(using Frame) = v
+                def restore[A, S2](v: A < S2)(using Frame)                      = v
+                override def andThen[R2, P2](next: Stateful[R2, P2])            = next
 
         /** Gets the Stateful isolate instance for given effect types. */
         def apply[Retain, Passthrough](using s: Stateful[Retain, Passthrough]): Stateful[Retain, Passthrough] = s

@@ -8,7 +8,7 @@ import zio.Task
 import zio.ZIO
 import zio.query.ZQuery
 
-given zioSchema[R, A: Flat, S](using ev: Schema[R, A], ev2: (A < S) <:< (A < (Abort[Throwable] & Async))): Schema[R, A < S] =
+given zioSchema[R, A, S](using ev: Schema[R, A], ev2: (A < S) <:< (A < (Abort[Throwable] & Async))): Schema[R, A < S] =
     new Schema[R, A < S]:
         override def nullable: Boolean = ev.nullable
         override def canFail: Boolean  = ev.canFail
@@ -23,9 +23,9 @@ given zioSchema[R, A: Flat, S](using ev: Schema[R, A], ev2: (A < S) <:< (A < (Ab
 end zioSchema
 
 trait Runner[S]:
-    def apply[A: Flat](v: A < S): Task[A]
+    def apply[A](v: A < S): Task[A]
 
-given runnerSchema[R, A: Flat, S](using ev: Schema[R, A], tag: zio.Tag[Runner[S]]): Schema[R & Runner[S], A < S] =
+given runnerSchema[R, A, S](using ev: Schema[R, A], tag: zio.Tag[Runner[S]]): Schema[R & Runner[S], A < S] =
     new Schema[R & Runner[S], A < S]:
         override def nullable: Boolean = ev.nullable
         override def canFail: Boolean  = ev.canFail

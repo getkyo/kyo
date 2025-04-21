@@ -1,6 +1,5 @@
 package kyo
 
-import Flat.unsafe.bypass
 import kyo.Result
 import zio.Trace
 import zio.prelude.Equal

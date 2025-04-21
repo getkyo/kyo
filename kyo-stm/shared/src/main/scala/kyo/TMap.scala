@@ -19,8 +19,6 @@ opaque type TMap[K, V] = TRef[Map[K, TRef[V]]]
 
 object TMap:
 
-    given [K, V]: Flat[TMap[K, V]] = Flat.derive[TRef[Map[K, TRef[V]]]]
-
     /** Creates a new empty TMap.
       *
       * @return
