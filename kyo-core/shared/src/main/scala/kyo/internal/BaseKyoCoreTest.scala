@@ -11,7 +11,7 @@ private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async 
             Abort.recover[Any] {
                 case ex: Throwable => throw ex
                 case e             => throw new IllegalStateException(s"Test aborted with $e")
-            },
+            }(_),
             Async.timeout(timeout),
             Async.run(_),
             _.map(_.toFuture).map(_.flatten),

@@ -305,7 +305,7 @@ object Abort:
       */
     def recover[E](
         using Frame
-    )[A, B, S, ER](onFail: E => B < S)(v: => A < (Abort[E | ER] & S))(
+    )[A, B, S, ER](onFail: E => B < S)(v: A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
         reduce: Reducible[Abort[ER]]

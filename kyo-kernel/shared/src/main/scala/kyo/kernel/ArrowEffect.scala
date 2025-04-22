@@ -454,10 +454,10 @@ object ArrowEffect:
                         eval = handle[Any](kyo.input, kyo(_, context)),
                         continue = handleLoop(_, context),
                         suspend = handleLoop(kyo, context)
-                    )
+                    )(using kyo.suspendedFrame.getOrElse(_frame))
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
-                        def frame = _frame
+                        def frame = kyo.suspendedFrame.getOrElse(_frame)
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             try handleLoop(kyo(v, context), context)
                             catch
