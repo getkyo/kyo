@@ -655,7 +655,7 @@ object Channel:
                 if queueClosed && (!takesEmpty || !putsEmpty) then
                     // Queue is closed, drain all takes and puts
                     val fail = queue.size() // Obtain the failed Result
-                    takes.drain(_.completeDiscard(fail))
+                    takes.drain(_.completeDiscard(fail.asInstanceOf[Result[Closed, Nothing]]))
                     puts.drain(_.promise.completeDiscard(fail.unit))
                     flush()
                 else if queueSize > 0 && !takesEmpty then
@@ -668,7 +668,7 @@ object Channel:
                                     // If completing the take fails and the queue
                                     // cannot accept the value back, enqueue a
                                     // placeholder put operation
-                                    val placeholder = Promise.Unsafe.init[Nothing, Unit]()
+                                    val placeholder = Promise.Unsafe.init[Closed, Unit]()
                                     discard(puts.add(Put.Value(value, placeholder)))
                             case _ =>
                                 // Queue became empty, enqueue the take again

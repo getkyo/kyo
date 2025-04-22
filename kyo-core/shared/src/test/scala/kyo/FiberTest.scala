@@ -37,6 +37,13 @@ class FiberTest extends Test:
                 r <- p.get
             yield assert(b && r == null)
         }
+        "complete wrong type" in run {
+            for
+                p <- Promise.init[String, Int]
+            yield
+                typeCheckFailure("p.complete(Result.unit)")("Required: kyo.Result[String, Int]")
+                typeCheckFailure("p.complete(Result.fail(1))")("Required: String")
+        }
         "failure" in run {
             val ex = new Exception
             for

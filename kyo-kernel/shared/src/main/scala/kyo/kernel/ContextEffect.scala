@@ -124,11 +124,7 @@ object ContextEffect:
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline effectTag: Tag[E],
         inline value: A
-    )(v: B < (E & S))(
-        using
-        inline _frame: Frame,
-        inline flat: Flat[A]
-    ): B < S =
+    )(v: B < (E & S))(using inline _frame: Frame): B < S =
         handle(effectTag, value, _ => value)(v)
 
     /** Handles a context effect by either providing a new value or transforming an existing one. This allows for layered handling of
@@ -151,9 +147,7 @@ object ContextEffect:
         inline ifUndefined: A,
         inline ifDefined: A => A
     )(v: B < (E & S))(
-        using
-        inline _frame: Frame,
-        inline flat: Flat[A]
+        using inline _frame: Frame
     ): B < S =
         @nowarn("msg=anonymous")
         def handleLoop(v: B < (E & S))(using Safepoint): B < S =
@@ -169,7 +163,7 @@ object ContextEffect:
                             handleLoop(kyo(v, updated))
                         end apply
                 case kyo =>
-                    kyo.asInstanceOf[B]
+                    kyo.unsafeGet
         handleLoop(v)
     end handle
 end ContextEffect

@@ -107,8 +107,8 @@ class AsyncTest extends Test:
 
     "interrupt" - {
 
-        def loop(ref: AtomicInt): Unit < Async =
-            Async.yieldWith(ref.incrementAndGet.map(_ => loop(ref)))
+        def loop(ref: AtomicInt): Unit < IO =
+            ref.incrementAndGet.map(_ => loop(ref))
 
         def runLoop(started: Latch, done: Latch) =
             Resource.run {
@@ -157,8 +157,8 @@ class AsyncTest extends Test:
         "multiple" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < Async =
-                Async.yieldNow.andThen {
+            def loop(i: Int, s: String): String < IO =
+                IO {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -251,7 +251,7 @@ class AsyncTest extends Test:
 
     "interrupt" in run {
         def loop(ref: AtomicInt): Unit < Async =
-            Async.yieldWith(ref.incrementAndGet.map(_ => loop(ref)))
+            ref.incrementAndGet.map(_ => loop(ref))
 
         def task(started: Latch, done: Latch): Unit < Async =
             Resource.run {
@@ -552,7 +552,7 @@ class AsyncTest extends Test:
                 result <- Async.run(Async.timeout(1.millis)(fiber.get))
                 result <- fiber.getResult
                 _      <- untilTrue(flag.get)
-            yield assert(result.isFailure)
+            yield assert(result.isPanic)
         }
     }
 
@@ -1174,9 +1174,9 @@ class AsyncTest extends Test:
                 memoized <- Async.memoize {
                     counter.incrementAndGet.map(_ => 42)
                 }
-                v1    <- memoized()
-                v2    <- memoized()
-                v3    <- memoized()
+                v1    <- memoized
+                v2    <- memoized
+                v3    <- memoized
                 count <- counter.get
             yield
                 assert(v1 == 42)
@@ -1194,9 +1194,9 @@ class AsyncTest extends Test:
                         else 42
                     }
                 }
-                r1    <- Abort.run(memoized())
-                v2    <- memoized()
-                v3    <- memoized()
+                r1    <- Abort.run(memoized)
+                v2    <- memoized
+                v3    <- memoized
                 count <- counter.get
             yield
                 assert(r1.isPanic)
@@ -1214,9 +1214,9 @@ class AsyncTest extends Test:
                         count <- counter.incrementAndGet
                     yield count
                 }
-                v1    <- memoized()
-                v2    <- memoized()
-                v3    <- memoized()
+                v1    <- memoized
+                v2    <- memoized
+                v3    <- memoized
                 count <- counter.get
             yield
                 assert(v1 == 1)
@@ -1235,9 +1235,9 @@ class AsyncTest extends Test:
                     yield count
                 }
                 results <- Async.zip(
-                    memoized(),
-                    memoized(),
-                    memoized()
+                    memoized,
+                    memoized,
+                    memoized
                 )
                 count <- counter.get
             yield
@@ -1262,11 +1262,11 @@ class AsyncTest extends Test:
                         yield count
                     }
                 }
-                fiber <- Async.run(memoized())
+                fiber <- Async.run(memoized)
                 _     <- started.await
                 _     <- fiber.interrupt
                 _     <- done.await
-                v2    <- memoized()
+                v2    <- memoized
                 count <- counter.get
             yield
                 assert(v2 == 1)
@@ -1380,34 +1380,34 @@ class AsyncTest extends Test:
         }
     }
 
-    "yield" - {
-        "yieldNow suspends and resumes execution" in run {
+    "effect nesting" - {
+        "basic nesting and cancellation" in run {
+            val nested =
+                Async.sleep(1.millis).andThen {
+                    Kyo.lift(Async.sleep(1.millis).andThen(42))
+                }
+
             for
-                counter <- AtomicInt.init(0)
-                result  <- Async.yieldNow.andThen(counter.incrementAndGet)
-                count   <- counter.get
+                res1 <- nested.flatten.handle(Async.run).map(_.get)
+                res2 <- nested.map(_.handle(Async.run)).handle(Async.run).map(_.get).map(_.get)
             yield
-                assert(result == 1)
-                assert(count == 1)
+                assert(res1 == 42)
+                assert(res2 == 42)
+            end for
         }
 
-        "yieldWith executes computation after yielding" in run {
-            for
-                counter <- AtomicInt.init(0)
-                result  <- Async.yieldWith(counter.incrementAndGet)
-                count   <- counter.get
-            yield
-                assert(result == 1)
-                assert(count == 1)
-        }
+        "parallel composition" in run {
+            val nested = Kyo.lift {
+                val comp1 = Async.sleep(1.millis).andThen(1)
+                val comp2 = Async.sleep(1.millis).andThen(2)
 
-        "stack safety with multiple yields" in run {
-            def loop(i: Int): Int < Async =
-                if i <= 0 then 0
-                else Async.yieldNow.andThen(loop(i - 1).map(_ + 1))
+                Async.zip(comp1, comp2).map { case (a, b) =>
+                    Kyo.lift(Async.sleep(5.millis).andThen(a + b))
+                }
+            }
 
-            loop(1000).map { result =>
-                assert(result == 1000)
+            nested.flatten.flatten.map { result =>
+                assert(result == 3)
             }
         }
     }

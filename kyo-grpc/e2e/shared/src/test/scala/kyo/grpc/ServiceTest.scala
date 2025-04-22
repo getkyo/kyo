@@ -205,8 +205,7 @@ class ServiceTest extends Test:
     end given
 
     private def assertStatusException(result: Result[StatusException, Any], expected: StatusException) =
-        assert(result.isInstanceOf[Result.Error[StatusException]])
-        val actual = result.swap.value.get
+        val actual = result.error.get
         // We can't compare the exception here because if it fails we run into https://github.com/scalatest/scalatest/issues/427.
         assert(actual.getStatus === expected.getStatus)
         assert((actual.getTrailers == null && expected.getTrailers == null) || actual.getTrailers === expected.getTrailers)

@@ -319,4 +319,67 @@ class VarTest extends Test:
         }.eval
         assert(result == 4)
     }
+
+    "effect nesting" - {
+
+        "state capture in nested computations" in {
+            val nested =
+                Kyo.lift {
+                    Var.use[Int] { outer =>
+                        Var.setWith(outer * 2) {
+                            Kyo.lift(Var.get[Int])
+                        }
+                    }
+                }
+
+            val result = Var.run(5)(nested.flatten.flatten)
+            assert(result.eval == 10)
+
+            val stateTrack =
+                Var.use[Int] { start =>
+                    Kyo.lift {
+                        Var.set(start + 1).andThen {
+                            Var.get[Int]
+                        }
+                    }.flatten.map { inner =>
+                        (start, inner)
+                    }
+                }
+
+            assert(Var.run(5)(stateTrack).eval == (5, 6))
+        }
+
+        "nested state transformations" in {
+            val nestedUpdates =
+                Var.updateWith[Int](_ + 1) { _ =>
+                    Kyo.lift {
+                        Var.update[Int](_ * 2).andThen {
+                            Var.update[Int](_ - 1).andThen {
+                                Var.get[Int]
+                            }
+                        }
+                    }
+                }
+
+            assert(Var.run(3)(nestedUpdates.flatten).eval == 7)
+        }
+
+        "ordering" in {
+            val sequence = Kyo.lift {
+                Var.setWith(List.empty[String]) {
+                    Kyo.lift {
+                        Var.updateWith[List[String]](_ :+ "first") { _ =>
+                            Var.update[List[String]](_ :+ "second")
+                        }
+                    }.flatten.andThen {
+                        Var.updateWith[List[String]](_ :+ "third") { _ =>
+                            Var.get[List[String]]
+                        }
+                    }
+                }
+            }
+
+            assert(Var.run(Nil)(sequence.flatten).eval == List("first", "second", "third"))
+        }
+    }
 end VarTest

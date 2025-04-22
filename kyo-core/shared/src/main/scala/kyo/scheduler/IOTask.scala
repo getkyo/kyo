@@ -14,8 +14,6 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     private var finalizers: Finalizers
 ) extends IOPromise[E, A] with Task:
 
-    inline given Flat[A] = Flat.unsafe.bypass
-
     import IOTask.frame
 
     def context: Context = Context.empty
@@ -36,12 +34,12 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     private inline def locally[A](inline f: A): A = f
 
-    final private def eval(startMillis: Long, clock: InternalClock)(using Safepoint) =
+    final private def eval(startMillis: Long, clock: InternalClock, deadline: Long)(using Safepoint) =
         try
             curr = Isolate.restoring(trace, this) {
                 ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
                     stop =
-                        shouldPreempt(),
+                        shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline),
                     [C] =>
                         (input, cont) =>
                             locally {
@@ -81,9 +79,9 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         end try
     end eval
 
-    final def run(startMillis: Long, clock: InternalClock): Task.Result =
+    final def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         val safepoint = Safepoint.get
-        eval(startMillis, clock)(using safepoint)
+        eval(startMillis, clock, deadline)(using safepoint)
         if isNull(curr) || !isPending() then
             finalizers.run()
             finalizers = Finalizers.empty
@@ -115,7 +113,7 @@ object IOTask:
         context: Context,
         finalizers: Finalizers = Finalizers.empty,
         runtime: Int = 0
-    )(using Frame, Flat[A]): IOTask[Ctx, E, A] =
+    ): IOTask[Ctx, E, A] =
         val ctx = context
         val task =
             if ctx.isEmpty then

@@ -250,19 +250,17 @@ class SignalTest extends Test:
                 ref <- Signal.initRef(0)
                 readers <-
                     Async.run(Async.fill(10, 10)(
-                        Loop(0)(_ => Async.yieldWith(ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v))))
+                        Loop(0)(_ => ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v)))
                     ))
                 writers <-
                     Async.run(Async.fill(10, 10)(
                         Loop(()) { _ =>
-                            Async.yieldWith {
-                                ref.get.map { v =>
-                                    if v < 10 then
-                                        ref.compareAndSet(v, v + 1).andThen(Loop.continue)
-                                    else
-                                        Loop.done(v)
-                                    end if
-                                }
+                            ref.get.map { v =>
+                                if v < 10 then
+                                    ref.compareAndSet(v, v + 1).andThen(Loop.continue)
+                                else
+                                    Loop.done(v)
+                                end if
                             }
                         }
                     ))

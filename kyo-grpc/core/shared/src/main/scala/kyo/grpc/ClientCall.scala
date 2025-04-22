@@ -9,7 +9,7 @@ import scalapb.grpc.*
 
 object ClientCall:
 
-    def unary[Request, Response: Flat](
+    def unary[Request, Response](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
@@ -19,7 +19,7 @@ object ClientCall:
         GrpcRequest.fromFuture(future)
     end unary
 
-    def clientStreaming[Request: Flat: Tag, Response: Flat](
+    def clientStreaming[Request: Tag, Response](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
@@ -33,7 +33,7 @@ object ClientCall:
             response <- promise.get
         yield response
 
-    def serverStreaming[Request, Response: Flat: Tag](
+    def serverStreaming[Request, Response: Tag](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
@@ -49,7 +49,7 @@ object ClientCall:
         Stream.embed(responses)
     end serverStreaming
 
-    def bidiStreaming[Request, Response: Flat](
+    def bidiStreaming[Request, Response](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,

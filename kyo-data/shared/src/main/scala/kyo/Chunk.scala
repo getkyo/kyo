@@ -363,6 +363,8 @@ sealed abstract class Chunk[+A]
                                 array(start + index) = seq(index + dropLeft)
                                 loop(index + 1)
                         loop(0)
+                    case c: Single[A] @unchecked =>
+                        if dropLeft == 0 && dropRight == 0 then array(start) = c.value
         if !isEmpty then
             loop(self, elements, 0, 0)
     end copyTo
@@ -447,7 +449,7 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
                 case c: Compact[A] @unchecked => c.array.iterator
                 case c: FromSeq[A] @unchecked => c.value.iterator
                 case c: Tail[A] @unchecked    => c.chunk.iterator.drop(c.offset)
-
+                case c: Single[A] @unchecked  => Iterator.single(c.value)
         final override def iterableFactory: StrictOptimizedSeqFactory[Indexed] = Indexed
 
     end Indexed
@@ -461,10 +463,21 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           */
         def empty[A]: Indexed[A] = cachedEmpty.asInstanceOf[Indexed[A]]
 
+        /** Returns a single value Chunk.
+          *
+          * @tparam A
+          *   the type of elements in the Chunk
+          * @return
+          *   a single value Chunk of type A
+          */
+        def single[A](a: A): Single[A] = Single(a)
+
         def from[A](source: Array[A]): Indexed[A] =
-            if source.isEmpty then empty[A]
-            else
-                Compact(Array.copyAs(source, source.length)(using erasedTag[A]))
+            source.length match
+                case 0 => empty[A]
+                case 1 => single(source(0))
+                case _ => Compact(Array.copyAs(source, source.length)(using erasedTag[A]))
+        end from
 
         /** Creates an Indexed Chunk from an `IterableOnce`.
           *
@@ -478,15 +491,51 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           *   a new Chunk.Indexed containing the elements from the IterableOnce
           */
         def from[A](source: IterableOnce[A]): Indexed[A] =
-            if source.knownSize == 0 then empty[A]
-            else
-                source match
-                    case chunk: Chunk.Indexed[A] @unchecked => chunk
-                    case seq: IndexedSeq[A]                 => FromSeq(seq)
-                    case _ =>
-                        val array = source.iterator.toArray(using erasedTag[A])
-                        if array.isEmpty then empty[A]
-                        else Compact(array)
+            source.knownSize match
+                case 0 => empty[A]
+                case 1 => single(source.iterator.next())
+                case _ =>
+                    source match
+                        case chunk: Chunk.Indexed[A] @unchecked => chunk
+                        case seq: IndexedSeq[A]                 => FromSeq(seq)
+                        case _ =>
+                            val array = source.iterator.toArray(using erasedTag[A])
+                            array.length match
+                                case 0 => empty[A]
+                                case 1 => single(array(0))
+                                case _ => Compact(array)
+                            end match
+            end match
+        end from
+
+        /** Creates an Indexed Chunk from a Maybe.
+          *
+          * @tparam A
+          *   the type of the element
+          * @param source
+          *   the Maybe to create the Chunk from
+          * @return
+          *   a new Chunk.Indexed containing the single element
+          */
+        @targetName("fromMaybe")
+        def from[A](source: Maybe[A]): Indexed[A] =
+            source match
+                case Absent         => cachedEmpty.asInstanceOf[Indexed[A]]
+                case Present(value) => single(value)
+
+        /** Creates an Indexed Chunk from an Option.
+          *
+          * @tparam A
+          *   the type of the element
+          * @param source
+          *   the Option to create the Chunk from
+          * @return
+          *   a new Chunk.Indexed containing the single element
+          */
+        def from[A](source: Option[A]): Indexed[A] =
+            source match
+                case None        => cachedEmpty.asInstanceOf[Indexed[A]]
+                case Some(value) => single(value)
 
         def newBuilder[A]: collection.mutable.Builder[A, Indexed[A]] = ChunkBuilder.init[A]
     end Indexed
@@ -499,6 +548,17 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       *   an empty Chunk of type A
       */
     def empty[A]: Chunk[A] = Indexed.empty[A]
+
+    /** Creates a Chunk containing exactly one element.
+      *
+      * @tparam A
+      *   the type of elements in the Chunk
+      * @param a
+      *   the single element
+      * @return
+      *   a new Chunk.Single containing the single element
+      */
+    def single[A](a: A): Chunk.Indexed[A] = Indexed.single(a)
 
     /** Creates a Chunk from an Array of elements.
       *
@@ -513,6 +573,7 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
 
     private[kyo] def fromNoCopy[A](values: Array[A]): Chunk.Indexed[A] =
         if values.isEmpty then Indexed.empty[A]
+        else if values.length == 1 then Indexed.single(values(0))
         else
             Compact(values)
 
@@ -594,5 +655,20 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
         ) extends Chunk[A]:
             override def toString = mkString("Chunk(", ", ", ")")
         end Append
+
+        /** A Chunk containing exactly one element.
+          *
+          * @param value
+          *   the single element
+          */
+        final case class Single[A](value: A) extends Indexed[A]:
+            override def length: Int = 1
+            override def apply(i: Int): A =
+                if i == 0 then value else throw new IndexOutOfBoundsException(s"Index out of range: $i")
+            override def toString                                      = s"Chunk.Single($value)"
+            override def map[B](f: A => B): Chunk[B]                   = copy(f(value))
+            override def flatMap[B](f: A => IterableOnce[B]): Chunk[B] = Indexed.from(f(value))
+            override def foreach[U](f: A => U): Unit                   = discard(f(value))
+        end Single
     end internal
 end Chunk

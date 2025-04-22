@@ -15,13 +15,13 @@ object ServerHandler:
 
     // TODO: We should probably implement the ServerCallHandler's ourselves like ZIO does.
 
-    def unary[Request, Response: Flat](f: Request => Response < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
+    def unary[Request, Response](f: Request => Response < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncUnaryCall { (request, responseObserver) =>
             val completed = StreamNotifier.notifyObserver(f(request), responseObserver)
             KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
         }
 
-    def clientStreaming[Request: Tag, Response: { Flat, Tag }](f: Stream[Request, GrpcRequest] => Response < GrpcResponse)(using
+    def clientStreaming[Request: Tag, Response: Tag](f: Stream[Request, GrpcRequest] => Response < GrpcResponse)(using
         Frame
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncClientStreamingCall(responseObserver =>
@@ -31,7 +31,7 @@ object ServerHandler:
             Abort.run(IO.Unsafe.run(observer)).eval.getOrThrow
         )
 
-    def serverStreaming[Request: Tag, Response: { Flat, Tag }](f: Request => Stream[Response, GrpcResponse] < GrpcResponse)(using
+    def serverStreaming[Request: Tag, Response: Tag](f: Request => Stream[Response, GrpcResponse] < GrpcResponse)(using
         Frame
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
@@ -43,7 +43,7 @@ object ServerHandler:
 
     def bidiStreaming[
         Request: Tag,
-        Response: { Flat, Tag }
+        Response: Tag
     ](f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncBidiStreamingCall(responseObserver =>
             val observer = BidiRequestStreamObserver.init(f, responseObserver.asInstanceOf[ServerCallStreamObserver[Response]])

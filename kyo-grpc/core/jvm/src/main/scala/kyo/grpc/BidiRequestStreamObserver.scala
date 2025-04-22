@@ -9,7 +9,7 @@ import kyo.Result.*
 import kyo.scheduler.top.Status
 import scala.language.future
 
-class BidiRequestStreamObserver[Request: Tag, Response: { Flat, Tag }] private (
+class BidiRequestStreamObserver[Request: Tag, Response: Tag] private (
     f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
     requestChannel: StreamChannel[Request, GrpcRequest.Errors],
     responseObserver: ServerCallStreamObserver[Response]
@@ -38,7 +38,7 @@ end BidiRequestStreamObserver
 
 object BidiRequestStreamObserver:
 
-    def init[Request: Tag, Response: { Flat, Tag }](
+    def init[Request: Tag, Response: Tag](
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe): BidiRequestStreamObserver[Request, Response] < IO =

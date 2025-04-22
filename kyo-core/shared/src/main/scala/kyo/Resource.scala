@@ -69,12 +69,15 @@ object Resource:
                                     case Absent =>
                                         Abort.panic(new Closed("Resource finalizer queue already closed.", frame))
                                     case Present(tasks) =>
-                                        Async.foreachDiscard(tasks, parallelism) { task =>
-                                            Abort.run[Throwable](task)
-                                                .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
-                                        }
-                                            .handle(Async.run[Nothing, Unit, Any])
-                                            .map(promise.becomeDiscard)
+                                        if tasks.isEmpty then
+                                            promise.completeDiscard(Result.unit)
+                                        else
+                                            Async.foreachDiscard(tasks, parallelism) { task =>
+                                                Abort.run[Throwable](task)
+                                                    .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
+                                            }
+                                                .handle(Async.run[Nothing, Unit, Any])
+                                                .map(promise.becomeDiscard)
                             }
 
                         def await(using Frame): Unit < Async = promise.get

@@ -48,6 +48,12 @@ class IOPromiseTest extends Test:
             assert(p.done())
             assert(p.block(deadline()) == Result.fail(ex))
         }
+
+        "wrong type" in {
+            val p = new IOPromise[String, Int]()
+            typeCheckFailure("p.complete(Result.unit)")("Required: kyo.Result[String, Int]")
+            typeCheckFailure("p.complete(Result.fail(1))")("Required: String")
+        }
     }
 
     "completeDiscard" - {
@@ -693,68 +699,6 @@ class IOPromiseTest extends Test:
 
             p1.interrupt(Result.Panic(new Exception("Interrupted")))
             assert(p2.block(deadline()).isFailure)
-        }
-    }
-
-    "variance" - {
-        given [A, B]: CanEqual[A, B] = CanEqual.derived
-        "covariance of A" in {
-            val p: IOPromise[Nothing, AnyRef] = new IOPromise[Nothing, String]()
-            p.complete(Result.succeed("Hello"))
-            assert(p.block(deadline()) == Result.succeed("Hello"))
-        }
-
-        "contravariance of E" in {
-            val p: IOPromise[Throwable, Nothing] = new IOPromise[Exception, Nothing]()
-            val ex                               = new Exception("Test")
-            p.complete(Result.fail(ex))
-            assert(p.block(deadline()) == Result.fail(ex))
-        }
-
-        "variance with become" in {
-            val p1: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
-            val p2: IOPromise[Exception, String] = new IOPromise[Exception, String]()
-            p2.complete(Result.succeed("Hello"))
-            assert(p1.become(p2))
-            assert(p1.block(deadline()) == Result.succeed("Hello"))
-        }
-
-        "variance with onComplete" in {
-            val p: IOPromise[Exception, String]           = new IOPromise[Exception, String]()
-            var result: Option[Result[Throwable, AnyRef]] = None
-            p.onComplete(r => result = Some(r.asInstanceOf[Result[Throwable, AnyRef]]))
-            p.complete(Result.succeed("Hello"))
-            assert(result.contains(Result.succeed("Hello")))
-        }
-
-        "variance with interrupts" in {
-            val p1: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
-            val p2: IOPromise[Exception, Int]    = new IOPromise[Exception, Int]()
-            p1.interrupts(p2)
-            val ex = new Exception("Test")
-            assert(p1.interrupt(Result.Panic(ex)))
-            assert(p2.block(deadline()).isPanic)
-        }
-
-        "variance with mask" in {
-            val original: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
-            val masked: IOPromise[Throwable, AnyRef]   = original.mask()
-            original.complete(Result.succeed("Hello"))
-            assert(masked.block(deadline()) == Result.succeed("Hello"))
-        }
-
-        "variance with complex chaining" in {
-            val p1: IOPromise[Throwable, AnyRef]       = new IOPromise[Exception, String]()
-            val p2: IOPromise[Exception, String]       = new IOPromise[Exception, String]()
-            val p3: IOPromise[Throwable, CharSequence] = new IOPromise[Throwable, String]()
-
-            p1.become(p2)
-            p2.become(p3)
-            p3.complete(Result.succeed("Hello"))
-
-            assert(p1.block(deadline()) == Result.succeed("Hello"))
-            assert(p2.block(deadline()) == Result.succeed("Hello"))
-            assert(p3.block(deadline()) == Result.succeed("Hello"))
         }
     }
 

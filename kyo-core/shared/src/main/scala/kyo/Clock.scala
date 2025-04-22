@@ -423,7 +423,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatWithDelay[E, A: Flat, S](
+    def repeatWithDelay[E, A, S](
         startAfter: Duration,
         delay: Duration,
         state: A
@@ -457,7 +457,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatWithDelay[E, A: Flat, S](
+    def repeatWithDelay[E, A, S](
         delaySchedule: Schedule,
         state: A
     )(
@@ -525,7 +525,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatAtInterval[E, A: Flat, S](
+    def repeatAtInterval[E, A, S](
         startAfter: Duration,
         interval: Duration,
         state: A
@@ -559,7 +559,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task and access the final state
       */
-    def repeatAtInterval[E, A: Flat, S](
+    def repeatAtInterval[E, A, S](
         intervalSchedule: Schedule,
         state: A
     )(
@@ -608,7 +608,7 @@ object Clock:
                     Promise.Unsafe.fromIOPromise {
                         new IOPromise[Nothing, Unit] with Callable[Unit]:
                             val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
-                            override def interrupt[E2 >: Nothing](error: Result.Error[E2]): Boolean =
+                            override def interrupt(error: Result.Error[Nothing]): Boolean =
                                 discard(task.cancel(true))
                                 super.interrupt(error)
                             def call(): Unit = completeDiscard(Result.unit)

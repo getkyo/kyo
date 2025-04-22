@@ -18,7 +18,7 @@ object GrpcRequest:
     // TODO: We should really get rid of StatusRuntimeException from here and combine the two effects.
     type Errors = StatusException | StatusRuntimeException
 
-    def fromFuture[Response: Flat](f: Future[Response])(using Frame): Response < GrpcRequest =
+    def fromFuture[Response](f: Future[Response])(using Frame): Response < GrpcRequest =
         // TODO: Is there a better way to do this?
         for
             p <- IO {
@@ -37,10 +37,10 @@ object GrpcRequest:
         yield response
     end fromFuture
 
-    def run[Request: Flat, S](request: Request < (GrpcRequest & S))(using Frame): Result[Errors, Request] < (Async & S) =
+    def run[Request, S](request: Request < (GrpcRequest & S))(using Frame): Result[Errors, Request] < (Async & S) =
         Abort.run[StatusRuntimeException](Abort.run[StatusException](request)).map(_.flatten)
 
-    def mergeErrors[Request: Flat, S](request: Request < (GrpcRequest & S))(using Frame): Request < (Async & Abort[StatusException] & S) =
+    def mergeErrors[Request, S](request: Request < (GrpcRequest & S))(using Frame): Request < (Async & Abort[StatusException] & S) =
         // TODO: This ought to be easier (still).
         Abort.run[StatusRuntimeException](request).map(_.foldOrThrow[Request < Abort[StatusException]](
             identity,

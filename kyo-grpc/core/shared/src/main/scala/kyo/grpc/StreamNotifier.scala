@@ -9,7 +9,7 @@ import scala.util.chaining.scalaUtilChainingOps
 
 private[grpc] object StreamNotifier:
 
-    def notifyObserver[A: Flat, E <: Throwable: SafeClassTag, S](
+    def notifyObserver[A, E <: Throwable: SafeClassTag, S](
         value: A < (Abort[E] & S),
         observer: StreamObserver[A]
     )(using Frame): Unit < (IO & S) =
@@ -22,7 +22,7 @@ private[grpc] object StreamNotifier:
             case result: Result.Error[E] => notifyError(result, observer)
         }
 
-    def notifyObserver[A: { Flat, Tag }, E <: Throwable: SafeClassTag, S](
+    def notifyObserver[A: Tag, E <: Throwable: SafeClassTag, S](
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
     )(using Frame): Unit < (IO & S) =

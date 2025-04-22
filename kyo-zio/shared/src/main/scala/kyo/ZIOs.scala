@@ -53,7 +53,7 @@ object ZIOs:
       * @return
       *   A zio.ZIO that, when run, will execute the Kyo effect
       */
-    def run[A: Flat, E](v: => A < (Abort[E] & Async))(using frame: Frame, trace: zio.Trace): ZIO[Any, E, A] =
+    def run[A, E](v: => A < (Abort[E] & Async))(using frame: Frame, trace: zio.Trace): ZIO[Any, E, A] =
         ZIO.suspendSucceed {
             import AllowUnsafe.embrace.danger
             Async.run(v).map { fiber =>

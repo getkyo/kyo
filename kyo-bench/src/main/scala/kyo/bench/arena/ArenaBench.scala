@@ -41,7 +41,7 @@ object ArenaBench:
         def catsBench(): cats.effect.IO[A]
     end Base
 
-    abstract class Fork[A: kyo.Flat](expectedResult: A) extends Base[A](expectedResult):
+    abstract class Fork[A](expectedResult: A) extends Base[A](expectedResult):
 
         @Benchmark
         def forkKyo(warmup: KyoForkWarmup): A =
@@ -60,10 +60,10 @@ object ArenaBench:
         )
     end Fork
 
-    abstract class ForkOnly[A: kyo.Flat](expectedResult: A) extends Fork[A](expectedResult):
+    abstract class ForkOnly[A](expectedResult: A) extends Fork[A](expectedResult):
         def kyoBench() = ???
 
-    abstract class SyncAndFork[A: kyo.Flat](expectedResult: A) extends Fork[A](expectedResult):
+    abstract class SyncAndFork[A](expectedResult: A) extends Fork[A](expectedResult):
 
         @Benchmark
         def syncKyo(warmup: KyoSyncWarmup): A =

@@ -144,7 +144,7 @@ object Parse:
     def anyOf[A, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
         Choice.eval(seq)(identity)
 
-    private def firstOf[A: Flat, S](seq: Seq[() => A < (Parse & S)])(using Frame): A < (Parse & S) =
+    private def firstOf[A, S](seq: Seq[() => A < (Parse & S)])(using Frame): A < (Parse & S) =
         Loop(seq) {
             case Seq() => Choice.drop
             case head +: tail =>
@@ -163,7 +163,7 @@ object Parse:
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](
+    def firstOf[A, S](
         parser1: => A < (Parse & S),
         parser2: => A < (Parse & S)
     )(using Frame): A < (Parse & S) =
@@ -178,7 +178,7 @@ object Parse:
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](
+    def firstOf[A, S](
         parser1: => A < (Parse & S),
         parser2: => A < (Parse & S),
         parser3: => A < (Parse & S)
@@ -196,7 +196,7 @@ object Parse:
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](
+    def firstOf[A, S](
         parser1: => A < (Parse & S),
         parser2: => A < (Parse & S),
         parser3: => A < (Parse & S),
@@ -215,7 +215,7 @@ object Parse:
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](
+    def firstOf[A, S](
         parser1: => A < (Parse & S),
         parser2: => A < (Parse & S),
         parser3: => A < (Parse & S),
@@ -235,7 +235,7 @@ object Parse:
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](
+    def firstOf[A, S](
         parser1: => A < (Parse & S),
         parser2: => A < (Parse & S),
         parser3: => A < (Parse & S),
@@ -256,7 +256,7 @@ object Parse:
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](
+    def firstOf[A, S](
         parser1: => A < (Parse & S),
         parser2: => A < (Parse & S),
         parser3: => A < (Parse & S),
@@ -278,7 +278,7 @@ object Parse:
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](
+    def firstOf[A, S](
         parser1: => A < (Parse & S),
         parser2: => A < (Parse & S),
         parser3: => A < (Parse & S),
@@ -292,7 +292,7 @@ object Parse:
     ): A < (Parse & S) =
         firstOf(Seq(() => parser1, () => parser2, () => parser3, () => parser4, () => parser5, () => parser6, () => parser7, () => parser8))
 
-    private def inOrder[A: Flat, S](parsers: Seq[() => A < (Parse & S)])(using Frame): Chunk[A] < (Parse & S) =
+    private def inOrder[A, S](parsers: Seq[() => A < (Parse & S)])(using Frame): Chunk[A] < (Parse & S) =
         parsers.size match
             case 0 => Chunk.empty
             case 1 => parsers(0)().map(Chunk(_))
@@ -311,14 +311,14 @@ object Parse:
       * @return
       *   Tuple containing both parsed results in order. The parse branch is dropped if either parser fails
       */
-    def inOrder[A: Flat, B: Flat, S](
+    def inOrder[A, B, S](
         parser1: => A < (Parse & S),
         parser2: => B < (Parse & S)
     )(using Frame): (A, B) < (Parse & S) =
         inOrder(Chunk(
             () => parser1,
             () => parser2
-        ))(using Flat.unsafe.bypass).map { s =>
+        )).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B])
         }
 
@@ -328,7 +328,7 @@ object Parse:
       * @return
       *   Tuple containing all three parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A: Flat, B: Flat, C: Flat, S](
+    def inOrder[A, B, C, S](
         parser1: => A < (Parse & S),
         parser2: => B < (Parse & S),
         parser3: => C < (Parse & S)
@@ -339,7 +339,7 @@ object Parse:
             () => parser1,
             () => parser2,
             () => parser3
-        ))(using Flat.unsafe.bypass).map { s =>
+        )).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C])
         }
 
@@ -349,7 +349,7 @@ object Parse:
       * @return
       *   Tuple containing all four parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, S](
+    def inOrder[A, B, C, D, S](
         parser1: => A < (Parse & S),
         parser2: => B < (Parse & S),
         parser3: => C < (Parse & S),
@@ -362,7 +362,7 @@ object Parse:
             () => parser2,
             () => parser3,
             () => parser4
-        ))(using Flat.unsafe.bypass).map { s =>
+        )).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C], s(3).asInstanceOf[D])
         }
 
@@ -372,7 +372,7 @@ object Parse:
       * @return
       *   Tuple containing all five parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, S](
+    def inOrder[A, B, C, D, E, S](
         parser1: => A < (Parse & S),
         parser2: => B < (Parse & S),
         parser3: => C < (Parse & S),
@@ -387,7 +387,7 @@ object Parse:
             () => parser3,
             () => parser4,
             () => parser5
-        ))(using Flat.unsafe.bypass).map { s =>
+        )).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C], s(3).asInstanceOf[D], s(4).asInstanceOf[E])
         }
 
@@ -397,7 +397,7 @@ object Parse:
       * @return
       *   Tuple containing all six parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, F: Flat, S](
+    def inOrder[A, B, C, D, E, F, S](
         parser1: => A < (Parse & S),
         parser2: => B < (Parse & S),
         parser3: => C < (Parse & S),
@@ -414,7 +414,7 @@ object Parse:
             () => parser4,
             () => parser5,
             () => parser6
-        ))(using Flat.unsafe.bypass).map {
+        )).map {
             s =>
                 (
                     s(0).asInstanceOf[A],
@@ -432,7 +432,7 @@ object Parse:
       * @return
       *   Tuple containing all seven parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, F: Flat, G: Flat, S](
+    def inOrder[A, B, C, D, E, F, G, S](
         parser1: => A < (Parse & S),
         parser2: => B < (Parse & S),
         parser3: => C < (Parse & S),
@@ -451,7 +451,7 @@ object Parse:
             () => parser5,
             () => parser6,
             () => parser7
-        ))(using Flat.unsafe.bypass).map {
+        )).map {
             s =>
                 (
                     s(0).asInstanceOf[A],
@@ -470,7 +470,7 @@ object Parse:
       * @return
       *   Tuple containing all eight parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, F: Flat, G: Flat, H: Flat, S](
+    def inOrder[A, B, C, D, E, F, G, H, S](
         parser1: => A < (Parse & S),
         parser2: => B < (Parse & S),
         parser3: => C < (Parse & S),
@@ -491,7 +491,7 @@ object Parse:
             () => parser6,
             () => parser7,
             () => parser8
-        ))(using Flat.unsafe.bypass).map {
+        )).map {
             s =>
                 (
                     s(0).asInstanceOf[A],
@@ -512,7 +512,7 @@ object Parse:
       * @return
       *   Result when parser succeeds
       */
-    def skipUntil[A: Flat, S](v: A < (Parse & S))(using Frame): A < (Parse & S) =
+    def skipUntil[A, S](v: A < (Parse & S))(using Frame): A < (Parse & S) =
         attempt(v).map {
             case Absent =>
                 Var.use[State] { state =>
@@ -531,7 +531,7 @@ object Parse:
       * @return
       *   Maybe containing the result if successful, Absent if parser failed
       */
-    def attempt[A: Flat, S](v: A < (Parse & S))(using Frame): Maybe[A] < (Parse & S) =
+    def attempt[A, S](v: A < (Parse & S))(using Frame): Maybe[A] < (Parse & S) =
         Var.use[State] { start =>
             Choice.run(v).map { r =>
                 result(r).map {
@@ -553,7 +553,7 @@ object Parse:
       * @return
       *   Parser result, fails if parser fails with no possibility of backtracking
       */
-    def require[A: Flat, S](v: A < (Parse & S))(using Frame): A < (Parse & S) =
+    def require[A, S](v: A < (Parse & S))(using Frame): A < (Parse & S) =
         attempt(v).map {
             case Present(a) => a
             case Absent => Parse.fail(
@@ -569,7 +569,7 @@ object Parse:
       * @return
       *   Maybe containing the result if successful
       */
-    def peek[A: Flat, S](v: A < (Parse & S))(using Frame): Maybe[A] < (Parse & S) =
+    def peek[A, S](v: A < (Parse & S))(using Frame): Maybe[A] < (Parse & S) =
         Var.use[State] { start =>
             Choice.run(v).map { r =>
                 Var.set(start).andThen(result(r))
@@ -583,7 +583,7 @@ object Parse:
       * @return
       *   Chunk of all successful results
       */
-    def repeat[A: Flat, S](p: A < (Parse & S))(using Frame): Chunk[A] < (Parse & S) =
+    def repeat[A, S](p: A < (Parse & S))(using Frame): Chunk[A] < (Parse & S) =
         Loop(Chunk.empty[A]) { acc =>
             attempt(p).map {
                 case Present(a) => Loop.continue(acc.append(a))
@@ -600,7 +600,7 @@ object Parse:
       * @return
       *   Chunk of n results, fails if can't get n results
       */
-    def repeat[A: Flat, S](n: Int)(p: A < (Parse & S))(using Frame): Chunk[A] < (Parse & S) =
+    def repeat[A, S](n: Int)(p: A < (Parse & S))(using Frame): Chunk[A] < (Parse & S) =
         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
             if idx == n then Loop.done(acc)
             else
@@ -622,7 +622,7 @@ object Parse:
       * @return
       *   Chunk of successfully parsed elements
       */
-    def separatedBy[A: Flat, B: Flat, S](
+    def separatedBy[A, B, S](
         element: => A < (Parse & S),
         separator: => B < (Parse & S),
         allowTrailing: Boolean = false
@@ -656,7 +656,7 @@ object Parse:
       * @return
       *   The parsed content
       */
-    def between[A: Flat, S](
+    def between[A, S](
         left: => Any < (Parse & S),
         content: => A < (Parse & S),
         right: => Any < (Parse & S)
@@ -680,7 +680,7 @@ object Parse:
       * @return
       *   Parsed result if successful
       */
-    def run[A: Flat, S](input: Text)(v: A < (Parse & S))(using Frame): A < (S & Abort[ParseFailed]) =
+    def run[A, S](input: Text)(v: A < (Parse & S))(using Frame): A < (S & Abort[ParseFailed]) =
         Choice.run(Var.runTuple(State(input, 0))(v)).map {
             case Seq() =>
                 Parse.fail(Seq(State(input, 0)), "No valid parse results found")
@@ -707,7 +707,7 @@ object Parse:
       * @return
       *   Stream of successfully parsed results, which can abort with ParseFailed
       */
-    def run[A: Flat, S, S2](input: Stream[Text, S])(v: A < (Parse & S2))(
+    def run[A, S, S2](input: Stream[Text, S])(v: A < (Parse & S2))(
         using
         Frame,
         Tag[Emit[Chunk[Text]]],

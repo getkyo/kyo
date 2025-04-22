@@ -338,22 +338,6 @@ class ClockTest extends Test:
                 _        <- untilTrue(channel.poll.map(_.isEmpty))
             yield succeed
         }
-        "with time control" in runNotJS {
-            Clock.withTimeControl { control =>
-                for
-                    running  <- AtomicBoolean.init(false)
-                    queue    <- Queue.Unbounded.init[Instant]()
-                    task     <- Clock.repeatAtInterval(5.millis)(running.set(true).andThen(Clock.now.map(queue.add)))
-                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
-                    _        <- queue.drain
-                    _        <- Loop.repeat(10)(control.advance(1.milli))
-                    _        <- task.interrupt
-                    instants <- queue.drain
-                yield
-                    intervals(instants).foreach(v => assert(v == 5.millis))
-                    succeed
-            }
-        }
         "with Schedule parameter" in run {
             for
                 channel  <- Channel.init[Instant](10)

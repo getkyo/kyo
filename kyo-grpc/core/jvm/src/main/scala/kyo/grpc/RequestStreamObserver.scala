@@ -12,7 +12,7 @@ import kyo.Result.*
 /**
  * This is not thread-safe.
  */
-class RequestStreamObserver[Request: Tag, Response: Flat](
+class RequestStreamObserver[Request: Tag, Response](
     f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
     requestChannel: StreamChannel[Request, GrpcRequest.Errors],
     responseObserver: ServerCallStreamObserver[Response]
@@ -42,7 +42,7 @@ end RequestStreamObserver
 
 object RequestStreamObserver:
 
-    def init[Request: Tag, Response: Flat: Tag](
+    def init[Request: Tag, Response: Tag](
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe): RequestStreamObserver[Request, Response] < IO =
