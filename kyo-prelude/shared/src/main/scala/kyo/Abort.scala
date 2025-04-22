@@ -189,7 +189,7 @@ object Abort:
     inline def runWith[E](
         using Frame
     )[A, S, ER, B, S2](
-        v: => A < (Abort[E | ER] & S)
+        v: A < (Abort[E | ER] & S)
     )(
         continue: Result[E, A] => B < S2
     )(

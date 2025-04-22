@@ -1453,7 +1453,6 @@ class AsyncTest extends Test:
                 val pendingFrame = Frame.derive
                 val timeoutFrame = Frame.derive
                 val pending = Async.never(using pendingFrame)
-//                val effect: Result[Timeout, Any] < IO = pending.handle[Any < (Abort[Timeout] & Async), Fiber[Timeout, Any] < IO, Result[Timeout, Any] < IO](
                 val effect = pending.handle(
                     Abort.recover[Any] {
                         case ex: Throwable => throw ex

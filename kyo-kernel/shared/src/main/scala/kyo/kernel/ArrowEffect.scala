@@ -435,7 +435,7 @@ object ArrowEffect:
 
     private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
         inline effectTag: Tag[E],
-        inline v: => A < (E & S)
+        inline v: A < (E & S)
     )(
         inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
         inline done: A => B < S3 = (v: A) => v,
