@@ -175,9 +175,8 @@ object `<`:
           * @return
           *   The result of applying the transformation
           */
-        inline def handle[B](inline f: (=> A < S) => B): B =
-            def handle1 = v
-            f(handle1)
+        inline def handle[B](inline f: A < S => B): B =
+            f(v)
         end handle
 
         /** Applies two transformations to this computation in sequence.
