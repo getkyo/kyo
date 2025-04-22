@@ -3,6 +3,8 @@ package kyo
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import org.scalatest.compatible.Assertion
+import org.scalatest.matchers.must.Matchers.*
+import kyo.FrameMatchers.*
 
 class AsyncTest extends Test:
 
@@ -1408,6 +1410,63 @@ class AsyncTest extends Test:
 
             nested.flatten.flatten.map { result =>
                 assert(result == 3)
+            }
+        }
+    }
+
+    "suspended frame" - {
+        "apply" in run {
+            val frame = Frame.derive
+            val effect = Async(1)(using frame)
+            assert(effect.suspendedFrame.get == frame)
+        }
+
+        "run" in run {
+            val frame = Frame.derive
+            val inner = Async(1)(using frame)
+            val effect = Async.run(inner)
+            assert(effect.suspendedFrame.get == frame)
+        }
+
+        "timeout immediate" in run {
+            val frame = Frame.derive
+            val inner = Async(1)(using frame)
+            val effect = Async.timeout(Duration.Zero)(inner)
+            assert(effect.suspendedFrame.get == frame)
+        }
+
+        // TODO: Move these
+        "timeout message" - {
+
+            "timeout immediate" in run {
+                val pendingFrame = Frame.derive
+                val timeoutFrame = Frame.derive
+                val pending = Async.never(using pendingFrame)
+                val effect = Async.timeout(Duration.Zero)(pending)(using timeoutFrame)
+                Abort.run[Timeout](effect).map { result =>
+                    assert(result.isFailure)
+                    assert(result.failure.get === Timeout(Maybe(pendingFrame))(using timeoutFrame))
+                }
+            }
+
+            "timeout handled" in run {
+                val pendingFrame = Frame.derive
+                val timeoutFrame = Frame.derive
+                val pending = Async.never(using pendingFrame)
+//                val effect: Result[Timeout, Any] < IO = pending.handle[Any < (Abort[Timeout] & Async), Fiber[Timeout, Any] < IO, Result[Timeout, Any] < IO](
+                val effect = pending.handle(
+                    Abort.recover[Any] {
+                        case ex: Throwable => throw ex
+                        case e             => throw new IllegalStateException(s"Test aborted with $e")
+                    },
+                    Async.timeout(Duration.Zero)(_)(using timeoutFrame),
+                    Async.run(_),
+                    _.map(_.block(Duration.Infinity))
+                )
+                effect.map { result =>
+                    result mustBe an[Result.Failure[Timeout]]
+                    assert(result.failure.get === Timeout(Maybe(pendingFrame))(using timeoutFrame))
+                }
             }
         }
     }

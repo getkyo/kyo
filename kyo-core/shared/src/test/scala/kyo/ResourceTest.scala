@@ -217,7 +217,7 @@ class ResourceTest extends Test:
             val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => Kyo.unit)
             Resource.run(io)
                 .handle(Async.runAndBlock(timeout))
-                .handle(Abort.run)
+                .handle(Abort.run(_))
                 .map {
                     case Result.Panic(t) => assert(t eq TestException)
                     case _               => fail("Expected panic")
