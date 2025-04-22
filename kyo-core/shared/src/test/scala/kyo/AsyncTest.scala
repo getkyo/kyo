@@ -4,7 +4,6 @@ import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import org.scalatest.compatible.Assertion
 import org.scalatest.matchers.must.Matchers.*
-import kyo.FrameMatchers.*
 
 class AsyncTest extends Test:
 

@@ -105,9 +105,10 @@ object Isolate:
                     loop(v)
                 end apply
 
+        // TODO: Double-check all the Frames, make it non-implicit?
         /** Internal API for running computations with trace and context management. */
         @nowarn("msg=anonymous")
-        private[kyo] inline def runInternal[A, S](inline f: (Trace, Context) => A < S)(inline _frame: Frame): A < (S & Passthrough) =
+        private[kyo] inline def runInternal[A, S](inline f: (Trace, Context) => A < S)(using inline _frame: Frame): A < (S & Passthrough) =
             new KyoDefer[A, S & Passthrough]:
                 def frame = _frame
                 def apply(v: Unit, context: Context)(using safepoint: Safepoint) =

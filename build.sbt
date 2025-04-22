@@ -326,7 +326,6 @@ lazy val `kyo-core` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
         .dependsOn(`kyo-prelude`)
-        .dependsOn(`kyo-data` % "test->test")
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,

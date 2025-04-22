@@ -110,7 +110,7 @@ object Async:
     )(v: A < (Abort[E] & Async & S))(using frame: Frame): Fiber[E, A] < (IO & S) =
         isolate.runInternal((trace, context) =>
             Fiber.fromTask(IOTask(v, trace, context))
-        )(v.suspendedFrame.getOrElse(frame))
+        )(using v.suspendedFrame.getOrElse(frame))
 
     /** Runs an asynchronous computation and blocks until completion or timeout.
       *

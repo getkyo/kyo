@@ -8,6 +8,7 @@ import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
 import kyo.kernel.internal.*
 import kyo.scheduler.*
+
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -316,7 +317,7 @@ object Fiber extends FiberPlatformSpecific:
                     fiber.onComplete(state)
                 }
                 state
-            }(frame) // TODO
+            }(using frame) // TODO
         }
 
     /** Concurrently executes effects and collects up to `max` successful results.
@@ -410,7 +411,7 @@ object Fiber extends FiberPlatformSpecific:
                         fiber.onComplete(state(idx, _))
                     }
                     state
-                }(frame) // TODO
+                }(using frame) // TODO
             }
         end if
     end gather
@@ -483,7 +484,7 @@ object Fiber extends FiberPlatformSpecific:
         iterable.size match
             case 0 => Fiber.success(Chunk.empty)
             case size =>
-                IO.Unsafe {
+                IO.Unsafe { (allow: kyo.AllowUnsafe) ?=> {
                     class State extends IOPromise[E, Chunk[B]] with ((Int, Result[E, B]) => Unit):
                         val results = (new Array[Any](size)).asInstanceOf[Array[B]]
                         val pending = AtomicInt.Unsafe.init(size)
@@ -507,8 +508,8 @@ object Fiber extends FiberPlatformSpecific:
                             fiber.onComplete(state(idx, _))
                         }
                         state
-                    }(frame) // TODO
-                }
+                    }(using frame) // TODO
+                }}
 
     opaque type Unsafe[+E, +A] = IOPromise[? <: E, ? <: A]
 
