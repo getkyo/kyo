@@ -1443,7 +1443,27 @@ class AsyncTest extends Test:
                 val pending = Async.never(using pendingFrame)
                 val effect = Async.timeout(Duration.Zero)(pending)(using timeoutFrame)
                 Abort.run[Timeout](effect).map { result =>
-                    assert(result.isFailure)
+                    assert(result.failure.get === Timeout(Maybe(pendingFrame))(using timeoutFrame))
+                }
+            }
+
+            "timeout delayed" in run {
+                val pendingFrame = Frame.derive
+                val timeoutFrame = Frame.derive
+                val pending = Async.never(using pendingFrame)
+                val effect = Async.timeout(1.milli)(pending)(using timeoutFrame)
+                Abort.run[Timeout](effect).map { result =>
+                    assert(result.failure.get === Timeout(Maybe(pendingFrame))(using timeoutFrame))
+                }
+            }
+
+            "timeout on inner" in run {
+                val pendingFrame = Frame.derive
+                val timeoutFrame = Frame.derive
+                val pending = Async.never(using pendingFrame)
+                val outer = Async(1).map(_ => pending)
+                val effect = Async.timeout(10.seconds)(outer)(using timeoutFrame)
+                Abort.run[Timeout](effect).map { result =>
                     assert(result.failure.get === Timeout(Maybe(pendingFrame))(using timeoutFrame))
                 }
             }
@@ -1462,7 +1482,6 @@ class AsyncTest extends Test:
                     _.map(_.block(Duration.Infinity))
                 )
                 effect.map { result =>
-                    result mustBe an[Result.Failure[Timeout]]
                     assert(result.failure.get === Timeout(Maybe(pendingFrame))(using timeoutFrame))
                 }
             }

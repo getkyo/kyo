@@ -190,7 +190,7 @@ object Async:
     def timeout[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        if after == Duration.Zero then Abort.fail(Timeout(v.suspendedFrame))
+        if after == Duration.Zero then Abort.fail(Timeout(v.suspendedFrame))(using v.suspendedFrame.getOrElse(frame))
         else if !after.isFinite then v
         else
             isolate.capture { state =>
