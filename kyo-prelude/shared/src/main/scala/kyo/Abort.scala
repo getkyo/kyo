@@ -454,11 +454,8 @@ object Abort:
       */
     def catching[E](
         using Frame
-    )[A, S](v: => A < S)(using ct: SafeClassTag[E]): A < (Abort[E] & S) =
-        Effect.catching(v) {
-            case ct(ex) => Abort.fail(ex)
-            case ex     => Abort.panic(ex)
-        }
+    )[A, S](v: => A < S): A < (Abort[E] & S) =
+        Effect.defer(v)
 
     /** Catches exceptions of type E, transforms and converts them to Abort failures.
       *
@@ -476,10 +473,10 @@ object Abort:
     )[A, S, E1](f: E => E1)(v: => A < S)(
         using ct: SafeClassTag[E]
     ): A < (Abort[E1] & S) =
-        Effect.catching(v) {
-            case ct(ex) => Abort.fail(f(ex))
-            case ex     => Abort.panic(ex)
-        }
+        runWith[E](v):
+            case Success(a)  => a
+            case Failure(ex) => Abort.fail(f(ex))
+            case Panic(p)    => Abort.panic(p)
 
     /** Provides methods for working with literal error values in Abort effects.
       *
