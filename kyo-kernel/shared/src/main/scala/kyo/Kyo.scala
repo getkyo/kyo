@@ -165,16 +165,12 @@ object Kyo:
                         Loop(linearSeq, Chunk.empty[B]): (seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else f(seq.head).map(u => Loop.continue(seq.tail, acc.append(u)))
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else f(indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
-                    case other =>
-                        Loop(IterableExtractor(other), Chunk.empty[B]): (extractor, acc) =>
-                            extractor match
-                                case IterableExtractor(head, tail) => f(head).map(u => Loop.continue(tail, acc.append(u)))
-                                case _                             => Loop.done(acc)
     end foreach
 
     /** Applies an effect-producing function to each element of a sequence along with its index.
@@ -198,16 +194,12 @@ object Kyo:
                         Loop.indexed(linearSeq, Chunk.empty[B]): (idx, seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else f(idx, seq.head).map(u => Loop.continue(seq.tail, acc.append(u)))
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else f(idx, indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
-                    case other =>
-                        Loop.indexed(IterableExtractor(source), Chunk.empty[B]): (idx, extractor, acc) =>
-                            extractor match
-                                case IterableExtractor(head, tail) => f(idx, head).map(u => Loop.continue(tail, acc.append(u)))
-                                case _                             => Loop.done(acc)
     end foreachIndexed
 
     /** Applies an effect-producing function to each element of an `IterableOnce`, discarding the results.
@@ -231,16 +223,12 @@ object Kyo:
                         Loop(linearSeq): (seq) =>
                             if seq.isEmpty then Loop.done
                             else f(seq.head).andThen(Loop.continue(seq.tail))
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed: idx =>
                             if idx == size then Loop.done
                             else f(indexedSeq(idx)).andThen(Loop.continue)
-                    case other =>
-                        Loop(IterableExtractor(other)): (extractor) =>
-                            extractor match
-                                case IterableExtractor(head, tail) => f(head).andThen(Loop.continue(tail))
-                                case _                             => Loop.done
         end match
     end foreachDiscard
 
@@ -266,8 +254,9 @@ object Kyo:
                                 f(head).map:
                                     case true  => Loop.continue(seq.tail, acc.append(head))
                                     case false => Loop.continue(seq.tail, acc)
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed(Chunk.empty[A]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else
@@ -275,15 +264,6 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue(acc.append(curr))
                                     case false => Loop.continue(acc)
-                    case other =>
-                        Loop(IterableExtractor(other), Chunk.empty[A]): (extractor, acc) =>
-                            extractor match
-                                case IterableExtractor(head, tail) =>
-                                    f(head).map:
-                                        case true  => Loop.continue(tail, acc.append(head))
-                                        case false => Loop.continue(tail, acc)
-                                case _ => Loop.done(acc)
-                end match
         end match
     end filter
 
@@ -307,16 +287,12 @@ object Kyo:
                         Loop(linearSeq, acc): (seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else f(acc, seq.head).map(Loop.continue(seq.tail, _))
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed(acc): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else f(acc, indexedSeq(idx)).map(Loop.continue(_))
-                    case other =>
-                        Loop(IterableExtractor(other), acc): (extractor, acc) =>
-                            extractor match
-                                case IterableExtractor(head, tail) => f(acc, head).map(Loop.continue(tail, _))
-                                case _                             => Loop.done(acc)
         end match
     end foldLeft
 
@@ -344,22 +320,15 @@ object Kyo:
                                 f(seq.head).map:
                                     case Absent     => Loop.continue(seq.tail, acc)
                                     case Present(v) => Loop.continue(seq.tail, acc.append(v))
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else
                                 f(indexedSeq(idx)).map:
                                     case Absent     => Loop.continue(acc)
                                     case Present(v) => Loop.continue(acc.append(v))
-                    case other =>
-                        Loop(IterableExtractor(other), Chunk.empty[B]): (extractor, acc) =>
-                            extractor match
-                                case IterableExtractor(head, tail) =>
-                                    f(head).map:
-                                        case Absent     => Loop.continue(tail, acc)
-                                        case Present(v) => Loop.continue(tail, acc.append(v))
-                                case _ => Loop.done(acc)
     end collect
 
     /** Collects the results of an `IterableOnce` of effects into a single effect.
@@ -380,18 +349,13 @@ object Kyo:
                             if seq.isEmpty then Loop.done(acc)
                             else
                                 seq.head.map(u => Loop.continue(seq.tail, acc.append(u)))
-                    case indexedSeq: IndexedSeq[A < S] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed(Chunk.empty[A]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else
                                 indexedSeq(idx).map(u => Loop.continue(acc.append(u)))
-                    case other =>
-                        Loop(IterableExtractor(other), Chunk.empty[A]): (extractor, acc) =>
-                            extractor match
-                                case IterableExtractor(head, tail) =>
-                                    head.map(u => Loop.continue(tail, acc.append(u)))
-                                case _ => Loop.done(acc)
     end collectAll
 
     /** Collects the results of an `IterableOnce` of effects, discarding the results.
@@ -412,18 +376,13 @@ object Kyo:
                             if seq.isEmpty then Loop.done
                             else
                                 seq.head.andThen(Loop.continue(seq.tail))
-                    case indexedSeq: IndexedSeq[A < S] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed: idx =>
                             if idx == size then Loop.done
                             else
                                 indexedSeq(idx).andThen(Loop.continue)
-                    case other =>
-                        Loop(IterableExtractor(other)): extractor =>
-                            extractor match
-                                case IterableExtractor(head, tail) =>
-                                    head.andThen(Loop.continue(tail))
-                                case _ => Loop.done
     end collectAllDiscard
 
     /** Finds the first element in an `IterableOnce` that satisfies a predicate.
@@ -450,22 +409,15 @@ object Kyo:
                                 f(seq.head).map:
                                     case Absent     => Loop.continue(seq.tail)
                                     case Present(v) => Loop.done(Maybe(v))
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed: idx =>
                             if idx == size then Loop.done(Maybe.empty)
                             else
                                 f(indexedSeq(idx)).map:
                                     case Absent     => Loop.continue
                                     case Present(v) => Loop.done(Maybe(v))
-                    case other =>
-                        Loop(IterableExtractor(other)): extractor =>
-                            extractor match
-                                case IterableExtractor(head, tail) =>
-                                    f(head).map:
-                                        case Absent     => Loop.continue(tail)
-                                        case Present(v) => Loop.done(Maybe(v))
-                                case _ => Loop.done(Maybe.empty)
     end findFirst
 
     /** Takes elements from an `IterableOnce` while a predicate holds true.
@@ -490,8 +442,9 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue(seq.tail, acc.append(curr))
                                     case false => Loop.done(acc)
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed(Chunk.empty[A]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else
@@ -499,14 +452,6 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue(acc.append(curr))
                                     case false => Loop.done(acc)
-                    case other =>
-                        Loop(IterableExtractor(other), Chunk.empty[A]): (extractor, acc) =>
-                            extractor match
-                                case IterableExtractor(head, tail) =>
-                                    f(head).map:
-                                        case true  => Loop.continue(tail, acc.append(head))
-                                        case false => Loop.done(acc)
-                                case _ => Loop.done(acc)
     end takeWhile
 
     /** Drops elements from an `IterableOnce` while a predicate holds true.
@@ -531,8 +476,9 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue(seq.tail)
                                     case false => Loop.done(Chunk.from(seq.tail))
-                    case indexedSeq: IndexedSeq[A] =>
-                        val size = indexedSeq.length
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
                         Loop.indexed: idx =>
                             if idx == size then Loop.done(Chunk.empty)
                             else
@@ -540,14 +486,6 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue
                                     case false => Loop.done(Chunk.from(indexedSeq.drop(idx)))
-                    case other =>
-                        Loop(IterableExtractor(other)): extractor =>
-                            extractor match
-                                case IterableExtractor(head, tail) =>
-                                    f(head).map:
-                                        case true  => Loop.continue(tail)
-                                        case false => Loop.done(extractor.toChunk)
-                                case _ => Loop.done(Chunk.empty)
                 end match
     end dropWhile
 
@@ -561,42 +499,13 @@ object Kyo:
       *   A new effect that produces a Chunk of repeated values
       */
     def fill[A, S](n: Int)(v: Safepoint ?=> A < S)(using Frame, Safepoint): Chunk[A] < S =
-        Loop.indexed(Chunk.newBuilder[A]) { (idx, builder) =>
-            if idx == n then Loop.done(builder.result())
-            else v.map(t => Loop.continue(builder.addOne(t)))
+        Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
+            if idx == n then Loop.done(acc)
+            else v.map(t => Loop.continue(acc.append(t)))
         }
 
-    /** A minimal wrapper that can lazily and immutably extract elements from an `IterableOnce[A]`. The implementation is closely modelled
-      * after `LazyList`, stripped down to bare metals.
-      */
-    final private class IterableExtractor[A](private var maybeIterator: Maybe[Iterator[A]]):
-        private lazy val _extract: Maybe[(A, IterableExtractor[A])] =
-            maybeIterator match
-                case Absent => Absent
-                case Present(iterator) =>
-                    if iterator.hasNext then
-                        val next = iterator.next()
-                        maybeIterator = Absent
-                        Maybe(next -> new IterableExtractor(Present(iterator)))
-                    else
-                        Absent
-                    end if
-            end match
-        end _extract
-
-        def extract: Maybe[(A, IterableExtractor[A])] = _extract
-
-        def toChunk(using Frame): Chunk[A] =
-            val effect = Loop(this, Chunk.empty[A]): (extractor, acc) =>
-                extractor.extract match
-                    case Present((head, tail)) => Loop.continue(tail, acc.append(head))
-                    case _                     => Loop.done(acc)
-            effect.eval
-        end toChunk
-    end IterableExtractor
-
-    private[Kyo] object IterableExtractor:
-        def apply[A](source: IterableOnce[A]): IterableExtractor[A]                        = new IterableExtractor(Present(source.iterator))
-        def unapply[A](extractor: IterableExtractor[A]): Option[(A, IterableExtractor[A])] = extractor.extract.toOption
-    end IterableExtractor
+    private def toIndexed[A](source: IterableOnce[A]): Seq[A] =
+        source match
+            case seq: IndexedSeq[A] => seq
+            case other              => Chunk.from(other)
 end Kyo
