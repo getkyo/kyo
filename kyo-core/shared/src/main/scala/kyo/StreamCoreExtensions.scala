@@ -335,7 +335,7 @@ object StreamCoreExtensions:
                                 channelIn.take.map:
                                     case Absent => Loop.done
                                     case Present(v) => f(v).map: v2 =>
-                                        channelOut.put(Present(v2)).andThen(Loop.continue)
+                                            channelOut.put(Present(v2)).andThen(Loop.continue)
                         }.andThen(channelOut.put(Absent))
 
                         val background = Async.run:
@@ -488,7 +488,7 @@ object StreamCoreExtensions:
                                 channelIn.take.map:
                                     case Absent => Loop.done
                                     case Present(c) => f(c).map: c2 =>
-                                        channelOut.put(Present(c2)).andThen(Loop.continue)
+                                            channelOut.put(Present(c2)).andThen(Loop.continue)
                         }.andThen(channelOut.put(Absent))
 
                         val background = Async.run:
