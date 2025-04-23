@@ -17,7 +17,10 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
         val channel  = mock[StreamChannel[String, GrpcResponse.Errors]]
         val observer = IO.Unsafe(ResponseStreamObserver[String](channel))
 
-        (channel.put(_: String)(using _: Frame)).expects("next", *).once()
+        (channel.put(_: String)(using _: Frame))
+            .expects("next", *)
+            .returns(())
+            .once()
 
         observer.map(_.onNext("next")).map(_ => succeed)
     }
@@ -28,7 +31,10 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
         val exception       = new RuntimeException("Test exception")
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
-        (channel.fail(_: GrpcResponse.Errors)(using _: Frame)).expects(argThat[StatusException](_ === statusException), *).once()
+        (channel.fail(_: GrpcResponse.Errors)(using _: Frame))
+            .expects(argThat[StatusException](_ === statusException), *)
+            .returns(())
+            .once()
 
         observer.map(_.onError(exception)).map(_ => succeed)
     }
@@ -37,7 +43,10 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
         val channel  = mock[StreamChannel[String, GrpcResponse.Errors]]
         val observer = IO.Unsafe(ResponseStreamObserver[String](channel))
 
-        (channel.complete(using _: Frame)).expects(*).once()
+        (channel.complete(using _: Frame))
+            .expects(*)
+            .returns(())
+            .once()
 
         observer.map(_.onCompleted()).map(_ => succeed)
     }
