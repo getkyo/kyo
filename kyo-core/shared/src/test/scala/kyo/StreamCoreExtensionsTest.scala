@@ -104,6 +104,30 @@ class StreamCoreExtensionsTest extends Test:
                 s1.merge(s2).run.map: res =>
                     assert(res.toSet == Set.from(1 to 5) ++ Set.from(101 to 105))
         }
+
+        "mapPar" - {
+            "should map all elements preserving order" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        size <- Choice.get(Seq(1, 2, 4, 6, 8, 9, 12, 13))
+                        q    <- Queue.init[Int](12)
+                        s2 = stream.mapPar(3)(i => q.offer(i).andThen(i + 1))
+                        resStream <- s2.run
+                        resQueue  <- q.drain
+                    yield assert(
+                        // Order should be preserved
+                        resStream == (2 to 13) &&
+                            // Order should not be preserved in queue
+                            resQueue != (1 to 12) &&
+                            resQueue.toSet == (1 to 12).toSet
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+        }
     }
 
 end StreamCoreExtensionsTest
