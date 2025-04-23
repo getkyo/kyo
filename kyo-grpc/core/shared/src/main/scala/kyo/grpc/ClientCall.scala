@@ -27,7 +27,7 @@ object ClientCall:
     )(using Frame): Response < GrpcRequest =
         for
             promise          <- Promise.init[GrpcResponse.Errors, Response]
-            responseObserver <- IO.Unsafe(SingleResponseStreamObserver(promise))
+            responseObserver <- IO.Unsafe(UnaryResponseStreamObserver(promise))
             requestObserver = ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver)
             _        <- StreamNotifier.notifyObserver(requests, requestObserver)
             response <- promise.get
