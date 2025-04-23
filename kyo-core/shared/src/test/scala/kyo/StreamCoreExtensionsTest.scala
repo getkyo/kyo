@@ -116,8 +116,33 @@ class StreamCoreExtensionsTest extends Test:
                         resStream <- s2.run
                         resQueue  <- q.drain
                     yield assert(
-                        // Order should be preserved
+                        // Order should be preserved in transformed stream
                         resStream == (2 to 13) &&
+                            // Order should not be preserved in queue
+                            resQueue != (1 to 12) &&
+                            resQueue.toSet == (1 to 12).toSet
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+        }
+
+        "mapParUnordered" - {
+            "should map all elements" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        size <- Choice.get(Seq(1, 2, 4, 6, 8, 9, 12, 13))
+                        q    <- Queue.init[Int](12)
+                        s2 = stream.mapParUnordered(3)(i => q.offer(i).andThen(i + 1))
+                        resStream <- s2.run
+                        resQueue  <- q.drain
+                    yield assert(
+                        // Order should not be preserved in transformed stream
+                        resStream != (2 to 13) &&
+                            resStream.toSet == (2 to 13).toSet &&
                             // Order should not be preserved in queue
                             resQueue != (1 to 12) &&
                             resQueue.toSet == (1 to 12).toSet
