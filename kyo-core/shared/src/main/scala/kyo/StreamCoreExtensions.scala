@@ -9,7 +9,8 @@ object StreamCoreExtensions:
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[V], Frame) =
         val emit = Loop(()): _ =>
             channel.take.map:
-                case Absent => Loop.done
+                case Absent =>
+                    Loop.done
                 case Present(c) =>
                     Emit.valueWith(c)(Loop.continue)
         Abort.run(emit).unit
@@ -323,32 +324,33 @@ object StreamCoreExtensions:
             ev: SafeClassTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
-            val initialState: Int = parallel
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Meter.initSemaphore(parallel).map: semaphore =>
-                    Channel.init[Maybe[V2]](bufferSize).map { channel =>
-                        val background = Async.run:
-                            val handleElements = stream.foreach: v =>
-                                semaphore.run:
-                                    Async.run:
-                                        semaphore.run:
-                                            semaphore.availablePermits.map: perms =>
-                                                f(v).map: v2 =>
-                                                    channel.put(Present(v2))
+                Channel.initWith[Maybe[V]](bufferSize): channelIn =>
+                    Channel.initWith[Maybe[V2]](bufferSize): channelOut =>
+                        val input = Abort.run(
+                            stream.foreach(v => channelIn.put(Present(v)))
+                        ).andThen(channelIn.putBatch(Chunk.fill(parallel)(Absent)))
+                        val transform = Async.fill(parallel, parallel) {
+                            Loop(()): _ =>
+                                channelIn.take.map:
+                                    case Absent => Loop.done
+                                    case Present(v) => f(v).map: v2 =>
+                                        channelOut.put(Present(v2)).andThen(Loop.continue)
+                        }.andThen(channelOut.put(Absent))
 
+                        val background = Async.run:
                             Abort.fold[E | Closed](
-                                _ => Abort.run(channel.put(Absent)).unit,
+                                _ => Abort.run(channelOut.put(Absent)).unit,
                                 {
                                     case _: Closed       => bug("buffer closed unexpectedly")
-                                    case e: E @unchecked => Abort.run(channel.put(Absent)).andThen(Abort.fail(e))
+                                    case e: E @unchecked => Abort.run(channelOut.put(Absent)).andThen(Abort.fail(e))
                                 },
-                                e => Abort.run(channel.put(Absent)).andThen(Abort.panic(e))
-                            )(handleElements)
+                                e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
+                            )(Async.gather(input, transform))
 
                         background.map: backgroundFiber =>
-                            emitMaybeElementsFromChannel(channel).andThen:
+                            emitMaybeElementsFromChannel(channelOut).andThen:
                                 backgroundFiber.get.unit
-                    }
         end mapParUnordered
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Does not preserve chunk
@@ -388,8 +390,52 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, IO],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
+            ev: SafeClassTag[E | Closed],
             frame: Frame
-        ): Stream[V2, Abort[E] & Async & S & S2] = ???
+        ): Stream[V2, Abort[E] & Async & S & S2] =
+            val initialState: Fiber[E | Closed, Unit] = Fiber.unit
+            Stream[V2, S & S2 & Abort[E] & Async]:
+                Channel.init[Maybe[Chunk[V2]]](bufferSize).map: channel =>
+                    Signal.initRefWith(parallel): parRef =>
+                        val background = Async.run:
+                            val handledStream = ArrowEffect.handleState(t1, initialState, stream.emit)(
+                                handle = [C] =>
+                                    (input, prevFiber, cont) =>
+                                        parRef.currentWith: initialPar =>
+                                            Loop(initialPar): currentPar =>
+                                                if currentPar > 0 then
+                                                    parRef.updateAndGet(_ - 1).andThen:
+                                                        // java.lang.System.err.println(s"RUNNING ASYNCHRONOUSLY $input")
+                                                        Async.run {
+                                                            f(input).map: chunk =>
+                                                                // java.lang.System.err.println(s"TRANSFORMED $input to $chunk")
+                                                                prevFiber.get.andThen:
+                                                                    // java.lang.System.err.println(s"PUTTING $chunk")
+                                                                    channel.put(Present(chunk)).andThen:
+                                                                        parRef.updateAndGet(_ + 1).unit
+                                                        }.map: newFiber =>
+                                                            Loop.done((newFiber, cont(())))
+                                                else
+                                                    parRef.nextWith: nextPar =>
+                                                        Loop.continue(nextPar)
+                                                end if
+                                ,
+                                done = (finalFiber, _) => finalFiber.get
+                            )
+
+                            Abort.fold[E | Closed](
+                                _ => Abort.run(channel.put(Absent)).unit,
+                                {
+                                    case _: Closed       => bug("buffer closed unexpectedly")
+                                    case e: E @unchecked => Abort.run(channel.put(Absent)).andThen(Abort.fail(e))
+                                },
+                                e => Abort.run(channel.put(Absent)).andThen(Abort.panic(e))
+                            )(handledStream)
+
+                        background.map: backgroundFiber =>
+                            emitMaybeChunksFromChannel(channel).andThen:
+                                backgroundFiber.get.unit
+        end mapChunkPar
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Preserves chunk boundaries.
           *
@@ -403,9 +449,10 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, IO],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
+            ev: SafeClassTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
-            mapChunkPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, frame)
+            mapChunkPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
 
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunks in parallel. Does not preserve chunk
           * boundaries.
@@ -427,8 +474,36 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, IO],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
+            ev: SafeClassTag[E | Closed],
             frame: Frame
-        ): Stream[V2, Abort[E] & Async & S & S2] = ???
+        ): Stream[V2, Abort[E] & Async & S & S2] =
+            Stream[V2, S & S2 & Abort[E] & Async]:
+                Channel.initWith[Maybe[Chunk[V]]](bufferSize): channelIn =>
+                    Channel.initWith[Maybe[Chunk[V2]]](bufferSize): channelOut =>
+                        val input = Abort.run(
+                            stream.foreachChunk(c => channelIn.put(Present(c)))
+                        ).andThen(channelIn.putBatch(Chunk.fill(parallel)(Absent)))
+                        val transform = Async.fill(parallel, parallel) {
+                            Loop(()): _ =>
+                                channelIn.take.map:
+                                    case Absent => Loop.done
+                                    case Present(c) => f(c).map: c2 =>
+                                        channelOut.put(Present(c2)).andThen(Loop.continue)
+                        }.andThen(channelOut.put(Absent))
+
+                        val background = Async.run:
+                            Abort.fold[E | Closed](
+                                _ => Abort.run(channelOut.put(Absent)).unit,
+                                {
+                                    case _: Closed       => bug("buffer closed unexpectedly")
+                                    case e: E @unchecked => Abort.run(channelOut.put(Absent)).andThen(Abort.fail(e))
+                                },
+                                e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
+                            )(Async.gather(input, transform))
+
+                        background.map: backgroundFiber =>
+                            emitMaybeChunksFromChannel(channelOut).andThen:
+                                backgroundFiber.get.unit
 
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunk in parallel. Does not preserve chunk boundaries.
           *
@@ -442,9 +517,10 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, IO],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
+            ev: SafeClassTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
-            mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, frame)
+            mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
 
     end extension
 end StreamCoreExtensions

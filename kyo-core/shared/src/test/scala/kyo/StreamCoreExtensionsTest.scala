@@ -105,14 +105,16 @@ class StreamCoreExtensionsTest extends Test:
                     assert(res.toSet == Set.from(1 to 5) ++ Set.from(101 to 105))
         }
 
+        val randomSleep = Random.nextInt(5).map(i => Async.sleep(i.millis))
+
         "mapPar" - {
             "should map all elements preserving order" in run {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        size <- Choice.get(Seq(1, 2, 4, 6, 8, 9, 12, 13))
+                        size <- Choice.get(Seq(2, 4, 6, 8, 9, 12, 13))
                         q    <- Queue.init[Int](12)
-                        s2 = stream.mapPar(3)(i => q.offer(i).andThen(i + 1))
+                        s2 = stream.mapPar(size)(i => randomSleep.andThen(q.offer(i)).andThen(i + 1))
                         resStream <- s2.run
                         resQueue  <- q.drain
                     yield assert(
@@ -130,13 +132,13 @@ class StreamCoreExtensionsTest extends Test:
         }
 
         "mapParUnordered" - {
-            "should map all elements" in run {
+            "should map all elements without preserving order" in run {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        size <- Choice.get(Seq(1, 2, 4, 6, 8, 9, 12, 13))
+                        size <- Choice.get(Seq(2, 4, 6, 8, 9, 12, 13))
                         q    <- Queue.init[Int](12)
-                        s2 = stream.mapParUnordered(3)(i => q.offer(i).andThen(i + 1))
+                        s2 = stream.mapParUnordered(size)(i => randomSleep.andThen(q.offer(i)).andThen(i + 1))
                         resStream <- s2.run
                         resQueue  <- q.drain
                     yield assert(
@@ -146,6 +148,54 @@ class StreamCoreExtensionsTest extends Test:
                             // Order should not be preserved in queue
                             resQueue != (1 to 12) &&
                             resQueue.toSet == (1 to 12).toSet
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+        }
+
+        "mapChunkPar" - {
+            "should map all chunks preserving order" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        size <- Choice.get(Seq(2, 4, 6, 8, 9, 12, 13))
+                        q    <- Queue.init[Int](12)
+                        s2 = stream.mapChunkPar(size)(chunk => randomSleep.andThen(q.offer(chunk.reduce(_ + _))).andThen(chunk.map(_ + 1)))
+                        resStream <- s2.run
+                        resQueue  <- q.drain
+                    yield assert(
+                        // Order should be preserved in transformed stream
+                        resStream == (2 to 13) &&
+                            // Order need not be preserved in queue
+                            resQueue.toSet == Set(10, 26, 42)
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+        }
+
+        "mapChunkParUnordered" - {
+            "should map all chunks without preserving order" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        size <- Choice.get(Seq(2, 4, 6, 8, 9, 12, 13))
+                        q    <- Queue.init[Int](12)
+                        s2 = stream.mapChunkParUnordered(size)(chunk =>
+                            randomSleep.andThen(q.offer(chunk.reduce(_ + _))).andThen(chunk.map(_ + 1))
+                        )
+                        resStream <- s2.run
+                        resQueue  <- q.drain
+                    yield assert(
+                        // Order should be preserved in transformed stream
+                        resStream.toSet == (2 to 13).toSet &&
+                            // Order need not be preserved in queue
+                            resQueue.toSet == Set(10, 26, 42)
                     )
                     end for
                 end test
