@@ -113,7 +113,7 @@ object IOTask:
         context: Context,
         finalizers: Finalizers = Finalizers.empty,
         runtime: Int = 0
-    )(using Frame): IOTask[Ctx, E, A] =
+    ): IOTask[Ctx, E, A] =
         val ctx = context
         val task =
             if ctx.isEmpty then
