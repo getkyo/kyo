@@ -623,6 +623,16 @@ sealed abstract class Stream[V, -S] extends Serializable:
                 end match
         )
     end splitAt
+
+    /** Process with a [[Sink]] of corresponding streaming element type.
+      *
+      * @param sink
+      *   Sink to process stream with
+      * @return
+      *   An effect producing a value of sink's output type `A`
+      */
+    def into[A, S2](sink: Sink[V, A, S2])(using Tag[V], Frame): A < (S & S2) =
+        sink.consume(this)
 end Stream
 
 object Stream:
