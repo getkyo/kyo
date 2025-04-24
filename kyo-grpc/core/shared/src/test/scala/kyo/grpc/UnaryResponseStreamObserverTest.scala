@@ -22,7 +22,19 @@ class UnaryResponseStreamObserverTest extends Test:
         yield assert(result === Success("next"))
     }
 
-    "onError fails" in run {
+    "onError with status exception fails" in run {
+        val exception = new RuntimeException("Test exception")
+        val statusException = StreamNotifier.throwableToStatusException(exception)
+
+        for
+            promise <- Promise.init[GrpcResponse.Errors, String]
+            observer <- IO.Unsafe(UnaryResponseStreamObserver[String](promise))
+            _ <- IO(observer.onError(statusException))
+            result <- promise.poll
+        yield assert(result.get.failure.get === statusException)
+    }
+
+    "onError with other exception fails" in run {
         val exception       = new RuntimeException("Test exception")
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
@@ -31,16 +43,18 @@ class UnaryResponseStreamObserverTest extends Test:
             observer <- IO.Unsafe(UnaryResponseStreamObserver[String](promise))
             _        <- IO(observer.onError(exception))
             result   <- promise.poll
-        yield assert(result === Failure(statusException))
+        yield assert(result.get.failure.get === statusException)
     }
 
     "onCompleted completes" in run {
+        val statusException = StatusException(Status.CANCELLED)
+
         for
             promise  <- Promise.init[GrpcResponse.Errors, String]
             observer <- IO.Unsafe(UnaryResponseStreamObserver[String](promise))
             _        <- IO(observer.onCompleted())
             result   <- promise.poll
-        yield assert(result === Failure(StatusException(Status.CANCELLED)))
+        yield assert(result.get.failure.get === statusException)
     }
 
 end UnaryResponseStreamObserverTest

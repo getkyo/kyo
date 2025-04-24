@@ -25,7 +25,21 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
         observer.map(_.onNext("next")).map(_ => succeed)
     }
 
-    "onError fails" in run {
+    "onError with status exception fails" in run {
+        val channel = mock[StreamChannel[String, GrpcResponse.Errors]]
+        val observer = IO.Unsafe(ResponseStreamObserver[String](channel))
+        val exception = new RuntimeException("Test exception")
+        val statusException = StreamNotifier.throwableToStatusException(exception)
+
+        (channel.fail(_: GrpcResponse.Errors)(using _: Frame))
+            .expects(argThat[StatusException](_ === statusException), *)
+            .returns(())
+            .once()
+
+        observer.map(_.onError(statusException)).map(_ => succeed)
+    }
+
+    "onError with other exception fails" in run {
         val channel         = mock[StreamChannel[String, GrpcResponse.Errors]]
         val observer        = IO.Unsafe(ResponseStreamObserver[String](channel))
         val exception       = new RuntimeException("Test exception")

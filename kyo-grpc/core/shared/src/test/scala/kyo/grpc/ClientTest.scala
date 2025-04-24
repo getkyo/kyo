@@ -1,0 +1,135 @@
+package kyo.grpc
+
+import io.grpc.ManagedChannel
+import io.grpc.ManagedChannelBuilder
+import io.grpc.ManagedChannelProvider
+import io.grpc.ManagedChannelProvider.ProviderNotFoundException
+import io.grpc.ManagedChannelRegistry
+import io.grpc.Status
+import io.grpc.StatusException
+import io.grpc.StatusRuntimeException
+import io.grpc.stub.StreamObserver
+import java.net.SocketAddress
+import kyo.*
+import kyo.Result.*
+import org.scalactic.TripleEquals.*
+import org.scalamock.scalatest.AsyncMockFactory2
+import org.scalatest.EitherValues.*
+import scala.util.chaining.*
+
+class ClientTest extends Test with AsyncMockFactory2:
+
+    "shutdown shuts down the channel" in run {
+        val channel = mock[ManagedChannel]
+
+        (() => channel.shutdown())
+            .expects()
+            .returns(channel)
+            .once()
+
+        Client.shutdown(channel).map(_ => succeed)
+    }
+
+    "configures channel" in run {
+        val host = "localhost"
+        val port = 50051
+
+        val channel = mock[ManagedChannel]
+        (() => channel.shutdown())
+            .expects()
+            // FIXME: This doesn't fail.
+            .never()
+
+        val unconfiguredBuilder = mock[Builder]
+
+        val configuredBuilder = mock[Builder]
+        (() => configuredBuilder.build())
+            .expects()
+            .returns(channel)
+            .once()
+
+        val provider = StubProvider(unconfiguredBuilder)
+
+        var configured = false
+
+        def configure(
+                         actualBuilder: ManagedChannelBuilder[?]
+                     ): ManagedChannelBuilder[?] =
+            configured = true
+            assert(actualBuilder eq unconfiguredBuilder)
+            configuredBuilder
+        end configure
+
+        for
+            _ <- replaceProviders(provider)
+            _ <- Client.channel(host, port)(configure)
+        yield
+            assert(provider.builderAddressName == host)
+            assert(provider.builderAddressPort == port)
+            assert(configured)
+    }
+
+    "shuts down channel" in run {
+        val host = "localhost"
+        val port = 50051
+
+        val channel = mock[ManagedChannel]
+        (() => channel.shutdown())
+            .expects()
+            .returns(channel)
+            .once()
+
+        val builder = mock[Builder]
+        (() => builder.build())
+            .expects()
+            .returns(channel)
+            .once()
+
+        val provider = StubProvider(builder)
+
+        Resource.run:
+            for
+                _ <- replaceProviders(provider)
+                _ <- Client.channel(host, port)(identity)
+            yield
+                succeed
+    }
+
+    private def replaceProviders(provider: ManagedChannelProvider): Unit < IO =
+        for
+            registry <- IO(ManagedChannelRegistry.getDefaultRegistry())
+            _        <- removeProviders(registry)
+            _        <- IO(registry.register(provider))
+        yield ()
+
+    private def removeProviders(registry: ManagedChannelRegistry): Unit < IO =
+        Loop(registry): registry =>
+            Abort.recover[ProviderNotFoundException](_ => Loop.done):
+                for
+                    provider <- Abort.catching[ProviderNotFoundException](ManagedChannelProvider.provider())
+                    _        <- IO(registry.deregister(provider))
+                yield Loop.continue(registry)
+
+    abstract private class Builder extends ManagedChannelBuilder[Builder]
+
+    private class StubProvider(builder: ManagedChannelBuilder[?]) extends ManagedChannelProvider:
+        var builderAddressName: String = ""
+        var builderAddressPort: Int    = -1
+
+        override protected def isAvailable(): Boolean = true
+
+        override protected def priority(): Int = 0
+
+        override protected def builderForAddress(name: String, port: Int): ManagedChannelBuilder[?] =
+            builderAddressName = name
+            builderAddressPort = port
+            builder
+        end builderForAddress
+
+        override protected def builderForTarget(target: String): ManagedChannelBuilder[?] = builder
+
+        override protected def getSupportedSocketAddressTypes: java.util.Collection[Class[? <: SocketAddress]] =
+            java.util.Collections.emptyList()
+    end StubProvider
+
+end ClientTest
