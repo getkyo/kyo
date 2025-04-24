@@ -18,6 +18,9 @@ import org.scalatest.EitherValues.*
 import scala.util.chaining.*
 
 class ClientTest extends Test with AsyncMockFactory2:
+    
+    private val host = "localhost"
+    private val port = 50051
 
     "shutdown shuts down the channel" in run {
         val channel = mock[ManagedChannel]
@@ -31,14 +34,10 @@ class ClientTest extends Test with AsyncMockFactory2:
     }
 
     "configures channel" in run {
-        val host = "localhost"
-        val port = 50051
-
         val channel = mock[ManagedChannel]
         (() => channel.shutdown())
             .expects()
-            // FIXME: This doesn't fail.
-            .never()
+            .once()
 
         val unconfiguredBuilder = mock[Builder]
 
@@ -70,13 +69,17 @@ class ClientTest extends Test with AsyncMockFactory2:
     }
 
     "shuts down channel" in run {
-        val host = "localhost"
-        val port = 50051
-
         val channel = mock[ManagedChannel]
+
+        // Be careful here. Unexpected calls will fail when shutdown is called which gets swallowed by Resource and so
+        // the test will not fail. See https://github.com/ScalaMock/ScalaMock/issues/633.
+        var shutdownCount = 0
         (() => channel.shutdown())
             .expects()
-            .returns(channel)
+            .onCall(() => {
+                shutdownCount += 1
+                channel
+            })
             .once()
 
         val builder = mock[Builder]
@@ -87,12 +90,14 @@ class ClientTest extends Test with AsyncMockFactory2:
 
         val provider = StubProvider(builder)
 
-        Resource.run:
+        val result = Resource.run:
             for
                 _ <- replaceProviders(provider)
                 _ <- Client.channel(host, port)(identity)
             yield
-                succeed
+                assert(shutdownCount == 0)
+                
+        result.map(_ => assert(shutdownCount == 1))
     }
 
     private def replaceProviders(provider: ManagedChannelProvider): Unit < IO =
