@@ -1361,7 +1361,7 @@ import kyo.*
 val stream = Stream.init(1 to 10)
 
 val collectValuesSink: Sink[Int, Chunk[Int], Any] = Sink.collect[Int]
-val collectedValues: Chunk[Int] < Any = stream.into(collectedValues)
+val collectedValues: Chunk[Int] < Any = stream.into(collectValuesSink)
 
 val printValuesSink: Sink[Int, Unit, IO] = Sink.foreach((v: Int) => Console.printLine(s"Value: $v"))
 val printedValues: Unit < IO = stream.into(printValuesSink)
@@ -1373,10 +1373,12 @@ val summedValues: Int < Any = stream.into(sumValuesSink)
 Sinks can then be combined and transformed to produce new sinks:
 
 ```scala
+import kyo.*
+
 // built in sink to count elements in stream
-val countSink = Sink[Int, Int, Any] = Sink.count[Int]
+val countSink: Sink[Int, Int, Any] = Sink.count[Int]
 // add all integers in stream together
-val sumSink = Sink[Int, Int, Any] = Sink.fold(0)((a: Int, v: Int) => a + v)
+val sumSink: Sink[Int, Int, Any] = Sink.fold(0)((a: Int, v: Int) => a + v)
 // zip combines sinks together, applying them to same stream elements in tandem, and
 // producing a tuple of the output values of each sink.
 // map transforms the output value
