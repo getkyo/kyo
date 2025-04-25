@@ -145,6 +145,22 @@ class SinkTest extends Test:
             val result = zipped.consume(stream).eval
             assert(result == (15, 16, 17, 18, 19, 20, 21, 22, 23, 24))
         }
+
+        "early terminating sink" in {
+            val s1 = Sink:
+                Loop(0, 3): (acc, i) =>
+                    Poll.one[Chunk[Int]].map:
+                        case Absent => Loop.done(acc)
+                        case Present(chunk) =>
+                            val newAcc = acc + chunk.take(i).reduce(_ + _)
+                            if chunk.size >= i then Loop.done(newAcc)
+                            else Loop.continue(newAcc, i - chunk.size)
+            val s2     = Sink.fold(0)((acc: Int, v: Int) => acc + v)
+            val zipped = s1.zip(s2)
+            val stream = Stream.init(0 to 5).rechunk(1)
+            val result = zipped.consume(stream).eval
+            assert(result == (3, 15))
+        }
     }
 
 end SinkTest

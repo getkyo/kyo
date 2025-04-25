@@ -57,8 +57,14 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
                             )
                         ,
                         done = a =>
-                            pollB.map: b =>
-                                Loop.done((a, b))
+                            ArrowEffect.handleFirst(tag, pollB)(
+                                handle = [C] =>
+                                    (_, contB) =>
+                                        contB(polledValue).map: b =>
+                                            Loop.done((a, b)),
+                                done = b =>
+                                    Loop.done((a, b))
+                            )
                     )
     end zip
 
