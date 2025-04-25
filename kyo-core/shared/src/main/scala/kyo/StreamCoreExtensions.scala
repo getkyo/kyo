@@ -20,7 +20,7 @@ object StreamCoreExtensions:
         val emit = Loop(()): _ =>
             channel.take.map: v =>
                 channel.drain.map: chunk =>
-                    val fullChunk      = Chunk(v).concat(chunk)
+                    val fullChunk      = Chunk.single(v).concat(chunk)
                     val publishedChunk = fullChunk.collect({ case Present(v) => v })
                     Emit.valueWith(publishedChunk):
                         if publishedChunk.size == fullChunk.size then
