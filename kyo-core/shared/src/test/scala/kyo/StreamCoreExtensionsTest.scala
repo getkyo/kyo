@@ -112,8 +112,8 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.get(Seq(1, 2, 4, Async.defaultConcurrency))
-                        buf <- Choice.get(Seq(1, 4, 5, 8, 12))
+                        par <- Choice.get(Seq(1, 2, 4, Async.defaultConcurrency, Int.MaxValue))
+                        buf <- Choice.get(Seq(1, 4, 5, 8, 12, par, Int.MaxValue))
                         s2 = stream.mapPar(par, buf)(i => IO(i + 1))
                         res <- s2.run
                     yield assert(
