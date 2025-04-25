@@ -273,12 +273,12 @@ object StreamCoreExtensions:
                             )
 
                             Abort.fold[E | Closed](
-                                _ => Abort.run(channel.put(Absent)).unit,
-                                {
+                                onSuccess = _ => Abort.run(channel.put(Absent)).unit,
+                                onFail = {
                                     case _: Closed       => bug("buffer closed unexpectedly")
                                     case e: E @unchecked => Abort.run(channel.put(Absent)).andThen(Abort.fail(e))
                                 },
-                                e => Abort.run(channel.put(Absent)).andThen(Abort.panic(e))
+                                onPanic = e => Abort.run(channel.put(Absent)).andThen(Abort.panic(e))
                             )(handledStream)
 
                         background.map: backgroundFiber =>
