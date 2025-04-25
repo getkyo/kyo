@@ -238,7 +238,7 @@ object StreamCoreExtensions:
 
                                                     if newRemainingPar <= 0 && newRemainingChunk.size <= 0 then
                                                         nextChunkEffect.map: nextChunk =>
-                                                            prevChunkFiber.get.map: prevChunk =>
+                                                            prevChunkFiber.use: prevChunk =>
                                                                 prevEmitFiber.get.andThen:
                                                                     channel.put(Present(prevChunk ++ nextChunk)).andThen:
                                                                         Loop.done(((Fiber.unit, parallel), cont(())))
