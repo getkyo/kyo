@@ -37,24 +37,29 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that produces a tuple of the outputs of the source sinks.
       */
-    def zip[B, S2](other: Sink[V, B, S2])(using Tag[V], Frame): Sink[V, (A, B), S & S2] =
+    def zip[B, S2](other: Sink[V, B, S2])(using tag: Tag[Poll[Chunk[V]]], f: Frame): Sink[V, (A, B), S & S2] =
         Sink:
             Loop((poll, other.poll)): (pollA, pollB) =>
                 Poll.andMap[Chunk[V]]: polledValue =>
-                    // TODO: use ArrowEffect.handleFirst directly to avoid Either
-                    Poll.runFirst(pollA).map:
-                        case Left(a) =>
+                    ArrowEffect.handleFirst(tag, pollA)(
+                        handle = [C] =>
+                            (_, contA) =>
+                                val nextA = contA(polledValue)
+                                ArrowEffect.handleFirst(tag, pollB)(
+                                    handle = [C] =>
+                                        (_, contB) =>
+                                            val nextB = contB(polledValue)
+                                            Loop.continue(nextA, nextB)
+                                    ,
+                                    done = b =>
+                                        nextA.map: a =>
+                                            Loop.done((a, b))
+                            )
+                        ,
+                        done = a =>
                             pollB.map: b =>
                                 Loop.done((a, b))
-                        case Right(fnA) =>
-                            val nextA = fnA(polledValue)
-                            Poll.runFirst(pollB).map:
-                                case Left(b) =>
-                                    nextA.map: a =>
-                                        Loop.done((a, b))
-                                case Right(fnB) =>
-                                    val nextB = fnB(polledValue)
-                                    Loop.continue(nextA, nextB)
+                    )
     end zip
 
     /** Transform a sink to consume a stream of a different element type by providing a function to transform elements of the new type to
