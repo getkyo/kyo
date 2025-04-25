@@ -334,7 +334,8 @@ object StreamCoreExtensions:
                             Loop(()): _ =>
                                 channelIn.take.map:
                                     case Absent => Loop.done
-                                    case Present(v) => f(v).map: v2 =>
+                                    case Present(v) =>
+                                        f(v).map: v2 =>
                                             channelOut.put(Present(v2)).andThen(Loop.continue)
                         }.andThen(channelOut.put(Absent))
 
@@ -487,7 +488,8 @@ object StreamCoreExtensions:
                             Loop(()): _ =>
                                 channelIn.take.map:
                                     case Absent => Loop.done
-                                    case Present(c) => f(c).map: c2 =>
+                                    case Present(c) =>
+                                        f(c).map: c2 =>
                                             channelOut.put(Present(c2)).andThen(Loop.continue)
                         }.andThen(channelOut.put(Absent))
 
