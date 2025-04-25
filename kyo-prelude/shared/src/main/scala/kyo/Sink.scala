@@ -40,10 +40,10 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
     def zip[B, S2](other: Sink[V, B, S2])(using tag: Tag[Poll[Chunk[V]]], f: Frame): Sink[V, (A, B), S & S2] =
         Sink:
             Loop((poll, other.poll)): (pollA, pollB) =>
-                Poll.andMap[Chunk[V]]: polledValue =>
-                    ArrowEffect.handleFirst(tag, pollA)(
-                        handle = [C] =>
-                            (_, contA) =>
+                ArrowEffect.handleFirst(tag, pollA)(
+                    handle = [C] =>
+                        (_, contA) =>
+                            Poll.andMap[Chunk[V]]: polledValue =>
                                 val nextA = contA(polledValue)
                                 ArrowEffect.handleFirst(tag, pollB)(
                                     handle = [C] =>
@@ -55,17 +55,19 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
                                         nextA.map: a =>
                                             Loop.done((a, b))
                             )
-                        ,
-                        done = a =>
-                            ArrowEffect.handleFirst(tag, pollB)(
-                                handle = [C] =>
-                                    (_, contB) =>
+                    ,
+                    done = a =>
+                        ArrowEffect.handleFirst(tag, pollB)(
+                            handle = [C] =>
+                                (_, contB) =>
+                                    Poll.andMap[Chunk[V]]: polledValue =>
                                         contB(polledValue).map: b =>
                                             Loop.done((a, b)),
-                                done = b =>
-                                    Loop.done((a, b))
-                            )
-                    )
+                            done = b =>
+                                Loop.done((a, b))
+                        )
+                )
+
     end zip
 
     /** Transform a sink to consume a stream of a different element type by providing a function to transform elements of the new type to
