@@ -103,7 +103,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
-        d: Sink.Dummy,
+        d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
@@ -156,7 +156,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
-        d: Sink.Dummy,
+        d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
@@ -446,11 +446,5 @@ object Sink:
     ): Sink[V, (A, B, C, D, E, F, G, H, I, J), S] =
         a.zip(zip(b, c, d, e, f, g, h, i, j)).map:
             case (a, tail) => a *: tail
-
-    /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
-      */
-    sealed class Dummy extends Serializable
-    object Dummy:
-        given Dummy = new Dummy {}
 
 end Sink

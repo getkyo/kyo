@@ -99,7 +99,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         using
         tagV: Tag[Emit[Chunk[V]]],
         tagV2: Tag[Emit[Chunk[V2]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream[V2, S](ArrowEffect.handleState(tagV, (), emit)(
@@ -269,7 +269,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       */
     def takeWhile(f: V => Boolean)(using
         tag: Tag[Emit[Chunk[V]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V, S] =
         Stream[V, S](ArrowEffect.handleState(tag, true, emit)(
@@ -341,7 +341,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
 
     def filter(f: V => Boolean)(using
         tag: Tag[Emit[Chunk[V]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V, S] =
         Stream[V, S](ArrowEffect.handleState(tag, (), emit)(
@@ -375,7 +375,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
     def collect[V2](f: V => Maybe[V2])(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
@@ -416,7 +416,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
     def collectWhile[V2](f: V => Maybe[V2])(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream[V2, S](ArrowEffect.handleState(tag, (), emit)(
@@ -733,11 +733,5 @@ object Stream:
                         end if
                     }
                 }
-
-    /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
-      */
-    sealed class Dummy extends Serializable
-    object Dummy:
-        given Dummy = new Dummy {}
 
 end Stream
