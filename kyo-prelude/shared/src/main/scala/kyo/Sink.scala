@@ -37,7 +37,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that produces a tuple of the outputs of the source sinks.
       */
-    def zip[B, S2](other: Sink[V, B, S2])(using tag: Tag[Poll[Chunk[V]]], f: Frame): Sink[V, (A, B), S & S2] =
+    final def zip[B, S2](other: Sink[V, B, S2])(using tag: Tag[Poll[Chunk[V]]], f: Frame): Sink[V, (A, B), S & S2] =
         Sink:
             Loop((poll, other.poll)): (pollA, pollB) =>
                 ArrowEffect.handleFirst(tag, pollA)(
@@ -77,7 +77,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that processes streams of the new element type
       */
-    def contramap[V2](f: V2 => V)(using
+    final def contramap[V2](f: V2 => V)(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
@@ -99,7 +99,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that processes streams of the new element type
       */
-    def contramap[V2, S2](f: V2 => V < S2)(using
+    final def contramap[V2, S2](f: V2 => V < S2)(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
@@ -129,7 +129,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that processes streams of the new element type
       */
-    def contramapChunk[V2](f: Chunk[V2] => Chunk[V])(using
+    final def contramapChunk[V2](f: Chunk[V2] => Chunk[V])(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
@@ -152,7 +152,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that processes streams of the new element type
       */
-    def contramapChunk[V2, S2](f: Chunk[V2] => Chunk[V] < S2)(using
+    final def contramapChunk[V2, S2](f: Chunk[V2] => Chunk[V] < S2)(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
@@ -181,7 +181,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that processes the same kind of stream to produce a new output type
       */
-    def map[B, S2](f: A => (B < S2))(
+    final def map[B, S2](f: A => (B < S2))(
         using fr: Frame
     ): Sink[V, B, S & S2] =
         Sink(poll.map((a: A) => f(a)))
@@ -197,7 +197,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   An effect generating an output value from elements consumed from the stream
       */
-    def consume[S2](stream: Stream[V, S2])(using Tag[V], Frame): A < (S & S2) =
+    final def consume[S2](stream: Stream[V, S2])(using Tag[V], Frame): A < (S & S2) =
         Poll.run(stream.emit)(poll).map(_._2)
 end Sink
 
