@@ -1379,9 +1379,9 @@ import kyo.*
 val countSink: Sink[Int, Int, Any] = Sink.count[Int]
 // add all integers in stream together
 val sumSink: Sink[Int, Int, Any] = Sink.fold(0)((a: Int, v: Int) => a + v)
-// zip combines sinks together, applying them to same stream elements in tandem, and
+// `zip` combines sinks together, applying them to same stream elements in tandem, and
 // producing a tuple of the output values of each sink.
-// map transforms the output value
+// `map` transforms the output value
 val averageSink: Sink[Int, Double, Any] = sumSink.zip(countSink).map { 
     case (sum, count) => sum / count
 }
