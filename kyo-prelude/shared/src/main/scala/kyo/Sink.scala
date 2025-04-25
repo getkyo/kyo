@@ -144,7 +144,8 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
                             ((), cont(maybeChunkV))
             )
 
-    /** Transform a sink to consume a stream of a different element type using an effectful mapping function that transforms streamed chunks.
+    /** Transform a sink to consume a stream of a different element type using an effectful mapping function that transforms streamed
+      * chunks.
       *
       * @param f
       *   Effectful function mapping chunks of new stream element type to chunks of the original stream element type

@@ -625,7 +625,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
     end splitAt
 
     /** Process with a [[Sink]] of corresponding streaming element type.
-      * 
+      *
       * @see
       *   [[kyo.Sink.consume]]
       *
