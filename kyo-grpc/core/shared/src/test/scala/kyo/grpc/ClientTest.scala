@@ -11,14 +11,10 @@ import io.grpc.StatusRuntimeException
 import io.grpc.stub.StreamObserver
 import java.net.SocketAddress
 import kyo.*
-import kyo.Result.*
-import org.scalactic.TripleEquals.*
 import org.scalamock.scalatest.AsyncMockFactory2
-import org.scalatest.EitherValues.*
-import scala.util.chaining.*
 
 class ClientTest extends Test with AsyncMockFactory2:
-    
+
     private val host = "localhost"
     private val port = 50051
 
@@ -52,8 +48,8 @@ class ClientTest extends Test with AsyncMockFactory2:
         var configured = false
 
         def configure(
-                         actualBuilder: ManagedChannelBuilder[?]
-                     ): ManagedChannelBuilder[?] =
+            actualBuilder: ManagedChannelBuilder[?]
+        ): ManagedChannelBuilder[?] =
             configured = true
             assert(actualBuilder eq unconfiguredBuilder)
             configuredBuilder
@@ -66,6 +62,7 @@ class ClientTest extends Test with AsyncMockFactory2:
             assert(provider.builderAddressName == host)
             assert(provider.builderAddressPort == port)
             assert(configured)
+        end for
     }
 
     "shuts down channel" in run {
@@ -76,10 +73,10 @@ class ClientTest extends Test with AsyncMockFactory2:
         var shutdownCount = 0
         (() => channel.shutdown())
             .expects()
-            .onCall(() => {
+            .onCall(() =>
                 shutdownCount += 1
                 channel
-            })
+            )
             .once()
 
         val builder = mock[Builder]
@@ -94,9 +91,8 @@ class ClientTest extends Test with AsyncMockFactory2:
             for
                 _ <- replaceProviders(provider)
                 _ <- Client.channel(host, port)(identity)
-            yield
-                assert(shutdownCount == 0)
-                
+            yield assert(shutdownCount == 0)
+
         result.map(_ => assert(shutdownCount == 1))
     }
 
