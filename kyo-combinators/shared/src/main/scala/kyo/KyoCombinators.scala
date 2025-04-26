@@ -124,7 +124,7 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
     def repeatWhile[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1) =
-        Loop(()): _ =>
+        Loop.foreach:
             effect.map: a =>
                 fn(a).map: test =>
                     if test then Loop.continue
@@ -156,7 +156,7 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of the first execution where the condition becomes true
       */
     def repeatUntil[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1 & Async) =
-        Loop(()): _ =>
+        Loop.foreach:
             effect.map: a =>
                 fn(a).map: test =>
                     if test then Loop.done(a)

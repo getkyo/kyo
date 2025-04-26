@@ -303,7 +303,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       *   A computation that produces the result of this computation with Async and no Abort[E]
       */
     def retryForever(using SafeClassTag[E], Frame): A < S =
-        Loop(()): _ =>
+        Loop.foreach:
             Abort.fold[E](
                 (result: A) => Loop.done[Unit, A](result),
                 _ => Loop.continue,
@@ -592,7 +592,7 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         Frame
     ): A < (S & Abort[ER]) =
         val retypedEffect = effect.asInstanceOf[A < (S & Abort[E1 | ER])]
-        Loop(()): _ =>
+        Loop.foreach:
             Abort.fold[E1](
                 (result: A) => Loop.done[Unit, A](result),
                 _ => Loop.continue,

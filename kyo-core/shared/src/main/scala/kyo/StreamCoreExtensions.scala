@@ -6,7 +6,7 @@ object StreamCoreExtensions:
     val DefaultCollectBufferSize = 1024
 
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[V], Frame) =
-        val emit = Loop(()): _ =>
+        val emit = Loop.foreach:
             channel.take.map:
                 case Absent => Loop.done
                 case Present(c) =>
