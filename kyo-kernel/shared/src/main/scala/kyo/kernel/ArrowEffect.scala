@@ -424,7 +424,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): A < (S & S2) =
         @nowarn("msg=anonymous")
@@ -518,7 +517,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): B < (S & S2) =
         @nowarn("msg=anonymous")
