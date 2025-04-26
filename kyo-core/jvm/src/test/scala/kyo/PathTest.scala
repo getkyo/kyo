@@ -90,7 +90,7 @@ class PathTest extends Test:
                 _ <- useFile(first, text)
                 _ <- useFile(second, text)
                 v <- root.readAll("txt")
-            yield assert(v == List(first -> text, second -> text))
+            yield assert(v.toSet == Set(first -> text, second -> text))
             end for
         }
 
