@@ -5,5 +5,4 @@ package kyo
 sealed abstract class Discriminator {}
 
 object Discriminator:
-    private val cached  = new Discriminator {}
-    given Discriminator = cached
+    given Discriminator = new Discriminator {}
