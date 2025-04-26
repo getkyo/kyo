@@ -143,5 +143,50 @@ class ChoiceTest extends Test:
             assert(result.contains(2))
             assert(result.size == 4)
         }
+
+        "foreach - array" in {
+            val result = Choice.run(
+                Kyo.foreach(Array("x", "y")) { str =>
+                    Choice.get(Seq(true, false)).map(b =>
+                        if b then str.toUpperCase else str
+                    )
+                }
+            ).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
+        "collect - array" in {
+            val effects =
+                Array("x", "y").map { str =>
+                    Choice.get(Seq(true, false)).map(b =>
+                        if b then str.toUpperCase else str
+                    )
+                }
+            val result = Choice.run(Kyo.collectAll(effects)).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
+        "foldLeft - array" in {
+            val result = Choice.run(
+                Kyo.foldLeft(Array(1, 1))(0) { (acc, _) =>
+                    Choice.get(Seq(0, 1)).map(n => acc + n)
+                }
+            ).eval
+
+            assert(result.contains(0))
+            assert(result.contains(1))
+            assert(result.contains(2))
+            assert(result.size == 4)
+        }
     }
 end ChoiceTest
