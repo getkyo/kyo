@@ -7,7 +7,7 @@ object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
 
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[V], Frame) =
-        val emit = Loop(()): _ =>
+        val emit = Loop.foreach:
             channel.take.map:
                 case Absent =>
                     Loop.done
@@ -221,7 +221,7 @@ object StreamCoreExtensions:
                     IO.ensure(channel.close):
                         AtomicInt.init(0).map: parAdjustmentRef =>
                             val background = Async.run:
-                                val handledStream = ArrowEffect.handleState(t1, initialState, stream.emit)(
+                                val handledStream = ArrowEffect.handleLoop(t1, initialState, stream.emit)(
                                     handle = [C] =>
                                         (input, state, cont) =>
                                             val (prevEmitFiber, remainingEmitPar) = state
@@ -242,7 +242,7 @@ object StreamCoreExtensions:
                                                                 prevChunkFiber.use: prevChunk =>
                                                                     prevEmitFiber.get.andThen:
                                                                         channel.put(Present(prevChunk ++ nextChunk)).andThen:
-                                                                            Loop.done(((Fiber.unit, parallel), cont(())))
+                                                                            Loop.done(Loop.continue((Fiber.unit, parallel), cont(())))
                                                         else if newRemainingPar <= 0 then
                                                             nextChunkEffect.map: nextChunk =>
                                                                 prevChunkFiber.get.map: prevChunk =>
@@ -261,7 +261,10 @@ object StreamCoreExtensions:
                                                                             channel.put(Present(chunk)).andThen:
                                                                                 parAdjustmentRef.updateAndGet(_ + chunk.size).unit
                                                             }.map: nextFiber =>
-                                                                Loop.done(((nextFiber, newRemainingPar), cont(())))
+                                                                Loop.done(Loop.continue(
+                                                                    (nextFiber, newRemainingPar),
+                                                                    cont(())
+                                                                ))
                                                         else
                                                             bug("Illegal state: there is remaining parallel and remaining chunk in mapPar")
                                                         end if
@@ -403,7 +406,7 @@ object StreamCoreExtensions:
                     IO.ensure(channel.close):
                         Signal.initRefWith(parallel): parRef =>
                             val background = Async.run:
-                                val handledStream = ArrowEffect.handleState(t1, initialState, stream.emit)(
+                                val handledStream = ArrowEffect.handleLoop(t1, initialState, stream.emit)(
                                     handle = [C] =>
                                         (input, prevFiber, cont) =>
                                             parRef.currentWith: initialPar =>
@@ -419,7 +422,7 @@ object StreamCoreExtensions:
                                                                         channel.put(Present(chunk)).andThen:
                                                                             parRef.updateAndGet(_ + 1).unit
                                                             }.map: newFiber =>
-                                                                Loop.done((newFiber, cont(())))
+                                                                Loop.done(Loop.continue(newFiber, cont(())))
                                                     else
                                                         parRef.nextWith: nextPar =>
                                                             Loop.continue(nextPar)

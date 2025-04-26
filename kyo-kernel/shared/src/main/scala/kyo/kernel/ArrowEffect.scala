@@ -29,6 +29,12 @@ import scala.util.control.NonFatal
   * handler takes two parameters: an input value of type I[C] that contains the input of the operation, and a continuation function
   * representing the remainder of the computation from the point where the effect was suspended to the point where it's being handled.
   *
+  * ArrowEffect provides two main kinds of handling methods with distinct capabilities:
+  *   - handle: Basic handler that doesn't allow introducing new effects during handling
+  *   - handleLoop: Enhanced handler that explicitly allows introducing new effects (via S2 type parameter) during handling:
+  *     - Without state: When you need to add effects but not state between occurrences
+  *     - With state: When you need both new effects and state maintenance between occurrences
+  *
   * When defining concrete effects, ArrowEffect is commonly used with two special type constructors: Const and Id. The Const[X] type
   * constructor ignores its type parameter and always returns X, while Id[X] simply returns X unchanged. For instance, an effect that needs
   * to fail with errors of type E would use Const[E] as its input type - it only needs the error value itself, not any type parameters.
@@ -95,6 +101,10 @@ object ArrowEffect:
                 )
 
     /** Handles an arrow effect by providing a handler function implementation.
+      *
+      * This is the basic form of effect handling where each effect occurrence is processed independently. Unlike handleLoop, handle does
+      * not allow introducing new effects during the handling process (no S2 type parameter), making it more restrictive but simpler for
+      * basic transformations.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -388,9 +398,66 @@ object ArrowEffect:
         handleFirstLoop(v, Context.empty)
     end handleFirst
 
-    /** Handles an arrow effect with a stateful implementation. This combines function implementation with state management, allowing the
-      * handler to maintain and modify state as it processes operations. The state is threaded through the computation and can influence how
-      * operations are processed.
+    /** Handles an arrow effect with a loop-based approach for greater flexibility.
+      *
+      * This variant provides two key advantages over basic handle:
+      *   1. It explicitly allows introducing new effects during handling via the S2 type parameter
+      *   2. It provides control flow through the Loop abstraction to continue or terminate processing
+      *
+      * This non-stateful handleLoop is ideal when you need to perform effectful operations with access to new effects during handling, but
+      * don't need to maintain state between effect occurrences.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation that returns a Loop.Outcome for each iteration
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S)) => Loop.Outcome[A < (E & S), A] < S2
+    )(
+        using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): A < (S & S2) =
+        @nowarn("msg=anonymous")
+        def handleLoopLoop(v: Loop.Outcome[A < (E & S), A] < S2, context: Context)(using Safepoint): A < (S & S2) =
+            v match
+                case _: KyoSuspend[?, ?, ?, ?, ?, ?] =>
+                    v.map(handleLoopLoop(_, context))
+                case continue: Loop.Continue[A < (E & S)] @unchecked =>
+                    continue._1 match
+                        case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag =:= kyo.tag =>
+                            handleLoopLoop(handle(kyo.input, kyo(_, context)), context)
+                        case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
+                            new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
+                                def frame = _frame
+                                def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                    handleLoopLoop(Loop.continue(kyo(v, context)), context)
+                            end new
+                        case kyo =>
+                            kyo.asInstanceOf[A]
+                case _ =>
+                    v.asInstanceOf[A < (S & S2)]
+        end handleLoopLoop
+        handleLoopLoop(Loop.continue(v), Context.empty)
+    end handleLoop
+
+    /** Handles an arrow effect with stateful loop-based approach for maximum flexibility.
+      *
+      * This most powerful variant combines three key capabilities:
+      *   1. It explicitly allows introducing new effects during handling via the S2 type parameter
+      *   2. It provides control flow through the Loop abstraction to continue or terminate processing
+      *   3. It maintains state between effect occurrences through the State type
+      *
+      * The stateful handleLoop should be used when you need the full range of capabilities: introducing new effects during handling,
+      * maintaining state between occurrences, and controlling when to terminate processing.
       *
       * @param effectTag
       *   Identifies which arrow effect to handle
@@ -399,39 +466,83 @@ object ArrowEffect:
       * @param v
       *   The computation requiring the function implementation
       * @param handle
-      *   The stateful implementation to provide
+      *   The function implementation that returns a Loop.Outcome for each iteration
       * @return
-      *   The computation result with the stateful implementation provided
+      *   The computation result with the function implementation provided
       */
-    inline def handleState[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S, S2, S3](
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2, State](
         inline effectTag: Tag[E],
-        inline state: State,
+        state: State,
         v: A < (E & S)
     )(
-        inline handle: [C] => (I[C], State, Safepoint ?=> O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)) < S3,
-        inline done: (State, A) => B < (S & S2 & S3) = (_: State, v: A) => v
+        inline handle: [C] => (I[C], State, Safepoint ?=> O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), A] < S2
     )(
         using
         inline _frame: Frame,
         safepoint: Safepoint
-    ): B < (S & S2 & S3) =
+    ): A < (S & S2) =
+        handleLoop[I, O, E, A, A, S, S2, State](effectTag, state, v)(handle, (_, v) => v)
+
+    /** Handles an arrow effect with stateful loop-based approach and custom completion handling.
+      *
+      * This specialized variant of handleLoop provides maximum flexibility with three key capabilities:
+      *   1. It explicitly allows introducing new effects during handling via the S2 type parameter
+      *   2. It maintains state between effect occurrences through the State type
+      *   3. It allows custom transformation of the final state and result via the done function
+      *
+      * The key advantage of this variant is the separate done function, which gives precise control over how the final state and result are
+      * transformed when the loop completes. This is particularly useful when the final result needs different handling from intermediate
+      * steps.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param state
+      *   The initial state value
+      * @param v
+      *   The computation requiring the function implementation
+      * @param handle
+      *   The function implementation for each iteration
+      * @param done
+      *   The function to transform the final state and result
+      * @return
+      *   The computation result with the function implementation provided
+      */
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
+        inline effectTag: Tag[E],
+        state: State,
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], State, Safepoint ?=> O[C] => A < (E & S)) => Loop.Outcome2[State, A < (E & S), B] < S2,
+        inline done: (State, A) => B < (S & S2)
+    )(
+        using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): B < (S & S2) =
         @nowarn("msg=anonymous")
-        def handleLoop(state: State, v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
+        def handleLoopLoop(v: Loop.Outcome2[State, A < (E & S), B] < S2, context: Context)(using Safepoint): B < (S & S2) =
             v match
-                case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag =:= kyo.tag =>
-                    handle(kyo.input, state, kyo(_, context)).map(handleLoop(_, _, context))
-                case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            handleLoop(state, kyo(v, context), context)
-                    end new
-                case kyo =>
-                    done(state, kyo.unsafeGet)
-            end match
-        end handleLoop
-        handleLoop(state, v, Context.empty)
-    end handleState
+                case _: KyoSuspend[?, ?, ?, ?, ?, ?] =>
+                    v.map(handleLoopLoop(_, context))
+                case continue: Loop.Continue2[State, A < (E & S)] @unchecked =>
+                    val state = continue._1
+                    continue._2 match
+                        case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag =:= kyo.tag =>
+                            handleLoopLoop(handle(kyo.input, state, kyo(_, context)), context)
+                        case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
+                            new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
+                                def frame = _frame
+                                def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                    handleLoopLoop(Loop.continue(state, kyo(v, context)), context)
+                            end new
+                        case kyo =>
+                            done(state, kyo.asInstanceOf[A])
+                    end match
+                case _ =>
+                    v.asInstanceOf[B < (S & S2)] // Loop.done
+        end handleLoopLoop
+        handleLoopLoop(Loop.continue(state, v), Context.empty)
+    end handleLoop
 
     private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
         inline effectTag: Tag[E],

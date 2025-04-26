@@ -367,33 +367,33 @@ class LoopTest extends Test:
     "indexed without input" - {
         "with a single iteration" in {
             assert(
-                Loop.indexed(idx => if idx < 1 then Loop.continue(()) else Loop.done(idx)).eval == 1
+                Loop.indexed(idx => if idx < 1 then Loop.continue else Loop.done(idx)).eval == 1
             )
         }
 
         "with multiple iterations" in {
             assert(
-                Loop.indexed(idx => if idx < 5 then Loop.continue(()) else Loop.done(idx)).eval == 5
+                Loop.indexed(idx => if idx < 5 then Loop.continue else Loop.done(idx)).eval == 5
             )
         }
 
         "with no iterations" in {
             assert(
-                Loop.indexed(idx => if idx < 0 then Loop.continue(()) else Loop.done(idx)).eval == 0
+                Loop.indexed(idx => if idx < 0 then Loop.continue else Loop.done(idx)).eval == 0
             )
         }
 
         "stack safety" in {
             val largeNumber = 100000
             assert(
-                Loop.indexed(idx => if idx < largeNumber then Loop.continue(()) else Loop.done(idx)).eval == largeNumber
+                Loop.indexed(idx => if idx < largeNumber then Loop.continue else Loop.done(idx)).eval == largeNumber
             )
         }
 
         "suspend" in {
             val result = Loop.indexed(idx =>
                 if idx < 5 then
-                    Effect.defer(Loop.continue(()))
+                    Effect.defer(Loop.continue)
                 else
                     Effect.defer(Loop.done(idx))
             )
@@ -572,7 +572,7 @@ class LoopTest extends Test:
             var counter = 0
             Loop.foreach {
                 counter += 1
-                if counter < 1 then Loop.continue(()) else Loop.done
+                if counter < 1 then Loop.continue else Loop.done
             }.eval
             assert(counter == 1)
         }
@@ -581,7 +581,7 @@ class LoopTest extends Test:
             var sum = 0
             Loop.foreach {
                 sum += 1
-                if sum < 10 then Loop.continue(()) else Loop.done
+                if sum < 10 then Loop.continue else Loop.done
             }.eval
             assert(sum == 10)
         }
@@ -600,7 +600,7 @@ class LoopTest extends Test:
             val largeNumber = 100000
             Loop.foreach {
                 counter += 1
-                if counter < largeNumber then Loop.continue(()) else Loop.done
+                if counter < largeNumber then Loop.continue else Loop.done
             }.eval
             assert(counter == largeNumber)
         }
@@ -610,13 +610,20 @@ class LoopTest extends Test:
             val result = Loop.foreach {
                 effect += "A"
                 if effect.length < 3 then
-                    Effect.defer(Loop.continue(()))
+                    Effect.defer(Loop.continue)
                 else
                     Effect.defer(Loop.done)
                 end if
             }
             result.eval
             assert(effect == "AAA")
+        }
+
+        "returns" in {
+            val result = Loop.foreach {
+                Effect.defer(Loop.done(1))
+            }
+            assert(result.eval == 1)
         }
     }
 
