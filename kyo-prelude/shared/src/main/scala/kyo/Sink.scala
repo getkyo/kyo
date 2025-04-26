@@ -231,7 +231,7 @@ object Sink:
                 Poll.andMap[Chunk[V]]:
                     case Absent => Loop.done(currentChunk)
                     case Present(c) =>
-                        Loop.continue(currentChunk ++ c)
+                        Loop.continue(currentChunk.concat(c))
     end collect
 
     /** Construct a sink that counts streaming elements.
