@@ -30,4 +30,4 @@ jobs:
       run: sbt '+kyoJS/test'
 
     - name: Build Native
-      run: sbt '+kyoNative/Test/compile' # test
+      run: sbt '+kyoNative/test'
