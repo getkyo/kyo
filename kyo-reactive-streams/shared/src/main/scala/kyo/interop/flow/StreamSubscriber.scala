@@ -245,12 +245,12 @@ final private[kyo] class StreamSubscriber[V](
 
     private[interop] def emit(using Frame, Tag[Emit[Chunk[V]]]): Unit < (Emit[Chunk[V]] & Async) =
         Emit.valueWith(Chunk.empty) {
-            Loop(()) { _ =>
+            Loop.foreach {
                 await
                     .map {
-                        case true => request.andThen(Loop.continue(()))
+                        case true => request.andThen(Loop.continue)
                         case false => poll.map {
-                                case Result.Success(nextChunk)  => Emit.value(nextChunk).andThen(Loop.continue(()))
+                                case Result.Success(nextChunk)  => Emit.value(nextChunk).andThen(Loop.continue)
                                 case Result.Error(e: Throwable) => Abort.panic(e)
                                 case _                          => Loop.done
                             }
