@@ -215,7 +215,7 @@ object Actor:
       *   An effect representing the message processing loop
       */
     def receiveLoop[A: Tag](using Frame)[S](f: A => Loop.Outcome[Unit, Unit] < S): Unit < (Context[A] & S) =
-        Loop(()) { _ =>
+        Loop.foreach {
             Poll.one[A].map {
                 case Absent     => Loop.done
                 case Present(v) => f(v)
