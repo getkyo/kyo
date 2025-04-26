@@ -38,23 +38,30 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
 
     def take(using Frame): A < (Abort[Closed | E] & Async) =
         for
-            _     <- checkConsume
-            value <- channel.take
+            value <- Abort.recover(_ => errorOrClosedError)(channel.take)
             _     <- closeIfDone
         yield value
 
-    private def checkConsume(using Frame): Unit < (Abort[Closed | E] & IO) =
-        // Only abort with the error after all the values have been taken.
-        for
-            done <- channel.closed
-            _ <-
-                if done then
-                    for
-                        e <- error.getAndSet(Maybe.empty)
-                        _ <- Abort.fail(e.getOrElse(closedError))
-                    yield ()
-                else Kyo.unit[Any]
-        yield ()
+    private def errorOrClosedError(using Frame): Nothing < (Abort[Closed | E] & IO) =
+        error.getAndSet(Maybe.empty)
+            .map(_.getOrElse(closedError))
+            .map(Abort.fail)
+
+//    private def checkConsume(using Frame): Unit < (Abort[Closed | E] & IO) =
+//        // Only abort with the error after all the values have been taken.
+//        for
+//            done <- channel.closed
+//            _ <- Console.printLineErr(s"Done? = ${done}")
+//            _ <-
+//                if done then
+//                    for
+//                        e <- error.getAndSet(Maybe.empty)
+//                        ex = e.getOrElse(closedError)
+//                        _ <- Console.printLineErr(s"StreamChannel: aborting with error = ${ex}")
+//                        _ <- Abort.fail(ex)
+//                    yield ()
+//                else Kyo.unit[Any]
+//        yield ()
 
     def closeProducer(using Frame): Unit < (Abort[Closed] & IO) =
         for
@@ -62,6 +69,8 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
             _ <- closeIfEmpty
         yield ()
 
+    // Be careful calling this. It is only thread safe if there will be no more puts/errors,
+    // i.e. the producer calls it or the producer is closed.
     private def closeIfEmpty(using Frame) =
         for
             shouldClose <- channel.empty
@@ -70,8 +79,8 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
 
     private def closeIfDone(using Frame) =
         for
-            shouldClose <- _producerClosed.get
-            _           <- if shouldClose then closeIfEmpty else Kyo.unit
+            producerClosed <- _producerClosed.get
+            _              <- if producerClosed then closeIfEmpty else Kyo.unit
         yield ()
 
     def producerClosed(using Frame): Boolean < IO =
@@ -84,6 +93,7 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
             noErrors <- error.get.map(_.isEmpty)
         yield channelClosed && noErrors
 
+    // This can only be called once and mutually exclusive with take.
     def stream(using Frame): Stream[A, Abort[E] & Async] =
         Stream(emitChunks())
 
@@ -93,13 +103,18 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
         if maxChunkSize <= 0 then ()
         else
             Loop(()): _ =>
-                Abort.recover[Closed](_ => Loop.done[Unit]):
+                Abort.recover[Closed](_ => Console.printLineErr("Closed").andThen(Loop.done[Unit])):
                     for
-                        _    <- checkConsume
-                        head <- channel.take
-                        tail <- channel.drainUpTo(maxChunkSize - 1)
+                        _    <- Console.printLineErr("Checking consume")
+                        _    <- Console.printLineErr("Taking")
+                        head <- Abort.recover(_ => errorOrClosedError)(channel.take)
+                        _    <- Console.printLineErr("Draining")
+                        tail <- Abort.recover(_ => errorOrClosedError)(channel.drainUpTo(maxChunkSize - 1))
+                        _    <- Console.printLineErr("Closing if done")
                         _    <- closeIfDone
+                        _    <- Console.printLineErr("Emitting head")
                         _    <- Emit.value(Chunk(head))
+                        _    <- Console.printLineErr("Emitting tail")
                         _    <- Emit.value(tail)
                     yield Loop.continue(())
     end emitChunks

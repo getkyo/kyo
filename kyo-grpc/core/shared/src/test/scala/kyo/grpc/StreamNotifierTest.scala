@@ -13,9 +13,9 @@ class StreamNotifierTest extends Test with AsyncMockFactory2:
         val value    = 1
 
         inSequence:
-            (observer.onNext _).expects(value)
-            (observer.onCompleted _).expects()
-            (observer.onError _).expects(*).never()
+            (observer.onNext).expects(value)
+            (() => observer.onCompleted()).expects()
+            (observer.onError).expects(*).never()
 
         StreamNotifier.notifyObserver(value, observer).map(_ => succeed)
     }
@@ -25,9 +25,9 @@ class StreamNotifierTest extends Test with AsyncMockFactory2:
         val exception = new RuntimeException("Test exception")
 
         inSequence:
-            (observer.onNext _).expects(*).never()
-            (observer.onCompleted _).expects().never()
-            (observer.onError _).expects(exception)
+            (observer.onNext).expects(*).never()
+            (() => observer.onCompleted()).expects().never()
+            (observer.onError).expects(exception)
 
         StreamNotifier.notifyObserver(Abort.fail(exception), observer).map(_ => succeed)
     }
@@ -38,9 +38,9 @@ class StreamNotifierTest extends Test with AsyncMockFactory2:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         inSequence:
-            (observer.onNext _).expects(*).never()
-            (observer.onCompleted _).expects().never()
-            (observer.onError _).expects(argThat[StatusException](_ === statusException))
+            (observer.onNext).expects(*).never()
+            (() => observer.onCompleted()).expects().never()
+            (observer.onError).expects(argThat[StatusException](_ === statusException))
 
         StreamNotifier.notifyObserver(Abort.panic(exception), observer).map(_ => succeed)
     }
@@ -52,9 +52,9 @@ class StreamNotifierTest extends Test with AsyncMockFactory2:
 
         inSequence:
             successful.foreach: value =>
-                (observer.onNext _).expects(value)
-            (observer.onCompleted _).expects()
-            (observer.onError _).expects(*).never()
+                (observer.onNext).expects(value)
+            (() => observer.onCompleted()).expects()
+            (observer.onError).expects(*).never()
 
         StreamNotifier.notifyObserver(values, observer).map(_ => succeed)
     }
@@ -67,9 +67,9 @@ class StreamNotifierTest extends Test with AsyncMockFactory2:
 
         inSequence:
             values.foreach: value =>
-                (observer.onNext _).expects(value)
-            (observer.onCompleted _).expects().never()
-            (observer.onError _).expects(exception)
+                (observer.onNext).expects(value)
+            (() => observer.onCompleted()).expects().never()
+            (observer.onError).expects(exception)
 
         StreamNotifier.notifyObserver(values, observer).map(_ => succeed)
     }
@@ -83,9 +83,9 @@ class StreamNotifierTest extends Test with AsyncMockFactory2:
 
         inSequence:
             values.foreach: value =>
-                (observer.onNext _).expects(value)
-            (observer.onCompleted _).expects().never()
-            (observer.onError _).expects(argThat[StatusException](_ === statusException))
+                (observer.onNext).expects(value)
+            (() => observer.onCompleted()).expects().never()
+            (observer.onError).expects(argThat[StatusException](_ === statusException))
 
         StreamNotifier.notifyObserver(values, observer).map(_ => succeed)
     }
