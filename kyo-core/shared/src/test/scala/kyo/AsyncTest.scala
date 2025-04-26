@@ -917,20 +917,22 @@ class AsyncTest extends Test:
 
                 Emit.run {
                     Emit.isolate.merge[String].use {
-                        Async.gather(1)(
-                            Seq(
-                                for
-                                    _ <- Emit.value("a1")
-                                    _ <- Async.sleep(50.millis)
-                                    _ <- Emit.value("a2")
-                                yield 1,
-                                for
-                                    _ <- Emit.value("b1")
-                                    _ <- Async.sleep(1.millis)
-                                    _ <- Emit.value("b2")
-                                yield 2
+                        Latch.initWith(1) { latch =>
+                            Async.gather(1)(
+                                Seq(
+                                    for
+                                        _ <- Emit.value("a1")
+                                        _ <- latch.await
+                                        _ <- Emit.value("a2")
+                                    yield 1,
+                                    for
+                                        _ <- Emit.value("b1")
+                                        _ <- latch.release
+                                        _ <- Emit.value("b2")
+                                    yield 2
+                                )
                             )
-                        )
+                        }
                     }
                 }.map { result =>
                     assert(result._1.size == 2)
@@ -1139,10 +1141,12 @@ class AsyncTest extends Test:
         }
         "with race" in run {
             Async.run {
-                Async.race(
-                    Async.run(Async.delay(100.millis)(1)).map(_.get),
-                    Async.run(Async.delay(200.millis)(2)).map(_.get)
-                )
+                Latch.initWith(1) { latch =>
+                    Async.race(
+                        Async.run(Async.delay(100.millis)(latch.release.andThen(1))).map(_.get),
+                        Async.run(latch.await.andThen(Async.delay(100.millis)(2))).map(_.get)
+                    )
+                }
             }.map(_.get).map { result =>
                 assert(result == 1)
             }
