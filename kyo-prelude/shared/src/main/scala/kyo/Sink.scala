@@ -187,7 +187,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
         Sink(poll.map((a: A) => f(a)))
     end map
 
-    /** Process a stream to produce an output
+    /** Consumes a stream and produces an output
       *
       * @see
       *   [[kyo.Stream.into]]
@@ -197,7 +197,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   An effect generating an output value from elements consumed from the stream
       */
-    final def consume[S2](stream: Stream[V, S2])(using Tag[V], Frame): A < (S & S2) =
+    final def drain[S2](stream: Stream[V, S2])(using Tag[V], Frame): A < (S & S2) =
         Poll.run(stream.emit)(poll).map(_._2)
 end Sink
 
@@ -212,14 +212,13 @@ object Sink:
       * @return
       *   A sink that runs a stream without producing a value
       */
-    def drain[V](using Tag[V], Frame): Sink[V, Unit, Any] =
+    def discard[V](using Tag[V], Frame): Sink[V, Unit, Any] =
         Sink:
-            Loop(()): _ =>
+            Loop.foreach:
                 Poll.andMap[Chunk[V]]:
                     case Absent => Loop.done
                     case Present(_) =>
                         Loop.continue
-    end drain
 
     /** Construct a sink that accumulates all elements of a stream of type `V` into a chunk.
       *
@@ -258,7 +257,7 @@ object Sink:
       */
     def foreach[V, S](f: V => Unit < S)(using Tag[V], Frame): Sink[V, Unit, S] =
         Sink:
-            Loop(()): _ =>
+            Loop.foreach:
                 Poll.andMap[Chunk[V]]:
                     case Absent => Loop.done
                     case Present(c) =>
@@ -274,7 +273,7 @@ object Sink:
       */
     def foreachChunk[V, S](f: Chunk[V] => Unit < S)(using Tag[V], Frame): Sink[V, Unit, S] =
         Sink:
-            Loop(()): _ =>
+            Loop.foreach:
                 Poll.andMap[Chunk[V]]:
                     case Absent => Loop.done
                     case Present(c) =>
