@@ -470,7 +470,7 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           * @return
           *   a single value Chunk of type A
           */
-        def single[A](a: A): Single[A] = Single(a)
+        def single[A](a: A): Indexed[A] = Single(a)
 
         def from[A](source: Array[A]): Indexed[A] =
             source.length match
@@ -549,16 +549,16 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       */
     def empty[A]: Chunk[A] = Indexed.empty[A]
 
-    /** Creates a Chunk containing exactly one element.
+    /** Creates a Chunk containing multiple elements.
       *
       * @tparam A
       *   the type of elements in the Chunk
-      * @param a
-      *   the single element
+      * @param values
+      *   the elements of the Chunk
       * @return
-      *   a new Chunk.Single containing the single element
+      *   a new Chunk with the elements
       */
-    def single[A](a: A): Chunk.Indexed[A] = Indexed.single(a)
+    override def apply[A](values: A*): Chunk[A] = Indexed.from(values)
 
     /** Creates a Chunk from an Array of elements.
       *
