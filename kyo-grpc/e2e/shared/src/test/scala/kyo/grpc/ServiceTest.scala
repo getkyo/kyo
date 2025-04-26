@@ -16,15 +16,19 @@ import scala.util.chaining.scalaUtilChainingOps
 
 class ServiceTest extends Test:
 
+    private val trailers = Metadata().tap(_.put(GrpcUtil.CONTENT_TYPE_KEY, GrpcUtil.CONTENT_TYPE_GRPC))
+
+    private val notOKStatusCodes = Status.Code.values().filterNot(_ == Status.Code.OK)
+
     "unary" - {
-//        "echo" in run {
-//            for
-//                client <- createClientAndServer
-//                message = "Hello"
-//                request = Say(message)
-//                response <- client.oneToOne(request)
-//            yield assert(response == Echo(message))
-//        }
+        "echo" in run {
+            for
+                client <- createClientAndServer
+                message = "Hello"
+                request = Say(message)
+                response <- client.oneToOne(request)
+            yield assert(response == Echo(message))
+        }
 
         "cancel" in {
             forEvery(notOKStatusCodes) { code =>
@@ -69,7 +73,7 @@ class ServiceTest extends Test:
         }
 
         "cancel" - {
-            "producing stream" in {
+            "FOO - producing stream" in {
 //                forEvery(notOKStatusCodes) { code =>
 //                    run {
 //                        val status = code.toStatus
@@ -179,10 +183,6 @@ class ServiceTest extends Test:
 
     // TODO: For client streaming test sending nothing.
 
-    private val trailers = Metadata().tap(_.put(GrpcUtil.CONTENT_TYPE_KEY, GrpcUtil.CONTENT_TYPE_GRPC))
-
-    private val notOKStatusCodes = Status.Code.values().filterNot(_ == Status.Code.OK)
-
     private given CanEqual[Response, Echo]           = CanEqual.derived
     private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
 
@@ -205,7 +205,7 @@ class ServiceTest extends Test:
     end given
 
     private def assertStatusException(result: Result[StatusException, Any], expected: StatusException) =
-        val actual = result.error.get
+        val actual = result.failure.get
         // We can't compare the exception here because if it fails we run into https://github.com/scalatest/scalatest/issues/427.
         assert(actual.getStatus === expected.getStatus)
         assert((actual.getTrailers == null && expected.getTrailers == null) || actual.getTrailers === expected.getTrailers)

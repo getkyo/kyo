@@ -31,12 +31,13 @@ class RequestStreamObserver[Request: Tag, Response](
         // TODO: Do a better job of backpressuring here.
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(request)).getOrThrow
 
+    // onError will be the last method called. There will be no call to onCompleted.
     override def onError(t: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.error(StreamNotifier.throwableToStatusException(t))).getOrThrow
 
     override def onCompleted(): Unit =
-        Abort.run(IO.Unsafe.run(requestChannel.complete)).eval.getOrThrow
+        Abort.run(IO.Unsafe.run(requestChannel.closeProducer)).eval.getOrThrow
 
 end RequestStreamObserver
 

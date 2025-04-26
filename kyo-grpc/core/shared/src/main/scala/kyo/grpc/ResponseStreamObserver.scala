@@ -16,12 +16,12 @@ class ResponseStreamObserver[Response](
 
     // onError will be the last method called. There will be no call to onCompleted.
     override def onError(throwable: Throwable): Unit =
-        val fail = responseChannel.fail(StreamNotifier.throwableToStatusException(throwable))
+        val fail = responseChannel.error(StreamNotifier.throwableToStatusException(throwable))
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(fail).getOrThrow
     end onError
 
     override def onCompleted(): Unit =
-        val close = responseChannel.complete
+        val close = responseChannel.closeProducer
         Abort.run(IO.Unsafe.run(close)).eval.getOrThrow
     end onCompleted
 

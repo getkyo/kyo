@@ -9,111 +9,101 @@ class StreamChannelTest extends Test:
             channel <- StreamChannel.init[Int, String]
             _       <- channel.put(42)
             value   <- channel.take
-        yield assert(value == Result.succeed(42))
+        yield assert(value == 42)
     }
 
-    "put does not complete" in run {
+    "put does not close producer" in run {
         for
-            channel    <- StreamChannel.init[Int, String]
-            _          <- channel.put(42)
-            isComplete <- channel.completed
-        yield assert(!isComplete)
-    }
-
-    "fail and take" in run {
-        for
-            channel <- StreamChannel.init[Int, String]
-            _       <- channel.fail("fail")
-            value   <- channel.take
-        yield assert(value == Result.fail("fail"))
-    }
-
-    "fail completes" in run {
-        for
-            channel    <- StreamChannel.init[Int, String]
-            _          <- channel.fail("fail")
-            isComplete <- channel.completed
-        yield assert(isComplete)
-    }
-
-    "fail closes after take" in run {
-        for
-            channel   <- StreamChannel.init[Int, String]
-            _         <- channel.fail("fail")
-            wasClosed <- channel.closed
-            _         <- channel.take
-            isClosed  <- channel.closed
-        yield
-            assert(!wasClosed)
-            assert(isClosed)
+            channel        <- StreamChannel.init[Int, String]
+            _              <- channel.put(42)
+            producerClosed <- channel.producerClosed
+        yield assert(!producerClosed)
     }
 
     "error and take" in run {
         for
             channel <- StreamChannel.init[Int, String]
             _       <- channel.error("error")
-            value   <- channel.take
+            value   <- Abort.run(channel.take)
         yield assert(value == Result.fail("error"))
     }
 
-    "error does not complete" in run {
+    "error completes producer" in run {
         for
-            channel    <- StreamChannel.init[Int, String]
-            _          <- channel.error("error")
-            isComplete <- channel.completed
-        yield assert(!isComplete)
+            channel        <- StreamChannel.init[Int, String]
+            _              <- channel.error("error")
+            producerClosed <- channel.producerClosed
+        yield assert(producerClosed)
     }
 
-    "error does not close after take" in run {
+    "error closes consumer after take" in run {
         for
             channel   <- StreamChannel.init[Int, String]
             _         <- channel.error("error")
-            wasClosed <- channel.closed
-            _         <- channel.take
-            isClosed  <- channel.closed
+            wasClosed <- channel.consumerClosed
+            _         <- Abort.run(channel.take)
+            isClosed  <- channel.consumerClosed
         yield
             assert(!wasClosed)
-            assert(!isClosed)
+            assert(isClosed)
     }
 
-    "complete" in run {
+    "close producer" in run {
         for
-            channel    <- StreamChannel.init[Int, String]
-            _          <- channel.complete
-            isComplete <- channel.completed
-        yield assert(isComplete)
+            channel        <- StreamChannel.init[Int, String]
+            _              <- channel.closeProducer
+            producerClosed <- channel.producerClosed
+        yield assert(producerClosed)
     }
 
-    "complete closes empty channel" in run {
+    "closing producer closes consumer if channel is empty" in run {
         for
             channel <- StreamChannel.init[Int, String]
-            _       <- channel.complete
-            closed  <- channel.closed
+            _       <- channel.closeProducer
+            closed  <- channel.consumerClosed
         yield assert(closed)
     }
 
-    "take last element closes channel" in run {
+    "take last element closes consumer" in run {
         for
             channel  <- StreamChannel.init[Int, String]
             _        <- channel.put(1)
-            _        <- channel.complete
+            _        <- channel.closeProducer
             _        <- channel.take
-            isClosed <- channel.closed
+            isClosed <- channel.consumerClosed
         yield assert(isClosed)
     }
 
-    "take last elements closes channel" in run {
+    // TODO: Take only returns error when empty.
+
+    "take last elements closes consumer" in run {
         for
             channel   <- StreamChannel.init[Int, String]
             _         <- channel.put(1)
             _         <- channel.put(2)
-            _         <- channel.complete
+            _         <- channel.closeProducer
             _         <- channel.take
-            wasClosed <- channel.closed
+            wasClosed <- channel.consumerClosed
             _         <- channel.take
-            isClosed  <- channel.closed
+            isClosed  <- channel.consumerClosed
         yield
             assert(!wasClosed)
+            assert(isClosed)
+    }
+
+    "take error after elements closes consumer" in run {
+        for
+            channel   <- StreamChannel.init[Int, String]
+            _         <- channel.put(1)
+            _         <- channel.error("error")
+            _         <- channel.closeProducer
+            _         <- channel.take
+            wasClosed <- channel.consumerClosed
+            result    <- Abort.run(channel.take)
+            isClosed  <- channel.consumerClosed
+        yield
+            assert(!wasClosed)
+            assert(result == Result.fail("error"))
             assert(isClosed)
     }
 
@@ -139,60 +129,51 @@ class StreamChannelTest extends Test:
         yield assert(result == Chunk.from(1 to 10))
     }
 
-    "put fails when complete" in run {
+    "put fails when producer closed" in run {
         for
             channel <- StreamChannel.init[Int, String]
-            _       <- channel.complete
+            _       <- channel.closeProducer
             result  <- Abort.run(channel.put(42))
         yield assert(result.failure.get.isInstanceOf[Closed])
     }
 
-    "put fails when complete and non-empty" in run {
+    "put fails when producer closed and non-empty" in run {
         for
             channel <- StreamChannel.init[Int, String]
             _       <- channel.put(31)
-            _       <- channel.complete
+            _       <- channel.closeProducer
             result  <- Abort.run(channel.put(42))
         yield assert(result.failure.get.isInstanceOf[Closed])
     }
 
-    "fail fails when complete and non-empty" in run {
+    "error fails when producer closed and non-empty" in run {
         for
             channel <- StreamChannel.init[Int, String]
             _       <- channel.put(31)
-            _       <- channel.complete
-            result  <- Abort.run(channel.fail("fail"))
-        yield assert(result.failure.get.isInstanceOf[Closed])
-    }
-
-    "error fails when complete and non-empty" in run {
-        for
-            channel <- StreamChannel.init[Int, String]
-            _       <- channel.put(31)
-            _       <- channel.complete
+            _       <- channel.closeProducer
             result  <- Abort.run(channel.error("error"))
         yield assert(result.failure.get.isInstanceOf[Closed])
     }
 
-    "stream ends after last element when channel completed" in run {
+    "stream ends after last element when producer closed" in run {
         for
             channel <- StreamChannel.init[Int, String]
             fiber   <- Async.run(channel.stream.run)
             _       <- channel.put(1)
-            _      <- channel.complete
-            result <- fiber.get
+            _       <- channel.closeProducer
+            result  <- fiber.get
         yield assert(result == Chunk(1))
     }
 
-    "stream ends after last elements when channel completed" in run {
+    "stream ends after last elements when producer closed" in run {
         for
             channel <- StreamChannel.init[Int, String]
             fiber   <- Async.run(channel.stream.run)
             _       <- channel.put(1)
             _       <- channel.put(2)
             _       <- channel.put(3)
-            _      <- channel.complete
-            result <- fiber.get
+            _       <- channel.closeProducer
+            result  <- fiber.get
         yield assert(result == Chunk(1, 2, 3))
     }
 
