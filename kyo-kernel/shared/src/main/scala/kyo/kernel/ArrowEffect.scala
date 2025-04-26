@@ -123,7 +123,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): A < (S & S2) =
         @nowarn("msg=anonymous")
@@ -142,7 +141,7 @@ object ArrowEffect:
                             handleLoop(kyo(v, context), context)
                     end new
                 case kyo =>
-                    kyo.asInstanceOf[A]
+                    kyo.unsafeGet
             end match
         end handleLoop
         handleLoop(v, Context.empty)
@@ -173,7 +172,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): A < (S & S2) =
         @nowarn("msg=anonymous")
@@ -198,7 +196,7 @@ object ArrowEffect:
                             handle2Loop(kyo(v, context), context)
                     end new
                 case kyo =>
-                    kyo.asInstanceOf[A]
+                    kyo.unsafeGet
             end match
         end handle2Loop
         handle2Loop(v, Context.empty)
@@ -238,7 +236,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): A < (S & S2) =
         @nowarn("msg=anonymous")
@@ -269,7 +266,7 @@ object ArrowEffect:
                             handle3Loop(kyo(v, context), context)
                     end new
                 case kyo =>
-                    kyo.asInstanceOf[A]
+                    kyo.unsafeGet
             end match
         end handle3Loop
         handle3Loop(v, Context.empty)
@@ -315,7 +312,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): A < (S & S2) =
         @nowarn("msg=anonymous")
@@ -352,7 +348,7 @@ object ArrowEffect:
                             handle4Loop(kyo(v, context), context)
                     end new
                 case kyo =>
-                    kyo.asInstanceOf[A]
+                    kyo.unsafeGet
             end match
         end handle4Loop
         handle4Loop(v, Context.empty)
@@ -379,7 +375,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): B < (S & S2) =
         @nowarn("msg=anonymous")
@@ -397,7 +392,7 @@ object ArrowEffect:
                             handleFirstLoop(kyo(v, context), context)
                     end new
                 case kyo =>
-                    done(kyo.asInstanceOf[A])
+                    done(kyo.unsafeGet)
             end match
         end handleFirstLoop
         handleFirstLoop(v, Context.empty)
@@ -485,7 +480,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): A < (S & S2) =
         handleLoop[I, O, E, A, A, S, S2, State](effectTag, state, v)(handle, (_, v) => v)
@@ -563,7 +557,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): B < (S & S2 & S3) =
         @nowarn("msg=anonymous")
@@ -587,7 +580,7 @@ object ArrowEffect:
                         end apply
                     end new
                 case kyo =>
-                    done(kyo.asInstanceOf[A])
+                    done(kyo.unsafeGet)
             end match
         end handleLoop
 
@@ -611,7 +604,6 @@ object ArrowEffect:
     )(
         using
         inline _frame: Frame,
-        inline flat: Flat[A],
         safepoint: Safepoint
     ): A < (E1 & E2 & S & S2) =
         def partialLoop(v: A < (E1 & E2 & S & S2), context: Context)(using safepoint: Safepoint): A < (E1 & E2 & S & S2) =

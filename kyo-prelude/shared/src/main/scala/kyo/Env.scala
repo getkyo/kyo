@@ -73,7 +73,7 @@ object Env:
       * @return
       *   The result of the computation with the environment handled
       */
-    def run[R >: Nothing: Tag, A: Flat, S, VR](env: R)(v: A < (Env[R & VR] & S))(
+    def run[R >: Nothing: Tag, A, S, VR](env: R)(v: A < (Env[R & VR] & S))(
         using
         reduce: Reducible[Env[VR]],
         frame: Frame
@@ -89,7 +89,7 @@ object Env:
       * @return
       *   The result of the computation with the environment handled
       */
-    def runAll[R >: Nothing, A: Flat, S, VR](env: TypeMap[R])(v: A < (Env[R & VR] & S))(
+    def runAll[R >: Nothing, A, S, VR](env: TypeMap[R])(v: A < (Env[R & VR] & S))(
         using
         reduce: Reducible[Env[VR]],
         frame: Frame

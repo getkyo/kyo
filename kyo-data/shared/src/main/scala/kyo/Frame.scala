@@ -13,7 +13,6 @@ object Frame:
     private val snippetShortMaxChars = 50
 
     inline given CanEqual[Frame, Frame] = CanEqual.derived
-    inline given Flat[Frame]            = Flat.unsafe.bypass
 
     opaque type Position = String
 

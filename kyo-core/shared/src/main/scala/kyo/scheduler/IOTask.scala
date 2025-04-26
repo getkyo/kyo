@@ -14,8 +14,6 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     private var finalizers: Finalizers
 ) extends IOPromise[E, A] with Task:
 
-    inline given Flat[A] = Flat.unsafe.bypass
-
     import IOTask.frame
 
     def context: Context = Context.empty
@@ -115,7 +113,7 @@ object IOTask:
         context: Context,
         finalizers: Finalizers = Finalizers.empty,
         runtime: Int = 0
-    )(using Frame, Flat[A]): IOTask[Ctx, E, A] =
+    ): IOTask[Ctx, E, A] =
         val ctx = context
         val task =
             if ctx.isEmpty then

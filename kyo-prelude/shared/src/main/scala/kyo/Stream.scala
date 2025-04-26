@@ -365,7 +365,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
             )
         )
 
-    def filter(f: V => Boolean)(using tag: Tag[Emit[Chunk[V]]], discr: Flat[Boolean], frame: Frame): Stream[V, S] =
+    def filter(f: V => Boolean)(using tag: Tag[Emit[Chunk[V]]], discr: Stream.Dummy, frame: Frame): Stream[V, S] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>

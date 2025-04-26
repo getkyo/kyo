@@ -72,7 +72,7 @@ object Check:
       * @return
       *   A computation that may abort with CheckFailed if any checks fail
       */
-    def runAbort[A: Flat, S](v: A < (Check & S))(using Frame): A < (Abort[CheckFailed] & S) =
+    def runAbort[A, S](v: A < (Check & S))(using Frame): A < (Abort[CheckFailed] & S) =
         ArrowEffect.handle(Tag[Check], v)(
             [C] => (input, cont) => Abort.fail(input)
         )
@@ -84,7 +84,7 @@ object Check:
       * @return
       *   A tuple of collected failures and the computation result
       */
-    def runChunk[A: Flat, S](v: A < (Check & S))(using Frame): (Chunk[CheckFailed], A) < S =
+    def runChunk[A, S](v: A < (Check & S))(using Frame): (Chunk[CheckFailed], A) < S =
         ArrowEffect.handleLoop(Tag[Check], Chunk.empty[CheckFailed], v)(
             handle = [C] =>
                 (input, state, cont) =>
@@ -99,7 +99,7 @@ object Check:
       * @return
       *   The result of the computation, ignoring any check failures
       */
-    def runDiscard[A: Flat, S](v: A < (Check & S))(using Frame): A < S =
+    def runDiscard[A, S](v: A < (Check & S))(using Frame): A < S =
         ArrowEffect.handle(Tag[Check], v)(
             [C] => (_, cont) => cont(())
         )
@@ -118,15 +118,13 @@ object Check:
 
         type Transform[A] = (State, A)
 
-        given flatTransform[A: Flat]: Flat[(State, A)] = Flat.derive
-
-        def capture[A: Flat, S2](f: State => A < S2)(using Frame) =
+        def capture[A, S2](f: State => A < S2)(using Frame) =
             f(Chunk.empty)
 
-        def isolate[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
+        def isolate[A, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
             Check.runChunk(v)
 
-        def restore[A: Flat, S2](v: (Chunk[CheckFailed], A) < S2)(using Frame) =
+        def restore[A, S2](v: (Chunk[CheckFailed], A) < S2)(using Frame) =
             v.map { (state, r) =>
                 Kyo.foreachDiscard(state)(check => Check.require(false, check.message)(using check.frame)).andThen(r)
             }

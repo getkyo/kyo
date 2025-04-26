@@ -1,7 +1,6 @@
 package kyo.kernel.internal
 
 import Context.internal.*
-import kyo.Flat
 import kyo.Tag
 import kyo.bug
 import kyo.kernel.*
@@ -14,7 +13,6 @@ import kyo.kernel.*
 private[kyo] opaque type Context = Map[Tag[Any], AnyRef]
 
 private[kyo] object Context:
-    inline given Flat[Context] = Flat.unsafe.bypass
 
     val empty: Context = Map.empty
 

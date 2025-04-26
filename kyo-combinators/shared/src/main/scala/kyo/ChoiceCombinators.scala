@@ -21,14 +21,14 @@ extension [A, S](effect: A < (S & Choice))
       * @return
       *   A computation that produces a sequence of results from this computation with the Choice effect handled
       */
-    def handleChoice(using Flat[A], Frame): Seq[A] < S = Choice.run(effect)
+    def handleChoice(using Frame): Seq[A] < S = Choice.run(effect)
 
     /** Handles dropped Choice effects as Abort[Absent]
       *
       * @return
       *   A computation that aborts with Maybe.Empty when its Choice effect is reduced to an empty sequence
       */
-    def choiceDropToAbsent(using Flat[A], Frame): A < (Choice & Abort[Absent] & S) =
+    def choiceDropToAbsent(using Frame): A < (Choice & Abort[Absent] & S) =
         Choice.run(effect).map:
             case seq if seq.isEmpty => Abort.fail(Absent)
             case other              => Choice.get(other)
@@ -38,7 +38,7 @@ extension [A, S](effect: A < (S & Choice))
       * @return
       *   A computation that aborts with Maybe.Empty when its Choice effect is reduced to an empty sequence
       */
-    def choiceDropToThrowable(using Flat[A], Frame): A < (Choice & Abort[NoSuchElementException] & S) =
+    def choiceDropToThrowable(using Frame): A < (Choice & Abort[NoSuchElementException] & S) =
         Choice.run(effect).map:
             case seq if seq.isEmpty => Abort.catching(Chunk.empty.head)
             case other              => Choice.get(other)
@@ -50,7 +50,7 @@ extension [A, S](effect: A < (S & Choice))
       * @return
       *   A computation that produces the result of this computation with dropped Choice translated to Abort[E]
       */
-    def choiceDropToFailure[E](error: => E)(using Flat[A], Frame): A < (Choice & Abort[E] & S) =
+    def choiceDropToFailure[E](error: => E)(using Frame): A < (Choice & Abort[E] & S) =
         Choice.run(effect).map:
             case seq if seq.isEmpty => Abort.fail(error)
             case other              => Choice.get(other)

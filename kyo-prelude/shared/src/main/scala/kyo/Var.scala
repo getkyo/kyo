@@ -141,7 +141,7 @@ object Var:
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         ArrowEffect.suspendWith[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
-    private[kyo] inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
+    private[kyo] inline def runWith[V, A, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
     )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
         ArrowEffect.handleLoop(tag, state, v)(
@@ -173,7 +173,7 @@ object Var:
       * @return
       *   The result of the computation without the Var state
       */
-    def run[V, A: Flat, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): A < S =
+    def run[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): A < S =
         runWith(state)(v)((_, result) => result)
 
     /** Handles the effect and returns a tuple with the final `Var` state and the computation's result.
@@ -191,7 +191,7 @@ object Var:
       * @return
       *   A tuple containing the final Var state and the result of the computation
       */
-    def runTuple[V, A: Flat, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
+    def runTuple[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
         runWith(state)(v)((state, result) => (state, result))
 
     object isolate:
@@ -202,11 +202,9 @@ object Var:
 
             type Transform[A] = (V, A)
 
-            given flatTransform[A: Flat]: Flat[Transform[A]] = Flat.derive
+            def capture[A, S2](f: V => A < S2)(using Frame) = Var.use(f)
 
-            def capture[A: Flat, S2](f: V => A < S2)(using Frame) = Var.use(f)
-
-            def isolate[A: Flat, S2](state: State, v: A < (Var[V] & S2))(using Frame) =
+            def isolate[A, S2](state: State, v: A < (Var[V] & S2))(using Frame) =
                 Var.runTuple(state)(v)
         end Base
 
@@ -221,7 +219,7 @@ object Var:
           */
         def update[V](using Tag[Var[V]]): Isolate.Stateful[Var[V], Any] =
             new Base[V, Any]:
-                def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
+                def restore[A, S2](v: (V, A) < S2)(using Frame) =
                     v.map(Var.setWith(_)(_))
 
         /** Creates an isolate that merges Var values using a combination function.
@@ -238,7 +236,7 @@ object Var:
           */
         def merge[V](using Tag[Var[V]])[S](f: (V, V) => V < S): Isolate.Stateful[Var[V], S] =
             new Base[V, S]:
-                def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
+                def restore[A, S2](v: (V, A) < S2)(using Frame) =
                     Var.use[V](prev => v.map((state, r) => f(prev, state).map(Var.setWith(_)(r))))
 
         /** Creates an isolate that keeps Var modifications local.
@@ -253,7 +251,7 @@ object Var:
           */
         def discard[V](using Tag[Var[V]]): Isolate.Stateful[Var[V], Any] =
             new Base[V, Any]:
-                def restore[A: Flat, S2](v: (V, A) < S2)(using Frame) =
+                def restore[A, S2](v: (V, A) < S2)(using Frame) =
                     v.map(_._2)
 
     end isolate

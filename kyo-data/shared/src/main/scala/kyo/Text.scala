@@ -7,8 +7,6 @@ opaque type Text >: String = String | Op
 
 object Text:
 
-    inline given Flat[Text] = Flat.unsafe.bypass
-
     /** Creates a Tag instance for Text type */
     given Tag[Text] = Tag.fromRaw("kyo.Text")
 

@@ -74,11 +74,6 @@ object Loop:
         private[kyo] def _4: D
     end Continue4
 
-    given [A, O: Flat]: Flat[Outcome[A, O]]                    = Flat.unsafe.bypass
-    given [A, B, O: Flat]: Flat[Outcome2[A, B, O]]             = Flat.unsafe.bypass
-    given [A, B, C, O: Flat]: Flat[Outcome3[A, B, C, O]]       = Flat.unsafe.bypass
-    given [A, B, C, D, O: Flat]: Flat[Outcome4[A, B, C, D, O]] = Flat.unsafe.bypass
-
     /** Represents the result of a loop iteration, which can either continue with new state or complete with a final value.
       *
       * @tparam A

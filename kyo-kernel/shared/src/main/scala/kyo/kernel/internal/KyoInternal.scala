@@ -27,6 +27,11 @@ import kyo.kernel.ArrowEffect
   */
 sealed abstract private[kernel] class Kyo[+A, -S] extends Serializable
 
+/** Nested serves as a special wrapper type that extends the core Kyo class to handle cases where one effect computation is embedded within
+  * another. It prevents unintended unsound flattening of effects and maintains the proper composition structure when effects are nested.
+  */
+private[kernel] case class Nested[+A](v: A) extends Kyo[A, Any]
+
 /** Base class of suspended computations, separated from Kyo solely to hide its additional type parameters and to avoid variance checking.
   * Contains the actual storage and continuation machinery.
   */

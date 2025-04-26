@@ -11,7 +11,7 @@ class TraceTest extends Test:
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect:
         def apply(i: Int): Int < TestEffect = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
-        def run[A: Flat, S](v: A < (TestEffect & S)) =
+        def run[A, S](v: A < (TestEffect & S)) =
             ArrowEffect.handle(Tag[TestEffect], v)(
                 [C] => (input, cont) => cont(input + 1)
             )
