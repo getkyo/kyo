@@ -549,17 +549,6 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       */
     def empty[A]: Chunk[A] = Indexed.empty[A]
 
-    /** Creates a Chunk containing multiple elements.
-      *
-      * @tparam A
-      *   the type of elements in the Chunk
-      * @param values
-      *   the elements of the Chunk
-      * @return
-      *   a new Chunk with the elements
-      */
-    override def apply[A](values: A*): Chunk[A] = Indexed.from(values)
-
     /** Creates a Chunk from an Array of elements.
       *
       * @tparam A
