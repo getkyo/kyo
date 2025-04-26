@@ -539,19 +539,18 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
-    inline def foreach[S](inline run: Safepoint ?=> Outcome[Unit, Unit] < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
+    inline def foreach[A, S](inline run: Safepoint ?=> Outcome[Unit, A] < S)(using inline _frame: Frame, safepoint: Safepoint): A < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome[Unit, Unit] < S)(using Safepoint): Unit < S =
+        @tailrec def loop(v: Outcome[Unit, A] < S)(using Safepoint): A < S =
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(run)
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, Unit], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, A], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, A, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
-                case res =>
-                    ()
+                case res => res.asInstanceOf[A]
         loop(Loop.continue)
     end foreach
 

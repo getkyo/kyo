@@ -66,7 +66,7 @@ object Poll:
             if idx == n then Loop.done
             else
                 Poll.andMap[V] {
-                    case Present(v) => f(v).map(_ => Loop.continue(()))
+                    case Present(v) => f(v).map(_ => Loop.continue)
                     case Absent     => Loop.done
                 }
         }
@@ -79,12 +79,11 @@ object Poll:
       *   A computation that processes values until completion
       */
     def values[V](using Frame)[S](f: V => Any < S)(using tag: Tag[Poll[V]]): Unit < (Poll[V] & S) =
-        Loop(()) { _ =>
+        Loop.foreach:
             Poll.andMap[V] {
-                case Present(v) => f(v).map(_ => Loop.continue(()))
+                case Present(v) => f(v).map(_ => Loop.continue)
                 case Absent     => Loop.done
             }
-        }
 
     /** Applies a function to the result of polling.
       *

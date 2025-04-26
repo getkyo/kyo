@@ -673,12 +673,11 @@ object Stream:
         frame: Frame
     ): Stream[V, S] =
         Stream[V, S]:
-            Loop(()) { _ =>
+            Loop.foreach:
                 v.map {
                     case Maybe.Present(seq) => Emit.valueWith(Chunk.from(seq))(Loop.continue)
                     case Maybe.Absent       => Emit.valueWith(Chunk.empty[V])(Loop.done)
                 }
-            }
         .rechunk(chunkSize)
 
     /** Creates a stream of integers from start (inclusive) to end (exclusive).
