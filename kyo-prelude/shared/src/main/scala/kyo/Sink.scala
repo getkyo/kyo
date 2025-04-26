@@ -5,7 +5,6 @@ import kyo.kernel.ArrowEffect
 import kyo.kernel.internal.WeakFlat
 import scala.annotation.nowarn
 import scala.annotation.targetName
-import scala.util.NotGiven
 
 /** Processes a stream of type `V`, producing a value of type `A`.
   *
@@ -80,7 +79,6 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
     final def contramap[V2](f: V2 => V)(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
-        ev: NotGiven[V2 <:< (Any < Nothing)],
         fr: Frame
     ): Sink[V2, A, S] =
         Sink:
@@ -102,7 +100,6 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
     final def contramap[V2, S2](f: V2 => V < S2)(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
-        ev: NotGiven[V2 <:< (Any < Nothing)],
         d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
@@ -128,7 +125,6 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
     final def contramapChunk[V2](f: Chunk[V2] => Chunk[V])(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
-        ev: NotGiven[V2 <:< (Any < Nothing)],
         fr: Frame
     ): Sink[V2, A, S] =
         Sink:
@@ -151,7 +147,6 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
     final def contramapChunk[V2, S2](f: Chunk[V2] => Chunk[V] < S2)(using
         t1: Tag[Poll[Chunk[V]]],
         t2: Tag[Poll[Chunk[V2]]],
-        ev: NotGiven[V2 <:< (Any < Nothing)],
         d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
