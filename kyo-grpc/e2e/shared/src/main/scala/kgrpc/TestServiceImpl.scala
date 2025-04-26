@@ -4,8 +4,6 @@ import io.grpc.*
 import kgrpc.test.*
 import kgrpc.test.given
 import kyo.*
-import kyo.Result
-import kyo.Result.Panic
 import kyo.grpc.*
 
 object TestServiceImpl extends TestService:
@@ -13,24 +11,24 @@ object TestServiceImpl extends TestService:
         request match
             case Request.Empty => Abort.fail(Status.INVALID_ARGUMENT.asException())
             case nonEmpty: Request.NonEmpty => nonEmpty match
-                    case Say(message, _, _)     => Kyo.lift(Echo(message))
-                    case Cancel(code, _, _, _)  => Abort.fail(Status.fromCodeValue(code).asException)
-                    case Fail(message, _, _, _) => Abort.panic(new Exception(message))
+                    case Success(message, _, _)     => Kyo.lift(Echo(message))
+                    case Fail(code, _, _, _)  => Abort.fail(Status.fromCodeValue(code).asException)
+                    case Panic(message, _, _, _) => Abort.panic(new Exception(message))
 
     override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
         request match
             case Request.Empty => Stream.empty[Response]
             case nonEmpty: Request.NonEmpty => nonEmpty match
-                    case Say(message, count, _) =>
+                    case Success(message, count, _) =>
                         stream((1 to count).map(n => Echo(s"$message $n")))
-                    case Cancel(code, _, true, _) =>
+                    case Fail(code, _, true, _) =>
                         Abort.fail(Status.fromCodeValue(code).asException)
-                    case Cancel(code, after, _, _) =>
+                    case Fail(code, after, _, _) =>
                         val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Cancelling in $n")))
                         stream(echos :+ Abort.fail(Status.fromCodeValue(code).asException))
-                    case Fail(message, _, true, _) =>
+                    case Panic(message, _, true, _) =>
                         Abort.panic(new Exception(message))
-                    case Fail(message, after, _, _) =>
+                    case Panic(message, after, _, _) =>
                         val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Failing in $n")))
                         stream(echos :+ Abort.panic(new Exception(message)))
 
@@ -52,35 +50,9 @@ object TestServiceImpl extends TestService:
         Stream(GrpcRequest.mergeErrors(requests.map(oneToOne).emit))
 
     private def stream(responses: Seq[Response < GrpcResponse]): Stream[Response, GrpcResponse] =
-        // TODO: Tidy up.
-        val a: Chunk[Response] < GrpcResponse                = Kyo.collectAll(responses)
-        val b: Unit < (Emit[Chunk[Response]] & GrpcResponse) = a.map(c => Emit.value(c))
-        Stream(b)
-//        Stream(Kyo.collect(responses).map: r =>
-//            Emit.valueWith(r))
-
-    // Stream[Response, GrpcResponse](
-    //     Emit.andMap(Chunk.empty[Response]) { ack =>
-    //         Loop(responses, ack) { (responses, ack) =>
-    //             ack match
-    //                 case Stop => Loop.done(Stop)
-    //                 case Continue(n) =>
-    //                     val (init, tail) = responses.splitAt(n)
-    //                     if init.isEmpty then Loop.done(Stop)
-    //                     else Kyo.collect(init).map(Emit.andMap(_)(ack => Loop.continue(tail, ack)))
-    //         }
-    //     }
-    // )
-
-//        def emit(remaining: Seq[Response < GrpcResponse])(ack: Ack): Ack < (Emit[Chunk[Response]] & GrpcResponse) =
-//            ack match
-//                case Stop => Stop
-//                case Continue(_) =>
-//                    remaining match
-//                        case head +: tail => head.map(response => Emit.andMap(Chunk(response))(emit(tail)(_)))
-//                        case _            => Stop
-//
-//        Stream(Emit.andMap(Chunk.empty)(emit(responses)))
-    end stream
+        Stream:
+            Kyo.foldLeft(responses)(()) { (_, response) =>
+                response.map(r => Emit.value(Chunk(r)))
+            }
 
 end TestServiceImpl

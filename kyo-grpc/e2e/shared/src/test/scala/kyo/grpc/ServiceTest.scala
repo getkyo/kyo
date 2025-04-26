@@ -11,9 +11,8 @@ import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.EitherValues.*
 import org.scalatest.Inspectors.*
-import org.scalatest.Inspectors.*
-import scala.util.chaining.scalaUtilChainingOps
 import scala.jdk.CollectionConverters.*
+import scala.util.chaining.scalaUtilChainingOps
 
 class ServiceTest extends Test:
 
@@ -23,92 +22,84 @@ class ServiceTest extends Test:
 
     "unary" - {
         "echo" in run {
+            val message = "Hello"
+            val request = Success(message)
             for
-                client <- createClientAndServer
-                message = "Hello"
-                request = Say(message)
+                client   <- createClientAndServer
                 response <- client.oneToOne(request)
             yield assert(response == Echo(message))
+            end for
         }
 
         "cancel" in {
             forEvery(notOKStatusCodes) { code =>
                 run {
-                    val status = code.toStatus
+                    val status  = code.toStatus
+                    val request = Fail(status.getCode.value)
                     // TODO: No StatusRuntimeExceptions
                     val expected = status.asRuntimeException(trailers)
                     for
                         client <- createClientAndServer
-                        request = Cancel(status.getCode.value)
                         result <- Abort.run[StatusRuntimeException](client.oneToOne(request))
                     yield assertStatusRuntimeException(result, expected)
+                    end for
                 }
             }
         }
 
         "fail" in run {
             val message = "Oh no!"
+            val request = Panic(message)
             // TODO: No StatusRuntimeExceptions
             val expected = Status.INTERNAL.withDescription(message).asRuntimeException(trailers)
             for
                 client <- createClientAndServer
-                request = Fail(message)
                 result <- Abort.run[StatusRuntimeException](client.oneToOne(request))
             yield assertStatusRuntimeException(result, expected)
+            end for
         }
     }
 
     "server streaming" - {
         "echo" in run {
+            val message = "Hello"
+            val request = Success(message, count = 5)
             for
-                client <- createClientAndServer
-                message = "Hello"
-                request = Say(message, count = 5)
+                client    <- createClientAndServer
                 responses <- client.oneToMany(request).run
-                // FIXME: There is a race condition here. Sometimes it has fewer messages.
             yield assert(responses == Chunk.from((1 to 5).map(n => Echo(s"$message $n"))))
+            end for
         }
 
         "cancel" - {
-            "FOO - producing stream" in {
-//                forEvery(notOKStatusCodes) { code =>
-//                    run {
-//                        val status = code.toStatus
-//                        // TODO: Why no trailers here?
-//                        val expected = status.asException // (trailers)
-//                        Abort.run[StatusException] {
-//                            for
-//                                client <- createClientAndServer
-//                                request = Cancel(status.getCode.value, outside = true)
-//                                response <- client.oneToMany(request).run
-//                            yield response
-//                        }.map(assertStatusException(_, expected))
-//                    }
-//                }
-                run {
-                    val status = notOKStatusCodes.head.toStatus
-                    // TODO: Why no trailers here?
-                    val expected = status.asException // (trailers)
-                    for
-                        client <- createClientAndServer
-                        request = Cancel(status.getCode.value, outside = true)
-                        result <- Abort.run[StatusException](client.oneToMany(request).run)
-                        _ <- Console.printLineErr(s"Result = ${result}")
-                    yield assertStatusException(result, expected)
+            "producing stream" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status  = code.toStatus
+                        val request = Fail(status.getCode.value, outside = true)
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client   <- createClientAndServer
+                            response <- Abort.run[StatusException](client.oneToMany(request).run)
+                        yield assertStatusException(response, expected)
+                        end for
+                    }
                 }
             }
 
             "first element" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val status = code.toStatus
+                        val status  = code.toStatus
+                        val request = Fail(status.getCode.value)
                         // TODO: Why no trailers here?
-                        val expected = status.asException // (trailers)
+                        val expected = status.asException
                         for
                             client <- createClientAndServer
-                            request = Cancel(status.getCode.value)
                             result <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
                         yield assertStatusException(result, expected)
+                        end for
                     }
                 }
             }
@@ -116,17 +107,15 @@ class ServiceTest extends Test:
             "after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val status = code.toStatus
-                        val after  = 5
+                        val status  = code.toStatus
+                        val after   = 5
+                        val request = Fail(status.getCode.value, after)
                         // TODO: Why no trailers here?
-                        val expected = status.asException // (trailers)
+                        val expected = status.asException
                         for
-                            client <- createClientAndServer
-                            request = Cancel(status.getCode.value, after)
-                            // TODO: How to we run as many as we can before failing?
-                            stream = client.oneToMany(request)
-                            responses      <- stream.take(after).run
-                            failedResponse <- Abort.run[StatusException](stream.drop(after).take(1).run)
+                            client            <- createClientAndServer
+                            (responses, tail) <- client.oneToMany(request).splitAt(5)
+                            failedResponse    <- Abort.run[StatusException](tail.run)
                         yield
                             assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Cancelling in $n"))))
                             assertStatusException(failedResponse, expected)
@@ -139,32 +128,35 @@ class ServiceTest extends Test:
         "fail" - {
             "producing stream" in run {
                 val message  = "Oh no!"
+                val request  = Panic(message)
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
                     client <- createClientAndServer
-                    request = Fail(message)
                     result <- Abort.run[StatusException](client.oneToMany(request).run)
                 yield assertStatusException(result, expected)
+                end for
             }
 
             "first element" in run {
                 val message  = "Oh no!"
+                val request  = Panic(message)
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
                     client <- createClientAndServer
-                    request = Fail(message)
                     result <- Abort.run[StatusException](client.oneToMany(request).run)
                 yield assertStatusException(result, expected)
+                end for
             }
 
             "after some elements" in run {
                 val message  = "Oh no!"
+                val request  = Panic(message)
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
                     client <- createClientAndServer
-                    request = Fail(message)
                     result <- Abort.run[StatusException](client.oneToMany(request).run)
                 yield assertStatusException(result, expected)
+                end for
             }
         }
     }
@@ -188,7 +180,7 @@ class ServiceTest extends Test:
         override def areEqual(metadata: Metadata, b: Any): Boolean =
             Maybe(b) match
                 case Present(other: Metadata) => metadata.toString == other.toString
-                case _ => false
+                case _                        => false
         end areEqual
     end given
 

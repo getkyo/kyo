@@ -14,9 +14,6 @@ object Client:
     )(using Frame): ManagedChannel < (Resource & IO) =
         Resource.acquireRelease(
             IO(configure(ManagedChannelBuilder.forAddress(host, port)).build())
-        )(channel => {
-            scala.Console.err.println("Shutting down channel")
-            shutdown(channel)
-        })
+        )(shutdown)
 
 end Client

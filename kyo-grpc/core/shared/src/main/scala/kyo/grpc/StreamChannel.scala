@@ -17,12 +17,14 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
     def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
         for
             _ <- checkProduce
+            _ <- Log.debug(s"Putting value: $value")
             _ <- channel.put(value)
         yield ()
 
     def error(e: E)(using Frame): Unit < (Abort[Closed] & IO) =
         for
             _ <- checkProduce
+            _ <- Log.debug(s"Setting error: $e")
             _ <- error.set(Maybe(e))
             _ <- closeProducer
         yield ()
@@ -46,22 +48,6 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
         error.getAndSet(Maybe.empty)
             .map(_.getOrElse(closedError))
             .map(Abort.fail)
-
-//    private def checkConsume(using Frame): Unit < (Abort[Closed | E] & IO) =
-//        // Only abort with the error after all the values have been taken.
-//        for
-//            done <- channel.closed
-//            _ <- Console.printLineErr(s"Done? = ${done}")
-//            _ <-
-//                if done then
-//                    for
-//                        e <- error.getAndSet(Maybe.empty)
-//                        ex = e.getOrElse(closedError)
-//                        _ <- Console.printLineErr(s"StreamChannel: aborting with error = ${ex}")
-//                        _ <- Abort.fail(ex)
-//                    yield ()
-//                else Kyo.unit[Any]
-//        yield ()
 
     def closeProducer(using Frame): Unit < (Abort[Closed] & IO) =
         for
@@ -103,18 +89,12 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
         if maxChunkSize <= 0 then ()
         else
             Loop(()): _ =>
-                Abort.recover[Closed](_ => Console.printLineErr("Closed").andThen(Loop.done[Unit])):
+                Abort.recover[Closed](_ => Loop.done[Unit]):
                     for
-                        _    <- Console.printLineErr("Checking consume")
-                        _    <- Console.printLineErr("Taking")
                         head <- Abort.recover(_ => errorOrClosedError)(channel.take)
-                        _    <- Console.printLineErr("Draining")
                         tail <- Abort.recover(_ => errorOrClosedError)(channel.drainUpTo(maxChunkSize - 1))
-                        _    <- Console.printLineErr("Closing if done")
                         _    <- closeIfDone
-                        _    <- Console.printLineErr("Emitting head")
                         _    <- Emit.value(Chunk(head))
-                        _    <- Console.printLineErr("Emitting tail")
                         _    <- Emit.value(tail)
                     yield Loop.continue(())
     end emitChunks

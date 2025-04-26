@@ -5,7 +5,6 @@ import io.grpc.StatusRuntimeException
 import kyo.*
 import kyo.Result.Panic
 import kyo.scheduler.IOPromise
-import kyo.scheduler.top.Status
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.*

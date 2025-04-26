@@ -12,9 +12,9 @@ service TestService {
 
 message Request {
   oneof sealed_value {
-    Say say = 1;
-    Cancel abort = 2;
-    Fail fail = 3;
+    Success success = 1;
+    Fail fail = 2;
+    Panic panic = 3;
   }
 }
 
@@ -24,18 +24,18 @@ message Response {
   }
 }
 
-message Say {
+message Success {
   string message = 1;
   int32 count = 2;
 }
 
-message Cancel {
+message Fail {
   int32 code = 1;
   int32 after = 2;
   bool outside = 3;
 }
 
-message Fail {
+message Panic {
   string message = 1;
   int32 after = 2;
   bool outside = 3;
