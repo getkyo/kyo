@@ -158,7 +158,7 @@ object Kyo:
             case 0 => Chunk.empty
             case 1 =>
                 val head = source.iterator.next()
-                f(head).map(Chunk.single(_))
+                f(head).map(Chunk(_))
             case _ =>
                 source match
                     case linearSeq: LinearSeq[A] =>
@@ -187,7 +187,7 @@ object Kyo:
             case 0 => Chunk.empty
             case 1 =>
                 val head = source.iterator.next()
-                f(0, head).map(Chunk.single(_))
+                f(0, head).map(Chunk(_))
             case _ =>
                 source match
                     case linearSeq: LinearSeq[A] =>
@@ -341,7 +341,7 @@ object Kyo:
     def collectAll[A, S](source: IterableOnce[A < S])(using Frame, Safepoint): Chunk[A] < S =
         source.knownSize match
             case 0 => Chunk.empty
-            case 1 => source.iterator.next().map(Chunk.single(_))
+            case 1 => source.iterator.next().map(Chunk(_))
             case _ =>
                 source match
                     case linearSeq: LinearSeq[A < S] =>
