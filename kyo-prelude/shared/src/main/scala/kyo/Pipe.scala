@@ -6,30 +6,18 @@ import scala.annotation.nowarn
 import scala.annotation.targetName
 import scala.util.NotGiven
 
-/** Represents a stream of values of type `V` with effects of type `S`.
+/** Represents a transformation of a stream of type `A` to a stream of type `B`, using effect `S`.
   *
-  * @tparam V
-  *   The type of values in the stream
+  * @tparam A
+  *   Input stream element type
+  * @tparam B
+  *   Output stream element type
   * @tparam S
-  *   The type of effects associated with the stream
-  *
-  * @param v
-  *   The effect that produces acknowledgments and emits chunks of values
-  *
-  * @see
-  *   [[kyo.Stream.map]], [[kyo.Stream.filter]], [[kyo.Stream.flatMap]] for transforming streams
-  * @see
-  *   [[kyo.Stream.concat]], [[kyo.Stream.take]], [[kyo.Stream.drop]] for stream composition and slicing
-  * @see
-  *   [[kyo.Stream.run]], [[kyo.Stream.foreach]], [[kyo.Stream.fold]] for consuming streams
-  * @see
-  *   [[kyo.Emit]] for the underlying push-based emission mechanism
-  * @see
-  *   [[kyo.Poll]] for pull-based consumption with backpressure
+  *   The type of effects associated with the transformation
   */
 sealed abstract class Pipe[A, B, -S] extends Serializable:
 
-    /** Returns the effect that polls chunks of type A and emits chunks of type B */
+    /** Returns the underlying effect that polls chunks of type A and emits chunks of type B */
     def pollEmit: Unit < (Poll[Chunk[A]] & Emit[Chunk[B]] & S)
 
     def contramap[A1](f: A1 => A)(
@@ -197,5 +185,265 @@ object Pipe:
                     case Absent => Loop.done
                     case Present(c) =>
                         Emit.valueWith(c)(Loop.continue)
+
+    def map[A, B](f: A => B)(
+        using
+        Tag[A],
+        Tag[B],
+        NotGiven[B <:< (Any < Nothing)],
+        Frame
+    ): Pipe[A, B, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        Emit.valueWith(c.map(f))(Loop.continue)
+
+    def map[A, B, S](f: A => B < S)(
+        using
+        Tag[A],
+        Tag[B],
+        NotGiven[B <:< (Any < Nothing)],
+        Stream.Dummy,
+        Frame
+    ): Pipe[A, B, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        Kyo.foreach(c)(f).map: c1 =>
+                            Emit.valueWith(c1)(Loop.continue)
+
+    def mapChunk[A, B](f: Chunk[A] => Chunk[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        Emit.valueWith(f(c))(Loop.continue)
+
+    def mapChunk[A, B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[A], Tag[B], Stream.Dummy, Frame): Pipe[A, B, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        f(c).map: c1 =>
+                            Emit.valueWith(c1)(Loop.continue)
+
+    def take[A](n: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
+        Pipe:
+            Loop(n): i =>
+                if i <= 0 then Loop.done
+                else
+                    Poll.andMap[Chunk[A]]:
+                        case Absent => Loop.done
+                        case Present(c) =>
+                            val c1 = c.take(i)
+                            Emit.valueWith(c1)(Loop.continue(i - c1.size))
+
+    def drop[A](n: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
+        Pipe:
+            Loop(n): i =>
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        if i <= 0 then Emit.valueWith(c)(Loop.continue(0))
+                        else
+                            val c1 = c.drop(i)
+                            if c1.isEmpty then Loop.continue(i - c.size)
+                            else
+                                Emit.valueWith(c1)(Loop.continue(0))
+
+    def takeWhile[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        if c.isEmpty then Loop.continue
+                        else
+                            val c1 = c.takeWhile(f)
+                            Emit.valueWith(c1):
+                                if c1.size == c.size then Loop.continue else Loop.done
+
+    def takeWhile[A, S](f: A => Boolean < S)(using Tag[A], Stream.Dummy, Frame): Pipe[A, A, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        if c.isEmpty then Loop.continue
+                        else
+                            Kyo.takeWhile(c)(f).map: c1 =>
+                                Emit.valueWith(c1):
+                                    if c1.size == c.size then Loop.continue else Loop.done
+
+    def dropWhile[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
+        Pipe:
+            Loop(false): done =>
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        if c.isEmpty then Loop.continue(done)
+                        else if done then Emit.valueWith(c)(Loop.continue(done))
+                        else
+                            val c1 = c.dropWhile(f)
+                            if c1.isEmpty then Loop.continue(done)
+                            else Emit.valueWith(c1)(Loop.continue(true))
+
+    def dropWhile[A, S](f: A => Boolean < S)(using Tag[A], Stream.Dummy, Frame): Pipe[A, A, S] =
+        Pipe:
+            Loop(false): done =>
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        if c.isEmpty then Loop.continue(done)
+                        else if done then Emit.valueWith(c)(Loop.continue(done))
+                        else
+                            Kyo.dropWhile(c)(f).map: c1 =>
+                                if c1.isEmpty then Loop.continue(done)
+                                else Emit.valueWith(c1)(Loop.continue(true))
+
+    def filter[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        val c1 = c.filter(f)
+                        if c1.isEmpty then Loop.continue
+                        else Emit.valueWith(c1)(Loop.continue)
+
+    def filter[A, S](f: A => Boolean < S)(using Tag[A], Stream.Dummy, Frame): Pipe[A, A, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        Kyo.filter(c)(f).map: c1 =>
+                            if c1.isEmpty then Loop.continue
+                            else Emit.valueWith(c1)(Loop.continue)
+
+    def collect[A, B](f: A => Maybe[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        val c1 = c.map(f).collect({ case Present(v) => v })
+                        if c1.isEmpty then Loop.continue
+                        else Emit.valueWith(c1)(Loop.continue)
+
+    def collect[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Stream.Dummy, Frame): Pipe[A, B, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        Kyo.collect(c)(f).map: c1 =>
+                            if c1.isEmpty then Loop.continue
+                            else Emit.valueWith(c1)(Loop.continue)
+
+    def collectWhile[A, B](f: A => Maybe[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        if c.isEmpty then Loop.continue
+                        else
+                            val c1 = c.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
+                            if c1.isEmpty then Loop.done
+                            else
+                                Emit.valueWith(c1):
+                                    if c1.size < c.size then Loop.done
+                                    else Loop.continue
+                            end if
+
+    def collectWhile[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Stream.Dummy, Frame): Pipe[A, B, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        if c.isEmpty then Loop.continue
+                        else
+                            Kyo.foreach(c)(f).map: c1 =>
+                                val c2 = c1.takeWhile(_.isDefined).collect({ case Present(v) => v })
+                                if c2.isEmpty then Loop.done
+                                else
+                                    Emit.valueWith(c2):
+                                        if c2.length < c.length then Loop.done
+                                        else Loop.continue
+                                end if
+
+    /** Emits only elements that are different from their predecessor.
+      */
+    def changes[A](using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
+        changes(Maybe.empty)
+
+    /** Emits only elements that are different from their predecessor, starting with the given first element.
+      *
+      * @param first
+      *   The initial element to compare against
+      */
+    def changes[A](first: A)(using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
+        changes(Maybe(first))
+
+    /** Emits only elements that are different from their predecessor, starting with the given optional first element.
+      *
+      * @param first
+      *   The optional initial element to compare against
+      */
+    @targetName("changesMaybe")
+    def changes[A](first: Maybe[A])(using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
+        Pipe:
+            Loop(first): state =>
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        val c1       = c.changes(state)
+                        val newState = if c1.isEmpty then state else Maybe(c1.last)
+                        Emit.valueWith(c1)(Loop.continue(newState))
+    end changes
+
+    /** Transforms the stream by regrouping elements into chunks of the specified size.
+      *
+      * This operation maintains the order of elements while potentially redistributing them into new chunks. Smaller chunks may occur in
+      * two cases:
+      *   - When there aren't enough remaining elements to form a complete chunk
+      *   - When the input stream emits an empty chunk
+      *
+      * @param chunkSize
+      *   The target size for each chunk. Must be positive - negative values will be treated as 1.
+      * @return
+      *   A new stream with elements regrouped into chunks of the specified size
+      */
+    def rechunk[A](chunkSize: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
+        Pipe:
+            val _chunkSize = chunkSize max 1
+            Loop(Chunk.empty[A]): buffer =>
+                Poll.andMap[Chunk[A]]:
+                    case Absent =>
+                        if buffer.isEmpty then Loop.done
+                        else Emit.valueWith(buffer)(Loop.done)
+                    case Present(c) if c.isEmpty =>
+                        Emit.valueWith(buffer)(Loop.continue(Chunk.empty))
+                    case Present(c) =>
+                        val combined = buffer.concat(c)
+                        if combined.size < _chunkSize then
+                            Loop.continue(combined)
+                        else
+                            Loop(combined): current =>
+                                if current.size < _chunkSize then
+                                    Loop.done(Loop.continue(current))
+                                else
+                                    Emit.valueWith(current.take(_chunkSize)):
+                                        Loop.continue(current.dropLeft(_chunkSize))
+                        end if
+    end rechunk
 
 end Pipe
