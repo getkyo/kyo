@@ -1,35 +1,30 @@
 package kyo.grpc
 
-import io.grpc.Status
-import io.grpc.StatusException
-import io.grpc.StatusRuntimeException
-import io.grpc.stub.ServerCallStreamObserver
-import io.grpc.stub.StreamObserver
+import io.grpc.{Status, StatusException, StatusRuntimeException}
+import io.grpc.stub.{ServerCallStreamObserver, StreamObserver}
 import kyo.*
 import org.scalactic.TripleEquals.*
 import org.scalamock.scalatest.AsyncMockFactory2
+
+import java.util.Locale
 import scala.concurrent.Future
 
-class RequestStreamObserverTest extends Test with AsyncMockFactory2:
+class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
 
-    private def foldRequests(requests: Stream[String, GrpcRequest]): String < GrpcResponse =
-        GrpcRequest.mergeErrors:
-            requests.fold(Maybe.empty[String]) {
-                case (Present(s), next) => Maybe(s + " " + next)
-                case (_, next) => Maybe(next)
-            }.map(_.getOrElse(""))
+    private def mapRequests(requests: Stream[String, GrpcRequest]): Stream[String, GrpcResponse] =
+        Stream(GrpcRequest.mergeErrors(requests.map(_.toUpperCase(Locale.ENGLISH)).emit))
 
-    "onComplete puts result of folded requests" in run {
+    "onComplete puts result of mapped requests" in run {
         val serverObserver = mock[ServerCallStreamObserver[String]]
 
         def setupExpectations(latch: Latch) =
             IO.Unsafe {
                 serverObserver.onNext
-                    .expects("next next")
+                    .expects("NEXT")
                     .onCall { _ =>
                         IO.Unsafe.evalOrThrow(latch.release)
                     }
-                    .once()
+                    .twice()
 
                 (() => serverObserver.onCompleted())
                     .expects()
@@ -40,9 +35,9 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
             }
 
         for
-            latch    <- Latch.init(2)
+            latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
+            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onCompleted())
@@ -50,7 +45,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         yield succeed
     }
 
-    "onError with status exception puts error of folded requests" in run {
+    "onError with status exception puts error of mapped requests" in run {
         val serverObserver = mock[ServerCallStreamObserver[String]]
 
         val exception       = new RuntimeException("Test exception")
@@ -58,6 +53,13 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
 
         def setupExpectations(latch: Latch) =
             IO.Unsafe {
+                serverObserver.onNext
+                    .expects("NEXT")
+                    .onCall { _ =>
+                        IO.Unsafe.evalOrThrow(latch.release)
+                    }
+                    .twice()
+
                 serverObserver.onError
                     .expects(argThat[StatusException](_ === statusException))
                     .onCall { _ =>
@@ -67,9 +69,9 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
             }
 
         for
-            latch    <- Latch.init(1)
+            latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
+            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onError(statusException))
@@ -77,7 +79,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         yield succeed
     }
 
-    "onError with other exception puts error of folded requests" in run {
+    "onError with other exception puts error of mapped requests" in run {
         val serverObserver = mock[ServerCallStreamObserver[String]]
 
         val exception       = new RuntimeException("Test exception")
@@ -85,6 +87,13 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
 
         def setupExpectations(latch: Latch) =
             IO.Unsafe {
+                serverObserver.onNext
+                    .expects("NEXT")
+                    .onCall { _ =>
+                        IO.Unsafe.evalOrThrow(latch.release)
+                    }
+                    .twice()
+
                 serverObserver.onError
                     .expects(argThat[StatusException](_ === statusException))
                     .onCall { _ =>
@@ -94,9 +103,9 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
             }
 
         for
-            latch    <- Latch.init(1)
+            latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
+            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onError(exception))
@@ -104,4 +113,4 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         yield succeed
     }
 
-end RequestStreamObserverTest
+end BidiRequestStreamObserverTest

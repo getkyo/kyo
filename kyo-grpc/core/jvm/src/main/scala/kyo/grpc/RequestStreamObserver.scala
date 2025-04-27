@@ -1,6 +1,5 @@
 package kyo.grpc
 
-import io.grpc.Grpc
 import io.grpc.StatusException
 import io.grpc.stub.ServerCallStreamObserver
 import io.grpc.stub.StreamObserver

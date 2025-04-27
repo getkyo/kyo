@@ -1,12 +1,10 @@
 package kyo.grpc
 
-import io.grpc.Grpc
 import io.grpc.StatusException
 import io.grpc.stub.ServerCallStreamObserver
 import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*
-import kyo.scheduler.top.Status
 import scala.language.future
 
 class BidiRequestStreamObserver[Request: Tag, Response: Tag] private (
