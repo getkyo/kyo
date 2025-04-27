@@ -42,13 +42,14 @@ class LogTest extends Test:
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
             override def write(b: Int): Unit = output.append(b.toChar))) {
             import AllowUnsafe.embrace.danger
+            val text: Text = "info message - hidden"
             IO.Unsafe.evalOrThrow {
                 for
                     _ <- Log.withConsoleLogger("test.logger", Log.Level.debug) {
                         for
                             _ <- Log.trace("won't show up")
                             _ <- Log.debug("test message")
-                            _ <- Log.info("info message")
+                            _ <- Log.info(text.dropRight(9))
                             _ <- Log.warn("warning", new Exception("test exception"))
                         yield ()
                     }
