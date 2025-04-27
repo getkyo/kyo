@@ -175,7 +175,7 @@ class AsyncTest extends Test:
         "waits for the first success" in run {
             val ex = new Exception
             Async.race(
-                Async.sleep(1.milli).andThen(42),
+                Async.sleep(10.millis).andThen(42),
                 Abort.panic[Exception](ex)
             ).map { r =>
                 assert(r == 42)
@@ -186,7 +186,7 @@ class AsyncTest extends Test:
             val ex2 = new Exception
             val race =
                 Async.race(
-                    Async.sleep(1.milli).andThen(Abort.panic[Int](ex1)),
+                    Async.sleep(10.millis).andThen(Abort.panic[Int](ex1)),
                     Abort.panic[Int](ex2)
                 )
             Abort.run(race).map {
