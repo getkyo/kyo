@@ -14,10 +14,13 @@ private[grpc] object StreamNotifier:
         observer: StreamObserver[A]
     )(using Frame): Unit < (IO & S) =
         Abort.run[E](value).map {
-            case Result.Success(value) => IO {
-                    observer.onNext(value)
-                    observer.onCompleted()
-                }
+            case Result.Success(value) =>
+                for
+                    _ <- Log.debug(s"StreamNotifier - Sending next value to observer: $value")
+                    _ <- IO(observer.onNext(value))
+                    _ <- Log.debug("StreamNotifier - Completing observer")
+                    _ <- IO(observer.onCompleted())
+                yield ()
             // TODO: Why the unchecked warning here?
             case result: Result.Error[E] => notifyError(result, observer)
         }
@@ -26,19 +29,26 @@ private[grpc] object StreamNotifier:
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
     )(using Frame): Unit < (IO & S) =
-        // TODO: Rename
-        def foo(a: A) = IO(observer.onNext(a))
-        Abort.run[E](values.foreach(foo)).map(notifyCompleteOrError(_, observer))
+        def handleValue(value: A) =
+            for
+                _ <- Log.debug(s"StreamNotifier - Sending next value to observer: $value")
+                _ <- IO(observer.onNext(value))
+            yield ()
+        Abort.run[E](values.foreach(handleValue)).map(notifyCompleteOrError(_, observer))
     end notifyObserver
 
     private def notifyCompleteOrError[E <: Throwable](
         complete: Result[E, Unit],
-        requestObserver: StreamObserver[?]
+        observer: StreamObserver[?]
     )(using Frame): Unit < IO =
         complete match
-            case Result.Success(_) => IO(requestObserver.onCompleted())
+            case Result.Success(_) =>
+                for
+                    _ <- Log.debug("StreamNotifier - Completing observer")
+                    _ <- IO(observer.onCompleted())
+                yield ()
             // TODO: Why the unchecked warning here?
-            case result: Result.Error[E] => notifyError(result, requestObserver)
+            case result: Result.Error[E] => notifyError(result, observer)
         end match
     end notifyCompleteOrError
 
@@ -46,12 +56,19 @@ private[grpc] object StreamNotifier:
         result: Result.Error[E],
         requestObserver: StreamObserver[?]
     )(using Frame): Unit < IO =
-        IO {
-            // TODO: Why the non-exhaustive match here?
-            result match
-                case Result.Failure(s: E) => requestObserver.onError(s)
-                case Result.Panic(t)      => requestObserver.onError(throwableToStatusException(t))
-        }
+        // TODO: Why the non-exhaustive match here?
+        result match
+            case Result.Failure(s: E) =>
+                for
+                    _ <- Log.debug(s"StreamNotifier - Sending error to observer: $s")
+                    _ <- IO(requestObserver.onError(s))
+                yield ()
+            case Result.Panic(t)      =>
+                for
+                    _ <- Log.debug(s"StreamNotifier - Sending error to observer: $t")
+                    _ <- IO(requestObserver.onError(throwableToStatusException(t)))
+                yield ()
+    end notifyError
 
     // TODO: This doesn't belong here.
     def throwableToStatusException(t: Throwable): StatusException =

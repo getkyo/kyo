@@ -7,6 +7,7 @@ import kyo.*
 import kyo.Result.*
 import scala.language.future
 
+// TODO: This should implement ClientCallStreamObserver.
 class BidiRequestStreamObserver[Request: Tag, Response: Tag] private (
     f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
     requestChannel: StreamChannel[Request, GrpcRequest.Errors],
@@ -26,9 +27,11 @@ class BidiRequestStreamObserver[Request: Tag, Response: Tag] private (
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(request)).getOrThrow
 
     // onError will be the last method called. There will be no call to onCompleted.
-    override def onError(t: Throwable): Unit =
+    override def onError(throwable: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
-        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.error(StreamNotifier.throwableToStatusException(t))).getOrThrow
+        val error = StreamNotifier.throwableToStatusException(throwable)
+        val fail = requestChannel.error(error)
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(fail).getOrThrow
 
     override def onCompleted(): Unit =
         Abort.run(IO.Unsafe.run(requestChannel.closeProducer)).eval.getOrThrow

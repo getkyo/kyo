@@ -6,6 +6,7 @@ import sun.misc.Signal
 
 object Server:
 
+    // TODO: Await a maximum time and then call shutdownNow.
     def shutdown(server: io.grpc.Server)(using Frame): Unit < Async =
         Async.run(server.shutdown().awaitTermination()).map(_.get)
 

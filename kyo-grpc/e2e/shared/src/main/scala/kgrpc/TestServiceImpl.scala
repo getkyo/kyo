@@ -9,17 +9,38 @@ import kyo.grpc.*
 object TestServiceImpl extends TestService:
 
     override def oneToOne(request: Request): Response < GrpcResponse =
+        for
+            _        <- Log.debug(s"TestServiceImpl - Received request: $request")
+            response <- requestToResponse(request)
+            _        <- Log.debug(s"TestServiceImpl - Sending response: $response")
+        yield response
+    end oneToOne
+
+    private def requestToResponse(request: Request): Response < GrpcResponse =
         request match
             case Request.Empty => Abort.fail(Status.INVALID_ARGUMENT.asException())
-            case nonEmpty: Request.NonEmpty => nonEmpty match
+            case nonEmpty: Request.NonEmpty =>
+                nonEmpty match
                     case Success(message, _, _)  => Kyo.lift(Echo(message))
                     case Fail(code, _, _, _)     => Abort.fail(Status.fromCodeValue(code).asException)
                     case Panic(message, _, _, _) => Abort.panic(new Exception(message))
+                end match
+        end match
+    end requestToResponse
 
     override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
+        for
+            _               <- Log.debug(s"TestServiceImpl - Received request: $request")
+            responses       <- requestToResponses(request)
+            loggedResponses <- responses.tap(response => Log.debug(s"TestServiceImpl - Sending response: $response"))
+        yield loggedResponses
+    end oneToMany
+
+    private def requestToResponses(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
         request match
             case Request.Empty => Stream.empty[Response]
-            case nonEmpty: Request.NonEmpty => nonEmpty match
+            case nonEmpty: Request.NonEmpty =>
+                nonEmpty match
                     case Success(message, count, _) =>
                         stream((1 to count).map(n => Echo(s"$message $n")))
                     case Fail(code, _, true, _) =>
@@ -32,25 +53,38 @@ object TestServiceImpl extends TestService:
                     case Panic(message, after, _, _) =>
                         val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Panicing in $n")))
                         stream(echos :+ Abort.panic(new Exception(message)))
-
-    override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
-        val result = requests.foldKyo(Maybe.empty[String])((acc, request) =>
-            for
-                response <- oneToOne(request)
-                nextAcc <- response.asNonEmpty.get match
-                    case Echo(message, _) => acc.map(_ + " " + message).orElse(Maybe(message))
-            yield nextAcc
-        ).map(maybeMessage => Echo(maybeMessage.getOrElse("")))
-        GrpcRequest.mergeErrors(result)
-    end manyToOne
-
-    override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
-        Stream(GrpcRequest.mergeErrors(requests.flatMap(oneToMany).emit))
+                end match
+        end match
+    end requestToResponses
 
     private def stream(responses: Seq[Response < GrpcResponse]): Stream[Response, GrpcResponse] =
         Stream:
             Kyo.foldLeft(responses)(()) { (_, response) =>
                 response.map(r => Emit.value(Chunk(r)))
             }
+
+    override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
+        val response = requests.foldKyo(Maybe.empty[String])((acc, request) =>
+            for
+                response <- requestToResponse(request)
+                nextAcc <- response.asNonEmpty.get match
+                    case Echo(message, _) => acc.map(_ + " " + message).orElse(Maybe(message))
+            yield nextAcc
+        ).map(maybeMessage => Echo(maybeMessage.getOrElse("")))
+        for
+            r <- GrpcRequest.mergeErrors(response)
+            _ <- Log.debug(s"TestServiceImpl - Sending response: $r")
+        yield r
+        end for
+    end manyToOne
+
+    override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
+        val emitResponses = requests
+            .tap(request => Log.debug(s"TestServiceImpl - Received request: $request"))
+            .flatMap(requestToResponses)
+            .emit
+        Stream(GrpcRequest.mergeErrors(emitResponses))
+            .tap(response => Log.debug(s"TestServiceImpl - Sending response: $response"))
+    end manyToMany
 
 end TestServiceImpl

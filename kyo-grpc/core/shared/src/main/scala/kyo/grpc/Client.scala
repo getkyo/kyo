@@ -5,6 +5,7 @@ import kyo.*
 
 object Client:
 
+    // TODO: Await termination and call shutdownNow etc.
     def shutdown(channel: ManagedChannel)(using Frame): Unit < IO =
         IO(channel.shutdown()).unit
 

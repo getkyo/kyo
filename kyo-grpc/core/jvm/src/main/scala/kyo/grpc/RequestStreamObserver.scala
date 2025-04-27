@@ -6,7 +6,7 @@ import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*
 
-// TODO: Should this extend ServerCallStreamObserver?
+// TODO: This should implement ClientCallStreamObserver.
 
 /**
  * This is not thread-safe.
@@ -31,9 +31,11 @@ class RequestStreamObserver[Request: Tag, Response](
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(request)).getOrThrow
 
     // onError will be the last method called. There will be no call to onCompleted.
-    override def onError(t: Throwable): Unit =
+    override def onError(throwable: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
-        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.error(StreamNotifier.throwableToStatusException(t))).getOrThrow
+        val error = StreamNotifier.throwableToStatusException(throwable)
+        val fail = requestChannel.error(error)
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(fail).getOrThrow
 
     override def onCompleted(): Unit =
         Abort.run(IO.Unsafe.run(requestChannel.closeProducer)).eval.getOrThrow

@@ -267,17 +267,15 @@ class ServiceTest extends Test:
             end for
         }
 
-        "FOO success" in run {
-            val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+        "success" in run {
+            val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = n - 2): Request))
+            val expected = Chunk.from((3 to 5).flatMap(n => Chunk.from((1 to (n - 2)).map(m => Echo(s"$n $m")))))
             val requests  = Stream(Emit.value(successes))
             for
                 client    <- createClientAndServer
                 responses <- client.manyToMany(requests).run
-            yield assert(responses == Chunk.from((1 to 5).map(n => Echo(n.toString))))
-            end for
+            yield assert(responses == expected)
         }
-
-        // TODO: Test one becoming many.
 
         "fail" - {
             "producing stream on first element" in {

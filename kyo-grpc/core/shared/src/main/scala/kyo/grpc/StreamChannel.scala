@@ -18,14 +18,14 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
     def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
         for
             _ <- checkProduce
-            _ <- Log.debug(s"Putting value: $value")
+            _ <- Log.debug(s"StreamChannel - Putting value: $value")
             _ <- channel.put(value)
         yield ()
 
     def error(e: E)(using Frame): Unit < (Abort[Closed] & IO) =
         for
             _ <- checkProduce
-            _ <- Log.debug(s"Setting error: $e")
+            _ <- Log.debug(s"StreamChannel - Setting error: $e")
             _ <- error.set(Maybe(e))
             _ <- closeProducer
         yield ()
@@ -41,7 +41,7 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
 
     def take(using Frame): A < (Abort[Closed | E] & Async) =
         for
-            _ <- Log.debug("Taking value.")
+            _ <- Log.debug("StreamChannel - Taking value.")
             // This will only abort when it is empty.
             value <- Abort.recover(_ => errorOrClosedError)(channel.take)
             _     <- closeIfDone
@@ -53,16 +53,16 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
                 e <- error.getAndSet(Maybe.empty)
                 eOrClosed <- e match
                     case Present(e) =>
-                        Log.debug(s"Aborting with error: $e").andThen(e)
+                        Log.debug(s"StreamChannel - Aborting with error: $e").andThen(e)
                     case _ =>
-                        Log.debug(s"Aborting with Closed").andThen(closedError)
+                        Log.debug(s"StreamChannel - Aborting with Closed").andThen(closedError)
             yield eOrClosed
         pendingError.map(Abort.fail)
     end errorOrClosedError
 
     def closeProducer(using Frame): Unit < IO =
         for
-            _ <- Log.debug("Closing producer.")
+            _ <- Log.debug("StreamChannel - Closing producer.")
             _ <- _producerClosed.set(true)
             _ <- closeIfEmpty
         yield ()
@@ -74,7 +74,7 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
             // Be careful here too. This might be called concurrently and so channel.empty might abort with Closed.
             shouldClose <- Abort.recover(_ => false)(channel.empty)
             _ <-
-                if shouldClose then Log.debug("Closing channel.").andThen(channel.close)
+                if shouldClose then Log.debug("StreamChannel - Closing channel.").andThen(channel.close)
                 else Kyo.unit
         yield ()
 
@@ -104,20 +104,20 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
         if maxChunkSize <= 0 then ()
         else
             Loop(()): _ =>
-                Abort.recover[Closed](_ => Log.debug("Stream complete.").andThen(Loop.done[Unit])):
+                Abort.recover[Closed](_ => Log.debug("StreamChannel - Stream complete.").andThen(Loop.done[Unit])):
                     for
-                        _ <- Log.debug("Retrieving next chunk for stream.")
+                        _ <- Log.debug("StreamChannel - Retrieving next chunk for stream.")
                         // This will only abort when it is empty.
                         chunk <- Abort.recover(_ => errorOrClosedError)(channel.drainUpTo(maxChunkSize))
                         _ <-
                             if chunk.nonEmpty then
-                                Log.debug(s"Emitting chunk: $chunk").andThen(Emit.value(chunk))
+                                Log.debug(s"StreamChannel - Emitting chunk: $chunk").andThen(Emit.value(chunk))
                             else
                                 for
-                                    _ <- Log.debug("Blocking for next value.")
+                                    _ <- Log.debug("StreamChannel - Blocking for next value.")
                                     // This will only abort when it is empty.
                                     head <- Abort.recover(_ => errorOrClosedError)(channel.take)
-                                    _    <- Log.debug(s"Emitting value: $head")
+                                    _    <- Log.debug(s"StreamChannel - Emitting value: $head")
                                     _    <- Emit.value(Chunk(head))
                                 yield ()
                         _ <- closeIfDone

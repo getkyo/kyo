@@ -7,7 +7,6 @@ import kyo.*
 import kyo.Result.*
 import kyo.grpc.*
 
-// TODO: Should this extend one of the other StreamObservers?
 class UnaryResponseStreamObserver[Response](promise: Promise[GrpcResponse.Errors, Response])(using Frame, AllowUnsafe)
     extends StreamObserver[Response]:
 
