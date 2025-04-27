@@ -41,7 +41,8 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
 
     def take(using Frame): A < (Abort[Closed | E] & Async) =
         for
-            _     <- Log.debug("Taking value.")
+            _ <- Log.debug("Taking value.")
+            // This will only abort when it is empty.
             value <- Abort.recover(_ => errorOrClosedError)(channel.take)
             _     <- closeIfDone
         yield value
@@ -50,8 +51,11 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
         val pendingError =
             for
                 e <- error.getAndSet(Maybe.empty)
-                eOrClosed = e.getOrElse(closedError)
-                _ <- Log.debug(s"Aborting with error: $eOrClosed")
+                eOrClosed <- e match
+                    case Present(e) =>
+                        Log.debug(s"Aborting with error: $e").andThen(e)
+                    case _ =>
+                        Log.debug(s"Aborting with Closed").andThen(closedError)
             yield eOrClosed
         pendingError.map(Abort.fail)
     end errorOrClosedError
@@ -102,18 +106,21 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
             Loop(()): _ =>
                 Abort.recover[Closed](_ => Log.debug("Stream complete.").andThen(Loop.done[Unit])):
                     for
-                        _    <- Log.debug("Taking value for stream.")
-                        head <- Abort.recover(_ => errorOrClosedError)(channel.take)
-                        // Be careful here. The producer might close the channel in between taking the last element and
-                        // attempting to drain what is left. We have to emit the head before draining so that it isn't
-                        // dropped.
-                        _    <- Log.debug(s"Emitting value: $head")
-                        _    <- Emit.value(Chunk(head))
-                        tail <- Abort.recover(_ => errorOrClosedError)(channel.drainUpTo(maxChunkSize - 1))
-                        _    <- closeIfDone
+                        _ <- Log.debug("Retrieving next chunk for stream.")
+                        // This will only abort when it is empty.
+                        chunk <- Abort.recover(_ => errorOrClosedError)(channel.drainUpTo(maxChunkSize))
                         _ <-
-                            if tail.nonEmpty then Log.debug(s"Emitting chunk: $tail").andThen(Emit.value(tail))
-                            else Kyo.unit
+                            if chunk.nonEmpty then
+                                Log.debug(s"Emitting chunk: $chunk").andThen(Emit.value(chunk))
+                            else
+                                for
+                                    _ <- Log.debug("Blocking for next value.")
+                                    // This will only abort when it is empty.
+                                    head <- Abort.recover(_ => errorOrClosedError)(channel.take)
+                                    _    <- Log.debug(s"Emitting value: $head")
+                                    _    <- Emit.value(Chunk(head))
+                                yield ()
+                        _ <- closeIfDone
                     yield Loop.continue(())
     end emitChunks
 

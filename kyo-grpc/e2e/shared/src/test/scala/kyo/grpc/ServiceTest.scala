@@ -21,7 +21,7 @@ class ServiceTest extends Test:
     private val notOKStatusCodes = Status.Code.values().filterNot(_ == Status.Code.OK)
 
     "unary" - {
-        "echo" in run {
+        "success" in run {
             val message = "Hello"
             val request = Success(message)
             for
@@ -31,7 +31,7 @@ class ServiceTest extends Test:
             end for
         }
 
-        "cancel" in {
+        "fail" in {
             forEvery(notOKStatusCodes) { code =>
                 run {
                     val status  = code.toStatus
@@ -47,7 +47,7 @@ class ServiceTest extends Test:
             }
         }
 
-        "fail" in run {
+        "panic" in run {
             val message = "Oh no!"
             val request = Panic(message)
             // TODO: No StatusRuntimeExceptions
@@ -61,7 +61,7 @@ class ServiceTest extends Test:
     }
 
     "server streaming" - {
-        "echo" in run {
+        "success" in run {
             val message = "Hello"
             val request = Success(message, count = 5)
             for
@@ -71,7 +71,7 @@ class ServiceTest extends Test:
             end for
         }
 
-        "cancel" - {
+        "fail" - {
             "producing stream" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
@@ -104,43 +104,28 @@ class ServiceTest extends Test:
                 }
             }
 
-            "FOO after some elements" in {
-//                forEvery(notOKStatusCodes) { code =>
-//                    run {
-//                        val status  = code.toStatus
-//                        val after   = 5
-//                        val request = Fail(status.getCode.value, after)
-//                        // TODO: Why no trailers here?
-//                        val expected = status.asException
-//                        for
-//                            client            <- createClientAndServer
-//                            (responses, tail) <- client.oneToMany(request).splitAt(5)
-//                            failedResponse    <- Abort.run[StatusException](tail.run)
-//                        yield
-//                            assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Cancelling in $n"))))
-//                            assertStatusException(failedResponse, expected)
-//                        end for
-//                    }
-//                }
-                run {
-                    val status  = notOKStatusCodes.head.toStatus
-                    val after   = 5
-                    val request = Fail(status.getCode.value, after)
-                    // TODO: Why no trailers here?
-                    val expected = status.asException
-                    for
-                        client            <- createClientAndServer
-                        (responses, tail) <- client.oneToMany(request).splitAt(5)
-                        failedResponse    <- Abort.run[StatusException](tail.run)
-                    yield
-                        assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Cancelling in $n"))))
-                        assertStatusException(failedResponse, expected)
-                    end for
+            "after some elements" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status  = code.toStatus
+                        val after   = 5
+                        val request = Fail(status.getCode.value, after)
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client            <- createClientAndServer
+                            (responses, tail) <- client.oneToMany(request).splitAt(5)
+                            failedResponse    <- Abort.run[StatusException](tail.run)
+                        yield
+                            assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Failing in $n"))))
+                            assertStatusException(failedResponse, expected)
+                        end for
+                    }
                 }
             }
         }
 
-        "fail" - {
+        "panic" - {
             "producing stream" in run {
                 val message  = "Oh no!"
                 val request  = Panic(message)
@@ -165,13 +150,16 @@ class ServiceTest extends Test:
 
             "after some elements" in run {
                 val message  = "Oh no!"
-                val request  = Panic(message)
+                val after = 5
+                val request  = Panic(message, after)
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
                     client <- createClientAndServer
-                    // TODO: Check first elements.
-                    result <- Abort.run[StatusException](client.oneToMany(request).run)
-                yield assertStatusException(result, expected)
+                    (responses, tail) <- client.oneToMany(request).splitAt(5)
+                    failedResponse <- Abort.run[StatusException](tail.run)
+                yield
+                    assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Panicing in $n"))))
+                    assertStatusException(failedResponse, expected)
                 end for
             }
         }

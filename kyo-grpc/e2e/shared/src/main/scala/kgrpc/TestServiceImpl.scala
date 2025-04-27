@@ -24,12 +24,12 @@ object TestServiceImpl extends TestService:
                     case Fail(code, _, true, _) =>
                         Abort.fail(Status.fromCodeValue(code).asException)
                     case Fail(code, after, _, _) =>
-                        val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Cancelling in $n")))
+                        val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Failing in $n")))
                         stream(echos :+ Abort.fail(Status.fromCodeValue(code).asException))
                     case Panic(message, _, true, _) =>
                         Abort.panic(new Exception(message))
                     case Panic(message, after, _, _) =>
-                        val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Failing in $n")))
+                        val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Panicing in $n")))
                         stream(echos :+ Abort.panic(new Exception(message)))
 
     override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
