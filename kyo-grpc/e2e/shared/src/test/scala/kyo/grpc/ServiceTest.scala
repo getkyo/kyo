@@ -81,7 +81,7 @@ class ServiceTest extends Test:
                         val expected = status.asException
                         for
                             client   <- createClientAndServer
-                            response <- Abort.run[StatusException](client.oneToMany(request).run)
+                            response <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
                         yield assertStatusException(response, expected)
                         end for
                     }
@@ -143,23 +143,246 @@ class ServiceTest extends Test:
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
                     client <- createClientAndServer
-                    result <- Abort.run[StatusException](client.oneToMany(request).run)
+                    result <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
                 yield assertStatusException(result, expected)
                 end for
             }
 
             "after some elements" in run {
                 val message  = "Oh no!"
-                val after = 5
+                val after    = 5
                 val request  = Panic(message, after)
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
-                    client <- createClientAndServer
+                    client            <- createClientAndServer
                     (responses, tail) <- client.oneToMany(request).splitAt(5)
-                    failedResponse <- Abort.run[StatusException](tail.run)
+                    failedResponse    <- Abort.run[StatusException](tail.run)
                 yield
                     assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Panicing in $n"))))
                     assertStatusException(failedResponse, expected)
+                end for
+            }
+        }
+    }
+
+    "client streaming" - {
+        "empty" in run {
+            val successes = Chunk.empty[Request]
+            val requests  = Stream(Emit.value(successes))
+            for
+                client   <- createClientAndServer
+                response <- client.manyToOne(requests)
+            yield assert(response == Echo(""))
+            end for
+        }
+
+        "success" in run {
+            val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+            val requests  = Stream(Emit.value(successes))
+            for
+                client   <- createClientAndServer
+                response <- client.manyToOne(requests)
+            yield assert(response == Echo((1 to 5).mkString(" ")))
+            end for
+        }
+
+        "fail" - {
+            "first element" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status    = code.toStatus
+                        val fail      = Fail(status.getCode.value)
+                        val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+                        val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client <- createClientAndServer
+                            result <- Abort.run[StatusException](client.manyToOne(requests))
+                        yield assertStatusException(result, expected)
+                        end for
+                    }
+                }
+            }
+
+            // TODO: This has failed once. I can't reproduce it.
+            "after some elements" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status    = code.toStatus
+                        val after     = 5
+                        val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
+                        val fail      = Fail(status.getCode.value)
+                        val requests  = Stream(Emit.value(successes.append(fail)))
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client <- createClientAndServer
+                            result <- Abort.run[StatusException](client.manyToOne(requests))
+                        yield assertStatusException(result, expected)
+                        end for
+                    }
+                }
+            }
+        }
+
+        "panic" - {
+            "first element" in run {
+                val message   = "Oh no!"
+                val panic     = Panic(message)
+                val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+                val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
+                val expected  = Status.INTERNAL.withDescription(message).asException
+                for
+                    client <- createClientAndServer
+                    result <- Abort.run[StatusException](client.manyToOne(requests))
+                yield assertStatusException(result, expected)
+                end for
+            }
+
+            "after some elements" in run {
+                val message   = "Oh no!"
+                val after     = 5
+                val panic     = Panic(message)
+                val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
+                val requests  = Stream(Emit.value(successes.append(panic)))
+                val expected  = Status.INTERNAL.withDescription(message).asException
+                for
+                    client <- createClientAndServer
+                    result <- Abort.run[StatusException](client.manyToOne(requests))
+                yield assertStatusException(result, expected)
+                end for
+            }
+        }
+    }
+
+    "bidirectional streaming" - {
+        "empty" in run {
+            val successes = Chunk.empty[Request]
+            val requests  = Stream(Emit.value(successes))
+            for
+                client    <- createClientAndServer
+                responses <- client.manyToMany(requests).run
+            yield assert(responses == Chunk.empty)
+            end for
+        }
+
+        "FOO success" in run {
+            val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+            val requests  = Stream(Emit.value(successes))
+            for
+                client    <- createClientAndServer
+                responses <- client.manyToMany(requests).run
+            yield assert(responses == Chunk.from((1 to 5).map(n => Echo(n.toString))))
+            end for
+        }
+
+        // TODO: Test one becoming many.
+
+        "fail" - {
+            "producing stream on first element" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status    = code.toStatus
+                        val fail      = Fail(status.getCode.value, outside = true)
+                        val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+                        val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client   <- createClientAndServer
+                            response <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
+                        yield assertStatusException(response, expected)
+                        end for
+                    }
+                }
+            }
+
+            "producing stream after some elements" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status    = code.toStatus
+                        val after     = 5
+                        val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
+                        val fail      = Fail(status.getCode.value, outside = true)
+                        val requests  = Stream(Emit.value(successes.append(fail)))
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client <- createClientAndServer
+                            // Unlike the other tests, we cannot predict exactly when the stream will fail because it
+                            // depends on how many requests the client has sent before the server replies.
+                            failedResponse <- Abort.run[StatusException](client.manyToMany(requests).run)
+                        yield assertStatusException(failedResponse, expected)
+                        end for
+                    }
+                }
+            }
+
+            "first element" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status    = code.toStatus
+                        val fail      = Fail(status.getCode.value)
+                        val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+                        val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client <- createClientAndServer
+                            result <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
+                        yield assertStatusException(result, expected)
+                    }
+                }
+            }
+
+            // TODO: Finish the tests below.
+
+            "after some elements" in {
+                forEvery(notOKStatusCodes) { code =>
+                    run {
+                        val status    = code.toStatus
+                        val after     = 5
+                        val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
+                        val fail      = Fail(status.getCode.value)
+                        val requests  = Stream(Emit.value(successes.append(fail)))
+                        // TODO: Why no trailers here?
+                        val expected = status.asException
+                        for
+                            client <- createClientAndServer
+                            result <- Abort.run[StatusException](client.manyToOne(requests))
+                        yield assertStatusException(result, expected)
+                        end for
+                    }
+                }
+            }
+        }
+
+        "panic" - {
+            "first element" in run {
+                val message   = "Oh no!"
+                val panic     = Panic(message)
+                val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+                val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
+                val expected  = Status.INTERNAL.withDescription(message).asException
+                for
+                    client <- createClientAndServer
+                    result <- Abort.run[StatusException](client.manyToOne(requests))
+                yield assertStatusException(result, expected)
+                end for
+            }
+
+            "after some elements" in run {
+                val message   = "Oh no!"
+                val after     = 5
+                val panic     = Panic(message)
+                val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
+                val requests  = Stream(Emit.value(successes.append(panic)))
+                val expected  = Status.INTERNAL.withDescription(message).asException
+                for
+                    client <- createClientAndServer
+                    result <- Abort.run[StatusException](client.manyToOne(requests))
+                yield assertStatusException(result, expected)
                 end for
             }
         }

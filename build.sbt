@@ -64,10 +64,10 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    Test / forkOptions := (Test / forkOptions).value
-        .withOutputStrategy(
-            OutputStrategy.CustomOutput(java.io.OutputStream.nullOutputStream)
-        )
+//    Test / forkOptions := (Test / forkOptions).value
+//        .withOutputStrategy(
+//            OutputStrategy.CustomOutput(java.io.OutputStream.nullOutputStream)
+//        )
 )
 
 Global / onLoad := {

@@ -39,7 +39,7 @@ object GrpcRequest:
     def run[Request, S](request: Request < (GrpcRequest & S))(using Frame): Result[Errors, Request] < (Async & S) =
         Abort.run[StatusRuntimeException | StatusException](request)
 
-    def mergeErrors[Request, S](request: Request < (GrpcRequest & S))(using Frame): Request < (Async & Abort[StatusException] & S) =
+    def mergeErrors[Request, S](request: Request < (Abort[StatusException | StatusRuntimeException] & S))(using Frame): Request < (Abort[StatusException] & S) =
         // TODO: This ought to be easier (still).
         Abort.run[StatusRuntimeException](request).map(_.foldOrThrow[Request < Abort[StatusException]](
             identity,

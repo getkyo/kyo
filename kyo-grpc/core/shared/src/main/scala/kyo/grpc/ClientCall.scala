@@ -4,7 +4,6 @@ import io.grpc.CallOptions
 import io.grpc.Channel
 import io.grpc.MethodDescriptor
 import kyo.*
-import scala.collection.convert.StreamExtensions.StreamUnboxer
 import scalapb.grpc.*
 
 object ClientCall:
@@ -49,13 +48,21 @@ object ClientCall:
         Stream.embed(responses)
     end serverStreaming
 
-    def bidiStreaming[Request, Response](
+    def bidiStreaming[Request: Tag, Response: Tag](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         requests: Stream[Request, GrpcRequest]
     )(using Frame): Stream[Response, GrpcRequest] =
-        ???
+        val responses =
+            for
+                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]
+                // TODO: Do we have to cancel the observer returned here?
+                responseObserver <- IO.Unsafe(ResponseStreamObserver(responseChannel))
+                requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)
+                _        <- StreamNotifier.notifyObserver(requests, requestObserver)
+            yield responseChannel.stream
+        Stream.embed(responses)
     end bidiStreaming
 
 end ClientCall

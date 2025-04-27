@@ -7,12 +7,13 @@ import kyo.*
 import kyo.grpc.*
 
 object TestServiceImpl extends TestService:
+
     override def oneToOne(request: Request): Response < GrpcResponse =
         request match
             case Request.Empty => Abort.fail(Status.INVALID_ARGUMENT.asException())
             case nonEmpty: Request.NonEmpty => nonEmpty match
-                    case Success(message, _, _)     => Kyo.lift(Echo(message))
-                    case Fail(code, _, _, _)  => Abort.fail(Status.fromCodeValue(code).asException)
+                    case Success(message, _, _)  => Kyo.lift(Echo(message))
+                    case Fail(code, _, _, _)     => Abort.fail(Status.fromCodeValue(code).asException)
                     case Panic(message, _, _, _) => Abort.panic(new Exception(message))
 
     override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
@@ -44,10 +45,7 @@ object TestServiceImpl extends TestService:
     end manyToOne
 
     override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
-        // TODO: There should be an easier way to do this.
-        // TODO: Test failing at the outer level
-        // TODO: Map oneToMany
-        Stream(GrpcRequest.mergeErrors(requests.map(oneToOne).emit))
+        Stream(GrpcRequest.mergeErrors(requests.flatMap(oneToMany).emit))
 
     private def stream(responses: Seq[Response < GrpcResponse]): Stream[Response, GrpcResponse] =
         Stream:
