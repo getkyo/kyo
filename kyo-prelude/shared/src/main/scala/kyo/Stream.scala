@@ -637,27 +637,18 @@ sealed abstract class Stream[V, -S] extends Serializable:
       *   A tuple containing chunk of the first n elements and the rest of the stream
       */
     def splitAt(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): (Chunk[V], Stream[V, S]) < S =
-        val emptyEmit = Maybe.empty[Unit < (Emit[Chunk[V]] & S)]
-        ArrowEffect.handleLoop(tag, (Chunk.empty[V], emptyEmit), emit)(
-            handle = [C] =>
-                (input, state, cont) =>
-                    val (chunk, _)    = state
-                    val appendedChunk = chunk.concat(input)
-                    if (appendedChunk.size) < n then
-                        Loop.continue(appendedChunk -> emptyEmit, cont(()))
+        Loop(emit, Chunk.empty[V]): (curEmit, curChunk) =>
+            Emit.runFirst(curEmit).map:
+                case (Present(items), nextEmitFn) =>
+                    val nextChunk = curChunk.concat(items)
+                    if nextChunk.length < n then
+                        Loop.continue(nextEmitFn(), nextChunk)
                     else
-                        val (taken, rest) = appendedChunk.splitAt(n)
-                        val restEmit      = Maybe.Present(Emit.valueWith(rest)(cont(())))
-                        Loop.continue(taken -> restEmit, Kyo.unit)
+                        val (taken, rest) = nextChunk.splitAt(n)
+                        val restEmitFn    = () => Emit.valueWith(rest)(nextEmitFn())
+                        Loop.done(taken -> Stream(restEmitFn()))
                     end if
-            ,
-            done = (state, _) =>
-                val (chunk, lastEmit) = state
-                lastEmit match
-                    case Maybe.Present(emit) => (chunk, Stream(emit))
-                    case Maybe.Absent        => (chunk, Stream.empty)
-                end match
-        )
+                case (Absent, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[V])))
     end splitAt
 
     /** Process with a [[Sink]] of corresponding streaming element type.
@@ -768,5 +759,42 @@ object Stream:
                         end if
                     }
                 }
+
+    /** Creates a stream by repeatedly applying a function to accumulate values.
+      *
+      * @tparam A
+      *   The type of the accumulator
+      * @tparam V
+      *   The type of values in the resulting stream
+      * @tparam S
+      *   The type of effects in the stream
+      * @param acc
+      *   The initial accumulator value
+      * @param chunkSize
+      *   The target size for each chunk (must be positive)
+      * @param f
+      *   A function that takes the current accumulator and returns Maybe of next value and accumulator
+      * @return
+      *   A stream containing the unfolded values
+      */
+    def unfoldKyo[A, V, S](acc: A, chunkSize: Int = DefaultChunkSize)(f: A => (Maybe[(V, A)] < S))(using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S] =
+        Stream[V, S]:
+            val _chunkSize = chunkSize max 1
+            Loop(Chunk.empty[V], acc): (curChunk, curAcc) =>
+                if curChunk.length == _chunkSize then
+                    Emit.valueWith(curChunk)(Loop.continue(Chunk.empty[V], curAcc))
+                else
+                    f(curAcc).map:
+                        case Present(value -> nextAcc) => Loop.continue(curChunk.append(value), nextAcc)
+                        case Absent                    => Emit.valueWith(curChunk)(Loop.done(()))
+
+    /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
+      */
+    sealed class Dummy extends Serializable
+    object Dummy:
+        given Dummy = new Dummy {}
 
 end Stream
