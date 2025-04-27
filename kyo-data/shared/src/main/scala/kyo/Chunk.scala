@@ -470,7 +470,7 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           * @return
           *   a single value Chunk of type A
           */
-        def single[A](a: A): Indexed[A] = Single(a)
+        private[Chunk] def single[A](a: A): Indexed[A] = Single(a)
 
         def from[A](source: Array[A]): Indexed[A] =
             source.length match
