@@ -57,16 +57,17 @@ lazy val `kyo-settings` = Seq(
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
+//    scalafmtOnCompile := true,
     scalafmtOnCompile := false,
     scalacOptions += compilerOptionFailDiscard,
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    Test / forkOptions := (Test / forkOptions).value
-        .withOutputStrategy(
-            OutputStrategy.CustomOutput(java.io.OutputStream.nullOutputStream)
-        )
+//    Test / forkOptions := (Test / forkOptions).value
+//        .withOutputStrategy(
+//            OutputStrategy.CustomOutput(java.io.OutputStream.nullOutputStream)
+//        )
 )
 
 Global / onLoad := {
@@ -98,7 +99,7 @@ lazy val kyoJVM = project
         name := "kyoJVM",
         `kyo-settings`,
         commands += Command.command("testOnlyUntilFailed") { state =>
-            "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"producing stream\"" :: "testOnlyUntilFailed" :: state
+            "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"FOO\"" :: "testOnlyUntilFailed" :: state
         }
     )
     .disablePlugins(MimaPlugin)
@@ -596,7 +597,8 @@ lazy val `kyo-grpc-core` =
                 "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
                 "io.grpc"               % "grpc-api"             % "1.64.0",
                 // It is a little unusual to include this here but it greatly reduces the amount of generated code.
-                "io.grpc" % "grpc-stub" % "1.64.0"
+                "io.grpc" % "grpc-stub" % "1.64.0",
+                "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
             )
         ).jsSettings(
             `js-settings`,
@@ -674,7 +676,10 @@ lazy val `kyo-grpc-e2e` =
             Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value
         ).jvmSettings(
             codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
-            libraryDependencies += "io.grpc" % "grpc-netty-shaded" % "1.64.0"
+            libraryDependencies ++= Seq(
+                "io.grpc" % "grpc-netty-shaded" % "1.64.0",
+                "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
+            )
         ).jsSettings(
             `js-settings`,
             codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value,

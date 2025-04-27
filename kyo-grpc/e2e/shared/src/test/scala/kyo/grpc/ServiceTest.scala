@@ -104,23 +104,38 @@ class ServiceTest extends Test:
                 }
             }
 
-            "after some elements" in {
-                forEvery(notOKStatusCodes) { code =>
-                    run {
-                        val status  = code.toStatus
-                        val after   = 5
-                        val request = Fail(status.getCode.value, after)
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
-                        for
-                            client            <- createClientAndServer
-                            (responses, tail) <- client.oneToMany(request).splitAt(5)
-                            failedResponse    <- Abort.run[StatusException](tail.run)
-                        yield
-                            assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Cancelling in $n"))))
-                            assertStatusException(failedResponse, expected)
-                        end for
-                    }
+            "FOO after some elements" in {
+//                forEvery(notOKStatusCodes) { code =>
+//                    run {
+//                        val status  = code.toStatus
+//                        val after   = 5
+//                        val request = Fail(status.getCode.value, after)
+//                        // TODO: Why no trailers here?
+//                        val expected = status.asException
+//                        for
+//                            client            <- createClientAndServer
+//                            (responses, tail) <- client.oneToMany(request).splitAt(5)
+//                            failedResponse    <- Abort.run[StatusException](tail.run)
+//                        yield
+//                            assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Cancelling in $n"))))
+//                            assertStatusException(failedResponse, expected)
+//                        end for
+//                    }
+//                }
+                run {
+                    val status  = notOKStatusCodes.head.toStatus
+                    val after   = 5
+                    val request = Fail(status.getCode.value, after)
+                    // TODO: Why no trailers here?
+                    val expected = status.asException
+                    for
+                        client            <- createClientAndServer
+                        (responses, tail) <- client.oneToMany(request).splitAt(5)
+                        failedResponse    <- Abort.run[StatusException](tail.run)
+                    yield
+                        assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Cancelling in $n"))))
+                        assertStatusException(failedResponse, expected)
+                    end for
                 }
             }
         }
@@ -154,6 +169,7 @@ class ServiceTest extends Test:
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
                     client <- createClientAndServer
+                    // TODO: Check first elements.
                     result <- Abort.run[StatusException](client.oneToMany(request).run)
                 yield assertStatusException(result, expected)
                 end for

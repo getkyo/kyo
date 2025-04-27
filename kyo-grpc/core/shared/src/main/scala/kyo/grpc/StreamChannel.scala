@@ -2,6 +2,7 @@ package kyo.grpc
 
 import kyo.*
 import kyo.kernel.Loop.Outcome
+import kyo.kernel.internal.Kyo
 
 /** A channel that can be closed without draining.
   *
@@ -40,30 +41,40 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
 
     def take(using Frame): A < (Abort[Closed | E] & Async) =
         for
+            _     <- Log.debug("Taking value.")
             value <- Abort.recover(_ => errorOrClosedError)(channel.take)
             _     <- closeIfDone
         yield value
 
     private def errorOrClosedError(using Frame): Nothing < (Abort[Closed | E] & IO) =
-        error.getAndSet(Maybe.empty)
-            .map(_.getOrElse(closedError))
-            .map(Abort.fail)
+        val pendingError =
+            for
+                e <- error.getAndSet(Maybe.empty)
+                eOrClosed = e.getOrElse(closedError)
+                _ <- Log.debug(s"Aborting with error: $eOrClosed")
+            yield eOrClosed
+        pendingError.map(Abort.fail)
+    end errorOrClosedError
 
-    def closeProducer(using Frame): Unit < (Abort[Closed] & IO) =
+    def closeProducer(using Frame): Unit < IO =
         for
+            _ <- Log.debug("Closing producer.")
             _ <- _producerClosed.set(true)
             _ <- closeIfEmpty
         yield ()
 
     // Be careful calling this. It is only thread safe if there will be no more puts/errors,
     // i.e. the producer calls it or the producer is closed.
-    private def closeIfEmpty(using Frame) =
+    private def closeIfEmpty(using Frame): Unit < IO =
         for
-            shouldClose <- channel.empty
-            _           <- if shouldClose then channel.close else Kyo.unit
+            // Be careful here too. This might be called concurrently and so channel.empty might abort with Closed.
+            shouldClose <- Abort.recover(_ => false)(channel.empty)
+            _ <-
+                if shouldClose then Log.debug("Closing channel.").andThen(channel.close)
+                else Kyo.unit
         yield ()
 
-    private def closeIfDone(using Frame) =
+    private def closeIfDone(using Frame): Unit < IO =
         for
             producerClosed <- _producerClosed.get
             _              <- if producerClosed then closeIfEmpty else Kyo.unit
@@ -89,13 +100,20 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
         if maxChunkSize <= 0 then ()
         else
             Loop(()): _ =>
-                Abort.recover[Closed](_ => Loop.done[Unit]):
+                Abort.recover[Closed](_ => Log.debug("Stream complete.").andThen(Loop.done[Unit])):
                     for
+                        _    <- Log.debug("Taking value for stream.")
                         head <- Abort.recover(_ => errorOrClosedError)(channel.take)
+                        // Be careful here. The producer might close the channel in between taking the last element and
+                        // attempting to drain what is left. We have to emit the head before draining so that it isn't
+                        // dropped.
+                        _    <- Log.debug(s"Emitting value: $head")
+                        _    <- Emit.value(Chunk(head))
                         tail <- Abort.recover(_ => errorOrClosedError)(channel.drainUpTo(maxChunkSize - 1))
                         _    <- closeIfDone
-                        _    <- Emit.value(Chunk(head))
-                        _    <- Emit.value(tail)
+                        _ <-
+                            if tail.nonEmpty then Log.debug(s"Emitting chunk: $tail").andThen(Emit.value(tail))
+                            else Kyo.unit
                     yield Loop.continue(())
     end emitChunks
 

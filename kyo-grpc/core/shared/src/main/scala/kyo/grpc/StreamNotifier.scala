@@ -27,11 +27,7 @@ private[grpc] object StreamNotifier:
         observer: StreamObserver[A]
     )(using Frame): Unit < (IO & S) =
         // TODO: Rename
-        def foo(a: A) =
-            // TODO: Remove this
-            println(s"StreamNotifier.notifyObserver: a = $a")
-            IO(observer.onNext(a))
-        end foo
+        def foo(a: A) = IO(observer.onNext(a))
         Abort.run[E](values.foreach(foo)).map(notifyCompleteOrError(_, observer))
     end notifyObserver
 
@@ -39,8 +35,6 @@ private[grpc] object StreamNotifier:
         complete: Result[E, Unit],
         requestObserver: StreamObserver[?]
     )(using Frame): Unit < IO =
-        // TODO: Remove this
-        println(s"StreamNotifier.notifyCompleteOrError: complete = $complete")
         complete match
             case Result.Success(_) => IO(requestObserver.onCompleted())
             // TODO: Why the unchecked warning here?
