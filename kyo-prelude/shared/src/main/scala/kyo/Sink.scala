@@ -164,7 +164,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
                                     Loop.continue(cont(Present(chunk1)))
             )
 
-    /** Transform a sink to produce a new output type using a function that transforms the original stream's result.
+    /** Transform a sink to produce a new output type using a function that transforms the original pipe's result.
       *
       * @param f
       *   Function mapping the original output to a new output value
@@ -187,8 +187,25 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   An effect generating an output value from elements consumed from the stream
       */
-    final def drain[S2](stream: Stream[V, S2])(using Tag[V], Frame): A < (S & S2) =
-        Poll.run(stream.emit)(poll).map(_._2)
+    final def drain[S2](stream: Stream[V, S2])(using
+        emitTag: Tag[Emit[Chunk[V]]],
+        pollTag: Tag[Poll[Chunk[V]]],
+        fr: Frame
+    ): A < (S & S2) =
+        Loop(stream.emit, poll) { (emit, poll) =>
+            ArrowEffect.handleFirst(pollTag, poll)(
+                handle = [C] =>
+                    (_, pollCont) =>
+                        ArrowEffect.handleFirst(emitTag, emit)(
+                            handle = [C2] =>
+                                (emitted, emitCont) =>
+                                    Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
+                            done = _ => Loop.continue(Kyo.unit, pollCont(Absent))
+                    ),
+                done = a =>
+                    Loop.done(a)
+            )
+        }
 end Sink
 
 object Sink:

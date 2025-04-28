@@ -239,9 +239,25 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
       * @return
       *   A new transformed stream
       */
-    def transform[S1](stream: Stream[A, S1])(using Tag[A], Frame): Stream[B, S & S1] =
+    def transform[S1](stream: Stream[A, S1])(using
+        emitTag: Tag[Emit[Chunk[A]]],
+        pollTag: Tag[Poll[Chunk[A]]],
+        fr: Frame
+    ): Stream[B, S & S1] =
         Stream:
-            Poll.run(stream.emit)(pollEmit).map(_._2)
+            Loop(stream.emit, pollEmit) { (emit, poll) =>
+                ArrowEffect.handleFirst(pollTag, poll)(
+                    handle = [C] =>
+                        (_, pollCont) =>
+                            ArrowEffect.handleFirst(emitTag, emit)(
+                                handle = [C2] =>
+                                    (emitted, emitCont) =>
+                                        Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
+                                done = _ => Loop.continue(Kyo.unit, pollCont(Absent))
+                        ),
+                    done = _ => Loop.done(())
+                )
+            }
 
 end Pipe
 
@@ -250,6 +266,10 @@ object Pipe:
     inline def apply[A, B, S](inline v: => Unit < (Poll[Chunk[A]] & Emit[Chunk[B]] & S)): Pipe[A, B, S] =
         new Pipe[A, B, S]:
             def pollEmit: Unit < (Poll[Chunk[A]] & Emit[Chunk[B]] & S) = v
+
+    private val _empty = Pipe(())
+
+    def empty[A]: Pipe[A, A, Any] = _empty.asInstanceOf[Pipe[A, A, Any]]
 
     /** A pipe that passes through the original stream without transforming it */
     def identity[A](using Tag[A], Frame): Pipe[A, A, Any] =
@@ -262,12 +282,16 @@ object Pipe:
 
     /** A pipe that transforms each element of a stream with a pure function.
       *
+      * @see
+      *   [[kyo.Stream.map]]
+      *
       * @param f
       *   Pure function transforming stream elements
       */
-    def map[A, B](f: A => B)(
+    def map[A](using
+        Tag[A]
+    )[B](f: A => B)(
         using
-        Tag[A],
         Tag[B],
         NotGiven[B <:< (Any < Nothing)],
         Frame
@@ -281,12 +305,16 @@ object Pipe:
 
     /** A pipe that transforms each element of a stream with an effectful function.
       *
+      * @see
+      *   [[kyo.Stream.map]]
+      *
       * @param f
       *   Effectful function transforming stream elements
       */
-    def map[A, B, S](f: A => B < S)(
+    def map[A](using
+        Tag[A]
+    )[B, S](f: A => B < S)(
         using
-        Tag[A],
         Tag[B],
         NotGiven[B <:< (Any < Nothing)],
         Discriminator,
@@ -302,10 +330,13 @@ object Pipe:
 
     /** A pipe that transforms each chunk of a stream with a pure function.
       *
+      * @see
+      *   [[kyo.Stream.mapChunk]]
+      *
       * @param f
       *   Pure function transforming stream chunks
       */
-    def mapChunk[A, B](f: Chunk[A] => Chunk[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
+    def mapChunk[A](using Tag[A])[B](f: Chunk[A] => Chunk[B])(using Tag[B], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -315,10 +346,13 @@ object Pipe:
 
     /** A pipe that transforms each chunk of a stream with an effectful function.
       *
+      * @see
+      *   [[kyo.Stream.mapChunk]]
+      *
       * @param f
       *   Effectful function transforming stream chunks
       */
-    def mapChunk[A, B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
+    def mapChunk[A](using Tag[A])[B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -329,21 +363,28 @@ object Pipe:
 
     /** A pipe whose output stream completes after at most `n` elements.
       *
+      * @see
+      *   [[kyo.Stream.take]]
+      *
       * @param n
       *   Maximum number of elements to stream
       */
     def take[A](n: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
-        Pipe:
-            Loop(n): i =>
-                if i <= 0 then Loop.done
-                else
+        if n <= 0 then Pipe.empty
+        else
+            Pipe:
+                Loop(n): i =>
                     Poll.andMap[Chunk[A]]:
                         case Absent => Loop.done
                         case Present(c) =>
-                            val c1 = c.take(i)
-                            Emit.valueWith(c1)(Loop.continue(i - c1.size))
+                            val c1  = c.take(i)
+                            val nst = i - c1.size
+                            Emit.valueWith(c1)(if nst > 0 then Loop.continue(nst) else Loop.done)
 
     /** A pipe whose output stream skips the first `n` elements of the input stream.
+      *
+      * @see
+      *   [[kyo.Stream.drop]]
       *
       * @param n
       *   Number of elements to skip
@@ -363,6 +404,9 @@ object Pipe:
 
     /** A pipe whose output continues only as long as the provided predicate returns true.
       *
+      * @see
+      *   [[kyo.Stream.takeWhile]]
+      *
       * @param f
       *   Pure function determining whether to continue output stream based on input stream element
       */
@@ -380,10 +424,13 @@ object Pipe:
 
     /** A pipe whose output continues only as long as the provided effectful predicate returns true.
       *
+      * @see
+      *   [[kyo.Stream.takeWhile]]
+      *
       * @param f
       *   Effectful function determining whether to continue output stream based on input stream element
       */
-    def takeWhile[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
+    def takeWhile[A](using Tag[A])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -396,6 +443,9 @@ object Pipe:
                                     if c1.size == c.size then Loop.continue else Loop.done
 
     /** A pipe whose output skips input elements as long as the provided predicate returns true.
+      *
+      * @see
+      *   [[kyo.Stream.dropWhile]]
       *
       * @param f
       *   Pure function determining whether to continue skipping elements
@@ -415,10 +465,13 @@ object Pipe:
 
     /** A pipe whose output skips input elements as long as the provided effectful predicate returns true.
       *
+      * @see
+      *   [[kyo.Stream.dropWhile]]
+      *
       * @param f
       *   Effectful function determining whether to continue skipping elements
       */
-    def dropWhile[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
+    def dropWhile[A](using Tag[A])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop(false): done =>
                 Poll.andMap[Chunk[A]]:
@@ -432,6 +485,9 @@ object Pipe:
                                 else Emit.valueWith(c1)(Loop.continue(true))
 
     /** A pipe whose output skips input elements that do not satisfy the provided predicate.
+      *
+      * @see
+      *   [[kyo.Stream.filter]]
       *
       * @param f
       *   Pure function determining whether to skip streaming element
@@ -448,10 +504,13 @@ object Pipe:
 
     /** A pipe whose output skips input elements that do not satisfy the provided effectful predicate.
       *
+      * @see
+      *   [[kyo.Stream.filter]]
+      *
       * @param f
       *   Effectful function determining whether to skip streaming element
       */
-    def filter[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
+    def filter[A](using Tag[A])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -463,10 +522,13 @@ object Pipe:
 
     /** A pipe that filters and transforms an input stream using a pure function.
       *
+      * @see
+      *   [[kyo.Stream.collect]]
+      *
       * @param f
       *   Pure function converting input elements to optional output elements
       */
-    def collect[A, B](f: A => Maybe[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
+    def collect[A](using Tag[A])[B](f: A => Maybe[B])(using Tag[B], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -478,10 +540,13 @@ object Pipe:
 
     /** A pipe that filters and transforms an input stream using an effectful function.
       *
+      * @see
+      *   [[kyo.Stream.collect]]
+      *
       * @param f
       *   Effectful function converting input elements to optional output elements
       */
-    def collect[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
+    def collect[A](using Tag[A])[B, S](f: A => Maybe[B] < S)(using Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -494,10 +559,13 @@ object Pipe:
     /** A pipe that transforms an input stream using a pure function, ending the stream when the first absent transformed element is
       * returned.
       *
+      * @see
+      *   [[kyo.Stream.collectWhile]]
+      *
       * @param f
       *   Pure function converting input elements to optional output elements
       */
-    def collectWhile[A, B](f: A => Maybe[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
+    def collectWhile[A](using Tag[A])[B](f: A => Maybe[B])(using Tag[B], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -516,10 +584,13 @@ object Pipe:
     /** A pipe that transforms an input stream using an effectful function, ending the stream when the first absent transformed element is
       * returned.
       *
+      * @see
+      *   [[kyo.Stream.collectWhile]]
+      *
       * @param f
       *   Effectful function converting input elements to optional output elements
       */
-    def collectWhile[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
+    def collectWhile[A](using Tag[A])[B, S](f: A => Maybe[B] < S)(using Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -543,6 +614,9 @@ object Pipe:
 
     /** A pipe whose output only emits elements that are different from their predecessor, starting with the given first element.
       *
+      * @see
+      *   [[kyo.Stream.changes]]
+      *
       * @param first
       *   The initial element to compare against
       */
@@ -550,6 +624,9 @@ object Pipe:
         changes(Maybe(first))
 
     /** A pipe whose output only emits elements that are different from their predecessor, starting with the given optional first element.
+      *
+      * @see
+      *   [[kyo.Stream.changes]]
       *
       * @param first
       *   The optional initial element to compare against
@@ -594,13 +671,49 @@ object Pipe:
                         if combined.size < _chunkSize then
                             Loop.continue(combined)
                         else
-                            Loop(combined): current =>
+                            Loop(combined) { current =>
                                 if current.size < _chunkSize then
-                                    Loop.done(Loop.continue(current))
+                                    Loop.done(current)
                                 else
                                     Emit.valueWith(current.take(_chunkSize)):
                                         Loop.continue(current.dropLeft(_chunkSize))
+                                end if
+                            }.map(result => Loop.continue(result))
                         end if
     end rechunk
+
+    /** A pipe that performs a side-effect on each element without transforming the stream.
+      *
+      * @see
+      *   [[kyo.Stream.tap]]
+      *
+      * @param f
+      *   Side-effecting function to perform on each input element
+      */
+    def tap[A](using Tag[A])[S](f: A => Any < S)(using Frame): Pipe[A, A, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        Kyo.foreach(c)(f).andThen:
+                            Emit.valueWith(c)(Loop.continue)
+
+    /** A pipe that performs a side-effect on each input chunk without transforming the stream.
+      *
+      * @see
+      *   [[kyo.Stream.tapChunk]]
+      *
+      * @param f
+      *   Side-effecting function to perform on each input chunk
+      */
+    def tapChunk[A](using Tag[A])[S](f: Chunk[A] => Any < S)(using Frame): Pipe[A, A, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        f(c).andThen:
+                            Emit.valueWith(c)(Loop.continue)
 
 end Pipe

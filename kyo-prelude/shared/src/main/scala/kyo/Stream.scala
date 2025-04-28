@@ -289,7 +289,6 @@ sealed abstract class Stream[V, -S] extends Serializable:
       */
     def takeWhile(f: V => Boolean)(using
         tag: Tag[Emit[Chunk[V]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[V, S] =
         Stream(
@@ -312,7 +311,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
-    def takeWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+    def takeWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], discr: Discriminator, frame: Frame): Stream[V, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
