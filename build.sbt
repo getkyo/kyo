@@ -579,9 +579,8 @@ lazy val `kyo-grpc` =
 lazy val `kyo-grpc-jvm` =
     `kyo-grpc`
         .jvm
-        .aggregate(`protoc-gen-kyo-grpc`.componentProjects.map(p => p: ProjectReference) *)
+        .aggregate(`kyo-grpc-protoc-gen`.componentProjects.map(p => p: ProjectReference) *)
 
-// TODO: Split this into client and server
 lazy val `kyo-grpc-core` =
     crossProject(JVMPlatform, JSPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -606,8 +605,6 @@ lazy val `kyo-grpc-core` =
                 "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0")
         )
 
-// TODO: Split this into shared, client, and server
-// TODO: Do we need code gen for JS?
 lazy val `kyo-grpc-code-gen` =
     crossProject(JVMPlatform, JSPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -617,9 +614,7 @@ lazy val `kyo-grpc-code-gen` =
         .settings(
             `kyo-settings`,
             buildInfoKeys := Seq[BuildInfoKey](name, organization, version, scalaVersion, sbtVersion),
-            // TODO: What package to use here?
             buildInfoPackage := "kyo.grpc.compiler",
-            // TODO: Which versions should this be for?
             crossScalaVersions := List(scala212Version, scala213Version, scala3Version),
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies ++= Seq(
@@ -641,15 +636,12 @@ lazy val `kyo-grpc-code-genJS_2.12` =
         .js
         .settings(scalaVersion := scala212Version)
 
-// TODO: Why this name?
-// TODO: Can these meta projects be in the sub directory?
-lazy val `protoc-gen-kyo-grpc` =
-    protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen_2.12`)
+lazy val `kyo-grpc-protoc-gen` =
+    protocGenProject("kyo-grpc-protoc-gen", `kyo-grpc-code-gen_2.12`)
         .settings(
             `kyo-settings`,
             scalaVersion       := scala212Version,
             crossScalaVersions := Seq(scala212Version),
-            // TODO: Does it not auto-discover it?
             Compile / mainClass := Some("kyo.grpc.compiler.CodeGenerator")
         )
         .aggregateProjectSettings(
