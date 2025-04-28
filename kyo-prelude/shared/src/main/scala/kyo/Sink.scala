@@ -11,6 +11,9 @@ import scala.annotation.targetName
   * `Sink` provides a composable abstraction for processing `Stream` s. A `Sink[V, A, S]` can process a stream of type `Stream[V, S2]` to
   * produce a value of type `A` using effects `S & S2`.
   *
+  * @see
+  *   [[kyo.Stream]] [[kyo.Pipe]]
+  *
   * @tparam V
   *   The type of values that this sink can process
   * @tparam A
@@ -74,7 +77,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @param f
       *   Function mapping new stream element type to original stream element type
       * @return
-      *   A new sink that processes streams of the new element type
+      *   A sink that processes streams of the new element type
       */
     final def contramap[V2](f: V2 => V)(using
         t1: Tag[Poll[Chunk[V]]],
@@ -95,7 +98,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @param f
       *   Effectful function mapping new stream element type to original stream element type
       * @return
-      *   A new sink that processes streams of the new element type
+      *   A sink that processes streams of the new element type
       */
     final def contramap[V2, S2](f: V2 => V < S2)(using
         t1: Tag[Poll[Chunk[V]]],

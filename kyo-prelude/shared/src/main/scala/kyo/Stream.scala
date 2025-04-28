@@ -38,6 +38,8 @@ import scala.util.NotGiven
   * @see
   *   [[kyo.Stream.run]], [[kyo.Stream.foreach]], [[kyo.Stream.fold]] for consuming streams
   * @see
+  *   [[kyo.Pipe]] [[kyo.Sink]] for abstracting and composing stream transformation and processing
+  * @see
   *   [[kyo.Emit]] for the underlying push-based emission mechanism
   * @see
   *   [[kyo.Poll]] for pull-based consumption with backpressure
@@ -660,10 +662,23 @@ sealed abstract class Stream[V, -S] extends Serializable:
         )
     end splitAt
 
+    /** Transform with a [[Pipe]] of corresponding input streaming element type.
+      *
+      * @see
+      *   [[kyo.Pipe.transform]]
+      *
+      * @param sink
+      *   Pipe to transform stream with
+      * @return
+      *   A new stream of transformed element type `A`
+      */
+    def into[A, S2](pipe: Pipe[V, A, S2])(using Tag[V], Frame): Stream[A, S & S2] =
+        pipe.transform(this)
+
     /** Process with a [[Sink]] of corresponding streaming element type.
       *
       * @see
-      *   [[kyo.Sink.consume]]
+      *   [[kyo.Sink.drain]]
       *
       * @param sink
       *   Sink to process stream with

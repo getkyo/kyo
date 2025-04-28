@@ -8,6 +8,12 @@ import scala.util.NotGiven
 
 /** Represents a transformation of a stream of type `A` to a stream of type `B`, using effect `S`.
   *
+  * `Pipe` provides a composable abstraction for transforming `Stream` s. A `Pipe[A, B, S]` can process a stream of type `Stream[A, S2]` to
+  * produce a new stream `Stream[B, S & S2]`.
+  *
+  * @see
+  *   [[kyo.Stream]], [[kyo.Sink]]
+  *
   * @tparam A
   *   Input stream element type
   * @tparam B
@@ -20,6 +26,13 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     /** Returns the underlying effect that polls chunks of type A and emits chunks of type B */
     def pollEmit: Unit < (Poll[Chunk[A]] & Emit[Chunk[B]] & S)
 
+    /** Transform a pipe to consume a stream of a different element type using a pure mapping function.
+      *
+      * @param f
+      *   Pure function mapping new stream element type to original stream element type
+      * @return
+      *   A pipe that accepts streams of the new element type
+      */
     def contramap[A1](f: A1 => A)(
         using
         t1: Tag[Poll[Chunk[A]]],
@@ -34,11 +47,18 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                             Loop.continue(cont(maybeChunk.map(_.map(f))))
             )
 
+    /** Transform a pipe to consume a stream of a different element type using an effectful mapping function.
+      *
+      * @param f
+      *   Effectful function mapping new stream element type to original stream element type
+      * @return
+      *   A pipe that accepts streams of the new element type
+      */
     def contramap[A1, S1](f: A1 => A < S1)(
         using
         t1: Tag[Poll[Chunk[A]]],
         t2: Tag[A1],
-        disc: Stream.Dummy,
+        disc: Discriminator,
         fr: Frame
     ): Pipe[A1, B, S & S1] =
         Pipe:
@@ -52,6 +72,13 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                                     Loop.continue(cont(Present(chunk2)))
             )
 
+    /** Transform a pipe to consume a stream of a different element type using a pure mapping function that transforms streamed chunks.
+      *
+      * @param f
+      *   Pure function mapping chunks of a new stream element type to chunks of the original stream element type
+      * @return
+      *   A pipe that accepts streams of the new element type
+      */
     def contramapChunk[A1](f: Chunk[A1] => Chunk[A])(
         using
         t1: Tag[Poll[Chunk[A]]],
@@ -66,11 +93,19 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                             Loop.continue(cont(maybeChunk.map(f)))
             )
 
+    /** Transform a pipe to consume a stream of a different element type using an effectful mapping function that transforms streamed
+      * chunks.
+      *
+      * @param f
+      *   Effectful function mapping chunks of a new stream element type to chunks of the original stream element type
+      * @return
+      *   A pipe that accepts streams of the new element type
+      */
     def contramapChunk[A1, S1](f: Chunk[A1] => Chunk[A] < S1)(
         using
         t1: Tag[Poll[Chunk[A]]],
         t2: Tag[A1],
-        disc: Stream.Dummy,
+        disc: Discriminator,
         fr: Frame
     ): Pipe[A1, B, S & S1] =
         Pipe:
@@ -84,6 +119,14 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                                     Loop.continue(cont(Present(chunk2)))
             )
 
+    /** Transform a pipe to produce a new output type using a pure function that transforms each streamed element of the original pipe's
+      * output stream.
+      *
+      * @param f
+      *   Pure function mapping the streamed elements produced by the original pipe
+      * @return
+      *   A new pipe with output stream transformed by the mapping function
+      */
     def map[B1](f: B => B1)(
         using
         t1: Tag[Emit[Chunk[B]]],
@@ -97,11 +140,19 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                         Emit.valueWith(chunk.map(f))(Loop.continue(cont(())))
             )
 
+    /** Transform a pipe to produce a new output type using an effectful function that transforms each streamed element of the original
+      * pipe's output stream.
+      *
+      * @param f
+      *   Effectful function mapping the streamed elements produced by the original pipe
+      * @return
+      *   A new pipe with output stream transformed by the mapping function
+      */
     def map[B1, S1](f: B => B1 < S1)(
         using
         t1: Tag[Emit[Chunk[B]]],
         t2: Tag[B1],
-        disc: Stream.Dummy,
+        disc: Discriminator,
         fr: Frame
     ): Pipe[A, B1, S & S1] =
         Pipe:
@@ -112,6 +163,14 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                             Emit.valueWith(chunk2)(Loop.continue(cont(())))
             )
 
+    /** Transform a pipe to produce a new output type using a pure function that transforms each streamed chunk of the original pipe's
+      * output stream.
+      *
+      * @param f
+      *   Pure function mapping the streamed chunks produced by the original pipe
+      * @return
+      *   A new pipe with output stream transformed by the mapping function
+      */
     def mapChunk[B1](f: Chunk[B] => Chunk[B1])(
         using
         t1: Tag[Emit[Chunk[B]]],
@@ -125,11 +184,19 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                         Emit.valueWith(f(chunk))(Loop.continue(cont(())))
             )
 
+    /** Transform a pipe to produce a new output type using an effectful function that transforms each streamed chunk of the original pipe's
+      * output stream.
+      *
+      * @param f
+      *   Effectful function mapping the streamed chunks produced by the original pipe
+      * @return
+      *   A new pipe with output stream transformed by the mapping function
+      */
     def mapChunk[B1, S1](f: Chunk[B] => Chunk[B1] < S1)(
         using
         t1: Tag[Emit[Chunk[B]]],
         t2: Tag[B1],
-        disc: Stream.Dummy,
+        disc: Discriminator,
         fr: Frame
     ): Pipe[A, B1, S & S1] =
         Pipe:
@@ -140,33 +207,39 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                             Emit.valueWith(chunk2)(Loop.continue(cont(())))
             )
 
-    def combine[S1](other: Pipe[A, B, S1])(
-        using
-        t1: Tag[Poll[Chunk[A]]],
-        fr: Frame
-    ): Pipe[A, B, S & S1] =
+    /** Prepend to another pipe producing a new pipe that performs both pipes' transformations in sequence.
+      *
+      * @param pipe
+      *   Pipe to prepend pipe to
+      * @return
+      *   New pipe that performs both transformations in sequence
+      */
+    def join[C, S1](pipe: Pipe[B, C, S1])(using Tag[B], Frame): Pipe[A, C, S & S1] =
         Pipe:
-            Loop(pollEmit, other.pollEmit): (pollEmit1, pollEmit2) =>
-                ArrowEffect.handleFirst(t1, pollEmit1)(
-                    handle = [C] =>
-                        (_, cont1) =>
-                            Poll.andMap[Chunk[A]]: maybeChunk =>
-                                val next1 = cont1(maybeChunk)
-                                ArrowEffect.handleFirst(t1, pollEmit2)(
-                                    handle = [C] =>
-                                        (_, cont2) =>
-                                            val next2 = cont2(maybeChunk)
-                                            Loop.continue(next1, next2)
-                                    ,
-                                    done = _ =>
-                                        next1.andThen(Loop.done(()))
-                            )
-                    ,
-                    done = _ =>
-                        pollEmit2.andThen(Loop.done(()))
-                )
+            Poll.run(pollEmit)(pipe.pollEmit).unit
 
-    def consume[S1](stream: Stream[A, S1])(using Tag[A], Frame): Stream[B, S & S1] =
+    /** Prepend to a sink producing a new sink that transforms the stream prior to processing it.
+      *
+      * @param sink
+      *   Sink to prepend pipe to
+      * @return
+      *   New sink that transforms stream prior to processing it
+      */
+    def join[C, S1](sink: Sink[B, C, S1])(using Tag[B], Frame): Sink[A, C, S & S1] =
+        Sink:
+            Poll.run(pollEmit)(sink.poll).map(_._2)
+
+    /** Consume a stream to produce a new stream
+      *
+      * @see
+      *   [[kyo.Stream.into]]
+      *
+      * @param stream
+      *   Stream to be transformed
+      * @return
+      *   A new transformed stream
+      */
+    def transform[S1](stream: Stream[A, S1])(using Tag[A], Frame): Stream[B, S & S1] =
         Stream:
             Poll.run(stream.emit)(pollEmit).map(_._2)
 
@@ -205,7 +278,7 @@ object Pipe:
         Tag[A],
         Tag[B],
         NotGiven[B <:< (Any < Nothing)],
-        Stream.Dummy,
+        Discriminator,
         Frame
     ): Pipe[A, B, S] =
         Pipe:
@@ -224,7 +297,7 @@ object Pipe:
                     case Present(c) =>
                         Emit.valueWith(f(c))(Loop.continue)
 
-    def mapChunk[A, B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[A], Tag[B], Stream.Dummy, Frame): Pipe[A, B, S] =
+    def mapChunk[A, B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -269,7 +342,7 @@ object Pipe:
                             Emit.valueWith(c1):
                                 if c1.size == c.size then Loop.continue else Loop.done
 
-    def takeWhile[A, S](f: A => Boolean < S)(using Tag[A], Stream.Dummy, Frame): Pipe[A, A, S] =
+    def takeWhile[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -294,7 +367,7 @@ object Pipe:
                             if c1.isEmpty then Loop.continue(done)
                             else Emit.valueWith(c1)(Loop.continue(true))
 
-    def dropWhile[A, S](f: A => Boolean < S)(using Tag[A], Stream.Dummy, Frame): Pipe[A, A, S] =
+    def dropWhile[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop(false): done =>
                 Poll.andMap[Chunk[A]]:
@@ -317,7 +390,7 @@ object Pipe:
                         if c1.isEmpty then Loop.continue
                         else Emit.valueWith(c1)(Loop.continue)
 
-    def filter[A, S](f: A => Boolean < S)(using Tag[A], Stream.Dummy, Frame): Pipe[A, A, S] =
+    def filter[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -337,7 +410,7 @@ object Pipe:
                         if c1.isEmpty then Loop.continue
                         else Emit.valueWith(c1)(Loop.continue)
 
-    def collect[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Stream.Dummy, Frame): Pipe[A, B, S] =
+    def collect[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -363,7 +436,7 @@ object Pipe:
                                     else Loop.continue
                             end if
 
-    def collectWhile[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Stream.Dummy, Frame): Pipe[A, B, S] =
+    def collectWhile[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
