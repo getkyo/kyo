@@ -132,7 +132,7 @@ class ServiceTest extends Test:
                 val expected = Status.INTERNAL.withDescription(message).asException
                 for
                     client <- createClientAndServer
-                    result <- Abort.run[StatusException](client.oneToMany(request).run)
+                    result <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
                 yield assertStatusException(result, expected)
                 end for
             }
@@ -269,12 +269,13 @@ class ServiceTest extends Test:
 
         "success" in run {
             val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = n - 2): Request))
-            val expected = Chunk.from((3 to 5).flatMap(n => Chunk.from((1 to (n - 2)).map(m => Echo(s"$n $m")))))
+            val expected  = Chunk.from((3 to 5).flatMap(n => Chunk.from((1 to (n - 2)).map(m => Echo(s"$n $m")))))
             val requests  = Stream(Emit.value(successes))
             for
                 client    <- createClientAndServer
                 responses <- client.manyToMany(requests).run
             yield assert(responses == expected)
+            end for
         }
 
         "fail" - {
@@ -283,7 +284,7 @@ class ServiceTest extends Test:
                     run {
                         val status    = code.toStatus
                         val fail      = Fail(status.getCode.value, outside = true)
-                        val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+                        val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
                         // TODO: Why no trailers here?
                         val expected = status.asException
@@ -291,7 +292,6 @@ class ServiceTest extends Test:
                             client   <- createClientAndServer
                             response <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
                         yield assertStatusException(response, expected)
-                        end for
                     }
                 }
             }
@@ -301,17 +301,18 @@ class ServiceTest extends Test:
                     run {
                         val status    = code.toStatus
                         val after     = 5
-                        val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
+                        val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail      = Fail(status.getCode.value, outside = true)
                         val requests  = Stream(Emit.value(successes.append(fail)))
                         // TODO: Why no trailers here?
                         val expected = status.asException
                         for
                             client <- createClientAndServer
-                            // Unlike the other tests, we cannot predict exactly when the stream will fail because it
-                            // depends on how many requests the client has sent before the server replies.
-                            failedResponse <- Abort.run[StatusException](client.manyToMany(requests).run)
-                        yield assertStatusException(failedResponse, expected)
+                            (responses, tail) <- client.manyToMany(requests).splitAt(5)
+                            failedResponse    <- Abort.run[StatusException](tail.run)
+                        yield
+                            assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
+                            assertStatusException(failedResponse, expected)
                         end for
                     }
                 }
@@ -322,7 +323,7 @@ class ServiceTest extends Test:
                     run {
                         val status    = code.toStatus
                         val fail      = Fail(status.getCode.value)
-                        val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
+                        val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
                         // TODO: Why no trailers here?
                         val expected = status.asException
@@ -334,22 +335,23 @@ class ServiceTest extends Test:
                 }
             }
 
-            // TODO: Finish the tests below.
-
             "after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
                         val status    = code.toStatus
-                        val after     = 5
-                        val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
-                        val fail      = Fail(status.getCode.value)
-                        val requests  = Stream(Emit.value(successes.append(fail)))
+                        val after = 5
+                        val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
+                        val fail = Fail(status.getCode.value)
+                        val requests = Stream(Emit.value(successes.append(fail)))
                         // TODO: Why no trailers here?
                         val expected = status.asException
                         for
                             client <- createClientAndServer
-                            result <- Abort.run[StatusException](client.manyToOne(requests))
-                        yield assertStatusException(result, expected)
+                            (responses, tail) <- client.manyToMany(requests).splitAt(5)
+                            failedResponse <- Abort.run[StatusException](tail.run)
+                        yield
+                            assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
+                            assertStatusException(failedResponse, expected)
                         end for
                     }
                 }
@@ -357,36 +359,73 @@ class ServiceTest extends Test:
         }
 
         "panic" - {
-            "first element" in run {
-                val message   = "Oh no!"
-                val panic     = Panic(message)
-                val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
-                val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
-                val expected  = Status.INTERNAL.withDescription(message).asException
-                for
-                    client <- createClientAndServer
-                    result <- Abort.run[StatusException](client.manyToOne(requests))
-                yield assertStatusException(result, expected)
-                end for
+            "producing stream on first element" in {
+                run {
+                    val message   = "Oh no!"
+                    val panic     = Panic(message)
+                    val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
+                    val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
+                    val expected = Status.INTERNAL.withDescription(message).asException
+                    for
+                        client   <- createClientAndServer
+                        response <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
+                    yield assertStatusException(response, expected)
+                }
             }
 
-            "after some elements" in run {
-                val message   = "Oh no!"
-                val after     = 5
-                val panic     = Panic(message)
-                val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
-                val requests  = Stream(Emit.value(successes.append(panic)))
-                val expected  = Status.INTERNAL.withDescription(message).asException
-                for
-                    client <- createClientAndServer
-                    result <- Abort.run[StatusException](client.manyToOne(requests))
-                yield assertStatusException(result, expected)
-                end for
+            "producing stream after some elements" in {
+                run {
+                    val after     = 5
+                    val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
+                    val message   = "Oh no!"
+                    val panic     = Panic(message)
+                    val requests  = Stream(Emit.value(successes.append(panic)))
+                    val expected = Status.INTERNAL.withDescription(message).asException
+                    for
+                        client <- createClientAndServer
+                        (responses, tail) <- client.manyToMany(requests).splitAt(5)
+                        failedResponse    <- Abort.run[StatusException](tail.run)
+                    yield
+                        assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
+                        assertStatusException(failedResponse, expected)
+                    end for
+                }
+            }
+
+            "first element" in {
+                run {
+                    val message   = "Oh no!"
+                    val panic     = Panic(message)
+                    val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
+                    val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
+                    val expected = Status.INTERNAL.withDescription(message).asException
+                    for
+                        client <- createClientAndServer
+                        result <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
+                    yield assertStatusException(result, expected)
+                }
+            }
+
+            "after some elements" in {
+                run {
+                    val after = 5
+                    val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
+                    val message   = "Oh no!"
+                    val panic     = Panic(message)
+                    val requests = Stream(Emit.value(successes.append(panic)))
+                    val expected = Status.INTERNAL.withDescription(message).asException
+                    for
+                        client <- createClientAndServer
+                        (responses, tail) <- client.manyToMany(requests).splitAt(5)
+                        failedResponse <- Abort.run[StatusException](tail.run)
+                    yield
+                        assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
+                        assertStatusException(failedResponse, expected)
+                    end for
+                }
             }
         }
     }
-
-    // TODO: For client streaming test sending nothing.
 
     private given CanEqual[Response, Echo]           = CanEqual.derived
     private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
