@@ -12,6 +12,8 @@ import scala.util.NotGiven
   * produce a new stream `Stream[B, S & S2]`.
   *
   * @see
+  *   [[kyo.Pipe.transform]]
+  * @see
   *   [[kyo.Stream]], [[kyo.Sink]]
   *
   * @tparam A
