@@ -589,14 +589,14 @@ lazy val `kyo-grpc-core` =
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .settings(
-            libraryDependencies += "org.scalamock" %% "scalamock" % "7.3.0" % Test
+            libraryDependencies += "org.scalamock" %% "scalamock" % "7.3.1" % Test
         )
         .jvmSettings(
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
-                "io.grpc"               % "grpc-api"             % "1.64.0",
+                "io.grpc"               % "grpc-api"             % "1.72.0",
                 // It is a little unusual to include this here but it greatly reduces the amount of generated code.
-                "io.grpc" % "grpc-stub" % "1.64.0",
+                "io.grpc" % "grpc-stub" % "1.72.0",
                 "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
             )
         ).jsSettings(
@@ -662,14 +662,13 @@ lazy val `kyo-grpc-e2e` =
             Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
-                // TODO: Make this nicer. Like scalapb.zio_grpc.ZioCodeGenerator.
                 genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
             ),
             Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value
         ).jvmSettings(
             codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
             libraryDependencies ++= Seq(
-                "io.grpc" % "grpc-netty-shaded" % "1.64.0",
+                "io.grpc" % "grpc-netty-shaded" % "1.72.0",
                 "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
             )
         ).jsSettings(
