@@ -207,7 +207,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
                             Emit.valueWith(chunk2)(Loop.continue(cont(())))
             )
 
-    /** Prepend to another pipe producing a new pipe that performs both pipes' transformations in sequence.
+    /** Join to another pipe producing a new pipe that performs both pipes' transformations in sequence.
       *
       * @param pipe
       *   Pipe to prepend pipe to
@@ -218,7 +218,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
         Pipe:
             Poll.run(pollEmit)(pipe.pollEmit).unit
 
-    /** Prepend to a sink producing a new sink that transforms the stream prior to processing it.
+    /** Join to a sink producing a new sink that transforms the stream prior to processing it.
       *
       * @param sink
       *   Sink to prepend pipe to
@@ -251,6 +251,7 @@ object Pipe:
         new Pipe[A, B, S]:
             def pollEmit: Unit < (Poll[Chunk[A]] & Emit[Chunk[B]] & S) = v
 
+    /** A pipe that passes through the original stream without transforming it */
     def identity[A](using Tag[A], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop.foreach:
@@ -259,6 +260,11 @@ object Pipe:
                     case Present(c) =>
                         Emit.valueWith(c)(Loop.continue)
 
+    /** A pipe that transforms each element of a stream with a pure function.
+      *
+      * @param f
+      *   Pure function transforming stream elements
+      */
     def map[A, B](f: A => B)(
         using
         Tag[A],
@@ -273,6 +279,11 @@ object Pipe:
                     case Present(c) =>
                         Emit.valueWith(c.map(f))(Loop.continue)
 
+    /** A pipe that transforms each element of a stream with an effectful function.
+      *
+      * @param f
+      *   Effectful function transforming stream elements
+      */
     def map[A, B, S](f: A => B < S)(
         using
         Tag[A],
@@ -289,6 +300,11 @@ object Pipe:
                         Kyo.foreach(c)(f).map: c1 =>
                             Emit.valueWith(c1)(Loop.continue)
 
+    /** A pipe that transforms each chunk of a stream with a pure function.
+      *
+      * @param f
+      *   Pure function transforming stream chunks
+      */
     def mapChunk[A, B](f: Chunk[A] => Chunk[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
@@ -297,6 +313,11 @@ object Pipe:
                     case Present(c) =>
                         Emit.valueWith(f(c))(Loop.continue)
 
+    /** A pipe that transforms each chunk of a stream with an effectful function.
+      *
+      * @param f
+      *   Effectful function transforming stream chunks
+      */
     def mapChunk[A, B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
@@ -306,6 +327,11 @@ object Pipe:
                         f(c).map: c1 =>
                             Emit.valueWith(c1)(Loop.continue)
 
+    /** A pipe whose output stream completes after at most `n` elements.
+      *
+      * @param n
+      *   Maximum number of elements to stream
+      */
     def take[A](n: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop(n): i =>
@@ -317,6 +343,11 @@ object Pipe:
                             val c1 = c.take(i)
                             Emit.valueWith(c1)(Loop.continue(i - c1.size))
 
+    /** A pipe whose output stream skips the first `n` elements of the input stream.
+      *
+      * @param n
+      *   Number of elements to skip
+      */
     def drop[A](n: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop(n): i =>
@@ -330,6 +361,11 @@ object Pipe:
                             else
                                 Emit.valueWith(c1)(Loop.continue(0))
 
+    /** A pipe whose output continues only as long as the provided predicate returns true.
+      *
+      * @param f
+      *   Pure function determining whether to continue output stream based on input stream element
+      */
     def takeWhile[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop.foreach:
@@ -342,6 +378,11 @@ object Pipe:
                             Emit.valueWith(c1):
                                 if c1.size == c.size then Loop.continue else Loop.done
 
+    /** A pipe whose output continues only as long as the provided effectful predicate returns true.
+      *
+      * @param f
+      *   Effectful function determining whether to continue output stream based on input stream element
+      */
     def takeWhile[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
@@ -354,6 +395,11 @@ object Pipe:
                                 Emit.valueWith(c1):
                                     if c1.size == c.size then Loop.continue else Loop.done
 
+    /** A pipe whose output skips input elements as long as the provided predicate returns true.
+      *
+      * @param f
+      *   Pure function determining whether to continue skipping elements
+      */
     def dropWhile[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop(false): done =>
@@ -367,6 +413,11 @@ object Pipe:
                             if c1.isEmpty then Loop.continue(done)
                             else Emit.valueWith(c1)(Loop.continue(true))
 
+    /** A pipe whose output skips input elements as long as the provided effectful predicate returns true.
+      *
+      * @param f
+      *   Effectful function determining whether to continue skipping elements
+      */
     def dropWhile[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop(false): done =>
@@ -380,6 +431,11 @@ object Pipe:
                                 if c1.isEmpty then Loop.continue(done)
                                 else Emit.valueWith(c1)(Loop.continue(true))
 
+    /** A pipe whose output skips input elements that do not satisfy the provided predicate.
+      *
+      * @param f
+      *   Pure function determining whether to skip streaming element
+      */
     def filter[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop.foreach:
@@ -390,6 +446,11 @@ object Pipe:
                         if c1.isEmpty then Loop.continue
                         else Emit.valueWith(c1)(Loop.continue)
 
+    /** A pipe whose output skips input elements that do not satisfy the provided effectful predicate.
+      *
+      * @param f
+      *   Effectful function determining whether to skip streaming element
+      */
     def filter[A, S](f: A => Boolean < S)(using Tag[A], Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
@@ -400,6 +461,11 @@ object Pipe:
                             if c1.isEmpty then Loop.continue
                             else Emit.valueWith(c1)(Loop.continue)
 
+    /** A pipe that filters and transforms an input stream using a pure function.
+      *
+      * @param f
+      *   Pure function converting input elements to optional output elements
+      */
     def collect[A, B](f: A => Maybe[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
@@ -410,6 +476,11 @@ object Pipe:
                         if c1.isEmpty then Loop.continue
                         else Emit.valueWith(c1)(Loop.continue)
 
+    /** A pipe that filters and transforms an input stream using an effectful function.
+      *
+      * @param f
+      *   Effectful function converting input elements to optional output elements
+      */
     def collect[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
@@ -420,6 +491,12 @@ object Pipe:
                             if c1.isEmpty then Loop.continue
                             else Emit.valueWith(c1)(Loop.continue)
 
+    /** A pipe that transforms an input stream using a pure function, ending the stream when the first absent transformed element is
+      * returned.
+      *
+      * @param f
+      *   Pure function converting input elements to optional output elements
+      */
     def collectWhile[A, B](f: A => Maybe[B])(using Tag[A], Tag[B], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
@@ -436,6 +513,12 @@ object Pipe:
                                     else Loop.continue
                             end if
 
+    /** A pipe that transforms an input stream using an effectful function, ending the stream when the first absent transformed element is
+      * returned.
+      *
+      * @param f
+      *   Effectful function converting input elements to optional output elements
+      */
     def collectWhile[A, B, S](f: A => Maybe[B] < S)(using Tag[A], Tag[B], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
@@ -453,12 +536,12 @@ object Pipe:
                                         else Loop.continue
                                 end if
 
-    /** Emits only elements that are different from their predecessor.
+    /** A pipe whose output only emits elements that are different from their predecessor.
       */
     def changes[A](using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
         changes(Maybe.empty)
 
-    /** Emits only elements that are different from their predecessor, starting with the given first element.
+    /** A pipe whose output only emits elements that are different from their predecessor, starting with the given first element.
       *
       * @param first
       *   The initial element to compare against
@@ -466,7 +549,7 @@ object Pipe:
     def changes[A](first: A)(using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
         changes(Maybe(first))
 
-    /** Emits only elements that are different from their predecessor, starting with the given optional first element.
+    /** A pipe whose output only emits elements that are different from their predecessor, starting with the given optional first element.
       *
       * @param first
       *   The optional initial element to compare against
@@ -483,17 +566,18 @@ object Pipe:
                         Emit.valueWith(c1)(Loop.continue(newState))
     end changes
 
-    /** Transforms the stream by regrouping elements into chunks of the specified size.
+    /** A pipe that regroups elements from the input stream into chunks of the specified size.
       *
       * This operation maintains the order of elements while potentially redistributing them into new chunks. Smaller chunks may occur in
       * two cases:
       *   - When there aren't enough remaining elements to form a complete chunk
       *   - When the input stream emits an empty chunk
       *
+      * @see
+      *   [[kyo.Stream.rechunk]]
+      *
       * @param chunkSize
       *   The target size for each chunk. Must be positive - negative values will be treated as 1.
-      * @return
-      *   A new stream with elements regrouped into chunks of the specified size
       */
     def rechunk[A](chunkSize: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
         Pipe:
