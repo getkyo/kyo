@@ -9,9 +9,7 @@ import kgrpc.test.*
 import kyo.*
 import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
-import org.scalatest.EitherValues.*
 import org.scalatest.Inspectors.*
-import scala.jdk.CollectionConverters.*
 import scala.util.chaining.scalaUtilChainingOps
 
 class ServiceTest extends Test:
