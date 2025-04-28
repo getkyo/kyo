@@ -101,7 +101,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         using
         tagV: Tag[Emit[Chunk[V]]],
         tagV2: Tag[Emit[Chunk[V2]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
@@ -287,7 +287,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       */
     def takeWhile(f: V => Boolean)(using
         tag: Tag[Emit[Chunk[V]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V, S] =
         Stream(
@@ -365,7 +365,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
             )
         )
 
-    def filter(f: V => Boolean)(using tag: Tag[Emit[Chunk[V]]], discr: Stream.Dummy, frame: Frame): Stream[V, S] =
+    def filter(f: V => Boolean)(using tag: Tag[Emit[Chunk[V]]], discr: Discriminator, frame: Frame): Stream[V, S] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -402,7 +402,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
     def collect[V2](f: V => Maybe[V2])(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
@@ -448,7 +448,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
     def collectWhile[V2](f: V => Maybe[V2])(using
         tag: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Stream.Dummy,
+        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
@@ -659,6 +659,19 @@ sealed abstract class Stream[V, -S] extends Serializable:
                 end match
         )
     end splitAt
+
+    /** Process with a [[Sink]] of corresponding streaming element type.
+      *
+      * @see
+      *   [[kyo.Sink.consume]]
+      *
+      * @param sink
+      *   Sink to process stream with
+      * @return
+      *   An effect producing a value of sink's output type `A`
+      */
+    def into[A, S2](sink: Sink[V, A, S2])(using Tag[V], Frame): A < (S & S2) =
+        sink.drain(this)
 end Stream
 
 object Stream:
@@ -755,11 +768,5 @@ object Stream:
                         end if
                     }
                 }
-
-    /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
-      */
-    sealed class Dummy extends Serializable
-    object Dummy:
-        given Dummy = new Dummy {}
 
 end Stream
