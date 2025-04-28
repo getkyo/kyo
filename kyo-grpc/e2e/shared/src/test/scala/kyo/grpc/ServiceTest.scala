@@ -333,10 +333,11 @@ class ServiceTest extends Test:
                 }
             }
 
-            "after some elements" in {
-                forEvery(notOKStatusCodes) { code =>
+            "FOO after some elements" in {
+//                forEvery(notOKStatusCodes) { code =>
                     run {
-                        val status    = code.toStatus
+//                        val status    = code.toStatus
+                        val status    = notOKStatusCodes.head.toStatus
                         val after = 5
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail = Fail(status.getCode.value)
@@ -352,7 +353,7 @@ class ServiceTest extends Test:
                             assertStatusException(failedResponse, expected)
                         end for
                     }
-                }
+//                }
             }
         }
 

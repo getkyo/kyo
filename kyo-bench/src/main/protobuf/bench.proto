@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+// Don't use kyo here because otherwise it cannot derive the Frame.
+package kgrpc;
+
+service TestService {
+  rpc OneToOne(Request) returns (Response);
+  rpc OneToMany(Request) returns (stream Response);
+  rpc ManyToOne(stream Request) returns (Response);
+  rpc ManyToMany(stream Request) returns (stream Response);
+}
+
+message Request {
+  string message = 1;
+}
+
+message Response {
+  string message = 1;
+}

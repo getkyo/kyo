@@ -2,7 +2,7 @@ package kyo.bench.arena
 
 import io.grpc.Grpc
 import io.grpc.Metadata
-import kgrpc.helloworld.testservice.*
+import kgrpc.*
 import kyo.*
 import kyo.bench.arena.GrpcService.*
 import kyo.grpc.GrpcRequest
@@ -15,7 +15,7 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
         import cats.effect.*
         createCatsServer.use: _ =>
             createCatsClient.use: client =>
-                client.sayHello(request, Metadata())
+                client.oneToOne(request, Metadata())
     end catsBench
 
     override def kyoBenchFiber() =
@@ -25,7 +25,7 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
                 for
                     _      <- createKyoServer
                     client <- createKyoClient
-                yield client.sayHello(request)
+                yield client.oneToOne(request)
             ).map(_.getOrThrow)
 
     override def zioBench() =
@@ -34,7 +34,7 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
                 for
                     _      <- createZioServer
                     client <- createZioClient
-                    reply  <- client.sayHello(request)
+                    reply  <- client.oneToOne(request)
                 yield reply
             run.orDie
 

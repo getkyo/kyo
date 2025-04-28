@@ -6,16 +6,16 @@ import fs2.grpc.syntax.all.*
 import io.grpc
 import io.grpc.*
 import io.grpc.netty.shaded.io.grpc.netty.*
-import kgrpc.helloworld.testservice.*
+import kgrpc.bench.*
 import kyo.*
+import kyo.grpc.*
+
 import scala.language.implicitConversions
 import scalapb.zio_grpc
 import scalapb.zio_grpc.ScopedServer
 import scalapb.zio_grpc.ServerLayer
 import scalapb.zio_grpc.ZManagedChannel
-import zio.Scope
-import zio.ZIO
-import zio.ZLayer
+import zio.{Scope, ZIO, ZLayer, stream}
 
 object GrpcService:
 
@@ -25,13 +25,13 @@ object GrpcService:
     val port = 50051
     val size = 100000L
 
-    val message: Some[Hello]  = Some(Hello("Alice"))
-    val request: HelloRequest = HelloRequest(message)
-    val reply: HelloReply     = HelloReply(message)
+    val message: String  = "Hello"
+    val request: Request = Request(message)
+    val reply: Response  = Response(message)
 
     lazy val createCatsServer: cats.effect.Resource[cats.effect.IO, Server] =
-        GreeterFs2Grpc
-            .bindServiceResource[cats.effect.IO](new CatsGreeterImpl(size))
+        TestServiceFs2Grpc
+            .bindServiceResource[cats.effect.IO](new CatsTestServiceImpl(size))
             .flatMap: service =>
                 NettyServerBuilder
                     .forPort(port)
@@ -39,53 +39,66 @@ object GrpcService:
                     .resource[cats.effect.IO]
                     .evalMap(server => cats.effect.IO(server.start()))
 
-    lazy val createCatsClient: cats.effect.Resource[cats.effect.IO, GreeterFs2Grpc[cats.effect.IO, Metadata]] =
+    lazy val createCatsClient: cats.effect.Resource[cats.effect.IO, TestServiceFs2Grpc[cats.effect.IO, Metadata]] =
         NettyChannelBuilder
             .forAddress(host, port)
             .usePlaintext()
             .resource[cats.effect.IO]
-            .flatMap(GreeterFs2Grpc.stubResource[cats.effect.IO](_))
+            .flatMap(TestServiceFs2Grpc.stubResource[cats.effect.IO](_))
 
     lazy val createKyoServer: grpc.Server < (Resource & IO) =
-        kyo.grpc.Server.start(port)(_.addService(KyoGreeterImpl(size)))
+        kyo.grpc.Server.start(port)(_.addService(KyoTestServiceImpl(size)))
 
-    lazy val createKyoClient: Greeter.Client < (Resource & IO) =
-        kyo.grpc.Client.channel(host, port)(_.usePlaintext()).map(Greeter.client(_))
+    lazy val createKyoClient: TestService.Client < (Resource & IO) =
+        kyo.grpc.Client.channel(host, port)(_.usePlaintext()).map(TestService.client(_))
 
     lazy val createZioServer: ZIO[Scope, Throwable, zio_grpc.Server] =
-        ScopedServer.fromService(ServerBuilder.forPort(port), new ZIOGreeterImpl(size))
+        ScopedServer.fromService(ServerBuilder.forPort(port), new ZIOTestServiceImpl(size))
 
-    lazy val createZioClient: ZIO[Scope, Throwable, ZioTestservice.GreeterClient] =
+    lazy val createZioClient: ZIO[Scope, Throwable, ZioBench.TestServiceClient] =
         val channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext()
-        ZioTestservice.GreeterClient.scoped(ZManagedChannel(channel))
+        ZioBench.TestServiceClient.scoped(ZManagedChannel(channel))
 
 end GrpcService
 
-class CatsGreeterImpl(size: Long) extends GreeterFs2Grpc[cats.effect.IO, Metadata]:
+class CatsTestServiceImpl(size: Long) extends TestServiceFs2Grpc[cats.effect.IO, Metadata]:
 
     import cats.effect.*
 
-    def sayHello(request: kgrpc.helloworld.testservice.HelloRequest, ctx: Metadata): IO[HelloReply] =
-        IO.pure(HelloReply(request.request))
+    override def oneToOne(request: kgrpc.bench.Request, ctx: Metadata): IO[Response] =
+        IO.pure(Response(request.message))
 
-    //    def sayHelloStreaming(request: HelloRequest): ZStream[Any, StatusException, HelloReply] =
-    //        ZStream.repeat(HelloReply(request.request)).take(size)
+    override def oneToMany(request: Request, ctx: Metadata): fs2.Stream[IO, Response] = ???
 
-end CatsGreeterImpl
+    override def manyToOne(request: fs2.Stream[IO, Request], ctx: Metadata): IO[Response] = ???
 
-class KyoGreeterImpl(size: Long) extends Greeter:
+    override def manyToMany(request: fs2.Stream[IO, Request], ctx: Metadata): fs2.Stream[IO, Response] = ???
 
-    override def sayHello(request: HelloRequest): HelloReply < Any =
-        HelloReply(request.request)
+end CatsTestServiceImpl
 
-end KyoGreeterImpl
+class KyoTestServiceImpl(size: Long) extends TestService:
 
-class ZIOGreeterImpl(size: Long) extends ZioTestservice.Greeter:
+    override def oneToOne(request: Request): Response < Any =
+        Response(request.message)
 
-    def sayHello(request: HelloRequest): ZIO[Any, StatusException, HelloReply] =
-        ZIO.succeed(HelloReply(request.request))
+    override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse = ???
 
-    //    def sayHelloStreaming(request: HelloRequest): ZStream[Any, StatusException, HelloReply] =
-    //        ZStream.repeat(HelloReply(request.request)).take(size)
+    override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse = ???
 
-end ZIOGreeterImpl
+    override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse = ???
+
+end KyoTestServiceImpl
+
+class ZIOTestServiceImpl(size: Long) extends ZioBench.TestService:
+
+    override def oneToOne(request: Request): ZIO[Any, StatusException, Response] =
+        ZIO.succeed(Response(request.message))
+
+    override def oneToMany(request: Request): stream.Stream[StatusException, Response] =
+        stream.ZStream.repeat(Response(request.message)).take(size)
+
+    override def manyToOne(request: stream.Stream[StatusException, Request]): zio.IO[StatusException, Response] = ???
+
+    override def manyToMany(request: stream.Stream[StatusException, Request]): stream.Stream[StatusException, Response] = ???
+
+end ZIOTestServiceImpl
