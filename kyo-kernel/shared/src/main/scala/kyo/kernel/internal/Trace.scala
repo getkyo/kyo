@@ -22,7 +22,23 @@ import scala.util.control.NoStackTrace
 final private[kyo] class Trace(
     private[kernel] val frames: Array[Frame],
     private[kernel] var index: Int
-) extends Serializable
+) extends Serializable:
+
+    def dump: IArray[Frame] =
+        val size   = if index < maxTraceFrames then index else maxTraceFrames
+        val result = new Array[Frame](size)
+        if index <= maxTraceFrames then
+            System.arraycopy(frames, 0, result, 0, size)
+        else
+            val start           = index & (maxTraceFrames - 1)
+            val firstPartLength = maxTraceFrames - start
+            System.arraycopy(frames, start, result, 0, firstPartLength)
+            System.arraycopy(frames, 0, result, firstPartLength, start)
+        end if
+
+        IArray.unsafeFromArray(result)
+    end dump
+end Trace
 
 private[kyo] object Trace:
 

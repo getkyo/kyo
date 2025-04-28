@@ -10,7 +10,7 @@ import scala.util.control.NonFatal
 
 sealed private[kyo] class IOTask[Ctx, E, A] private (
     private var curr: A < (Ctx & Async & Abort[E]),
-    private var trace: Trace,
+    private[kyo] var trace: Trace,
     private var finalizers: Finalizers
 ) extends IOPromise[E, A] with Task:
 

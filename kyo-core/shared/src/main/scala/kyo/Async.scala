@@ -198,7 +198,7 @@ object Async:
                     Clock.use { clock =>
                         IO.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
-                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout()))))
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(task.unsafe.dumpTrace())))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                             isolate.restore(task.get)
                         }

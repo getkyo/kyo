@@ -276,6 +276,21 @@ object Fiber extends FiberPlatformSpecific:
           */
         def poll(using Frame): Maybe[Result[E, A]] < IO = IO.Unsafe(Unsafe.poll(self)())
 
+        /** Attempts to retrieve the execution trace of this Fiber.
+          *
+          * This method returns the current execution trace of the Fiber if available. It's primarily intended for diagnostic purposes such
+          * as identifying where a Fiber is blocked when timing out.
+          *
+          * Note: This method intentionally omits memory barriers for performance reasons. The returned trace may be inconsistent if the
+          * Fiber is actively executing. However, for the common case of inspecting Fibers parked on async operations, the trace will
+          * typically be synchronized in main memory and provide accurate information.
+          *
+          * @return
+          *   A Maybe containing the execution trace as an IArray of Frames, or Absent if the trace is not available (if it's a Promise or
+          *   if the Fiber has been finalized)
+          */
+        def dumpTrace(using Frame): Maybe[IArray[Frame]] < IO = IO.Unsafe(Unsafe.dumpTrace(self)())
+
     end extension
 
     case class Interrupted(at: Frame)
@@ -575,6 +590,12 @@ object Fiber extends FiberPlatformSpecific:
             def waiters()(using AllowUnsafe): Int = lower.waiters()
 
             def poll()(using AllowUnsafe): Maybe[Result[E, A]] = lower.poll()
+
+            def dumpTrace()(using a: AllowUnsafe): Maybe[IArray[Frame]] =
+                lower match
+                    case task: IOTask[?, ?, ?] => 
+                        Maybe(task.trace).map(_.dump)
+                    case _                     => Absent
         end extension
     end Unsafe
 
