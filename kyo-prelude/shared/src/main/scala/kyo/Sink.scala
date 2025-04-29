@@ -8,9 +8,11 @@ import scala.annotation.targetName
 
 /** Processes a stream of type `V`, producing a value of type `A`.
   *
-  * `Sink` provides a composable abstraction for processing `Stream` s. A `Sink[V, A, S]` can process a stream of type `Stream[V, S2]` to
-  * produce a value of type `A` using effects `S & S2`.
+  * `Sink` provides a composable abstraction for processing `Stream` s. A `Sink[V, A, S]` can evaluate a stream of type `Stream[V, S2]`,
+  * producing a value of type `A` using effects `S & S2`.
   *
+  * @see
+  *   [[kyo.Sink.drain]]
   * @see
   *   [[kyo.Stream]] [[kyo.Pipe]]
   *
