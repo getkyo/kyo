@@ -531,6 +531,15 @@ object StreamCoreExtensions:
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
 
+        /** Collects values that are emitted within the same duration [[maxTime]] or reach the amount [[maxSize]] and emits them as a chunk.
+          *
+          * @param maxSize
+          *   Maximum number of elements to be collected within a single duration
+          * @param maxTime
+          *   Maximum amount of time to collect elements to emit in chunk
+          * @return
+          *   A new stream that emits collected chunks of elements
+          */
         def groupedWithin(maxSize: Int, maxTime: Duration)(using
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[V],
