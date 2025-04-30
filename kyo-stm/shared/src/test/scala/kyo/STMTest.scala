@@ -84,6 +84,63 @@ class STMTest extends Test:
                 count <- counter.get
             yield assert(result.isFailure && count == 4)
         }
+
+        "arbitrary failure is retried if the transaction is inconsistent" - {
+
+            "within retry budget" in run {
+                for
+                    ref      <- TRef.init(0)
+                    latch1   <- Latch.init(1)
+                    latch2   <- Latch.init(1)
+                    attempts <- AtomicInt.init
+                    _ <-
+                        Async.run {
+                            STM.run(latch1.release.andThen(ref.set(42)))
+                                .andThen(latch2.release)
+                        }
+                    v <-
+                        STM.run {
+                            for
+                                _ <- attempts.incrementAndGet
+                                _ <- latch1.await
+                                _ <- ref.get
+                                _ <- latch2.await
+                                v <- ref.get
+                                _ <- Abort.when(v == 0)(new Exception)
+                            yield v
+                        }
+                    a <- attempts.get
+                yield assert(v == 42 && a == 2)
+            }
+        }
+
+        "exceeding retry budget" in run {
+            for
+                ref      <- TRef.init(0)
+                latch1   <- Latch.init(1)
+                latch2   <- Latch.init(1)
+                attempts <- AtomicInt.init
+                _ <-
+                    Async.run {
+                        STM.run(latch1.release.andThen(ref.set(42)))
+                            .andThen(latch2.release)
+                    }
+                v <-
+                    Abort.run {
+                        STM.run(Schedule.never) {
+                            for
+                                _ <- attempts.incrementAndGet
+                                _ <- latch1.await
+                                _ <- ref.get
+                                _ <- latch2.await
+                                v <- ref.get
+                                _ <- Abort.when(v == 0)(new Exception)
+                            yield v
+                        }
+                    }
+                a <- attempts.get
+            yield assert(v.isFailure && a == 1)
+        }
     }
 
     "with isolates" - {
