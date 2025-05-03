@@ -1095,6 +1095,19 @@ class TagTest extends Test:
         }
     }
 
+    "subtype and supertype with different type argument (bug #551)" - {
+        class Super[A]
+        class Sub[A] extends Super[String]
+        test[Sub[Int], Super[String]]
+    }
+
+    "intersection subtype 3 (bug #552)" in {
+        trait A
+        trait B
+        class C extends A with B
+        assert(Tag[C] <:< Tag[A & B])
+    }
+
     // TODO: fix this to use `pendingUntilFixed` instead of `ignore`
     given RegisterFunction = (name, test, pending) =>
         if pending then name ignore Future.successful(test)
