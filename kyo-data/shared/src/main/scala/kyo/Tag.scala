@@ -390,12 +390,12 @@ object Tag:
           *   - The sign of the stored long indicates the result: positive for true, negative for false
           *   - Zero indicates an unused cache entry
           *
-          * Thread-specific cache arrays minimize contention while maintaining good performance. Each thread gets its own cache segment
-          * based on its hash code.
+          * Thread-specific cache arrays minimize contention while maintaining good performance. Each thread gets a specific cache slot
+          * based on its hash code but multiple threads may conflict on the same slot.
           *
-          * The implementation prioritizes speed over perfect cache accuracy. Cache collisions may occur but only affect performance, not
-          * correctness. The cache deliberately avoids synchronization mechanisms, as any race conditions would only result in redundant
-          * calculations rather than incorrect results.
+          * The implementation prioritizes speed over perfect cache accuracy. Threads collinding in the same cache slot may occur but only
+          * affect performance, not correctness. The cache deliberately avoids synchronization mechanisms, as any race conditions would only
+          * result in redundant calculations rather than incorrect results.
           *
           * @param a
           *   The potential subtype
