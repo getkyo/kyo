@@ -251,12 +251,12 @@ end STM
 
 /** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
   */
-class FailedTransaction(error: Maybe[Result.Error[?]] = Absent)(using Frame)
+final class FailedTransaction(error: Maybe[Result.Error[?]] = Absent)(using Frame)
     extends KyoException(
         s"STM transaction failed!",
         error.fold("") {
             _.failureOrPanic match
                 case ex: Throwable => ex
-                case _             => s"Error: ${error.show}"
+                case _             => error.show
         }
     )
