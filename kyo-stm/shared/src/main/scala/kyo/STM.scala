@@ -163,9 +163,9 @@ object STM:
                     var i = 0
                     // Pre-validate and dump the log to the flat array
                     logMap.foreachEntry { (ref, entry) =>
-                        // This code uses exception throwing because
+                        // This code uses `boundary`/`break` because
                         // foreachEntry is the only way to traverse the
-                        // map without allocating tuples, so throwing
+                        // map without allocating tuples, so throwing via `break`
                         // is the workaround to short circuit
                         if !ref.validate(entry) then boundary.break(false)
                         array(i) = ref
