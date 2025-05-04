@@ -366,7 +366,7 @@ object Tag:
           * @tparam A
           *   The Scala type represented by this recursive reference
           */
-        case class Recursive[A](id: String) extends Type[A]
+        final case class Recursive[A](id: String) extends Type[A]
 
     end Type
 
