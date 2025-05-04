@@ -419,11 +419,7 @@ object Tag:
                 false
             else
                 val res = isSubtype(a.tpe, b.tpe, ListMap.empty)
-                if !res then
-                    cache(idx) = -hash
-                else
-                    cache(idx) = hash
-                end if
+                cache(idx) = if res then hash else -hash
                 res
             end if
         end isSubtype

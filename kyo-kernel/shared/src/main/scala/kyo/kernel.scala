@@ -28,19 +28,10 @@ type Id[A] = A
   */
 type Const[A] = [B] =>> A
 
-private[kyo] object bug:
-
-    case class KyoBugException(msg: String) extends Exception(msg)
-
-    def failTag[A, B, S](
+extension (self: kyo.bug.type)
+    private[kyo] def failTag[A, B, S](
         kyo: A < S,
         expected: Tag[B]
     ): Nothing =
-        bug(s"Unexpected pending effect while handling ${expected.show}: " + kyo)
-
-    def check(cond: Boolean): Unit =
-        if !cond then throw new KyoBugException("Required condition is false.")
-
-    def apply(msg: String): Nothing =
-        throw KyoBugException(msg + " Please open an issue 🥹  https://github.com/getkyo/kyo/issues")
-end bug
+        self(s"Unexpected pending effect while handling ${expected.show}: " + kyo)
+end extension

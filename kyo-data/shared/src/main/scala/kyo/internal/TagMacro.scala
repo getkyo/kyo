@@ -62,8 +62,7 @@ private[kyo] object TagMacro:
                                 end if
                             }
                         val params = baseTpe.typeArgs.map(deriveStatic(_, newSeen))
-                        if params.size != variances.size then
-                            report.errorAndAbort("BUG: Tag derivation failed! params.size != variances.size")
+                        bug.checkMacro(params.size == variances.size, "Tag derivation failed! params.size != variances.size")
                         ClassType.Base(base.fullName, Chunk.from(variances).toIndexed, Chunk.from(params).toIndexed)
                     }
                 ClassType(tpe.typeSymbol.fullName.hashCode().toString(), Chunk.from(bases).toIndexed)
@@ -119,7 +118,7 @@ private[kyo] object TagMacro:
                                 end if
                             }
                         val params = baseTpe.typeArgs.map(deriveDynamic(_, newSeen))
-                        require(params.size == variances.size)
+                        bug.checkMacro(params.size == variances.size, "Tag derivation failed! params.size != variances.size")
                         '{
                             ClassType.Base(
                                 ${ Expr(base.fullName) },
@@ -141,11 +140,4 @@ private[kyo] object TagMacro:
                             case _          => throw MissingTag(tpe.show)
         end match
     end deriveDynamic
-
-    private def failMissing(using Quotes)(missing: quotes.reflect.TypeRepr) =
-        import quotes.reflect.*
-        report.errorAndAbort(
-            report.errorAndAbort(s"Please provide an implicit kyo.Tag[${missing.show}] parameter.")
-        )
-    end failMissing
 end TagMacro
