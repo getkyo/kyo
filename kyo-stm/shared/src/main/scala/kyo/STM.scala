@@ -2,10 +2,7 @@ package kyo
 
 import kyo.Result.Failure
 import scala.annotation.tailrec
-
-/** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
-  */
-class FailedTransaction()(using Frame) extends KyoException
+import scala.util.boundary
 
 /** Software Transactional Memory (STM) provides concurrent access to shared state using optimistic locking. Rather than acquiring locks
   * upfront, transactions execute speculatively and automatically retry if conflicts are detected during commit. While this enables better
@@ -70,7 +67,7 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A, S](
+    def run[E: SafeClassTag, A, S](
         using Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
     )(v: A < (STM & Abort[E] & Async & S))(using frame: Frame): A < (S & Async & Abort[E | FailedTransaction]) =
         run(defaultRetrySchedule)(v)
@@ -84,7 +81,7 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A, S](
+    def run[E: SafeClassTag, A, S](
         using isolate: Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
     )(retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async & S))(
         using frame: Frame
@@ -93,100 +90,38 @@ object STM:
             isolate.restore(run(retrySchedule)(isolate.isolate(st, v)))
         }
 
-    private def run[E, A](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
+    private def run[E: SafeClassTag, A](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
         using Frame
     ): A < (Async & Abort[E | FailedTransaction]) =
         TID.useIO {
             case -1L =>
-                // New transaction without a parent, use regular commit flow
-                Retry[FailedTransaction](retrySchedule) {
-                    TID.useNew { tid =>
-                        Var.runWith(TRefLog.empty)(v) { (log, result) =>
-                            val logMap = log.toMap
-                            logMap.size match
-                                case 0 =>
-                                    // Nothing to commit
-                                    result
-                                case 1 =>
-                                    // Fast-path for a single ref
-                                    IO.Unsafe {
-                                        val (ref, entry) = logMap.head
-                                        // No need to pre-validate since `lock` validates and
-                                        // there's a single ref
-                                        if ref.lock(entry) then
-                                            ref.commit(tid, entry)
-                                            ref.unlock(entry)
-                                            result
-                                        else
-                                            Abort.fail(FailedTransaction())
-                                        end if
-                                    }
-                                case size =>
-                                    // Commit multiple refs
-                                    IO.Unsafe {
-                                        // Flattened representation of the log
-                                        val array = new Array[Any](size * 2)
-
-                                        try
-                                            def fail = throw new FailedTransaction()
-
-                                            var i = 0
-                                            // Pre-validate and dump the log to the flat array
-                                            logMap.foreachEntry { (ref, entry) =>
-                                                // This code uses exception throwing because
-                                                // foreachEntry is the only way to traverse the
-                                                // map without allocating tuples, so throwing
-                                                // is the workaround to short circuit
-                                                if !ref.validate(entry) then fail
-                                                array(i) = ref
-                                                array(i + 1) = entry
-                                                i += 2
-                                            }
-
-                                            // Sort references by identity to prevent deadlocks
-                                            quickSort(array, size)
-
-                                            // Convenience accessors to the flat log
-                                            inline def ref(idx: Int)   = array(idx * 2).asInstanceOf[TRef[Any]]
-                                            inline def entry(idx: Int) = array(idx * 2 + 1).asInstanceOf[TRefLog.Entry[Any]]
-
-                                            @tailrec def lock(idx: Int): Int =
-                                                if idx == size then size
-                                                else if !ref(idx).lock(entry(idx)) then idx
-                                                else lock(idx + 1)
-
-                                            @tailrec def unlock(idx: Int, upTo: Int): Unit =
-                                                if idx < upTo then
-                                                    ref(idx).unlock(entry(idx))
-                                                    unlock(idx + 1, upTo)
-
-                                            @tailrec def commit(idx: Int): Unit =
-                                                if idx < size then
-                                                    ref(idx).commit(tid, entry(idx))
-                                                    commit(idx + 1)
-
-                                            val acquired = lock(0)
-                                            if acquired != size then
-                                                // Failed to acquire some locks - rollback and retry
-                                                unlock(0, acquired)
-                                                fail
-                                            end if
-
-                                            // Successfully locked all references - commit changes
-                                            commit(0)
-
-                                            // Release all locks
-                                            unlock(0, size)
-                                            result
-                                        catch
-                                            case ex: FailedTransaction =>
-                                                Abort.fail(ex)
-                                        end try
-                                    }
-                            end match
+                TID.useNew { tid =>
+                    v.handle(
+                        Abort.recoverError[E] { error =>
+                            // Retry arbitrary E failures in case the transaction is inconsistent
+                            Var.use[TRefLog] { log =>
+                                IO.Unsafe {
+                                    if !commit(tid, log, probe = true) then
+                                        // The ref log shows inconsistency, retry the transaction
+                                        Abort.fail(FailedTransaction(Present(error)))
+                                    else
+                                        // No inconsistency detected, just propagate the error
+                                        Abort.error(error)
+                                }
+                            }
+                        },
+                        Var.runTuple(TRefLog.empty)
+                    ).map { (log, result) =>
+                        IO.Unsafe {
+                            if !commit(tid, log) then
+                                Abort.fail(FailedTransaction())
+                            else
+                                result
                         }
                     }
-                }
+                }.handle(
+                    Retry[FailedTransaction](retrySchedule)
+                )
             case parent =>
                 // Nested transaction inherits parent's transaction context but isolates RefLog.
                 // On success: changes propagate to parent. On failure: changes are rolled back
@@ -201,6 +136,81 @@ object STM:
         }
 
     end run
+
+    private def commit[A, S](tid: Long, log: TRefLog, probe: Boolean = false)(using AllowUnsafe): Boolean =
+        val logMap = log.toMap
+        logMap.size match
+            case 0 =>
+                // Nothing to commit
+                true
+            case 1 =>
+                // Fast-path for a single ref
+                val (ref, entry) = logMap.head
+                // No need to pre-validate since `lock` validates and
+                // there's a single ref
+                val ok = ref.lock(entry)
+                if ok then
+                    if !probe then ref.commit(tid, entry)
+                    ref.unlock(entry)
+                ok
+            case size =>
+                // Commit multiple refs
+                // Flattened representation of the log
+                val array = new Array[Any](size * 2)
+
+                boundary {
+
+                    var i = 0
+                    // Pre-validate and dump the log to the flat array
+                    logMap.foreachEntry { (ref, entry) =>
+                        // This code uses `boundary`/`break` because
+                        // foreachEntry is the only way to traverse the
+                        // map without allocating tuples, so throwing via `break`
+                        // is the workaround to short circuit
+                        if !ref.validate(entry) then boundary.break(false)
+                        array(i) = ref
+                        array(i + 1) = entry
+                        i += 2
+                    }
+
+                    // Sort references by identity to prevent deadlocks
+                    quickSort(array, size)
+
+                    // Convenience accessors to the flat log
+                    inline def ref(idx: Int)   = array(idx * 2).asInstanceOf[TRef[Any]]
+                    inline def entry(idx: Int) = array(idx * 2 + 1).asInstanceOf[TRefLog.Entry[Any]]
+
+                    @tailrec def lock(idx: Int): Int =
+                        if idx == size then size
+                        else if !ref(idx).lock(entry(idx)) then idx
+                        else lock(idx + 1)
+
+                    @tailrec def unlock(idx: Int, upTo: Int): Unit =
+                        if idx < upTo then
+                            ref(idx).unlock(entry(idx))
+                            unlock(idx + 1, upTo)
+
+                    @tailrec def commit(idx: Int): Unit =
+                        if idx < size then
+                            ref(idx).commit(tid, entry(idx))
+                            commit(idx + 1)
+
+                    val acquired = lock(0)
+                    if acquired != size then
+                        // Failed to acquire some locks - rollback and retry
+                        unlock(0, acquired)
+                        boundary.break(false)
+                    end if
+
+                    // Successfully locked all references - commit changes
+                    if !probe then commit(0)
+
+                    // Release all locks
+                    unlock(0, size)
+                    true
+                }
+        end match
+    end commit
 
     private def quickSort(array: Array[Any], size: Int): Unit =
         def swap(i: Int, j: Int): Unit =
@@ -238,3 +248,15 @@ object STM:
             loop(0, size - 1)
     end quickSort
 end STM
+
+/** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
+  */
+final class FailedTransaction(error: Maybe[Result.Error[?]] = Absent)(using Frame)
+    extends KyoException(
+        s"STM transaction failed!",
+        error.fold("") {
+            _.failureOrPanic match
+                case ex: Throwable => ex
+                case _             => error.show
+        }
+    )
