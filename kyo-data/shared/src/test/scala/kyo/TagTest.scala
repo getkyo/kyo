@@ -82,7 +82,6 @@ class TagTest extends Test:
 
         "invariant type parameter" - {
             class Test[A, +B]
-            println(1)
             test[Test[String, String], Test[String, Any]]
         }
 
