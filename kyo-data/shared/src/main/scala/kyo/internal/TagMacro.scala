@@ -16,7 +16,7 @@ private[kyo] object TagMacro:
             case DynamicTypeDetected(missing) =>
                 if !dynamic && FindEnclosing.isInternal then
                     report.errorAndAbort(
-                        s"Dynamic tags aren't allowed in the kyo pacakage for performance reasons. Static derivation failed for '$missing', please modify the method to take an implicit 'Tag[${TypeRepr.of[A].show}]'."
+                        s"Dynamic tags aren't allowed in the kyo package for performance reasons. Static derivation failed for '$missing', please modify the method to take an implicit 'Tag[${TypeRepr.of[A].show}]'."
                     )
                 end if
                 def tpe = deriveDynamic(TypeRepr.of[A], Set.empty)
