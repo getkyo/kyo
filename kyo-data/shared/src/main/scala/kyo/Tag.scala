@@ -8,6 +8,7 @@ import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
+import kyo.Maybe.internal.PresentAbsent.cache
 import kyo.internal.TagMacro
 import scala.annotation.tailrec
 import scala.collection.immutable.HashSet
@@ -376,8 +377,7 @@ object Tag:
 
         private val threadSlots  = Runtime.getRuntime().availableProcessors() * 8
         private val cacheEntries = 64
-        private val cacheSlots   = new Array[Array[Long]](threadSlots)
-        (0 until threadSlots).foreach(idx => cacheSlots(idx) = new Array(cacheEntries))
+        private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
 
         /** Determines if one type is a subtype of another, with caching for performance.
           *

@@ -62,7 +62,8 @@ private[kyo] object TagMacro:
                                 end if
                             }
                         val params = baseTpe.typeArgs.map(deriveStatic(_, newSeen))
-                        require(params.size == variances.size)
+                        if params.size != variances.size then
+                            report.errorAndAbort("BUG: Tag derivation failed! params.size != variances.size")
                         ClassType.Base(base.fullName, Chunk.from(variances).toIndexed, Chunk.from(params).toIndexed)
                     }
                 ClassType(tpe.typeSymbol.fullName.hashCode().toString(), Chunk.from(bases).toIndexed)
