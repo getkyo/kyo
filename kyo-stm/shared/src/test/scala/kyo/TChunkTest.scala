@@ -197,7 +197,7 @@ class TChunkTest extends Test:
                 snapshot.length == size &&
                     snapshot.toSet == (1 to size).toSet
             ))
-                .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.runAll, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -216,7 +216,7 @@ class TChunkTest extends Test:
                 snapshot.forall(_ % 2 == 0) &&
                     snapshot.length == size / 2
             ))
-                .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.runAll, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -240,7 +240,7 @@ class TChunkTest extends Test:
                 snapshot.length <= size / 2 &&
                     snapshot.toSet.subsetOf((1 to size).toSet)
             ))
-                .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.runAll, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
 
@@ -260,7 +260,7 @@ class TChunkTest extends Test:
                     snapshot.length == size &&
                     snapshot.toSet == (1 to size).toSet
             ))
-                .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                .handle(Choice.runAll, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
         }
     }

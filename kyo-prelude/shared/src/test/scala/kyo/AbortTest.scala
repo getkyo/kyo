@@ -1323,7 +1323,7 @@ class AbortTest extends Test:
                 }
             }
 
-            val results = Choice.run(Abort.run(combined.flatten)).eval
+            val results = Choice.runAll(Abort.run(combined.flatten)).eval
             assert(results.length == 2)
             assert(results(0) == Result.fail("odd: 1"))
             assert(results(1) == Result.succeed(20))

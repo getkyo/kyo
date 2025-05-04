@@ -133,7 +133,7 @@ class MeterTest extends Test:
                     assert(count == 100)
                     assert(permits == size)
                 )
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                    .handle(Choice.runAll, _.unit, Loop.repeat(repeats))
                     .andThen(succeed)
             }
 
@@ -160,7 +160,7 @@ class MeterTest extends Test:
                     assert(count <= 100)
                     assert(available.isFailure)
                 )
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                    .handle(Choice.runAll, _.unit, Loop.repeat(repeats))
                     .andThen(succeed)
             }
 
@@ -183,7 +183,7 @@ class MeterTest extends Test:
                     completed   <- Kyo.foreach(runFibers)(_.getResult)
                     count       <- counter.get
                 yield assert(interrupted.count(identity) + completed.count(_.isSuccess) == 100))
-                    .handle(Choice.run, _.unit, Loop.repeat(repeats))
+                    .handle(Choice.runAll, _.unit, Loop.repeat(repeats))
                     .andThen(succeed)
             }
         }

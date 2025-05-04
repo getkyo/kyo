@@ -4,7 +4,7 @@ class StreamCoreExtensionsTest extends Test:
 
     "factory" - {
         "collectAll" in run {
-            Choice.run {
+            Choice.runAll {
                 for
                     size <- Choice.get(Seq(0, 1, 32, 100))
                     s1     = Stream.init(0 to 99 by 3)
@@ -17,7 +17,7 @@ class StreamCoreExtensionsTest extends Test:
         }
 
         "collectAllHalting" in runNotJS {
-            Choice.run {
+            Choice.runAll {
                 for
                     size <- Choice.get(Seq(0, 1, 32, 1024))
                     s1     = Stream(Loop.forever(Emit.value(Chunk(100))))
@@ -49,7 +49,7 @@ class StreamCoreExtensionsTest extends Test:
     "combinator" - {
         "mergeHaltingLeft/Right" - {
             "should halt if non-halting side completes" in run {
-                Choice.run {
+                Choice.runAll {
                     for
                         size <- Choice.get(Seq(0, 1, 32, 1024))
                         left <- Choice.get(Seq(true, false))
@@ -67,7 +67,7 @@ class StreamCoreExtensionsTest extends Test:
                 val s1 = Stream:
                     Async.sleep(10.millis).andThen((Kyo.foreachDiscard(s1Set.toSeq)(i => Emit.value(Chunk(i)))))
                 val s2 = Stream.init(s2Set.toSeq)
-                Choice.run {
+                Choice.runAll {
                     for
                         size <- Choice.get(Seq(0, 1, 32, 1024))
                         left <- Choice.get(Seq(true, false))
@@ -122,7 +122,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
 
             "should preserve order when first transformation is delayed" in run {
@@ -138,7 +138,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
         }
 
@@ -157,7 +157,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
 
             "should not preserve order when first transformation is delayed" in run {
@@ -174,7 +174,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
         }
 
@@ -193,7 +193,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
 
             "should preserve order when first transformation is delayed" in run {
@@ -210,7 +210,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
         }
 
@@ -229,7 +229,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
 
             "should not preserve order when first transformation is delayed" in run {
@@ -249,7 +249,7 @@ class StreamCoreExtensionsTest extends Test:
                     end for
                 end test
 
-                Choice.run(test).andThen(succeed)
+                Choice.runAll(test).andThen(succeed)
             }
         }
     }

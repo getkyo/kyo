@@ -533,7 +533,7 @@ object Parse:
       */
     def attempt[A, S](v: A < (Parse & S))(using Frame): Maybe[A] < (Parse & S) =
         Var.use[State] { start =>
-            Choice.run(v).map { r =>
+            Choice.runAll(v).map { r =>
                 result(r).map {
                     case Absent =>
                         Var.set(start).andThen(Maybe.empty)
@@ -571,7 +571,7 @@ object Parse:
       */
     def peek[A, S](v: A < (Parse & S))(using Frame): Maybe[A] < (Parse & S) =
         Var.use[State] { start =>
-            Choice.run(v).map { r =>
+            Choice.runAll(v).map { r =>
                 Var.set(start).andThen(result(r))
             }
         }
@@ -681,7 +681,7 @@ object Parse:
       *   Parsed result if successful
       */
     def run[A, S](input: Text)(v: A < (Parse & S))(using Frame): A < (S & Abort[ParseFailed]) =
-        Choice.run(Var.runTuple(State(input, 0))(v)).map {
+        Choice.runAll(Var.runTuple(State(input, 0))(v)).map {
             case Seq() =>
                 Parse.fail(Seq(State(input, 0)), "No valid parse results found")
             case Seq((state, value)) =>
@@ -724,7 +724,7 @@ object Parse:
                             // If no text to parse, request more input
                             text
                         else
-                            Choice.run(Var.runTuple(State(text, 0))(v)).map {
+                            Choice.runAll(Var.runTuple(State(text, 0))(v)).map {
                                 case Seq() =>
                                     // No valid parse found yet - keep current text and continue
                                     // collecting more input as the parse might succeed with additional text

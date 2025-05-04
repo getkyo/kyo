@@ -58,7 +58,7 @@ class DebugTest extends Test:
 
     def choiceComputation =
         Debug.trace {
-            Choice.run {
+            Choice.runAll {
                 for
                     x <- Choice.get(Seq(1, 2, 3))
                     y <- Choice.get(Seq(4, 5, 6))

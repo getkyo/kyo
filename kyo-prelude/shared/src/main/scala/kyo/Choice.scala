@@ -1,5 +1,6 @@
 package kyo
 
+import fansi.Str
 import kyo.Tag
 import kyo.kernel.*
 
@@ -72,18 +73,105 @@ object Choice:
     inline def drop(using inline frame: Frame): Nothing < Choice =
         ArrowEffect.suspend[Nothing](Tag[Choice], Seq.empty)
 
-    /** Handles the Choice effect by collecting all possible outcomes.
-      *
-      * @param v
-      *   The computation with Choice effect to handle
-      * @return
-      *   A computation that produces a sequence of all possible outcomes
-      */
-    def run[A, S](v: A < (Choice & S))(using Frame): Chunk[A] < S =
-        ArrowEffect.handle(Tag[Choice], v.map(Chunk[A](_))) {
-            [C] =>
-                (input, cont) =>
-                    Kyo.foreach(input)(v => Choice.run(cont(v))).map(_.flattenChunk.flattenChunk)
+    enum Strategy derives CanEqual:
+        case DepthFirst
+        case BreadthFirst
+
+        case Iterative(
+            maxDepth: Int = Int.MaxValue,
+            step: Int = 1,
+            minDepth: Int = 1
+        )
+    end Strategy
+
+    def runAll[A, S](v: A < (Choice & S))(using Frame): Chunk[A] < S =
+        runAll(Strategy.DepthFirst)(v)
+
+    def runAll[A, S](strategy: Strategy)(v: A < (Choice & S))(using Frame): Chunk[A] < S =
+        runMax(Int.MaxValue, strategy)(v)
+
+    def runMax[A, S](n: Int, strategy: Strategy = Strategy.DepthFirst)(v: A < (Choice & S))(using Frame): Chunk[A] < S =
+        runLoop[A, Chunk[A], S, Chunk[A]](Chunk.empty[A], strategy) { (acc, curr) =>
+            val r = acc.concat(curr)
+            if r.size >= n then
+                Loop.done(r.take(n))
+            else
+                Loop.continue(r)
+            end if
+        }(v)
+
+    def runFirst[A, S](v: A < (Choice & S))(using Frame): Maybe[A] < S =
+        runFirst(Strategy.DepthFirst)(v)
+
+    def runFirst[A, S](strategy: Strategy)(v: A < (Choice & S))(using Frame): Maybe[A] < S =
+        runMax(1, strategy)(v).map(_.headMaybe)
+
+    def runLoop[A, B, S, S2](f: Chunk[A] => Loop.Outcome[Unit, B] < S)(v: A < (Choice & S))(using Frame): B < S =
+        runLoop(Strategy.DepthFirst)(f)(v)
+
+    def runLoop[A, B, S, S2](strategy: Strategy)(f: Chunk[A] => Loop.Outcome[Unit, B] < S)(v: A < (Choice & S))(using Frame): B < S =
+        runLoop((), strategy)((_, v: Chunk[A]) => f(v))(v)
+
+    def runLoop[A, B, S, ST](
+        state: ST,
+        strategy: Strategy = Strategy.DepthFirst
+    )(handle: (ST, Chunk[A]) => Loop.Outcome[ST, B] < S, done: (ST, Chunk[A]) => B < S)(v: A < (Choice & S))(using Frame): B < S =
+        val x =
+            ArrowEffect.handleLoop(Tag[Choice], state, Chunk.empty[Chunk[A] < (Choice & S)], v.map(Chunk(_)))(
+                handle = [C] =>
+                    (input, state, pending, cont) =>
+                        if pending.isEmpty then 
+                            f(state, Chunk.empty).map {
+
+                            }
+                        else
+                            ???
+                        // strategy match
+                        //     case Strategy.BreadthFirst =>
+                        //         def loop(pending: Chunk[Chunk[A] < (Choice & S)]): Loop.Outcome[ST, B] < S =
+                        //             if pending.isEmpty then 
+                        //                 f(state, Chunk.empty)
+                        //             else
+                        //                 val done = pending.flatMap(_.evalNow).flattenChunk
+                        //                 if done.nonEmpty then
+                        //                     f(state, done)
+
+                        //         // Kyo.foreach(input) { v =>
+                        //         //     val res = cont(v)
+                        //         //     res.evalNow
+                        //         // }
+                        //         ???
+                        //     case Strategy.DepthFirst =>
+                        //         // Kyo.foreach(input)(v => Choice.runAll(cont(v))).map(_.flattenChunk.flattenChunk)
+                        //         ???
+                        //     case Strategy.Iterative(maxDepth, step, minDepth) =>
+                        //         ???
+                        // end match
+                ,
+                done = (state1, state2, a) => done(state1, a)
+            )
+        ???
+    end runLoop
+
+    def runStream[A, S](v: A < (Choice & S))(using Frame, Tag[Emit[Chunk[A]]]): Stream[A, S] =
+        runStream(Strategy.DepthFirst, 1)(v)
+
+    def runStream[A, S](strategy: Strategy = Strategy.DepthFirst, chunkSize: Int = 1)(v: A < (Choice & S))(
+        using
+        Frame,
+        Tag[Emit[Chunk[A]]]
+    ): Stream[A, S] =
+        require(chunkSize >= 1, "Chunk size must be equal or greater than 1")
+        Stream[A, S] {
+            runLoop(Chunk.empty[A], strategy) { (acc, curr: Chunk[A]) =>
+                val r = acc.concat(curr)
+                if r.size < chunkSize then
+                    Loop.continue(r)
+                else
+                    Emit.valueWith(r.take(chunkSize))(Loop.continue(r.drop(chunkSize)))
+                end if
+            }(v)
         }
+    end runStream
 
 end Choice

@@ -544,6 +544,45 @@ object ArrowEffect:
         handleLoopLoop(Loop.continue(state, v), Context.empty)
     end handleLoop
 
+    inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State1, State2](
+        inline effectTag: Tag[E],
+        state1: State1,
+        state2: State2,
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], State1, State2, Safepoint ?=> O[C] => A < (E & S)) => Loop.Outcome3[State1, State2, A < (E & S), B] < S2,
+        inline done: (State1, State2, A) => B < (S & S2)
+    )(
+        using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): B < (S & S2) =
+        @nowarn("msg=anonymous")
+        def handleLoopLoop(v: Loop.Outcome3[State1, State2, A < (E & S), B] < S2, context: Context)(using Safepoint): B < (S & S2) =
+            v match
+                case _: KyoSuspend[?, ?, ?, ?, ?, ?] =>
+                    v.map(handleLoopLoop(_, context))
+                case continue: Loop.Continue3[State1, State2, A < (E & S)] @unchecked =>
+                    val state1 = continue._1
+                    val state2 = continue._2
+                    continue._3 match
+                        case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag =:= kyo.tag =>
+                            handleLoopLoop(handle(kyo.input, state1, state2, kyo(_, context)), context)
+                        case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
+                            new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
+                                def frame = _frame
+                                def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                    handleLoopLoop(Loop.continue(state1, state2, kyo(v, context)), context)
+                            end new
+                        case kyo =>
+                            done(state1, state2, kyo.asInstanceOf[A])
+                    end match
+                case _ =>
+                    v.asInstanceOf[B < (S & S2)] // Loop.done
+        end handleLoopLoop
+        handleLoopLoop(Loop.continue(state1, state2, v), Context.empty)
+    end handleLoop
+
     private[kyo] inline def handleCatching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
         inline effectTag: Tag[E],
         inline v: => A < (E & S)

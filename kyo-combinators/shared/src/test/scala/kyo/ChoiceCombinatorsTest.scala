@@ -6,7 +6,7 @@ class ChoiceCombinatorTest extends Test:
         "construct" - {
             "should construct choice from a sequence" in {
                 val effect = Kyo.fromSeq(Seq(1, 2, 3))
-                assert(Choice.run(effect).eval == Seq(1, 2, 3))
+                assert(Choice.runAll(effect).eval == Seq(1, 2, 3))
             }
         }
 

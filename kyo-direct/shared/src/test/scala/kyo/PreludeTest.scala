@@ -198,7 +198,7 @@ class PreludeTest extends Test:
                     s"$x$y"
                 }
 
-            Choice.run(effect).map { results =>
+            Choice.runAll(effect).map { results =>
                 assert(results == Seq("1a", "1b", "2a", "2b", "3a", "3b"))
             }
         }
@@ -212,7 +212,7 @@ class PreludeTest extends Test:
                     else y.length
                 }
 
-            Choice.run(effect).map { result =>
+            Choice.runAll(effect).map { result =>
                 assert(result == Seq(2, 3, 2, 3, 2, 3))
             }
         }
@@ -225,7 +225,7 @@ class PreludeTest extends Test:
                     x
                 }
 
-            Choice.run(effect).map { results =>
+            Choice.runAll(effect).map { results =>
                 assert(results == Seq(1, 3))
             }
         }
@@ -370,7 +370,7 @@ class PreludeTest extends Test:
                 )
             }
 
-        Choice.run(v).map { result =>
+        Choice.runAll(v).map { result =>
             assert(result == Seq(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
         }
     }
@@ -391,7 +391,7 @@ class PreludeTest extends Test:
                 r
             }
 
-        Choice.run(v).map { result =>
+        Choice.runAll(v).map { result =>
             assert(result == Seq(3, 4, 1))
         }
     }
