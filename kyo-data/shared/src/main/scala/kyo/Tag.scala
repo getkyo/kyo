@@ -390,12 +390,20 @@ object Tag:
           *   - The sign of the stored long indicates the result: positive for true, negative for false
           *   - Zero indicates an unused cache entry
           *
-          * Thread-specific cache arrays minimize contention while maintaining good performance. Each thread gets a specific cache slot
-          * based on its hash code but multiple threads may conflict on the same slot.
+          * The implementation has two distinct types of potential collisions:
           *
-          * The implementation prioritizes speed over perfect cache accuracy. Threads collinding in the same cache slot may occur but only
-          * affect performance, not correctness. The cache deliberately avoids synchronization mechanisms, as any race conditions would only
-          * result in redundant calculations rather than incorrect results.
+          *   1. Thread slot collisions: Multiple threads may map to the same cache slot based on thread hash code. These collisions only
+          *      affect performance through cache thrashing, not correctness. The cache deliberately avoids synchronization mechanisms, as
+          *      any race conditions would only result in redundant calculations rather than incorrect results.
+          *   2. Type pair hash collisions: Different (tagA, tagB) pairs could theoretically generate the same 64-bit hash. The risk of
+          *      these true hash conflicts is extremely low due to:
+          *      - The large 63-bit effective hash space with over 9 quintillion possible values (1 bit reserved for the result flag)
+          *      - Effective xor-shift mixing that distributes bits throughout the hash
+          *      - The composite nature of the hash (requiring collisions in both subtype and supertype components)
+          *
+          * In the extremely rare case of a true hash collision between different type pairs, an incorrect cached result could be returned.
+          * However, the probability is negligible in practical applications, making this a reasonable tradeoff for the significant
+          * performance benefits of the caching system.
           *
           * @param a
           *   The potential subtype
