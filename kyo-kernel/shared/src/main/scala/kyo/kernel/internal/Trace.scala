@@ -33,9 +33,10 @@ private[kyo] object Trace:
         final private var index  = 0
 
         private[kernel] inline def pushFrame(frame: Frame): Unit =
-            val idx = this.index
-            frames(idx & (maxTraceFrames - 1)) = frame
-            this.index = idx + 1
+            if frame ne null then
+                val idx = this.index
+                frames(idx & (maxTraceFrames - 1)) = frame
+                this.index = idx + 1
         end pushFrame
 
         final private[kernel] def saveTrace(): Trace =
@@ -104,8 +105,12 @@ private[kyo] object Trace:
                     if idx < size then
                         val curr = frames((start + idx) & (maxTraceFrames - 1))
                         ordered(idx) = curr
-                        val snippetSize = curr.snippetShort.size
-                        parse(idx + 1, if snippetSize > maxSnippetSize then snippetSize else maxSnippetSize)
+                        if curr ne null then
+                            val snippetSize = curr.snippetShort.size
+                            parse(idx + 1, if snippetSize > maxSnippetSize then snippetSize else maxSnippetSize)
+                        else
+                            parse(idx + 1, maxSnippetSize)
+                        end if
                     else
                         maxSnippetSize + 1
                 val toPad = parse(0, 0)
@@ -115,7 +120,7 @@ private[kyo] object Trace:
                         case (acc, curr) =>
                             acc match
                                 case `curr` :: tail => acc
-                                case _              => curr :: acc
+                                case _              => if curr ne null then curr :: acc else acc
                     }.map { frame =>
                         StackTraceElement(
                             frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.className,
