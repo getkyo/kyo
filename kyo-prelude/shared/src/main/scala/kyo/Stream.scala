@@ -645,8 +645,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
                         Loop.continue(nextEmitFn(), nextChunk)
                     else
                         val (taken, rest) = nextChunk.splitAt(n)
-                        val restEmitFn    = () => Emit.valueWith(rest)(nextEmitFn())
-                        Loop.done(taken -> Stream(restEmitFn()))
+                        val restEmit      = if rest.isEmpty then nextEmitFn() else Emit.valueWith(rest)(nextEmitFn())
+                        Loop.done(taken -> Stream(restEmit))
                     end if
                 case (Absent, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[V])))
     end splitAt
@@ -773,7 +773,8 @@ object Stream:
       * @param chunkSize
       *   The target size for each chunk (must be positive)
       * @param f
-      *   A function that takes the current accumulator and returns Maybe of next value and accumulator
+      *   A function that takes the current accumulator and returns Maybe of next value and accumulator, where `Absent` will signal the end
+      *   of the stream.
       * @return
       *   A stream containing the unfolded values
       */
@@ -790,11 +791,5 @@ object Stream:
                     f(curAcc).map:
                         case Present(value -> nextAcc) => Loop.continue(curChunk.append(value), nextAcc)
                         case Absent                    => Emit.valueWith(curChunk)(Loop.done(()))
-
-    /** A dummy type that can be used as implicit evidence to help the compiler discriminate between overloaded methods.
-      */
-    sealed class Dummy extends Serializable
-    object Dummy:
-        given Dummy = new Dummy {}
 
 end Stream

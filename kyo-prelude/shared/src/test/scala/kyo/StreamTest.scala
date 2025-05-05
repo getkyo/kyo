@@ -46,12 +46,17 @@ class StreamTest extends Test:
         }
 
         "unfoldKyo" in {
-            val stream = Stream.unfoldKyo(0) {
-                case v: Int if v < 10 => Present(v -> (v + 1))
-                case _                => Absent
-            }
+            val stream = Stream.unfoldKyo(0): cur =>
+                for
+                    fromVar <- Var.get[Int]
+                    _       <- Var.update[Int](_ + cur)
+                yield
+                    if cur < 10 then
+                        Present(fromVar -> (cur + 1))
+                    else
+                        Absent
 
-            assert(stream.run.eval == Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+            assert(Var.run(1)(stream.run).eval == Seq(1, 1, 2, 4, 7, 11, 16, 22, 29, 37))
         }
     }
 
