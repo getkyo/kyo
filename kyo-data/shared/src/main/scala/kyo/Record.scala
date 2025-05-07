@@ -290,12 +290,6 @@ object Record:
     given [Fields, T](using TypeIntersection.Aux[Fields, T], CanEqual[T, T]): CanEqual[Record[Fields], Record[Fields]] =
         CanEqual.derived
 
-    inline given [Fields]: Tag[Record[Fields]] =
-        scala.compiletime.error(
-            "Cannot derive Tag for Record type. This commonly occurs when trying to nest Records, " +
-                "which is not currently supported by the Tag implementation."
-        )
-
     private object RenderInliner extends Inliner[(String, Render[?])]:
         inline def apply[T]: (String, Render[?]) =
             inline erasedValue[T] match

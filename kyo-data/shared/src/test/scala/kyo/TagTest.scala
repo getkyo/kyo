@@ -141,25 +141,49 @@ class TagTest extends Test:
         }
     }
 
-    opaque type Test  = String
-    opaque type Test1 = String
-    opaque type Test2 = Int
+    object OpaqueTypes:
+        opaque type Test  = String
+        opaque type Test1 = String
+        opaque type Test2 = Int
 
-    class Super
-    class Sub extends Super
-    opaque type OpaqueSub   = Sub
-    opaque type OpaqueSuper = Super
+        class Super
+        class Sub extends Super
+        opaque type OpaqueSub   = Sub
+        opaque type OpaqueSuper = Super
 
-    class Test3[+A]
-    opaque type OpaqueString = String
-    opaque type OpaqueAny    = Any
+        class Test3[+A]
+        opaque type OpaqueString = String
+        opaque type OpaqueAny    = Any
 
-    class TestContra[-A]
+        class TestContra[-A]
 
-    class TestNested[A]
-    opaque type OpaqueTest = TestNested[OpaqueString]
+        class TestNested[A]
+        opaque type OpaqueTest = TestNested[OpaqueString]
+
+        opaque type BoundedInt >: Int <: AnyVal       = Int
+        opaque type BoundedString >: String <: AnyRef = String
+
+        trait Animal
+        class Mammal extends Animal
+        class Cat    extends Mammal
+
+        opaque type BoundedCat >: Cat <: Animal = Mammal
+
+        opaque type UnionWithBounds >: Int <: Any = Int | String
+
+        trait Readable
+        trait Writable
+        class FileImpl extends Readable with Writable
+
+        opaque type IntersectionWithBounds >: FileImpl <: Readable = Readable & Writable
+
+        trait Graph[A]
+        trait Node extends Graph[Node]
+        opaque type GraphBounded >: Node <: Graph[Node] = Node
+    end OpaqueTypes
 
     "with opaque types" - {
+        import OpaqueTypes.*
         "equal opaque types" - {
             test[Test, Test]
         }
@@ -186,6 +210,36 @@ class TagTest extends Test:
 
         "nested opaque types" - {
             test[OpaqueTest, TestNested[String]]
+        }
+
+        "opaque types with explicit bounds" - {
+            test[BoundedInt, AnyVal]
+            test[Int, BoundedInt]
+            test[BoundedString, AnyRef]
+            test[String, BoundedString]
+        }
+
+        "opaque types with bounds different from underlying" - {
+            test[BoundedCat, Animal]
+            test[Cat, BoundedCat]
+            test[BoundedCat, Mammal]
+        }
+
+        "bounded opaque types with union underlying type" - {
+            test[UnionWithBounds, Any]
+            test[Int, UnionWithBounds]
+            test[String, UnionWithBounds]
+        }
+
+        "bounded opaque types with intersection underlying type" - {
+            test[IntersectionWithBounds, Readable]
+            test[FileImpl, IntersectionWithBounds]
+            test[IntersectionWithBounds, Writable]
+        }
+
+        "complex recursive bounded opaque types" - {
+            test[GraphBounded, Graph[Node]]
+            test[Node, GraphBounded]
         }
     }
 
@@ -719,6 +773,12 @@ class TagTest extends Test:
             assertCompiles("testBounded[Double]")
         }
 
+        "nested generic" in {
+            def testNestedGeneric[A, B](using Tag[A], Tag[B]) = Tag[Map[A, List[B]]]
+            assertCompiles("testNestedGeneric[String, Int]")
+            assertCompiles("testNestedGeneric[Int, Boolean]")
+        }
+
         "generic with variance" - {
             "covariance" in {
                 class Covariant[+A]
@@ -813,126 +873,6 @@ class TagTest extends Test:
             sealed trait TestEffect1 extends ArrowEffect[Join[Int], Join[String]]
             test[TestEffect1, ArrowEffect[Join[Int], Join[String]]]
         }
-
-    }
-
-    "dynamic tag operations" - {
-        "using | method for union types" - {
-            "creating simple union dynamically" in {
-                class A
-                class B
-
-                val tagA         = Tag[A]
-                val tagB         = Tag[B]
-                val dynamicUnion = tagA | tagB
-
-                assert(dynamicUnion =:= Tag[A | B])
-                assert(dynamicUnion.show == Tag[A | B].show)
-            }
-
-            "subtyping with dynamic union (left)" in {
-                class Super
-                class Sub extends Super
-
-                val tagSub       = Tag[Sub]
-                val tagSuper     = Tag[Super]
-                val dynamicUnion = tagSub | tagSuper
-
-                assert(dynamicUnion <:< tagSuper)
-                assert(tagSub <:< dynamicUnion)
-            }
-
-            "subtyping with dynamic union (right)" in {
-                class A
-                class B extends A
-                class C
-
-                val tagA = Tag[A]
-                val tagB = Tag[B]
-                val tagC = Tag[C]
-
-                val dynamicUnion = tagB | tagC
-
-                assert(dynamicUnion <:< (tagA | tagC))
-                assert(!(dynamicUnion <:< tagA))
-            }
-
-            "chained union operations" in {
-                class A
-                class B
-                class C
-
-                val tagA = Tag[A]
-                val tagB = Tag[B]
-                val tagC = Tag[C]
-
-                val dynamicUnion = tagA | tagB | tagC
-
-                assert(dynamicUnion =:= Tag[A | B | C])
-                assert(dynamicUnion.show.split('|').map(_.trim).toSet ==
-                    Tag[A | B | C].show.split('|').map(_.trim).toSet)
-            }
-        }
-
-        "using & method for intersection types" - {
-            "creating simple intersection dynamically" in {
-                trait A
-                trait B
-
-                val tagA                = Tag[A]
-                val tagB                = Tag[B]
-                val dynamicIntersection = tagA & tagB
-
-                assert(dynamicIntersection =:= Tag[A & B])
-                assert(dynamicIntersection.show == Tag[A & B].show)
-            }
-
-            "subtyping with dynamic intersection (left)" in {
-                trait A
-                trait B
-                class C extends A with B
-
-                val tagA                = Tag[A]
-                val tagB                = Tag[B]
-                val tagC                = Tag[C]
-                val dynamicIntersection = tagA & tagB
-
-                assert(tagC <:< dynamicIntersection)
-                assert(dynamicIntersection >:> tagC)
-            }
-
-            "subtyping with dynamic intersection (right)" in {
-                trait A
-                trait B extends A
-                trait C
-
-                val tagA = Tag[A]
-                val tagB = Tag[B]
-                val tagC = Tag[C]
-
-                val dynamicIntersection = tagB & tagC
-
-                assert(dynamicIntersection <:< (tagA & tagC))
-                assert(!(tagA <:< dynamicIntersection))
-            }
-
-            "chained intersection operations" in {
-                trait A
-                trait B
-                trait C
-
-                val tagA = Tag[A]
-                val tagB = Tag[B]
-                val tagC = Tag[C]
-
-                val dynamicIntersection = tagA & tagB & tagC
-
-                assert(dynamicIntersection =:= Tag[A & B & C])
-                assert(dynamicIntersection.show.split('&').map(_.trim).toSet ==
-                    Tag[A & B & C].show.split('&').map(_.trim).toSet)
-            }
-        }
-
     }
 
     "literal type tests" - {
@@ -1053,30 +993,6 @@ class TagTest extends Test:
             }
         }
 
-        "dynamic operations with literal types" - {
-            "creating literal union dynamically" in {
-                val tag1      = Tag[1]
-                val tag2      = Tag[2]
-                val stringTag = Tag["hello"]
-
-                val dynamicUnion = tag1 | tag2
-                assert(dynamicUnion =:= Tag[1 | 2])
-
-                val mixedUnion = tag1 | stringTag
-                assert(mixedUnion <:< Tag[Int | String])
-            }
-
-            "creating literal intersection dynamically" in {
-                trait Marker
-                val literalTag = Tag[1]
-                val markerTag  = Tag[Marker]
-
-                val dynamicIntersection = literalTag & markerTag
-                assert(dynamicIntersection =:= Tag[1 & Marker])
-                assert(dynamicIntersection <:< Tag[Int & Marker])
-            }
-        }
-
         "literal types in collections and tuples" - {
             "list of literal types" in {
                 assert(Tag[List[1]] <:< Tag[List[Int]])
@@ -1100,11 +1016,11 @@ class TagTest extends Test:
         test[Sub[Int], Super[String]]
     }
 
-    "intersection subtype 3 (bug #552)" in {
+    "intersection subtype 3 (bug #552)" - {
         trait A
         trait B
         class C extends A with B
-        assert(Tag[C] <:< Tag[A & B])
+        test[C, A & B]
     }
 
     // TODO: fix this to use `pendingUntilFixed` instead of `ignore`

@@ -8,11 +8,13 @@ import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
-import kyo.Maybe.internal.PresentAbsent.cache
+import kyo.Tag.Type.Entry.*
+import kyo.internal.IntEncoder
 import kyo.internal.TagMacro
 import scala.annotation.tailrec
-import scala.collection.immutable.HashSet
-import scala.collection.immutable.ListMap
+import scala.collection.immutable.HashMap
+import scala.collection.immutable.Map
+import scala.collection.immutable.SeqMap
 import scala.util.Using
 import scala.util.hashing.MurmurHash3
 
@@ -36,14 +38,14 @@ import scala.util.hashing.MurmurHash3
   * to minimize contention while providing fast lookups. The type decoding cache ensures that each unique type structure is only
   * deserialized once.
   *
-  * The implementation uses an opaque type that can be either a String (for encoded type information) or a Type object (for decoded type
-  * structures). This dual representation allows deferring the expensive deserialization operation until the type information is actually
-  * needed.
+  * The implementation uses an opaque type that can be either a String (for statically inferred tags) or a Dynamic object (for dynamic tags
+  * that depend on other runtime-defined tags). This dual representation allows deferring the expensive deserialization operation until the
+  * type information is actually needed.
   *
   * @tparam A
   *   The type for which this Tag provides runtime type information
   */
-opaque type Tag[A] >: Tag.Type[A] = String | Tag.Type[A]
+opaque type Tag[A] = String | Tag.internal.Dynamic
 
 object Tag:
 
@@ -58,10 +60,10 @@ object Tag:
       */
     def apply[A: Tag as tag]: Tag[A] = tag
 
-    /** Derives a Tag for type A at compile time. This method attempts to statically analyze the structure of type A and encode it as a
-      * string constant in the bytecode. This approach offers optimal performance as the type information is available without allocations
-      * but it can fall back to dynamic runtime derivation if the tag construction requires other runtime `Tag` values, which requires
-      * allocation.
+    /** Derives a Tag for type A. This method attempts to statically analyze the structure of type A and encode it as a string constant in
+      * the bytecode. This approach offers optimal performance as the type information is available without allocations but it can fall back
+      * to dynamic runtime derivation if the tag construction requires other runtime `Tag` values, which requires allocation of Dynamic
+      * objects.
       *
       * Within the `kyo` package, this method fails instead of falling back to a dynamic tag for performance reasons.
       *
@@ -70,23 +72,12 @@ object Tag:
       * @return
       *   A Tag for type A
       */
-    inline given derive[A]: Tag[A] = ${ TagMacro.deriveImpl[A](false) }
-
-    /** Derives a Tag for type A with runtime resolution support. Unlike the static derive method, this allows for dynamic type resolution
-      * at runtime when static analysis is insufficient. This is useful for complex types or types that depend on runtime information. Only
-      * necessary for code in the `kyo` package since `derive` does the fallback automatically for non-kyo packages.
-      *
-      * @tparam A
-      *   The type for which to derive a Tag
-      * @return
-      *   A Tag for type A
-      */
-    private[kyo] inline def deriveDynamic[A]: Tag[A] = ${ TagMacro.deriveImpl[A](true) }
+    inline given derive[A]: Tag[A] = ${ TagMacro.deriveImpl[A] }
 
     extension [A](self: Tag[A])
 
         /** Tests if this Tag represents the same type as another Tag. This operation checks type equality, which is more specific than
-          * subtype relationships.
+          * subtype relationships. It uses a sophisticated caching mechanism to optimize repeated checks.
           *
           * @param that
           *   The Tag to compare with
@@ -94,10 +85,9 @@ object Tag:
           *   true if the types are exactly the same, false otherwise
           */
         infix def =:=[B](that: Tag[B]): Boolean =
-            (self eq that) || self.equals(that) ||
-                (((self.isInstanceOf[Type[?]] && that.isInstanceOf[String]) ||
-                    (self.isInstanceOf[String] && that.isInstanceOf[Type[?]])) &&
-                    self.tpe =:= that.tpe)
+            (self eq that) ||
+                (self.hashCode == that.hashCode && self.equals(that)) ||
+                checkTypes(self, that, "equality")
 
         /** Tests if this Tag represents a different type than another Tag. This is the negation of the =:= operation.
           *
@@ -118,7 +108,7 @@ object Tag:
           *   true if this type is a subtype of the other type, false otherwise
           */
         infix def <:<[B](that: Tag[B]): Boolean =
-            (self eq that) || self.equals(that) || isSubtype(self, that)
+            (self eq that) || (self.hashCode == that.hashCode && self.equals(that)) || checkTypes(self, that, "subtype")
 
         /** Tests if this Tag represents a supertype of another Tag. This is the reverse of the <:< operation.
           *
@@ -130,29 +120,7 @@ object Tag:
         infix def >:>[B](that: Tag[B]): Boolean =
             that <:< self
 
-        /** Creates a Tag representing the intersection of this type and another type. The resulting Tag represents values that conform to
-          * both type A and type B.
-          *
-          * @param that
-          *   The Tag to intersect with
-          * @return
-          *   A Tag representing the intersection type A & B
-          */
-        infix def &[B](that: Tag[B]): Tag[A & B] =
-            Type.IntersectionType(self.tpe, that.tpe)
-
-        /** Creates a Tag representing the union of this type and another type. The resulting Tag represents values that conform to either
-          * type A or type B.
-          *
-          * @param that
-          *   The Tag to union with
-          * @return
-          *   A Tag representing the union type A | B
-          */
-        infix def |[B](that: Tag[B]): Tag[A | B] =
-            Type.UnionType(self.tpe, that.tpe)
-
-        /** Erases the specific type information, returning a Tag for Any. This operation is useful when you need to work with Tags of
+        /** Erases the specific type information, returning a Tag[Any]. This operation is useful when you need to work with Tags of
           * different types uniformly.
           *
           * @return
@@ -176,8 +144,8 @@ object Tag:
           */
         def tpe: Type[A] =
             self match
-                case self: String  => decode(self)
-                case self: Type[A] => self
+                case self: String      => Type(decode(self), Map.empty)
+                case Dynamic(tag, ddb) => Type(decode(tag), ddb.asInstanceOf[Map[Type.Entry.Id, Tag[Any]]])
 
         /** Returns a human-readable representation of the type structure. This is useful for debugging and understanding complex type
           * relationships.
@@ -187,206 +155,129 @@ object Tag:
           */
         def show: String =
             self.tpe.toString()
+
     end extension
 
-    /** Base class for all type representations in the Tag system. Type provides a structured representation of Scala types that can be
-      * manipulated at runtime for operations like subtype checking and type composition.
+    /** Base class for type representations in the Tag system. Type provides a structured representation of Scala types that can be
+      * manipulated at runtime.
       *
       * @tparam A
       *   The Scala type represented by this Type
       */
-    sealed abstract class Type[A] extends Serializable with Product:
-        final override lazy val hashCode = MurmurHash3.productHash(this)
+    final case class Type[A](staticDB: Map[Type.Entry.Id, Type.Entry], dynamicDB: Map[Type.Entry.Id, Tag[Any]]):
+        override val hashCode = MurmurHash3.productHash(this)
 
-    object Type:
+        def entryId: Type.Entry.Id = "0"
 
-        given [A <: Type[?], B <: Type[?]]: CanEqual[A, B] = CanEqual.derived
+        def narrowOwner(owner: Type[?], id: Type.Entry.Id): (Type[?], Type.Entry.Id) =
+            if staticDB.contains(id) then
+                (owner, id)
+            else if dynamicDB.contains(id) then
+                val tpe = dynamicDB(id).tpe
+                (tpe, tpe.entryId)
+            else
+                bug("")
 
-        /** Represents the bottom type scala.Nothing. Nothing is a subtype of all other types.
-          */
-        case object NothingType extends Type[Nothing]:
-            override def toString = "scala.Nothing"
+        private def render(owner: Type[?], id: Type.Entry.Id): String =
+            val (nowner, nid) = narrowOwner(owner, id)
+            if nowner ne owner then
+                render(nowner, nid)
+            else
+                owner.staticDB(id) match
+                    case AnyEntry                     => "scala.Any"
+                    case NothingEntry                 => "scala.Nothing"
+                    case NullEntry                    => "scala.Null"
+                    case LiteralEntry(widened, value) => value
+                    case IntersectionEntry(set)       => "(" + set.map(render(owner, _)).mkString(" & ") + ")"
+                    case UnionEntry(set)              => "(" + set.map(render(owner, _)).mkString(" | ") + ")"
+                    case LambdaEntry(params, _, _, body) =>
+                        s"[${params.mkString(", ")}] => ${render(owner, body)}"
+                    case OpaqueEntry(name, lower, upper) =>
+                        s"($name >: ${render(owner, lower)} <: ${render(owner, upper)})"
+                    case ClassEntry(className, variances, params, parents) =>
+                        if params.isEmpty then
+                            className
+                        else
+                            val p = variances.zip(params).map {
+                                case (Variance.Invariant, p)     => render(owner, p)
+                                case (Variance.Covariant, p)     => s"+${render(owner, p)}"
+                                case (Variance.Contravariant, p) => s"-${render(owner, p)}"
+                            }
+                            s"$className[${p.mkString(", ")}]"
+            end if
+        end render
 
-        /** Represents the top type scala.Any. Any is a supertype of all other types.
-          */
-        case object AnyType extends Type[Any]:
-            override def toString = "scala.Any"
-
-        /** Represents the null type scala.Null. Null is a subtype of all reference types.
-          */
-        case object NullType extends Type[Null]:
-            override def toString = "scala.Null"
-
-        /** Represents a literal type, which is a type with a specific value. Examples include singleton types like 42, "hello", or true.
-          *
-          * @param tag
-          *   The base type of the literal
-          * @param value
-          *   The specific value of the literal
-          * @tparam A
-          *   The type of the literal
-          */
-        final case class LiteralType[A](tag: Type[A], value: A) extends Type[A]:
-            override def toString = value.toString()
-
-        /** Represents an intersection type (A & B). An intersection type requires values to conform to all component types.
-          *
-          * @param set
-          *   The set of component types in this intersection
-          * @tparam A
-          *   The resulting intersection type
-          */
-        final case class IntersectionType[A] private (set: Chunk.Indexed[Type[?]]) extends Type[A]:
-            override def toString = s"(${set.mkString(" & ")})"
-
-        object IntersectionType:
-            /** Creates an intersection type from two component types. This method handles nested intersections by flattening them.
-              *
-              * @param a
-              *   The first type
-              * @param b
-              *   The second type
-              * @return
-              *   An intersection type representing A & B
-              */
-            def apply[A, B](a: Type[A], b: Type[B]): IntersectionType[A & B] =
-                val types =
-                    a match
-                        case IntersectionType(e1) =>
-                            b match
-                                case IntersectionType(e2) => e1.concat(e2)
-                                case b                    => e1.append(b)
-                        case a =>
-                            b match
-                                case IntersectionType(e2) => e2.append(a)
-                                case b                    => Chunk(a, b)
-                IntersectionType(types.distinct.sortBy(_.hash).toIndexed)
-            end apply
-        end IntersectionType
-
-        /** Represents a union type (A | B). A union type allows values to conform to any one of the component types.
-          *
-          * @param set
-          *   The set of component types in this union
-          * @tparam A
-          *   The resulting union type
-          */
-        final case class UnionType[A] private (set: Chunk.Indexed[Type[?]]) extends Type[A]:
-            override def toString = s"(${set.mkString(" | ")})"
-
-        object UnionType:
-            /** Creates a union type from two component types. This method handles nested unions by flattening them.
-              *
-              * @param a
-              *   The first type
-              * @param b
-              *   The second type
-              * @return
-              *   A union type representing A | B
-              */
-            def apply[A, B](a: Type[A], b: Type[B]): UnionType[A | B] =
-                val types =
-                    a match
-                        case UnionType(e1) =>
-                            b match
-                                case UnionType(e2) => e1.concat(e2)
-                                case b             => e1.append(b)
-                        case a =>
-                            b match
-                                case UnionType(e2) => e2.append(a)
-                                case b             => Chunk(a, b)
-                UnionType(types.distinct.sortBy(_.hash).toIndexed)
-            end apply
-        end UnionType
-
-        /** Represents the variance of a type parameter. Variance affects subtyping relationships for parameterized types.
-          *
-          * @param toString
-          *   String representation of the variance
-          */
-        enum Variance(override val toString: String) extends Serializable derives CanEqual:
-            /** Invariant parameters require exact type matches */
-            case Invariant extends Variance("")
-
-            /** Covariant parameters allow subtypes (+) */
-            case Covariant extends Variance("+")
-
-            /** Contravariant parameters allow supertypes (-) */
-            case Contravariant extends Variance("-")
-        end Variance
-
-        /** Represents a class or trait type, potentially with type parameters. This includes all named types in Scala like List, Option,
-          * etc.
-          *
-          * @param id
-          *   A unique identifier for this class type
-          * @param bases
-          *   The base classes/traits of this type, including itself
-          * @tparam A
-          *   The Scala type represented by this class type
-          */
-        final case class ClassType[A](
-            id: String,
-            bases: Chunk.Indexed[ClassType.Base]
-        ) extends Type[A]:
-            def className: String                  = bases(0).className
-            def variances: Chunk.Indexed[Variance] = bases(0).variances
-            def params: Chunk.Indexed[Type[?]]     = bases(0).params
-
-            override def toString =
-                val str = variances.zip(params).map((v, p) => s"$v$p").mkString(", ")
-                val p =
-                    if str.isBlank() then ""
-                    else s"[$str]"
-                s"$className$p"
-            end toString
-        end ClassType
-
-        object ClassType:
-            /** Represents a base class or trait of a class type. This includes information about the class name, type parameter variances,
-              * and the actual type arguments.
-              *
-              * @param className
-              *   The fully qualified name of the class
-              * @param variances
-              *   The variances of the type parameters
-              * @param params
-              *   The actual type arguments
-              */
-            final case class Base(
-                className: String,
-                variances: Chunk.Indexed[Variance],
-                params: Chunk.Indexed[Type[?]]
-            )
-        end ClassType
-
-        /** Represents a recursive type reference. This is used to handle recursive types without infinite recursion.
-          *
-          * @param id
-          *   The identifier of the referenced type
-          * @tparam A
-          *   The Scala type represented by this recursive reference
-          */
-        final case class Recursive[A](id: String) extends Type[A]
+        override def toString =
+            try
+                render(this, entryId)
+            catch
+                case ex: StackOverflowError => "bug"
 
     end Type
 
-    import Type.*
+    object Type:
 
-    private[kyo] object internal:
+        sealed abstract class Entry extends Serializable with Product derives CanEqual
+
+        object Entry:
+            type Id = String
+
+            case object AnyEntry     extends Entry
+            case object NothingEntry extends Entry
+            case object NullEntry    extends Entry
+
+            final case class IntersectionEntry(set: Chunk.Indexed[Id]) extends Entry
+
+            final case class UnionEntry(set: Chunk.Indexed[Id]) extends Entry
+
+            final case class LiteralEntry(widened: Id, value: String) extends Entry
+
+            final case class ClassEntry(
+                className: String,
+                variances: Chunk.Indexed[Variance],
+                params: Chunk.Indexed[Id],
+                parents: Chunk.Indexed[Id]
+            ) extends Entry
+
+            enum Variance extends Serializable derives CanEqual:
+                case Invariant
+                case Covariant
+                case Contravariant
+            end Variance
+
+            final case class LambdaEntry(
+                params: Chunk.Indexed[String],
+                lowerBounds: Chunk.Indexed[Id],
+                upperBounds: Chunk.Indexed[Id],
+                body: Id
+            ) extends Entry
+
+            final case class OpaqueEntry(name: String, lowerBound: Id, upperBound: Id) extends Entry
+
+        end Entry
+    end Type
+
+    object internal:
+
+        import Type.*
+        import Type.Entry.*
 
         private val threadSlots  = Runtime.getRuntime().availableProcessors() * 8
         private val cacheEntries = 64
         private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
 
-        /** Determines if one type is a subtype of another, with caching for performance.
+        case class Dynamic(tag: String, map: Map[Entry.Id, Any]):
+            override val hashCode = MurmurHash3.productHash(this)
+
+        /** Determines if one type is a subtype or equal to another, with caching for performance.
           *
           * This method uses a thread-local caching strategy to optimize repeated subtype checks. The cache is implemented as an array of
-          * longs for efficiency, where each entry represents a specific subtype check pair (a <:< b):
+          * longs for efficiency, where each entry represents a specific subtype check pair (a <:< b or a =:= b):
           *
           *   - Each long value packs both type hash codes together: subtype hash in the upper 32 bits and supertype hash in the lower 32
           *     bits
-          *   - This combined hash is then scrambled using xor-shift operations to improve distribution
+          *   - This combined hash is then scrambled using xor-shift operations to improve distribution and specialize it to either equality
+          *     or sub type checking.
           *   - The sign of the stored long indicates the result: positive for true, negative for false
           *   - Zero indicates an unused cache entry
           *
@@ -412,9 +303,17 @@ object Tag:
           * @return
           *   true if a is a subtype of b, false otherwise
           */
-        def isSubtype[A, B](a: Tag[A], b: Tag[B]): Boolean =
+        def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: "equality" | "subtype"): Boolean =
             val cache = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
             var hash  = ((a.hashCode.toLong << 32) | (b.hashCode.toLong & 0xffffffffL))
+            mode match
+                case "equality" =>
+                    hash ^= (hash >>> 12)
+                    hash ^= (hash << 25)
+                case "subtype" =>
+                    hash ^= (hash >>> 15)
+                    hash ^= (hash << 17)
+            end match
             hash ^= (hash << 21)
             hash ^= (hash >>> 35)
             hash ^= (hash << 4)
@@ -426,64 +325,218 @@ object Tag:
             else if hash == -cached then
                 false
             else
-                val res = isSubtype(a.tpe, b.tpe, ListMap.empty)
+                val aTpe = a.tpe
+                val bTpe = b.tpe
+                val res =
+                    mode match
+                        case "equality" => isSameType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
+                        case "subtype"  => isSubtype(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
                 cache(idx) = if res then hash else -hash
                 res
             end if
+        end checkTypes
+
+        private def isSubtype(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
+            if !aOwner.staticDB.contains(aId) then
+                val aType = aOwner.dynamicDB(aId).tpe
+                isSubtype(aType, bOwner, aType.entryId, bId)
+            else if !bOwner.staticDB.contains(bId) then
+                val bType = bOwner.dynamicDB(bId).tpe
+                isSubtype(aOwner, bType, aId, bType.entryId)
+            else
+                val aEntry = aOwner.staticDB(aId)
+                val bEntry = bOwner.staticDB(bId)
+
+                aEntry match
+                    case NothingEntry => true
+                    case AnyEntry     => bEntry == AnyEntry
+                    case NullEntry    => true
+
+                    case IntersectionEntry(aSet) =>
+                        bEntry match
+                            case IntersectionEntry(bSet) =>
+                                forall(bSet) { bElemId =>
+                                    exists(aSet) { aElemId =>
+                                        isSubtype(aOwner, bOwner, aElemId, bElemId)
+                                    }
+                                }
+                            case _ =>
+                                exists(aSet) { aElemId =>
+                                    isSubtype(aOwner, bOwner, aElemId, bId)
+                                }
+
+                    case UnionEntry(aSet) =>
+                        forall(aSet) { aElemId =>
+                            isSubtype(aOwner, bOwner, aElemId, bId)
+                        }
+
+                    case LiteralEntry(widenedId, value) =>
+                        bEntry match
+                            case LiteralEntry(_, bValue) => value.equals(bValue)
+                            case _                       => isSubtype(aOwner, bOwner, widenedId, bId)
+
+                    case LambdaEntry(aParams, aLower, aUpper, aBody) =>
+                        bEntry match
+                            case AnyEntry => true
+                            case LambdaEntry(bParams, bLower, bUpper, bBody) =>
+                                if aParams.size != bParams.size then false
+                                else
+                                    @tailrec def checkBounds(paramIdx: Int): Boolean =
+                                        if paramIdx == aParams.size then true
+                                        else
+                                            isSubtype(bOwner, aOwner, bLower(paramIdx), aLower(paramIdx)) &&
+                                            isSubtype(aOwner, bOwner, aUpper(paramIdx), bUpper(paramIdx)) &&
+                                            checkBounds(paramIdx + 1)
+                                    checkBounds(0) && isSubtype(aOwner, bOwner, aBody, bBody)
+                            case _ => false
+
+                    case OpaqueEntry(aName, _, aUpper) =>
+                        isSubtype(aOwner, bOwner, aUpper, bId)
+
+                    case aClass: ClassEntry =>
+                        bEntry match
+                            case NothingEntry => false
+                            case AnyEntry     => true
+                            case NullEntry    => false
+
+                            case IntersectionEntry(bSet) =>
+                                forall(bSet) { bElemId =>
+                                    isSubtype(aOwner, bOwner, aId, bElemId)
+                                }
+
+                            case UnionEntry(bSet) =>
+                                exists(bSet) { bElemId =>
+                                    isSubtype(aOwner, bOwner, aId, bElemId)
+                                }
+
+                            case _: LiteralEntry => false
+
+                            case _: LambdaEntry => false
+
+                            case OpaqueEntry(_, lower, upper) =>
+                                isSubtype(aOwner, bOwner, aId, lower)
+
+                            case bClass: ClassEntry =>
+                                isSubclassOf(aOwner, bOwner, aId, bId, aClass, bClass)
+                end match
         end isSubtype
 
-        private def isSubtype(a: Type[?], b: Type[?], seen: Map[String, Type[?]]): Boolean =
-            a match
-                case NothingType => true
-                case AnyType     => b eq AnyType
-                case NullType    => true
-                case IntersectionType(aSet) =>
-                    b match
-                        case IntersectionType(bset) =>
-                            forall(bset)(belem => exists(aSet)(aelem => isSubtype(aelem, belem, seen)))
-                        case _ =>
-                            exists(aSet)(elem => isSubtype(elem, b, seen))
-                case UnionType(set) =>
-                    forall(set)(elem => isSubtype(elem, b, seen))
-                case LiteralType(tag, v) =>
-                    b match
-                        case LiteralType(tag2, v2) => v.equals(v2)
-                        case _                     => isSubtype(tag, b, seen)
-                case Recursive(id) => isSubtype(resolve(id, seen), b, seen)
-                case a: ClassType[?] =>
-                    b match
-                        case NothingType           => false
-                        case AnyType               => true
-                        case NullType              => false
-                        case IntersectionType(set) => forall(set)(elem => isSubtype(a, elem, seen))
-                        case UnionType(set)        => exists(set)(elem => isSubtype(a, elem, seen))
-                        case LiteralType(tag, _)   => false
-                        case Recursive(id)         => isSubtype(a, resolve(id, seen), seen)
-                        case b: ClassType[?] =>
-                            val updatedSeen = seen.updated(a.id, a)
-                            exists(a.bases) { base =>
-                                base.className == b.className && {
-                                    val size = base.params.size
-                                    @tailrec def loopParams(paramIdx: Int): Boolean =
-                                        paramIdx == size || {
-                                            val variance = base.variances(paramIdx)
-                                            require(variance == b.variances(paramIdx))
-                                            val aParam = resolve(base.params(paramIdx), updatedSeen)
-                                            val bParam = b.params(paramIdx)
-                                            val ok =
-                                                variance match
-                                                    case Variance.Invariant     => aParam == bParam
-                                                    case Variance.Covariant     => isSubtype(aParam, bParam, updatedSeen)
-                                                    case Variance.Contravariant => isSubtype(bParam, aParam, updatedSeen)
-                                            ok && loopParams(paramIdx + 1)
-                                        }
-                                    loopParams(0)
-                                }
-                            }
-        end isSubtype
+        private def isSameType(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
+            if !aOwner.staticDB.contains(aId) then
+                val aType = aOwner.dynamicDB(aId).tpe
+                isSameType(aType, bOwner, aType.entryId, bId)
+            else if !bOwner.staticDB.contains(bId) then
+                val bType = bOwner.dynamicDB(bId).tpe
+                isSameType(aOwner, bType, aId, bType.entryId)
+            else
+                val aEntry = aOwner.staticDB(aId)
+                val bEntry = bOwner.staticDB(bId)
+
+                aEntry match
+                    case NothingEntry => bEntry == NothingEntry
+                    case AnyEntry     => bEntry == AnyEntry
+                    case NullEntry    => bEntry == NullEntry
+
+                    case IntersectionEntry(aSet) =>
+                        bEntry match
+                            case IntersectionEntry(bSet) =>
+                                def checkSet(idx: Int): Boolean =
+                                    if idx == aSet.size then true
+                                    else isSameType(aOwner, bOwner, aSet(idx), bSet(idx)) && checkSet(idx + 1)
+
+                                aSet.size == bSet.size && checkSet(0)
+                            case _ => false
+
+                    case UnionEntry(aSet) =>
+                        bEntry match
+                            case UnionEntry(bSet) =>
+                                def checkSet(idx: Int): Boolean =
+                                    if idx == aSet.size then true
+                                    else isSameType(aOwner, bOwner, aSet(idx), bSet(idx)) && checkSet(idx + 1)
+
+                                aSet.size == bSet.size && checkSet(0)
+                            case _ => false
+
+                    case LiteralEntry(aId, value) =>
+                        bEntry match
+                            case LiteralEntry(bId, `value`) => isSameType(aOwner, bOwner, aId, bId)
+                            case _                          => false
+
+                    case LambdaEntry(aParams, aLower, aUpper, aBody) =>
+                        bEntry match
+                            case LambdaEntry(bParams, bLower, bUpper, bBody) =>
+                                @tailrec def checkBounds(paramIdx: Int): Boolean =
+                                    if paramIdx == aParams.size then true
+                                    else
+                                        isSameType(bOwner, aOwner, bLower(paramIdx), aLower(paramIdx)) &&
+                                        isSameType(aOwner, bOwner, aUpper(paramIdx), bUpper(paramIdx)) &&
+                                        checkBounds(paramIdx + 1)
+
+                                aParams.size == bParams.size && checkBounds(0) && isSameType(aOwner, bOwner, aBody, bBody)
+                            case _ => false
+
+                    case OpaqueEntry(name, aLower, aUpper) =>
+                        bEntry match
+                            case OpaqueEntry(`name`, bLower, bUpper) =>
+                                isSameType(aOwner, bOwner, aLower, bLower) &&
+                                isSameType(aOwner, bOwner, aUpper, bUpper)
+                            case _ =>
+                                false
+
+                    case ClassEntry(name, variances, aParams, aParents) =>
+                        bEntry match
+                            case ClassEntry(`name`, `variances`, bParams, bParents) =>
+
+                                def checkParams(idx: Int): Boolean =
+                                    if idx == aParams.size then true
+                                    else isSameType(aOwner, bOwner, aParams(idx), bParams(idx)) && checkParams(idx + 1)
+
+                                def checkParents(idx: Int): Boolean =
+                                    if idx == aParents.size then true
+                                    else isSameType(aOwner, bOwner, aParents(idx), bParents(idx)) && checkParents(idx + 1)
+
+                                checkParams(0)
+                            case _ => false
+                end match
+
+        private def isSubclassOf(
+            aOwner: Type[?],
+            bOwner: Type[?],
+            aId: Entry.Id,
+            bId: Entry.Id,
+            aClass: ClassEntry,
+            bClass: ClassEntry
+        ): Boolean =
+            if aClass.className == bClass.className then
+                val size = aClass.params.size
+                if size != bClass.params.size then false
+                else
+                    @tailrec def loopParams(paramIdx: Int): Boolean =
+                        paramIdx == size || {
+                            val variance = aClass.variances(paramIdx)
+                            val aParamId = aClass.params(paramIdx)
+                            val bParamId = bClass.params(paramIdx)
+                            val ok =
+                                variance match
+                                    case Variance.Invariant =>
+                                        isSubtype(aOwner, bOwner, aParamId, bParamId) &&
+                                        isSubtype(bOwner, aOwner, bParamId, aParamId)
+                                    case Variance.Covariant =>
+                                        isSubtype(aOwner, bOwner, aParamId, bParamId)
+                                    case Variance.Contravariant =>
+                                        isSubtype(bOwner, aOwner, bParamId, aParamId)
+                            ok && loopParams(paramIdx + 1)
+                        }
+                    loopParams(0)
+                end if
+            else
+                exists(aClass.parents) { parentId =>
+                    isSubtype(aOwner, bOwner, parentId, bId)
+                }
+        end isSubclassOf
 
         // avoids regular exists since it allocates an iterator
-        private inline def exists[A](c: Chunk.Indexed[A])(inline f: A => Boolean): Boolean =
+        private def exists[A](c: Chunk.Indexed[A])(f: A => Boolean): Boolean =
             val size = c.size
             @tailrec def loop(idx: Int): Boolean =
                 idx != size && (f(c(idx)) || loop(idx + 1))
@@ -498,14 +551,30 @@ object Tag:
             loop(0)
         end forall
 
-        private def resolve(tpe: Type[?], seen: Map[String, Type[?]]): Type[?] =
-            tpe match
-                case Recursive(id) => resolve(id, seen)
-                case _             => tpe
+        def encodeEntry(entry: Entry): String =
+            entry match
+                case AnyEntry                     => "A"
+                case NothingEntry                 => "N"
+                case NullEntry                    => "U"
+                case LiteralEntry(widened, value) => s"L:$widened:$value"
+                case IntersectionEntry(set)       => s"I:${set.mkString(":")}"
+                case UnionEntry(set)              => s"U:${set.mkString(":")}"
+                case LambdaEntry(params, lower, upper, body) =>
+                    s"M:$body:${params.size}:${params.mkString(":")}:${lower.mkString(":")}:${upper.mkString(":")}"
+                case OpaqueEntry(name, lower, upper) =>
+                    s"O:$name:$lower:$upper"
+                case ClassEntry(className, variances, params, parents) =>
+                    require(params.size == variances.size)
+                    val sanitized = className.replaceAll(":", "_colon_")
+                    s"C:$sanitized:${params.size}:${variances.map(_.ordinal).mkString(":")}:" +
+                        s"${params.mkString(":")}:${parents.mkString(":")}"
+        end encodeEntry
 
-        private def resolve(id: String, seen: Map[String, Type[?]]): Type[?] =
-            require(seen.contains(id), s"Invalid recursive type id: $id")
-            seen(id)
+        def encode[A](staticDB: Map[Type.Entry.Id, Type.Entry]): String =
+            staticDB.map { (id, entry) =>
+                s"$id:${encodeEntry(entry)}"
+            }.mkString("\n")
+        end encode
 
         /** Cache for decoded type structures. This cache ensures that each unique encoded type string is only deserialized once,
           * significantly improving performance for repeated operations on the same types. Unlike the subtype cache, this cache is fully
@@ -515,31 +584,59 @@ object Tag:
           * subtype relationships, this cache can safely grow without bounds. Each unique Tag is only decoded once during the lifetime of
           * the application, regardless of how many times it's used.
           */
-        private val decodeCache = new ConcurrentHashMap[String, Any]()
+        private val decodeCache = new ConcurrentHashMap[String, Map[Type.Entry.Id, Type.Entry]]()
 
-        def encode[A](obj: Type[A]): String =
-            Using.resource(new ByteArrayOutputStream()) { baos =>
-                Using.resource(new GZIPOutputStream(baos)) { gzos =>
-                    Using.resource(new ObjectOutputStream(gzos)) { oos =>
-                        oos.writeObject(obj)
-                    }
-                }
-                Base64.getEncoder.encodeToString(baos.toByteArray)
-            }
-
-        def decode[A](encoded: String): Type[A] =
+        def decode[A](encoded: String): Map[Type.Entry.Id, Type.Entry] =
             decodeCache.computeIfAbsent(
                 encoded,
-                s =>
-                    val bytes = Base64.getDecoder.decode(s)
-                    Using.resource(new ByteArrayInputStream(bytes)) { bais =>
-                        Using.resource(new GZIPInputStream(bais)) { gzis =>
-                            Using.resource(new ObjectInputStream(gzis)) { ois =>
-                                ois.readObject()
-                            }
+                _ =>
+                    val lines = encoded.linesIterator
+                    HashMap.empty[Entry.Id, Entry] ++
+                        lines.map { encoded =>
+                            val fields = encoded.split(":", -1).toList
+                            fields.head -> decodeEntry(fields.tail)
                         }
-                    }
-            ).asInstanceOf[Type[A]]
+            )
+        end decode
+
+        def decodeEntry(fields: List[String]): Entry =
+            fields match
+                case "A" :: Nil                     => AnyEntry
+                case "N" :: Nil                     => NothingEntry
+                case "U" :: Nil                     => NullEntry
+                case "L" :: widened :: value :: Nil => LiteralEntry(widened, value)
+                case "I" :: set                     => IntersectionEntry(Chunk.Indexed.from(set))
+                case "U" :: set                     => UnionEntry(Chunk.Indexed.from(set))
+                case "M" :: body :: size :: rest =>
+                    val n  = size.toInt
+                    val it = rest.iterator
+                    LambdaEntry(
+                        body = body,
+                        params = Chunk.Indexed.from(it.take(n)),
+                        lowerBounds = Chunk.Indexed.from(it.take(n)),
+                        upperBounds = Chunk.Indexed.from(it.take(n))
+                    )
+                case "O" :: name :: lower :: upper :: Nil =>
+                    OpaqueEntry(name, lower, upper)
+                case "C" :: name :: size :: rest =>
+                    size.toInt match
+                        case 0 =>
+                            ClassEntry(
+                                name,
+                                Chunk.Indexed.empty,
+                                Chunk.Indexed.empty,
+                                Chunk.Indexed.from(rest.drop(2).filter(_.nonEmpty))
+                            )
+                        case size =>
+                            val chunk     = Chunk.from(rest)
+                            val variances = chunk.take(size).map(v => Variance.fromOrdinal(v.toInt))
+                            val params    = chunk.drop(size).take(size)
+                            val parents   = chunk.drop(size * 2)
+                            ClassEntry(name, variances.toIndexed, params.toIndexed, parents.toIndexed)
+                case fields =>
+                    bug("Invalid tag payload! " + fields.mkString(":"))
+            end match
+        end decodeEntry
     end internal
 
 end Tag

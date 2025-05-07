@@ -149,7 +149,6 @@ object Env:
 
     given eliminateEnv: Reducible.Eliminable[Env[Any]] with {}
 
-    private val cachedErasedTag = Tag.deriveDynamic[Env[Any]]
-    private def erasedTag[R]    = cachedErasedTag.asInstanceOf[Tag[Env[R]]]
+    private def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
 
 end Env

@@ -2,142 +2,178 @@ package kyo.internal
 
 import kyo.*
 import kyo.Tag.*
-import kyo.Tag.Type.*
-import scala.collection.immutable.HashSet
+import kyo.Tag.Type.Entry
+import kyo.Tag.Type.Entry.*
+import scala.annotation.tailrec
+import scala.collection.immutable
+import scala.collection.immutable.HashMap
 import scala.quoted.{Type as SType, *}
 
 private[kyo] object TagMacro:
 
-    def deriveImpl[A: SType](dynamic: Boolean)(using Quotes): Expr[String | Type[A]] =
+    private val compactNames = true
+
+    def deriveImpl[A: SType](using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
-        try
-            Expr(Tag.internal.encode(deriveStatic(TypeRepr.of[A], Set.empty)))
-        catch
-            case DynamicTypeDetected(missing) =>
-                if !dynamic && FindEnclosing.isInternal then
-                    report.errorAndAbort(
-                        s"Dynamic tags aren't allowed in the kyo package for performance reasons. Static derivation failed for '$missing', please modify the method to take an implicit 'Tag[${TypeRepr.of[A].show}]'."
-                    )
-                end if
-                def tpe = deriveDynamic(TypeRepr.of[A], Set.empty)
-                try
-                    if dynamic then
-                        '{ Tag.internal.encode($tpe.asInstanceOf[Type[A]]) }
-                    else
-                        '{ $tpe.asInstanceOf[Type[A]] }
-                catch
-                    case MissingTag(missing) =>
-                        report.errorAndAbort(
-                            s"Can't derive Tag for type '${TypeRepr.of[A].show}'. Please provide an implicit kyo.Tag[$missing] parameter."
-                        )
-                end try
-        end try
+        val (staticDB, dynamicDB) = deriveDB[A]
+        val encoded               = Expr(Tag.internal.encode(staticDB))
+        if dynamicDB.isEmpty then
+            encoded
+        else if FindEnclosing.isInternal then
+            val missing =
+                dynamicDB.map {
+                    case (_, (tpe, _)) =>
+                        tpe.show
+                }
+            report.errorAndAbort(
+                s"Dynamic tags aren't allowed in the kyo package for performance reasons. Please modify the method to take an implicit 'Tag[${TypeRepr.of[A].show}]'. Dynamic types: ${missing.mkString(", ")}."
+            )
+        else
+            val reifiedDB = dynamicDB.map {
+                case (id, (_, tag)) =>
+                    '{ ${ Expr(id) } -> $tag }
+            }.toSeq
+            '{ Tag.internal.Dynamic($encoded, Map(${ Expr.ofSeq(reifiedDB) }*)) }
+        end if
     end deriveImpl
 
-    private case class DynamicTypeDetected(tpe: String) extends Exception
-    private case class MissingTag(tpe: String)          extends Exception
-
-    private def deriveStatic(using q: Quotes)(t: q.reflect.TypeRepr, seen: Set[q.reflect.Symbol]): Type[?] =
+    private def deriveDB[A: SType](using
+        q: Quotes
+    ): (Map[Type.Entry.Id, Type.Entry], Map[Type.Entry.Id, (q.reflect.TypeRepr, Expr[Tag[Any]])]) =
         import quotes.reflect.*
-        t.dealias match
-            case tpe if tpe =:= TypeRepr.of[Any]     => AnyType
-            case tpe if tpe =:= TypeRepr.of[Nothing] => NothingType
-            case tpe if tpe =:= TypeRepr.of[Null]    => NullType
-            case AndType(a, b)                       => IntersectionType(deriveStatic(a, seen), deriveStatic(b, seen))
-            case OrType(a, b)                        => UnionType(deriveStatic(a, seen), deriveStatic(b, seen))
-            case tpe @ ConstantType(const)           => LiteralType[Any](deriveStatic(tpe.widen, seen).asInstanceOf[Type[Any]], const.value)
-            case tpe if seen.contains(tpe.typeSymbol) => Recursive(tpe.typeSymbol.fullName.hashCode().toString())
+        var nextId  = 0
+        var seen    = Map.empty[TypeRepr | Symbol, (TypeRepr, String)]
+        var static  = HashMap.empty[Type.Entry.Id, Type.Entry]
+        var dynamic = HashMap.empty[Type.Entry.Id, (TypeRepr, Expr[Tag[Any]])]
 
-            case tpe if tpe.typeSymbol.isClassDef =>
-                val newSeen = seen + tpe.typeSymbol
-                val bases =
-                    tpe.baseClasses.map { base =>
-                        val baseTpe = tpe.baseType(base)
-                        val variances =
-                            baseTpe.typeSymbol.declaredTypes.flatMap { v =>
-                                if !v.isTypeParam then None
-                                else if v.paramVariance.is(Flags.Contravariant) then Present(Variance.Contravariant)
-                                else if v.paramVariance.is(Flags.Covariant) then Present(Variance.Covariant)
-                                else Present(Variance.Invariant)
-                                end if
+        def visit(t: TypeRepr): Type.Entry.Id =
+
+            val tpe = t.dealias.simplified.dealias
+            val key =
+                tpe.typeSymbol.isNoSymbol match
+                    case true => tpe
+                    case false =>
+                        seen.get(tpe.typeSymbol) match
+                            case None                          => tpe.typeSymbol
+                            case Some((t, _)) if t.equals(tpe) => tpe.typeSymbol
+                            case _                             => tpe
+            if seen.contains(key) then
+                seen(key)._2
+            else
+                val id = nextId.toString
+                nextId += 1
+                seen += key -> (tpe, id)
+
+                def loop(tpe: TypeRepr): Entry =
+                    tpe match
+                        case tpe if tpe =:= TypeRepr.of[Any]     => AnyEntry
+                        case tpe if tpe =:= TypeRepr.of[Nothing] => NothingEntry
+                        case tpe if tpe =:= TypeRepr.of[Null]    => NullEntry
+
+                        case tpe @ AndType(_, _) =>
+                            IntersectionEntry(Chunk.Indexed.from(flattenAnd(tpe).map(visit)))
+
+                        case tpe @ OrType(_, _) =>
+                            def flatten(tpe: TypeRepr): Seq[TypeRepr] =
+                                tpe match
+                                    case OrType(a, b) => flatten(a) ++ flatten(b)
+                                    case tpe          => Seq(tpe)
+                            UnionEntry(Chunk.Indexed.from(flattenOr(tpe).map(visit)))
+
+                        case tpe @ ConstantType(const) =>
+                            LiteralEntry(visit(tpe.widen), const.value.toString())
+
+                        case TypeLambda(names, bounds, body) if body.typeSymbol.equals(tpe.typeSymbol) =>
+                            loop(body.dealias.simplified)
+
+                        case TypeLambda(names, bounds, body) =>
+                            val params = names.map(_.toString)
+                            val lowerBounds = bounds.map {
+                                case TypeBounds(low, high) => visit(low)
                             }
-                        val params = baseTpe.typeArgs.map(deriveStatic(_, newSeen))
-                        bug.checkMacro(params.size == variances.size, "Tag derivation failed! params.size != variances.size")
-                        ClassType.Base(base.fullName, Chunk.from(variances).toIndexed, Chunk.from(params).toIndexed)
-                    }
-                ClassType(tpe.typeSymbol.fullName.hashCode().toString(), Chunk.from(bases).toIndexed)
-
-            case tpe @ TypeLambda(_, _, bodyType) =>
-                deriveStatic(bodyType, seen)
-
-            case tpe =>
-                throw new DynamicTypeDetected(tpe.show)
-        end match
-    end deriveStatic
-
-    private def deriveDynamic(using q: Quotes)(t: q.reflect.TypeRepr, seen: Set[q.reflect.Symbol]): Expr[Type[?]] =
-        import quotes.reflect.*
-        t.dealias match
-            case tpe if tpe =:= TypeRepr.of[Any]     => '{ AnyType }
-            case tpe if tpe =:= TypeRepr.of[Nothing] => '{ NothingType }
-            case tpe if tpe =:= TypeRepr.of[Null]    => '{ NullType }
-            case AndType(a, b) =>
-                val ta = deriveDynamic(a, seen)
-                val tb = deriveDynamic(b, seen)
-                '{ IntersectionType(${ ta.asInstanceOf }, ${ tb.asInstanceOf }) }
-            case OrType(a, b) =>
-                val ta = deriveDynamic(a, seen)
-                val tb = deriveDynamic(b, seen)
-                '{ UnionType(${ ta.asInstanceOf }, ${ tb.asInstanceOf }) }
-            case tpe @ ConstantType(const) =>
-                val t = deriveDynamic(tpe.widen, seen)
-                val value =
-                    const.value match
-                        case x: Int     => Expr(x)
-                        case x: Long    => Expr(x)
-                        case x: Float   => Expr(x)
-                        case x: Double  => Expr(x)
-                        case x: Boolean => Expr(x)
-                        case x: Char    => Expr(x)
-                        case x: String  => Expr(x)
-                        case x          => report.errorAndAbort(s"Unsupported literal type: $x")
-                '{ LiteralType[Any](${ t.asInstanceOf }, $value) }
-            case tpe if seen.contains(tpe.typeSymbol) =>
-                '{ Recursive(${ Expr(tpe.typeSymbol.fullName.hashCode().toString()) }) }
-            case tpe if tpe.typeSymbol.isClassDef =>
-                val newSeen = seen + tpe.typeSymbol
-                val bases =
-                    tpe.baseClasses.map { base =>
-                        val baseTpe = tpe.baseType(base)
-                        val variances =
-                            baseTpe.typeSymbol.declaredTypes.flatMap { v =>
-                                if !v.isTypeParam then None
-                                else if v.paramVariance.is(Flags.Contravariant) then Present('{ Variance.Contravariant })
-                                else if v.paramVariance.is(Flags.Covariant) then Present('{ Variance.Covariant })
-                                else Present('{ Variance.Invariant })
-                                end if
+                            val higherBounds = bounds.map {
+                                case TypeBounds(low, high) => visit(high)
                             }
-                        val params = baseTpe.typeArgs.map(deriveDynamic(_, newSeen))
-                        bug.checkMacro(params.size == variances.size, "Tag derivation failed! params.size != variances.size")
-                        '{
-                            ClassType.Base(
-                                ${ Expr(base.fullName) },
-                                Chunk.from(${ Expr.ofSeq(variances) }).toIndexed,
-                                Chunk.from(${ Expr.ofSeq(params) }).toIndexed
+                            LambdaEntry(
+                                Chunk.Indexed.from(params),
+                                Chunk.Indexed.from(lowerBounds),
+                                Chunk.Indexed.from(higherBounds),
+                                visit(body)
                             )
-                        }
-                    }
-                '{ ClassType(${ Expr(tpe.typeSymbol.fullName.hashCode().toString()) }, Chunk.from(${ Expr.ofSeq(bases) }).toIndexed) }
 
-            case tpe @ TypeLambda(_, _, bodyType) =>
-                deriveDynamic(bodyType, seen)
+                        case tpe if tpe.typeSymbol.isClassDef =>
+                            val symbol = tpe.typeSymbol
+                            val name   = symbol.fullName
+                            val params = tpe.typeArgs.map(visit)
+                            val variances =
+                                symbol.declaredTypes.flatMap { v =>
+                                    if !v.isTypeParam then None
+                                    else if v.paramVariance.is(Flags.Contravariant) then Present(Variance.Contravariant)
+                                    else if v.paramVariance.is(Flags.Covariant) then Present(Variance.Covariant)
+                                    else Present(Variance.Invariant)
+                                    end if
+                                }
+                            ClassEntry(
+                                name,
+                                Chunk.Indexed.from(variances),
+                                Chunk.Indexed.from(params),
+                                Chunk.Indexed.from(immediateParents(tpe).map(visit))
+                            )
 
-            case tpe =>
-                tpe.asType match
-                    case '[t] =>
-                        Expr.summon[Tag[t]] match
-                            case Some(expr) => '{ $expr.tpe }
-                            case _          => throw MissingTag(tpe.show)
-        end match
-    end deriveDynamic
+                        case tpe if tpe.typeSymbol.flags.is(Flags.Opaque) && tpe.typeSymbol.isTypeDef =>
+                            tpe.typeSymbol.tree.asInstanceOf[TypeDef].rhs.asInstanceOf[TypeTree].tpe match
+                                case TypeBounds(lower, upper) =>
+                                    OpaqueEntry(tpe.typeSymbol.fullName, visit(lower), visit(upper))
+
+                        case tpe =>
+                            tpe.asType match
+                                case '[t] =>
+                                    Expr.summon[Tag[t]] match
+                                        case Some(tag) =>
+                                            if tpe.show.contains("kyo.Var.internal.Op") then
+                                                println("WHAT " + tpe.dealias)
+                                            dynamic = dynamic.updated(id, tpe -> '{ $tag.asInstanceOf[Tag[Any]] })
+                                            null
+                                        case None =>
+                                            report.errorAndAbort("Missing tag! " + tpe.show)
+
+                val entry = loop(tpe)
+                if entry != null then
+                    static = static.updated(id, loop(tpe))
+                id
+            end if
+        end visit
+
+        discard(visit(TypeRepr.of[A]))
+        (static, dynamic)
+    end deriveDB
+
+    private def immediateParents(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
+        import quotes.reflect.*
+        val all = tpe.baseClasses.tail.map(tpe.baseType)
+        all.filter { parent =>
+            !all.exists { otherAncestor =>
+                !otherAncestor.equals(parent) && otherAncestor.baseClasses.contains(parent.typeSymbol)
+            }
+        }
+    end immediateParents
+
+    private def flattenAnd(using q: Quotes)(tpe: q.reflect.TypeRepr): Seq[q.reflect.TypeRepr] =
+        import quotes.reflect.*
+        def loop(tpe: TypeRepr): Seq[TypeRepr] =
+            tpe match
+                case AndType(a, b) => loop(a) ++ loop(b)
+                case tpe           => Seq(tpe)
+        loop(tpe).sortBy(_.show)
+    end flattenAnd
+
+    private def flattenOr(using q: Quotes)(tpe: q.reflect.TypeRepr): Seq[q.reflect.TypeRepr] =
+        import quotes.reflect.*
+        def loop(tpe: TypeRepr): Seq[TypeRepr] =
+            tpe match
+                case OrType(a, b) => loop(a) ++ loop(b)
+                case tpe          => Seq(tpe)
+        loop(tpe).sortBy(_.show)
+    end flattenOr
+
 end TagMacro

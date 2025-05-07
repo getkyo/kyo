@@ -770,16 +770,12 @@ object Async:
         reduce(x)
     end use
 
-    // TODO the correct output is `Result[Nothing, *]` but it's not supported by Tag
-    sealed trait Join extends ArrowEffect[IOPromise[?, *], Const[Any]]
-
-    private val joinTag =
-        Tag.deriveDynamic[Join]
+    sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
 
     private[kyo] def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
-        ArrowEffect.suspend[A](Async.joinTag, v).asInstanceOf[Result[E, A] < Async]
+        ArrowEffect.suspend[A](Tag[Join], v)
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
-        ArrowEffect.suspendWith[A](Async.joinTag, v)(v => f(v.asInstanceOf[Result[E, A]]))
+        ArrowEffect.suspendWith[A](Tag[Join], v)(v => f(v))
 
 end Async
