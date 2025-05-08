@@ -123,7 +123,18 @@ private[kyo] object TagMacro:
                         case tpe if tpe.typeSymbol.flags.is(Flags.Opaque) && tpe.typeSymbol.isTypeDef =>
                             tpe.typeSymbol.tree.asInstanceOf[TypeDef].rhs.asInstanceOf[TypeTree].tpe match
                                 case TypeBounds(lower, upper) =>
-                                    OpaqueEntry(tpe.typeSymbol.fullName, visit(lower), visit(upper))
+                                    val symbol = tpe.typeSymbol
+                                    val name   = symbol.fullName
+                                    val params = tpe.typeArgs.map(visit)
+                                    val variances =
+                                        symbol.declaredTypes.flatMap { v =>
+                                            if !v.isTypeParam then None
+                                            else if v.paramVariance.is(Flags.Contravariant) then Present(Variance.Contravariant)
+                                            else if v.paramVariance.is(Flags.Covariant) then Present(Variance.Covariant)
+                                            else Present(Variance.Invariant)
+                                            end if
+                                        }
+                                    OpaqueEntry(name, visit(lower), visit(upper), Chunk.Indexed.from(variances), Chunk.Indexed.from(params))
 
                         case tpe =>
                             tpe.asType match

@@ -192,8 +192,16 @@ object Tag:
                     case UnionEntry(set)              => "(" + set.map(render(owner, _)).mkString(" | ") + ")"
                     case LambdaEntry(params, _, _, body) =>
                         s"[${params.mkString(", ")}] => ${render(owner, body)}"
-                    case OpaqueEntry(name, lower, upper) =>
-                        s"($name >: ${render(owner, lower)} <: ${render(owner, upper)})"
+                    case OpaqueEntry(name, lower, upper, variances, params) =>
+                        if params.isEmpty then
+                            s"($name >: ${render(owner, lower)} <: ${render(owner, upper)})"
+                        else
+                            val p = variances.zip(params).map {
+                                case (Variance.Invariant, p)     => render(owner, p)
+                                case (Variance.Covariant, p)     => s"+${render(owner, p)}"
+                                case (Variance.Contravariant, p) => s"-${render(owner, p)}"
+                            }
+                            s"($name[${p.mkString(", ")}] >: ${render(owner, lower)} <: ${render(owner, upper)})"
                     case ClassEntry(className, variances, params, parents) =>
                         if params.isEmpty then
                             className
@@ -207,11 +215,7 @@ object Tag:
             end if
         end render
 
-        override def toString =
-            try
-                render(this, entryId)
-            catch
-                case ex: StackOverflowError => "bug"
+        override def toString = render(this, entryId)
 
     end Type
 
@@ -252,7 +256,13 @@ object Tag:
                 body: Id
             ) extends Entry
 
-            final case class OpaqueEntry(name: String, lowerBound: Id, upperBound: Id) extends Entry
+            final case class OpaqueEntry(
+                name: String,
+                lowerBound: Id,
+                upperBound: Id,
+                variances: Chunk.Indexed[Variance],
+                params: Chunk.Indexed[Id]
+            ) extends Entry
 
         end Entry
     end Type
@@ -390,8 +400,30 @@ object Tag:
                                     checkBounds(0) && isSubtype(aOwner, bOwner, aBody, bBody)
                             case _ => false
 
-                    case OpaqueEntry(aName, _, aUpper) =>
-                        isSubtype(aOwner, bOwner, aUpper, bId)
+                    case OpaqueEntry(aName, _, aUpper, aVariances, aParams) =>
+                        bEntry match
+                            case OpaqueEntry(bName, bLower, _, bVariances, bParams) if aName == bName =>
+                                if aParams.size != bParams.size then false
+                                else
+                                    @tailrec def loopParams(paramIdx: Int): Boolean =
+                                        paramIdx == aParams.size || {
+                                            val variance = aVariances(paramIdx)
+                                            val aParamId = aParams(paramIdx)
+                                            val bParamId = bParams(paramIdx)
+                                            val ok =
+                                                variance match
+                                                    case Variance.Invariant =>
+                                                        isSubtype(aOwner, bOwner, aParamId, bParamId) &&
+                                                        isSubtype(bOwner, aOwner, bParamId, aParamId)
+                                                    case Variance.Covariant =>
+                                                        isSubtype(aOwner, bOwner, aParamId, bParamId)
+                                                    case Variance.Contravariant =>
+                                                        isSubtype(bOwner, aOwner, bParamId, aParamId)
+                                            ok && loopParams(paramIdx + 1)
+                                        }
+                                    loopParams(0)
+                            case _ =>
+                                isSubtype(aOwner, bOwner, aUpper, bId)
 
                     case aClass: ClassEntry =>
                         bEntry match
@@ -413,8 +445,23 @@ object Tag:
 
                             case _: LambdaEntry => false
 
-                            case OpaqueEntry(_, lower, upper) =>
-                                isSubtype(aOwner, bOwner, aId, lower)
+                            case OpaqueEntry(_, lower, upper, variances, params) =>
+                                isSubtype(aOwner, bOwner, aId, lower) && {
+                                    @tailrec def loopParams(paramIdx: Int): Boolean =
+                                        paramIdx == params.size || {
+                                            val variance = variances(paramIdx)
+                                            val paramId  = params(paramIdx)
+                                            val ok = variance match
+                                                case Variance.Invariant =>
+                                                    isSameType(aOwner, bOwner, aId, paramId)
+                                                case Variance.Covariant =>
+                                                    isSubtype(aOwner, bOwner, aId, paramId)
+                                                case Variance.Contravariant =>
+                                                    isSubtype(bOwner, aOwner, paramId, aId)
+                                            ok && loopParams(paramIdx + 1)
+                                        }
+                                    loopParams(0)
+                                }
 
                             case bClass: ClassEntry =>
                                 isSubclassOf(aOwner, bOwner, aId, bId, aClass, bClass)
@@ -475,11 +522,17 @@ object Tag:
                                 aParams.size == bParams.size && checkBounds(0) && isSameType(aOwner, bOwner, aBody, bBody)
                             case _ => false
 
-                    case OpaqueEntry(name, aLower, aUpper) =>
+                    case OpaqueEntry(name, aLower, aUpper, aVariances, aParams) =>
                         bEntry match
-                            case OpaqueEntry(`name`, bLower, bUpper) =>
+                            case OpaqueEntry(`name`, bLower, bUpper, bVariances, bParams) =>
                                 isSameType(aOwner, bOwner, aLower, bLower) &&
-                                isSameType(aOwner, bOwner, aUpper, bUpper)
+                                isSameType(aOwner, bOwner, aUpper, bUpper) &&
+                                aParams.size == bParams.size && {
+                                    @tailrec def checkParams(idx: Int): Boolean =
+                                        idx == aParams.size ||
+                                            (isSameType(aOwner, bOwner, aParams(idx), bParams(idx)) && checkParams(idx + 1))
+                                    checkParams(0)
+                                }
                             case _ =>
                                 false
 
@@ -561,8 +614,11 @@ object Tag:
                 case UnionEntry(set)              => s"U:${set.mkString(":")}"
                 case LambdaEntry(params, lower, upper, body) =>
                     s"M:$body:${params.size}:${params.mkString(":")}:${lower.mkString(":")}:${upper.mkString(":")}"
-                case OpaqueEntry(name, lower, upper) =>
-                    s"O:$name:$lower:$upper"
+                case OpaqueEntry(name, lower, upper, variances, params) =>
+                    if params.isEmpty then
+                        s"O:$name:$lower:$upper"
+                    else
+                        s"O:$name:$lower:$upper:${params.size}:${variances.map(_.ordinal).mkString(":")}:${params.mkString(":")}"
                 case ClassEntry(className, variances, params, parents) =>
                     require(params.size == variances.size)
                     val sanitized = className.replaceAll(":", "_colon_")
@@ -617,7 +673,13 @@ object Tag:
                         upperBounds = Chunk.Indexed.from(it.take(n))
                     )
                 case "O" :: name :: lower :: upper :: Nil =>
-                    OpaqueEntry(name, lower, upper)
+                    OpaqueEntry(name, lower, upper, Chunk.Indexed.empty, Chunk.Indexed.empty)
+                case "O" :: name :: lower :: upper :: size :: rest =>
+                    val n         = size.toInt
+                    val chunk     = Chunk.from(rest)
+                    val variances = chunk.take(n).map(v => Variance.fromOrdinal(v.toInt))
+                    val params    = chunk.drop(n).take(n)
+                    OpaqueEntry(name, lower, upper, variances.toIndexed, params.toIndexed)
                 case "C" :: name :: size :: rest =>
                     size.toInt match
                         case 0 =>
