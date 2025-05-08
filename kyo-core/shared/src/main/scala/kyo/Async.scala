@@ -776,6 +776,6 @@ object Async:
         ArrowEffect.suspend[A](Tag[Join], v)
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
-        ArrowEffect.suspendWith[A](Tag[Join], v)(v => f(v))
+        ArrowEffect.suspendWith[A](Tag[Join], v)(f)
 
 end Async

@@ -1,21 +1,10 @@
 package kyo
 
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
-import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
 import kyo.Tag.Type.Entry.*
-import kyo.internal.IntEncoder
 import kyo.internal.TagMacro
 import scala.annotation.tailrec
 import scala.collection.immutable.HashMap
-import scala.collection.immutable.Map
-import scala.collection.immutable.SeqMap
-import scala.util.Using
 import scala.util.hashing.MurmurHash3
 
 /** Tag provides a lightweight, efficient representation of types that supports operations like equality checking, subtype testing, and type

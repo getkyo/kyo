@@ -69,11 +69,6 @@ import scala.language.implicitConversions
   * (record.value: String) // Returns "string"
   * (record.value: Int)    // Returns 42
   * }}}
-  *
-  * =Known Limitations=
-  *
-  *   - Nested records cannot be created directly
-  *   - Tag derivation for Records is not currently supported
   */
 final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
 

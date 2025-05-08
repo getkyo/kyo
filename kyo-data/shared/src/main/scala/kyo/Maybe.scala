@@ -19,8 +19,6 @@ object Maybe:
     inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
     implicit def toIterableOnce[A](v: Maybe[A]): IterableOnce[A]                       = v.iterator
 
-    inline given [A]: Tag[Maybe[A]] = Tag[Absent | Present[A]]
-
     given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with
         given CanEqual[Absent, MaybeA] = CanEqual.derived
         def asText(value: MaybeA): String = (value: Maybe[A]) match
@@ -82,7 +80,6 @@ object Maybe:
     /** Represents a defined value in a Maybe. */
     opaque type Present[+A] = A | PresentAbsent
     object Present:
-        inline given [A]: Tag[Present[A]] = Tag[A | PresentAbsent]
 
         /** Creates a Present instance.
           *

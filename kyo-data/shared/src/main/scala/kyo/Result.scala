@@ -165,7 +165,6 @@ object Result:
     opaque type Success[+A] = A | SuccessError[A]
 
     object Success:
-        inline given [A]: Tag[Success[A]] = Tag[A | SuccessError[A]]
 
         /** Creates a Success instance.
           *
@@ -708,8 +707,6 @@ object Result:
 
     inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Result[E, A], Result[E, A]] = CanEqual.derived
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
-
-    inline given [E, A]: Tag[Result[E, A]] = Tag[Success[A] | Error[E]]
 
     given [E, A, ResultEA <: Result[E, A]](using re: Render[E], ra: Render[A]): Render[ResultEA] with
         def asText(value: ResultEA): String = value match
