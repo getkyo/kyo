@@ -113,6 +113,7 @@ private[kyo] object TagMacro:
                                     else Present(Variance.Invariant)
                                     end if
                                 }
+                            require(params.size == variances.size)
                             ClassEntry(
                                 name,
                                 Chunk.Indexed.from(variances),
@@ -121,20 +122,22 @@ private[kyo] object TagMacro:
                             )
 
                         case tpe if tpe.typeSymbol.flags.is(Flags.Opaque) && tpe.typeSymbol.isTypeDef =>
+                            val name = tpe.typeSymbol.fullName
                             tpe.typeSymbol.tree.asInstanceOf[TypeDef].rhs.asInstanceOf[TypeTree].tpe match
-                                case TypeBounds(lower, upper) =>
+                                case tpe @ TypeBounds(lower, upper) =>
                                     val symbol = tpe.typeSymbol
-                                    val name   = symbol.fullName
                                     val params = tpe.typeArgs.map(visit)
                                     val variances =
-                                        symbol.declaredTypes.flatMap { v =>
+                                        symbol.declarations.flatMap { v =>
                                             if !v.isTypeParam then None
                                             else if v.paramVariance.is(Flags.Contravariant) then Present(Variance.Contravariant)
                                             else if v.paramVariance.is(Flags.Covariant) then Present(Variance.Covariant)
                                             else Present(Variance.Invariant)
                                             end if
                                         }
+                                    require(params.size == variances.size)
                                     OpaqueEntry(name, visit(lower), visit(upper), Chunk.Indexed.from(variances), Chunk.Indexed.from(params))
+                            end match
 
                         case tpe =>
                             tpe.asType match

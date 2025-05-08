@@ -595,19 +595,20 @@ object Tag:
 
         def encodeEntry(entry: Entry): String =
             entry match
-                case AnyEntry                     => "A"
-                case NothingEntry                 => "N"
-                case NullEntry                    => "U"
+                case AnyEntry     => "A"
+                case NothingEntry => "N"
+                case NullEntry    => "U"
+
                 case LiteralEntry(widened, value) => s"L:$widened:$value"
                 case IntersectionEntry(set)       => s"I:${set.mkString(":")}"
                 case UnionEntry(set)              => s"U:${set.mkString(":")}"
+
                 case LambdaEntry(params, lower, upper, body) =>
                     s"M:$body:${params.size}:${params.mkString(":")}:${lower.mkString(":")}:${upper.mkString(":")}"
+
                 case OpaqueEntry(name, lower, upper, variances, params) =>
-                    if params.isEmpty then
-                        s"O:$name:$lower:$upper"
-                    else
-                        s"O:$name:$lower:$upper:${params.size}:${variances.map(_.ordinal).mkString(":")}:${params.mkString(":")}"
+                    s"O:$name:$lower:$upper:${params.size}:${variances.map(_.ordinal).mkString(":")}:${params.mkString(":")}"
+
                 case ClassEntry(className, variances, params, parents) =>
                     require(params.size == variances.size)
                     val sanitized = className.replaceAll(":", "_colon_")
@@ -652,6 +653,7 @@ object Tag:
                 case "L" :: widened :: value :: Nil => LiteralEntry(widened, value)
                 case "I" :: set                     => IntersectionEntry(Chunk.Indexed.from(set))
                 case "U" :: set                     => UnionEntry(Chunk.Indexed.from(set))
+
                 case "M" :: body :: size :: rest =>
                     val n  = size.toInt
                     val it = rest.iterator
@@ -661,14 +663,14 @@ object Tag:
                         lowerBounds = Chunk.Indexed.from(it.take(n)),
                         upperBounds = Chunk.Indexed.from(it.take(n))
                     )
-                case "O" :: name :: lower :: upper :: Nil =>
-                    OpaqueEntry(name, lower, upper, Chunk.Indexed.empty, Chunk.Indexed.empty)
+
                 case "O" :: name :: lower :: upper :: size :: rest =>
                     val n         = size.toInt
                     val chunk     = Chunk.from(rest)
                     val variances = chunk.take(n).map(v => Variance.fromOrdinal(v.toInt))
                     val params    = chunk.drop(n).take(n)
                     OpaqueEntry(name, lower, upper, variances.toIndexed, params.toIndexed)
+
                 case "C" :: name :: size :: rest =>
                     size.toInt match
                         case 0 =>
@@ -684,6 +686,7 @@ object Tag:
                             val params    = chunk.drop(size).take(size)
                             val parents   = chunk.drop(size * 2)
                             ClassEntry(name, variances.toIndexed, params.toIndexed, parents.toIndexed)
+
                 case fields =>
                     bug("Invalid tag payload! " + fields.mkString(":"))
             end match

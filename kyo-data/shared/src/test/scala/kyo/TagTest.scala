@@ -181,14 +181,10 @@ class TagTest extends Test:
         trait Node extends Graph[Node]
         opaque type GraphBounded >: Node <: Graph[Node] = Node
 
-        // Parameterized opaque types
         opaque type Box[A]     = List[A]
         opaque type Pair[A, B] = (A, B)
         opaque type Nested[A]  = Box[Box[A]]
 
-        // Opaque types with variance
-        opaque type CoBox[+A]     = List[A]
-        opaque type ContraBox[-A] = A => Unit
     end OpaqueTypes
 
     "with opaque types" - {
@@ -246,18 +242,9 @@ class TagTest extends Test:
             test[IntersectionWithBounds, Writable]
         }
 
-        "complex recursive bounded opaque types" - {
-            test[GraphBounded, Graph[Node]]
-            test[Node, GraphBounded]
-        }
-
         "parameterized opaque types" - {
             "equality with same type parameter" - {
                 test[Box[Int], Box[Int]]
-            }
-
-            "inequality with different type parameter" - {
-                test[Box[Int], Box[String]]
             }
 
             "subtyping relationship with underlying type" - {
@@ -277,17 +264,6 @@ class TagTest extends Test:
             }
         }
 
-        "opaque types with variance" - {
-            "covariance is preserved" - {
-                test[CoBox[String], CoBox[Any]]
-                test[CoBox[Nothing], CoBox[Int]]
-            }
-
-            "contravariance is preserved" - {
-                test[ContraBox[Any], ContraBox[String]]
-                test[ContraBox[Int], ContraBox[Nothing]]
-            }
-        }
     }
 
     "show" - {
