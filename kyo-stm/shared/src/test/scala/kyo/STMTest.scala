@@ -808,5 +808,33 @@ class STMTest extends Test:
             assert(result == Result.fail(ex))
         }
     }
+    "bug #1172" in runJVM {
+        Abort.run { // trap non-fatal exceptions (AssertionError)
+            for
+                // initially they contain equal values:
+                r1 <- STM.run(TRef.init("a"))
+                r2 <- STM.run(TRef.init("a"))
+                txn1 =
+                    for
+                        v1 <- r1.get
+                        v2 <- r2.get
+                        // we only write equal values:
+                        _ <- r1.set(v1 + "1")
+                        _ <- r2.set(v2 + "1")
+                    yield ()
+                txn2 = r1.get.map { v1 =>
+                    r2.get.map { v2 =>
+                        if v1 == v2 then
+                            ()
+                        else
+                            // observed non-equal values:
+                            throw new AssertionError(s"${v1} != ${v2}") // <- fails here
+                    }
+                }
+                once = Async.zip(STM.run(STM.defaultRetrySchedule.forever)(txn1), STM.run(STM.defaultRetrySchedule.forever)(txn2))
+                _ <- Async.foreachDiscard(1 to 100000, concurrency = 8) { _ => once }
+            yield succeed
+        }.map(_.getOrElse(succeed))
+    }
 
 end STMTest
