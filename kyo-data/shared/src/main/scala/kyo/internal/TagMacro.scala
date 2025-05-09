@@ -71,14 +71,14 @@ private[kyo] object TagMacro:
                         case tpe if tpe =:= TypeRepr.of[Null]    => NullEntry
 
                         case tpe @ AndType(_, _) =>
-                            IntersectionEntry(Chain.from(flattenAnd(tpe).map(visit)))
+                            IntersectionEntry(Chunk.Indexed.from(flattenAnd(tpe).map(visit)))
 
                         case tpe @ OrType(_, _) =>
                             def flatten(tpe: TypeRepr): Seq[TypeRepr] =
                                 tpe match
                                     case OrType(a, b) => flatten(a) ++ flatten(b)
                                     case tpe          => Seq(tpe)
-                            UnionEntry(Chain.from(flattenOr(tpe).map(visit)))
+                            UnionEntry(Chunk.Indexed.from(flattenOr(tpe).map(visit)))
 
                         case tpe @ ConstantType(const) =>
                             LiteralEntry(visit(tpe.widen), const.value.toString())
@@ -95,9 +95,9 @@ private[kyo] object TagMacro:
                                 case TypeBounds(low, high) => visit(high)
                             }
                             LambdaEntry(
-                                Chain.from(params),
-                                Chain.from(lowerBounds),
-                                Chain.from(higherBounds),
+                                Chunk.Indexed.from(params),
+                                Chunk.Indexed.from(lowerBounds),
+                                Chunk.Indexed.from(higherBounds),
                                 visit(body)
                             )
 
@@ -116,9 +116,9 @@ private[kyo] object TagMacro:
                             require(params.size == variances.size)
                             ClassEntry(
                                 name,
-                                Chain.from(variances),
-                                Chain.from(params),
-                                Chain.from(immediateParents(tpe).map(visit))
+                                Chunk.Indexed.from(variances),
+                                Chunk.Indexed.from(params),
+                                Chunk.Indexed.from(immediateParents(tpe).map(visit))
                             )
 
                         case tpe if tpe.typeSymbol.flags.is(Flags.Opaque) && tpe.typeSymbol.isTypeDef =>
@@ -136,7 +136,7 @@ private[kyo] object TagMacro:
                                             end if
                                         }
                                     require(params.size == variances.size)
-                                    OpaqueEntry(name, visit(lower), visit(upper), Chain.from(variances), Chain.from(params))
+                                    OpaqueEntry(name, visit(lower), visit(upper), Chunk.Indexed.from(variances), Chunk.Indexed.from(params))
                             end match
 
                         case tpe =>
