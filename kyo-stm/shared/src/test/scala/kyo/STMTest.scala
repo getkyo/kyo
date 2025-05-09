@@ -553,7 +553,7 @@ class STMTest extends Test:
         val repeats = 10
         val sizes   = Seq(1, 10, 100, 1000)
 
-        "concurrent updates" in run {
+        "concurrent updates" in runNotJS {
             (for
                 size  <- Choice.get(sizes)
                 ref   <- TRef.init(0)
@@ -564,7 +564,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent reads and writes" in run {
+        "concurrent reads and writes" in runNotJS {
             (for
                 size  <- Choice.get(sizes)
                 ref   <- TRef.init(0)
@@ -584,7 +584,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent nested transactions" in run {
+        "concurrent nested transactions" in runNotJS {
             (for
                 size <- Choice.get(sizes)
                 ref  <- TRef.init(0)
@@ -607,7 +607,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "dining philosophers" in run {
+        "dining philosophers" in runNotJS {
             val philosophers = 5
             (for
                 forks <- Kyo.fill(philosophers)(TRef.init(true))
@@ -637,7 +637,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "bank account transfers" in run {
+        "bank account transfers" in runNotJS {
             (for
                 account1 <- TRef.init(500)
                 account2 <- TRef.init(300)
@@ -687,7 +687,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "circular account transfers" in run {
+        "circular account transfers" in runNotJS {
             (for
                 account1 <- TRef.init(300)
                 account2 <- TRef.init(200)
