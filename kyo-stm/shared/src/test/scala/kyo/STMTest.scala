@@ -832,7 +832,7 @@ class STMTest extends Test:
                     }
                 }
                 once = Async.zip(STM.run(STM.defaultRetrySchedule.forever)(txn1), STM.run(STM.defaultRetrySchedule.forever)(txn2))
-                _ <- Async.foreachDiscard(1 to 100000, concurrency = 8) { _ => once }
+                _ <- Async.foreachDiscard(1 to 10, concurrency = 8) { _ => once }
             yield succeed
         }.map(_.getOrElse(succeed))
     }

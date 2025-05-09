@@ -187,7 +187,7 @@ object Tag:
                             val size = variances.size
                             @tailrec def loop(idx: Int, acc: Chunk[String]): String =
                                 if idx == size then acc.mkString(", ")
-                                else loop(idx + 1, acc.append(variances(idx).show).append(render(owner, params(idx))))
+                                else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
                             s"($name[${loop(0, Chunk.empty)}] >: ${render(owner, lower)} <: ${render(owner, upper)})"
                     case ClassEntry(className, variances, params, parents) =>
                         if params.isEmpty then
@@ -196,7 +196,7 @@ object Tag:
                             val size = params.size
                             @tailrec def loop(idx: Int, acc: Chunk[String]): String =
                                 if idx == size then acc.mkString(", ")
-                                else loop(idx + 1, acc.append(variances(idx).show).append(render(owner, params(idx))))
+                                else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
                             s"$className[${loop(0, Chunk.empty)}]"
             end if
         end render
@@ -389,18 +389,17 @@ object Tag:
                     case OpaqueEntry(aName, _, aUpper, aVariances, aParams) =>
                         bEntry match
                             case OpaqueEntry(bName, bLower, _, bVariances, bParams) if aName == bName =>
-                                if aParams.size != bParams.size then false
-                                else
-                                    forall(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
-                                        variance match
-                                            case Variance.Invariant =>
-                                                isSubtype(aOwner, bOwner, aParamId, bParamId) &&
-                                                isSubtype(bOwner, aOwner, bParamId, aParamId)
-                                            case Variance.Covariant =>
-                                                isSubtype(aOwner, bOwner, aParamId, bParamId)
-                                            case Variance.Contravariant =>
-                                                isSubtype(bOwner, aOwner, bParamId, aParamId)
-                                    }
+                                aParams.size == bParams.size &&
+                                forall(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
+                                    variance match
+                                        case Variance.Invariant =>
+                                            isSubtype(aOwner, bOwner, aParamId, bParamId) &&
+                                            isSubtype(bOwner, aOwner, bParamId, aParamId)
+                                        case Variance.Covariant =>
+                                            isSubtype(aOwner, bOwner, aParamId, bParamId)
+                                        case Variance.Contravariant =>
+                                            isSubtype(bOwner, aOwner, bParamId, aParamId)
+                                }
                             case _ =>
                                 isSubtype(aOwner, bOwner, aUpper, bId)
 
