@@ -100,6 +100,14 @@ lazy val kyoJVM = project
         `kyo-settings`,
         commands += Command.command("testOnlyUntilFailed") { state =>
             "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"FOO\"" :: "testOnlyUntilFailed" :: state
+        },
+        commands += Command.args("testOnlyUntilFailed", "[times]") { (state, args) =>
+          val times = args.headOption.flatMap(times => scala.util.Try(times.toInt).toOption).getOrElse(1)
+          if (times > 0) {
+            "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"FOO\"" :: s"testOnlyUntilFailed ${times - 1}" :: state
+          } else {
+            state
+          }
         }
     )
     .disablePlugins(MimaPlugin)

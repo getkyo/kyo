@@ -134,7 +134,7 @@ object StreamChannel:
     def init[A: Tag, E](using Frame): StreamChannel[A, E] < IO =
         for
             // TODO: Double check the access pattern here.
-            channel        <- Channel.init[A](capacity = Capacity, access = Access.SingleProducerSingleConsumer)
+            channel        <- Channel.init[A](capacity = Capacity, access = Access.MultiProducerMultiConsumer)
             error          <- AtomicRef.init(Maybe.empty[E])
             producerClosed <- AtomicBoolean.init(false)
         yield new StreamChannel[A, E](channel, error, producerClosed)

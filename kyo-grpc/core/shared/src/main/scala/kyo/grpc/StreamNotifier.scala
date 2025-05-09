@@ -16,7 +16,7 @@ private[grpc] object StreamNotifier:
         Abort.run[E](value).map {
             case Result.Success(value) =>
                 for
-                    _ <- Log.debug(s"StreamNotifier - Sending next value to observer: $value")
+                    _ <- Log.debug(s"StreamNotifier - Sending value to observer: $value")
                     _ <- IO(observer.onNext(value))
                     _ <- Log.debug("StreamNotifier - Completing observer")
                     _ <- IO(observer.onCompleted())
