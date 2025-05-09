@@ -28,7 +28,7 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
             fut.onComplete { r =>
                 import AllowUnsafe.embrace.danger
                 p.unsafe.complete(Result(r.get))
-            }(ExecutionContext.parasitic)
+            }(using ExecutionContext.parasitic)
             p.get
         }
 

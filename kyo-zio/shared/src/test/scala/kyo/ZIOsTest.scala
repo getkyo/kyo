@@ -389,7 +389,6 @@ class ZIOsTest extends Test:
             val cause     = Cause.die(exception)
             cause.toError match
                 case Result.Panic(e) => assert(e == exception)
-                case _               => fail("Expected Result.Panic")
         }
 
         "Interrupt" in runKyo {
@@ -420,7 +419,6 @@ class ZIOsTest extends Test:
             cause.toError match
                 case Result.Panic(e) =>
                     assert(e.getMessage.startsWith("Unexpected zio.Cause.Empty at"))
-                case _ => fail("Expected Result.Panic")
             end match
         }
     }

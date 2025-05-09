@@ -257,7 +257,6 @@ object Queue:
         object Unsafe:
             extension [A](self: Unsafe[A])
                 def add(value: A)(using AllowUnsafe, Frame): Unit = discard(self.offer(value))
-                def safe: Unbounded[A]                            = self
 
             def init[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(
                 using

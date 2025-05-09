@@ -23,7 +23,7 @@ object Cats:
             future.onComplete {
                 case Success(v)  => p.complete(Result.succeed(v))
                 case Failure(ex) => p.complete(Result.panic(ex))
-            }(ExecutionContext.parasitic)
+            }(using ExecutionContext.parasitic)
             p.onInterrupt(_ => discard(cancel()))
             p.safe.get
         }

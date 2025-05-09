@@ -32,6 +32,6 @@ private[kyo] trait BaseKyoDataTest:
                 if errors.contains(expected) && !expected.isEmpty() then assertionSuccess
                 else assertionFailure(frame.render(Map("expected" -> expected, "actual" -> errors)))
             case Result.Panic(exception) => assertionFailure(exception.getMessage)
-            case Result.Success(_)       => assertionFailure("Code type-checked successfully, expected a failure")
+            case _                       => assertionFailure("Code type-checked successfully, expected a failure")
 
 end BaseKyoDataTest
