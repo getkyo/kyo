@@ -397,10 +397,10 @@ object Tag:
                             isSubtype(aOwner, bOwner, aElemId, bId)
                         }
 
-                    case LiteralEntry(widenedId, value) =>
+                    case LiteralEntry(aWidened, value) =>
                         bEntry match
-                            case LiteralEntry(_, bValue) => value.equals(bValue)
-                            case _                       => isSubtype(aOwner, bOwner, widenedId, bId)
+                            case LiteralEntry(bWidened, bValue) => isSubtype(aOwner, bOwner, aWidened, bWidened) & value.equals(bValue)
+                            case _                              => isSubtype(aOwner, bOwner, aWidened, bId)
 
                     case LambdaEntry(aParams, aLower, aUpper, aBody) =>
                         bEntry match

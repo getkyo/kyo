@@ -219,26 +219,26 @@ class TagTest extends Test:
 
         "opaque types with explicit bounds" - {
             test[BoundedInt, AnyVal]
-            test[Int, BoundedInt]
+            test[Int, BoundedInt](skipIzumiWarning = true)
             test[BoundedString, AnyRef]
-            test[String, BoundedString]
+            test[String, BoundedString](skipIzumiWarning = true)
         }
 
         "opaque types with bounds different from underlying" - {
             test[BoundedCat, Animal]
-            test[Cat, BoundedCat]
+            test[Cat, BoundedCat](skipIzumiWarning = true)
             test[BoundedCat, Mammal]
         }
 
         "bounded opaque types with union underlying type" - {
             test[UnionWithBounds, Any]
-            test[Int, UnionWithBounds]
+            test[Int, UnionWithBounds](skipIzumiWarning = true)
             test[String, UnionWithBounds]
         }
 
         "bounded opaque types with intersection underlying type" - {
             test[IntersectionWithBounds, Readable]
-            test[FileImpl, IntersectionWithBounds]
+            test[FileImpl, IntersectionWithBounds](skipIzumiWarning = true)
             test[IntersectionWithBounds, Writable]
         }
 
@@ -1030,6 +1030,18 @@ class TagTest extends Test:
             "union of tuples with literals" in {
                 assert(Tag[(1, "a") | (2, "b")] <:< Tag[(Int, String)])
             }
+        }
+
+        "different types with similar string representation" - {
+            test[1, 1.0]
+            test[1, 1L](skipIzumiWarning = true)
+            test['a', "a"]
+            test[true, "true"]
+            test[1.0f, 1.0](skipIzumiWarning = true)
+            test[0, 0.0]
+            test[0, 0L](skipIzumiWarning = true)
+            class Box[A]
+            test[Box[1], Box[1.0]]
         }
     }
 
