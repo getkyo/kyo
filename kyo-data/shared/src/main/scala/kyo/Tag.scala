@@ -74,9 +74,10 @@ object Tag:
           *   true if the types are exactly the same, false otherwise
           */
         infix def =:=[B](that: Tag[B]): Boolean =
-            (self eq that) ||
-                (self.hashCode == that.hashCode && self.equals(that)) ||
+            (self eq that) || self.equals(that) || {
+                !self.isConcrete && !that.isConcrete &&
                 checkTypes(self, that, Mode.Equality)
+            }
 
         /** Tests if this Tag represents a different type than another Tag. This is the negation of the =:= operation.
           *
@@ -97,7 +98,12 @@ object Tag:
           *   true if this type is a subtype of the other type, false otherwise
           */
         infix def <:<[B](that: Tag[B]): Boolean =
-            (self eq that) || (self.hashCode == that.hashCode && self.equals(that)) || checkTypes(self, that, Mode.Subtype)
+            (self eq that) || self.equals(that) || checkTypes(self, that, Mode.Subtype)
+
+        private def isConcrete: Boolean =
+            self match
+                case self: String => self.charAt(0) == '*'
+                case _            => false
 
         /** Tests if this Tag represents a supertype of another Tag. This is the reverse of the <:< operation.
           *
@@ -164,7 +170,7 @@ object Tag:
                 val tpe = dynamicDB(id).tpe
                 (tpe, tpe.entryId)
             else
-                bug("")
+                bug("Tag: can't narrow entry id owner")
 
         private def render(owner: Type[?], id: Type.Entry.Id): String =
             val (nowner, nid) = narrowOwner(owner, id)
@@ -261,7 +267,7 @@ object Tag:
         private val typeCache = new ConcurrentHashMap[Tag[Any], Type[?]]()
 
         private val threadSlots  = Runtime.getRuntime().availableProcessors() * 8
-        private val cacheEntries = 256
+        private val cacheEntries = 128
         private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
 
         case class Dynamic(tag: String, map: Map[Entry.Id, Any]):
@@ -307,9 +313,9 @@ object Tag:
           *   true if a is a subtype of b, false otherwise
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            var hash = a.hashCode.toLong
+            var hash = a.hashCode.toLong << 32
+            hash |= b.hashCode.toLong & 0xffffffffL
             hash *= mode.hash
-            hash *= b.hashCode.toLong
             hash ^= (hash << 21)
             hash ^= (hash >>> 35)
             hash ^= (hash << 4)
@@ -567,9 +573,15 @@ object Tag:
                             s"${params.mkString(":")}:${parents.mkString(":")}"
             end encodeEntry
 
-            staticDB.map { (id, entry) =>
-                s"$id:${encodeEntry(entry)}"
-            }.mkString("\n")
+            val concreteFlag =
+                staticDB("0") match
+                    case ClassEntry(_, _, params, _) if params.isEmpty => "*"
+                    case _                                             => "."
+
+            concreteFlag +
+                staticDB.map { (id, entry) =>
+                    s"$id:${encodeEntry(entry)}"
+                }.mkString("\n")
         end encode
 
         /** Cache for decoded type structures. This cache ensures that each unique encoded type string is only deserialized once,
@@ -584,7 +596,7 @@ object Tag:
 
         private val decodeFunction: java.util.function.Function[String, Type[?]] =
             (encoded: String) =>
-                val lines = encoded.linesIterator
+                val lines = encoded.drop(1).linesIterator // discard concreteFlag
                 val staticDb =
                     HashMap.empty[Entry.Id, Entry] ++
                         lines.map { encoded =>
