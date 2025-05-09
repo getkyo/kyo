@@ -261,7 +261,7 @@ object Tag:
         private val typeCache = new ConcurrentHashMap[Tag[Any], Type[?]]()
 
         private val threadSlots  = Runtime.getRuntime().availableProcessors() * 8
-        private val cacheEntries = 64
+        private val cacheEntries = 256
         private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
 
         case class Dynamic(tag: String, map: Map[Entry.Id, Any]):
@@ -269,8 +269,8 @@ object Tag:
             override val hashCode = MurmurHash3.productHash(this)
 
         enum Mode(val hash: Int) derives CanEqual:
-            case Equality extends Mode(31)
-            case Subtype  extends Mode(37)
+            case Equality extends Mode(83)
+            case Subtype  extends Mode(89)
 
         /** Determines if one type is a subtype or equal to another, with caching for performance.
           *
@@ -307,9 +307,9 @@ object Tag:
           *   true if a is a subtype of b, false otherwise
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            var hash = a.hashCode.toLong << 32
-            hash |= b.hashCode.toLong & 0xffffffffL
+            var hash = a.hashCode.toLong
             hash *= mode.hash
+            hash *= b.hashCode.toLong
             hash ^= (hash << 21)
             hash ^= (hash >>> 35)
             hash ^= (hash << 4)
