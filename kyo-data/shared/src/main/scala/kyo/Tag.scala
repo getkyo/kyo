@@ -184,22 +184,20 @@ object Tag:
                         if params.isEmpty then
                             s"($name >: ${render(owner, lower)} <: ${render(owner, upper)})"
                         else
-                            val p = variances.zip(params).map {
-                                case (Variance.Invariant, p)     => render(owner, p)
-                                case (Variance.Covariant, p)     => s"+${render(owner, p)}"
-                                case (Variance.Contravariant, p) => s"-${render(owner, p)}"
-                            }
-                            s"($name[${p.mkString(", ")}] >: ${render(owner, lower)} <: ${render(owner, upper)})"
+                            val size = variances.size
+                            @tailrec def loop(idx: Int, acc: Chunk[String]): String =
+                                if idx == size then acc.mkString(", ")
+                                else loop(idx + 1, acc.append(variances(idx).show).append(render(owner, params(idx))))
+                            s"($name[${loop(0, Chunk.empty)}] >: ${render(owner, lower)} <: ${render(owner, upper)})"
                     case ClassEntry(className, variances, params, parents) =>
                         if params.isEmpty then
                             className
                         else
-                            val p = variances.zip(params).map {
-                                case (Variance.Invariant, p)     => render(owner, p)
-                                case (Variance.Covariant, p)     => s"+${render(owner, p)}"
-                                case (Variance.Contravariant, p) => s"-${render(owner, p)}"
-                            }
-                            s"$className[${p.mkString(", ")}]"
+                            val size = params.size
+                            @tailrec def loop(idx: Int, acc: Chunk[String]): String =
+                                if idx == size then acc.mkString(", ")
+                                else loop(idx + 1, acc.append(variances(idx).show).append(render(owner, params(idx))))
+                            s"$className[${loop(0, Chunk.empty)}]"
             end if
         end render
 
@@ -231,10 +229,10 @@ object Tag:
                 parents: Chunk.Indexed[Id]
             ) extends Entry
 
-            enum Variance extends Serializable derives CanEqual:
-                case Invariant
-                case Covariant
-                case Contravariant
+            enum Variance(val show: String) extends Serializable derives CanEqual:
+                case Invariant     extends Variance("")
+                case Covariant     extends Variance("+")
+                case Contravariant extends Variance("-")
             end Variance
 
             final case class LambdaEntry(
@@ -507,7 +505,7 @@ object Tag:
                     case ClassEntry(name, variances, aParams, aParents) =>
                         bEntry match
                             case ClassEntry(`name`, `variances`, bParams, bParents) =>
-                                aParams == bParams && forall(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
+                                aParams.size == bParams.size && forall(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
                 end match
 
