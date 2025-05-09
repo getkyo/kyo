@@ -74,7 +74,7 @@ object Tag:
           *   true if the types are exactly the same, false otherwise
           */
         infix def =:=[B](that: Tag[B]): Boolean =
-            (self eq that) || self.equals(that) || {
+            self.fastPathEqual(that) || {
                 !self.isConcrete && !that.isConcrete &&
                 checkTypes(self, that, Mode.Equality)
             }
@@ -98,12 +98,7 @@ object Tag:
           *   true if this type is a subtype of the other type, false otherwise
           */
         infix def <:<[B](that: Tag[B]): Boolean =
-            (self eq that) || self.equals(that) || checkTypes(self, that, Mode.Subtype)
-
-        private def isConcrete: Boolean =
-            self match
-                case self: String => self.charAt(0) == '*'
-                case _            => false
+            self.fastPathEqual(that) || checkTypes(self, that, Mode.Subtype)
 
         /** Tests if this Tag represents a supertype of another Tag. This is the reverse of the <:< operation.
           *
@@ -150,6 +145,14 @@ object Tag:
           */
         def show: String =
             self.tpe.toString()
+
+        private def fastPathEqual[B](that: Tag[B]): Boolean =
+            (self eq that) || self.hashCode == that.hashCode
+
+        private def isConcrete: Boolean =
+            self match
+                case self: String => self.charAt(0) == '*'
+                case _            => false
 
     end extension
 
@@ -274,9 +277,9 @@ object Tag:
             lazy val tpe          = Type(decode(tag).staticDB, map.asInstanceOf[Map[Type.Entry.Id, Tag[Any]]])
             override val hashCode = MurmurHash3.productHash(this)
 
-        enum Mode(val hash: Int) derives CanEqual:
-            case Equality extends Mode(83)
-            case Subtype  extends Mode(89)
+        enum Mode(val factor: Int) derives CanEqual:
+            case Equality extends Mode(31)
+            case Subtype  extends Mode(37)
 
         /** Determines if one type is a subtype or equal to another, with caching for performance.
           *
@@ -313,13 +316,12 @@ object Tag:
           *   true if a is a subtype of b, false otherwise
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            var hash = a.hashCode.toLong << 32
-            hash |= b.hashCode.toLong & 0xffffffffL
-            hash *= mode.hash
-            hash ^= (hash << 21)
-            hash ^= (hash >>> 35)
-            hash ^= (hash << 4)
-            hash = hash.abs
+            var hash = (a.hashCode.toLong << 32) | (b.hashCode & 0xffffffffL)
+            hash += mode.factor
+            hash ^= (hash >>> 30)
+            hash *= 0xbf58476d1ce4e5b9L
+            hash ^= (hash >>> 27)
+            hash &= Long.MaxValue
             val idx    = (hash & (cacheEntries - 1)).toInt
             val cache  = cacheSlots(Thread.currentThread().hashCode & (threadSlots - 1))
             val cached = cache(idx)
