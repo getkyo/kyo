@@ -165,6 +165,12 @@ object Tag:
                         false
             }
 
+        /** Checks if this Tag represents a concrete class type (without type parameters).
+          *
+          * This is an optimization for type equality checks. For a concrete class type (marked with an asterisk '*' prefix during
+          * encoding), the only way another tag can be equal is if it represents exactly the same class, since there are no type parameters
+          * that could require more expensive comparison with dynamic tags.
+          */
         private def isConcrete: Boolean =
             self match
                 case self: String => self.charAt(0) == '*'
