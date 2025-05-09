@@ -106,6 +106,7 @@ lazy val kyoJVM = project
           if (times > 0) {
             "kyo-grpc/testOnly kyo.grpc.ServiceTest -- -z \"FOO\"" :: s"testOnlyUntilFailed ${times - 1}" :: state
           } else {
+            state.log.info("testOnlyUntilFailed PASSED")
             state
           }
         }
