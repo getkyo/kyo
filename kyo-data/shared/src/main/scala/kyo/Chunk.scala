@@ -8,10 +8,17 @@ import scala.collection.StrictOptimizedSeqFactory
 import scala.collection.immutable.StrictOptimizedSeqOps
 import scala.reflect.ClassTag
 
-/** An immutable, efficient sequence of elements.
+/** An immutable, efficient sequence of elements with optimized structural operations.
   *
-  * Chunk provides O(1) operations for many common operations like `take`, `drop`, and `slice`. It also provides efficient concatenation and
-  * element access.
+  * Chunk provides O(1) operations for many common operations like `take`, `drop`, and `slice` without copying the underlying data. It also
+  * provides efficient concatenation and element access through specialized implementations.
+  *
+  * Chunk uses structural sharing to optimize operations that would normally require copying data. This makes it particularly valuable when
+  * performing slicing operations or working with large collections.
+  *
+  * Note that Chunk boxes primitive types, unlike Chain which doesn't. This means Chain is more memory-efficient when working with primitive
+  * values like Int, Long, Double, etc. Consider using Chain instead when you need simpler, more predictable performance characteristics or
+  * when memory efficiency with primitive types is your primary concern.
   *
   * @tparam A
   *   the type of elements in this Chunk

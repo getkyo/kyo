@@ -665,6 +665,11 @@ class TagTest extends Test:
             test[Null, String]
             test[List[Null], List[String]]
         }
+        "Null vs literals" - {
+            test[Null, 1](pending = true)
+            test[Null, "A"](pending = true)
+            test[List[Null], List["A"]](pending = true)
+        }
         "Any" - {
             test[Any, Any]
             test[Any, AnyRef](skipIzumiWarning = true) // known izumi limitation
