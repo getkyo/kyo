@@ -313,7 +313,7 @@ lazy val `kyo-prelude` =
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC39" % Test,
+            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC40" % Test,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -361,7 +361,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.0.0"
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.0.2"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -412,8 +412,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.49.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.49.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.50.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.50.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -574,7 +574,7 @@ lazy val `kyo-playwright` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.51.0"
+            libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.52.0"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -650,13 +650,13 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio"                 % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.7",
-            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC39",
+            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC40",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.12.0",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M44",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M44",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.2.0",
-            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR6",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR6"
+            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR8",
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR8"
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
