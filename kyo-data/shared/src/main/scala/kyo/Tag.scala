@@ -146,8 +146,24 @@ object Tag:
         def show: String =
             self.tpe.toString()
 
+        /** Fast-path optimization for type equality checking.
+          *
+          * Since the set of statically derived tags is bounded and fixed at compile time, hash code collisions between different types are
+          * extremely unlikely. This method checks for these common cases before falling back to the more expensive full type-based checking
+          * if any of the tags are dynamic.
+          */
         private def fastPathEqual[B](that: Tag[B]): Boolean =
-            (self eq that) || self.hashCode == that.hashCode
+            (self eq that) || {
+                self match
+                    case self: String =>
+                        that match
+                            case that: String =>
+                                self.hashCode == that.hashCode
+                            case _ =>
+                                false
+                    case _ =>
+                        false
+            }
 
         private def isConcrete: Boolean =
             self match
