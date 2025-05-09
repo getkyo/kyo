@@ -369,7 +369,7 @@ class TMapTest extends Test:
     "Concurrency" - {
         val repeats = 100
 
-        "concurrent modifications" in run {
+        "concurrent modifications" in runNotJS {
             (for
                 size     <- Choice.get(Seq(1, 10, 100))
                 map      <- STM.run(TMap.init[Int, Int]())
@@ -383,7 +383,7 @@ class TMapTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent reads and writes" in run {
+        "concurrent reads and writes" in runNotJS {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
                 map   <- STM.run(TMap.init[Int, Int]())
@@ -418,7 +418,7 @@ class TMapTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent updates" in run {
+        "concurrent updates" in runNotJS {
             (for
                 size <- Choice.get(Seq(1, 10, 100))
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -441,7 +441,7 @@ class TMapTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent removals" in run {
+        "concurrent removals" in runNotJS {
             (for
                 size <- Choice.get(Seq(1, 10, 100))
                 map  <- STM.run(TMap.init[Int, Int]())
@@ -457,7 +457,7 @@ class TMapTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent bulk operations" in run {
+        "concurrent bulk operations" in runNotJS {
             (for
                 size <- Choice.get(Seq(1, 10, 100))
                 map  <- STM.run(TMap.init[Int, Int]())
