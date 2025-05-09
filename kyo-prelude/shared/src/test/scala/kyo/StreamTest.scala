@@ -44,6 +44,20 @@ class StreamTest extends Test:
             assert(size(301, 100) == Chunk(100, 100, 100, 1))
             assert(size(5, 0) == Chunk(1, 1, 1, 1, 1))
         }
+
+        "unfoldKyo" in {
+            val stream = Stream.unfoldKyo(0): cur =>
+                for
+                    fromVar <- Var.get[Int]
+                    _       <- Var.update[Int](_ + cur)
+                yield
+                    if cur < 10 then
+                        Present(fromVar -> (cur + 1))
+                    else
+                        Absent
+
+            assert(Var.run(1)(stream.run).eval == Seq(1, 1, 2, 4, 7, 11, 16, 22, 29, 37))
+        }
     }
 
     "initChunk" - {
