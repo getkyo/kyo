@@ -258,7 +258,9 @@ object Tag:
                 variances: Chunk.Indexed[Variance],
                 params: Chunk.Indexed[Id],
                 parents: Chunk.Indexed[Id]
-            ) extends Entry
+            ) extends Entry:
+                require(variances.size == params.size)
+            end ClassEntry
 
             enum Variance(val show: String) extends Serializable derives CanEqual:
                 case Invariant     extends Variance("")
@@ -295,7 +297,7 @@ object Tag:
         private val cacheEntries = 128
         private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
 
-        case class Dynamic(tag: String, map: Map[Entry.Id, Any]):
+        final case class Dynamic(tag: String, map: Map[Entry.Id, Any]):
             lazy val tpe          = Type(decode(tag).staticDB, map.asInstanceOf[Map[Type.Entry.Id, Tag[Any]]])
             override val hashCode = MurmurHash3.productHash(this)
 
@@ -591,7 +593,6 @@ object Tag:
                         s"O:$name:$lower:$upper:${params.size}:${variances.map(_.ordinal).mkString(":")}:${params.mkString(":")}"
 
                     case ClassEntry(className, variances, params, parents) =>
-                        require(params.size == variances.size)
                         val sanitized = className.replaceAll(":", "_colon_")
                         s"C:$sanitized:${params.size}:${variances.map(_.ordinal).mkString(":")}:" +
                             s"${params.mkString(":")}:${parents.mkString(":")}"
