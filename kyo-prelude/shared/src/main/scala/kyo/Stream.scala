@@ -648,7 +648,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
                         val restEmit      = if rest.isEmpty then nextEmitFn() else Emit.valueWith(rest)(nextEmitFn())
                         Loop.done(taken -> Stream(restEmit))
                     end if
-                case (Absent, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[V])))
+                case (_, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[V])))
     end splitAt
 
     /** Process with a [[Sink]] of corresponding streaming element type.

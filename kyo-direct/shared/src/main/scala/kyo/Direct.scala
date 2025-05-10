@@ -145,6 +145,7 @@ private def impl[A: Type](body: Expr[A])(using Quotes): Expr[Any] =
                                         qual.asExprOf[t < s2]
                                     })
                                 }.asTerm
+                            case _ => bug("unreachable")
                     case Apply(TypeApply(Ident("later"), List(t, s2)), List(qual)) =>
                         qual
                 }

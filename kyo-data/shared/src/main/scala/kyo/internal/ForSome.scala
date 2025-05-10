@@ -6,7 +6,7 @@ type ForSome[F[_]] = ForSome.Type[F]
 object ForSome:
     class Unwrap[F[_], A](val unwrap: F[A]) extends AnyVal
 
-    opaque type Type[F[_]] <: Unwrap[F, ?] = Unwrap[F, ?]
+    type Type[F[_]] = Unwrap[F, ?]
 
     /** Converts value of type `F[A]` to existential form
       */
@@ -26,7 +26,7 @@ type ForSome2[F[_, _]] = ForSome2.Type[F]
 object ForSome2:
     class Unwrap[F[_, _], A1, A2](val unwrap: F[A1, A2]) extends AnyVal
 
-    opaque type Type[F[_, _]] <: Unwrap[F, ?, ?] = Unwrap[F, ?, ?]
+    type Type[F[_, _]] = Unwrap[F, ?, ?]
 
     /** Converts value of type `F[A1, A2]` to existential form
       */

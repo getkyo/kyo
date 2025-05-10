@@ -146,8 +146,6 @@ object Duration:
         infix def <=(that: Duration): Boolean = self.toLong <= that.toLong
         infix def >(that: Duration): Boolean  = self.toLong > that.toLong
         infix def <(that: Duration): Boolean  = self.toLong < that.toLong
-        infix def ==(that: Duration): Boolean = self.toLong == that.toLong
-        infix def !=(that: Duration): Boolean = self.toLong != that.toLong
 
         infix def +(that: Duration): Duration =
             val sum: Long = self.toLong + that.toLong

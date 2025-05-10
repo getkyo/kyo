@@ -170,7 +170,7 @@ object StreamCompression:
                                 Present(cont),
                                 Chunk.empty[Byte]
                             )))
-                        case Absent -> _ =>
+                        case _ =>
                             IO(deflater.finish()).andThen(Loop.continue(DeflateState.PullDeflater(
                                 deflater,
                                 Absent,
@@ -280,7 +280,7 @@ object StreamCompression:
                                 crc32.update(toUnboxByteArray(bytes))
                                 deflater.setInput(toUnboxByteArray(bytes))
                             }.andThen(Loop.continue(GZipState.PullDeflater(deflater, crc32, Present(cont), Chunk.empty[Byte])))
-                        case Absent -> _ =>
+                        case _ =>
                             IO(deflater.finish()).andThen(Loop.continue(GZipState.PullDeflater(deflater, crc32, Absent, Chunk.empty[Byte])))
                     }
                 case GZipState.PullDeflater(deflater, crc32, maybeEmitFn, chunk) =>
@@ -361,7 +361,7 @@ object StreamCompression:
                                 .andThen(
                                     Loop.continue(InflateState.PullInflater(inflater, Present(emitFn), bytes))
                                 )
-                        case Absent -> _ =>
+                        case _ =>
                             IO(Loop.continue(InflateState.PullInflater(inflater, Absent, Chunk.empty)))
                 case InflateState.PullInflater(inflater, maybeEmitFn, bytes) =>
                     if inflater.finished then
@@ -517,7 +517,7 @@ object StreamCompression:
                         Emit.runFirst(emit).map:
                             case Present(bytes) -> emitFn =>
                                 Loop.continue(GunzipState.ParseHeader(accBytes.concat(bytes), headerCrc32, emitFn()))
-                            case Absent -> _ =>
+                            case _ =>
                                 if accBytes.isEmpty then
                                     // No data, we stop
                                     Loop.done
@@ -563,7 +563,7 @@ object StreamCompression:
                                     commentsToSkip,
                                     emitFn()
                                 ))
-                            case Absent -> _ =>
+                            case _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
                                     .andThen(Loop.done)
@@ -581,7 +581,7 @@ object StreamCompression:
                                         commentsToSkip,
                                         emitFn()
                                     ))
-                                case Absent -> _ =>
+                                case _ =>
                                     Abort
                                         .fail(new StreamCompressionException("Invalid GZip header"))
                                         .andThen(Loop.done)
@@ -609,7 +609,7 @@ object StreamCompression:
                                     commentsToSkip,
                                     emitFn()
                                 ))
-                            case Absent -> _ =>
+                            case _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
                                     .andThen(Loop.done)
@@ -628,7 +628,7 @@ object StreamCompression:
                         Emit.runFirst(emit).map:
                             case Present(bytes) -> emitFn =>
                                 Loop.continue(GunzipState.CheckCrc16(accBytes.concat(bytes), headerCrc32, emitFn()))
-                            case Absent -> _ =>
+                            case _ =>
                                 Abort
                                     .fail(new StreamCompressionException("Invalid GZip header"))
                                     .andThen(Loop.done)
@@ -657,7 +657,7 @@ object StreamCompression:
                                     .andThen(
                                         Loop.continue(GunzipState.PullInflater(inflater, contentCrc32, Present(emitFn), bytes))
                                     )
-                            case Absent -> _ =>
+                            case _ =>
                                 Loop.continue(GunzipState.PullInflater(inflater, contentCrc32, Absent, Chunk.empty))
                     else
                         IO(inflater.setInput(toUnboxByteArray(leftOver)))
@@ -703,7 +703,7 @@ object StreamCompression:
                                             contentCrc32,
                                             Present(nextEmitFn)
                                         ))
-                                    case Absent -> _ =>
+                                    case _ =>
                                         Loop.continue(GunzipState.CheckTrailer(accBytes, inflater, contentCrc32, Absent))
                             case Absent =>
                                 Abort.fail[StreamCompressionException](StreamCompressionException("Checksum error"))

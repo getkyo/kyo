@@ -240,7 +240,7 @@ object Maybe:
           * @return
           *   the flattened Maybe
           */
-        inline def flatten[B](using inline ev: A <:< Maybe[B]): Maybe[B] =
+        def flatten[B](using ev: A <:< Maybe[B]): Maybe[B] =
             if isEmpty then Absent else ev(get)
 
         /** Filters the Maybe based on a predicate.

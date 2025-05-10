@@ -151,7 +151,7 @@ object Resolvers:
                     req =>
                         val f = Unsafe.unsafely { runtime.unsafe.runToFuture(endpoint.logic(zioMonadError)(())(req)) }
                         KyoSttpMonad.async { cb =>
-                            f.onComplete(r => cb(r.toEither))(ExecutionContext.parasitic)
+                            f.onComplete(r => cb(r.toEither))(using ExecutionContext.parasitic)
                             Canceler { () =>
                                 val _ = f.cancel()
                                 ()
