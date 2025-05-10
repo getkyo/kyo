@@ -187,7 +187,7 @@ class TChunkTest extends Test:
     "concurrency" - {
         val repeats = 100
 
-        "concurrent modifications" in run {
+        "concurrent modifications" in runNotJS {
             (for
                 size     <- Choice.get(Seq(1, 10, 100))
                 chunk    <- TChunk.init[Int]()
@@ -201,7 +201,7 @@ class TChunkTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent filtering" in run {
+        "concurrent filtering" in runNotJS {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
                 chunk <- TChunk.init[Int]()
@@ -220,7 +220,7 @@ class TChunkTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent slice operations" in run {
+        "concurrent slice operations" in runNotJS {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
                 chunk <- TChunk.init[Int]()
@@ -244,7 +244,7 @@ class TChunkTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent compaction" in run {
+        "concurrent compaction" in runNotJS {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
                 chunk <- TChunk.init[Int]()

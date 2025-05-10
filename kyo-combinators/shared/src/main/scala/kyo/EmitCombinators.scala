@@ -23,14 +23,14 @@ extension [A, B, S](effect: B < (Emit[A] & S))
       * @return
       *   A computation with handled Emit yielding a tuple of emitted values along with the original computation's result
       */
-    def handleEmit(using Tag[A], Frame): (Chunk[A], B) < S = Emit.run[A](effect)
+    def handleEmit(using Tag[Emit[A]], Frame): (Chunk[A], B) < S = Emit.run[A](effect)
 
     /** Handle Emit[A], returning only emitted values, discarding the original effect's result
       *
       * @return
       *   A computation with handled Emit yielding emitted values only
       */
-    def handleEmitDiscarding(using Tag[A], Frame): Chunk[A] < S = Emit.run[A](effect).map(_._1)
+    def handleEmitDiscarding(using Tag[Emit[A]], Frame): Chunk[A] < S = Emit.run[A](effect).map(_._1)
 
     /** Handle Emit[A], executing function [[fn]] on each emitted value
       *
@@ -58,7 +58,7 @@ extension [A, B, S](effect: B < (Emit[A] & S))
       * @return
       *   Asynchronous computation with handled Emit that can fail with Abort[Closed]
       */
-    def emitToChannel(channel: Channel[A])(using Tag[A], Frame): B < (S & Async & Abort[Closed]) =
+    def emitToChannel(channel: Channel[A])(using Tag[Emit[A]], Frame): B < (S & Async & Abort[Closed]) =
         effect.foreachEmit(a => channel.put(a))
 
     /** Handle Emit[A], re-emitting in chunks according to [[chunkSize]]
@@ -74,7 +74,7 @@ extension [A, B, S](effect: B < (Emit[A] & S))
         using
         tag: Tag[Emit[A]],
         fr: Frame,
-        at: Tag[A]
+        at: Tag[Emit[Chunk[A]]]
     ): B < (Emit[Chunk[A]] & S) =
         ArrowEffect.handleLoop(tag, Chunk.empty[A], effect)(
             [C] =>
@@ -104,7 +104,8 @@ extension [A, B, S](effect: B < (Emit[A] & S))
     )(
         using
         NotGiven[B =:= Unit],
-        Tag[A],
+        Tag[Emit[Chunk[A]]],
+        Tag[Emit[A]],
         Frame
     ): Stream[A, S] =
         effect.emitChunked(chunkSize).emitToStreamDiscarding
@@ -120,7 +121,8 @@ extension [A, B, S](effect: B < (Emit[A] & S))
       */
     def emitChunkedToStreamAndResult(
         using
-        Tag[A],
+        Tag[Emit[A]],
+        Tag[Emit[Chunk[A]]],
         Frame
     )(chunkSize: Int): (Stream[A, S & Async], B < Async) < Async =
         effect.emitChunked(chunkSize).emitToStreamAndResult
@@ -165,7 +167,8 @@ extension [A, B, S](effect: Unit < (Emit[A] & S))
         chunkSize: Int
     )(
         using
-        Tag[A],
+        Tag[Emit[A]],
+        Tag[Emit[Chunk[A]]],
         Frame
     ): Stream[A, S] =
         effect.emitChunked(chunkSize).emitToStream

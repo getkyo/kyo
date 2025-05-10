@@ -2,47 +2,13 @@ package kyo
 
 import izumi.reflect.Tag as ITag
 import kyo.*
-import kyo.Tag.Intersection
-import kyo.Tag.Union
+import kyo.Tag.Type.*
+import kyo.internal.RegisterFunction
+import kyo.internal.TagTestMacro.test
 import scala.annotation.nowarn
+import scala.concurrent.Future
 
 class TagTest extends Test:
-
-    inline def test[T1, T2](using k1: Tag[T1], i1: ITag[T1], k2: Tag[T2], i2: ITag[T2]): Unit =
-        "T1 <:< T2" in {
-            val kresult = k1 <:< k2
-            val iresult = i1 <:< i2
-            assert(
-                kresult == iresult,
-                s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
-            )
-        }
-        "T2 <:< T1" in {
-            val kresult = k2 <:< k1
-            val iresult = i2 <:< i1
-            assert(
-                kresult == iresult,
-                s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
-            )
-        }
-        "T2 =:= T1" in {
-            val kresult = k2 =:= k1
-            val iresult = i2 =:= i1
-            assert(
-                kresult == iresult,
-                s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
-            )
-        }
-        "T2 =!= T1" in {
-            val kresult = k2 =!= k1
-            val iresult = !(i2 =:= i1)
-            assert(
-                kresult == iresult,
-                s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
-            )
-        }
-        ()
-    end test
 
     "without variance" - {
         "equal tags" - {
@@ -77,9 +43,12 @@ class TagTest extends Test:
         }
 
         "subtype with type parameter" - {
-            class Super
-            class Sub[A] extends Super
-            test[Sub[Int], Super]
+            class Parent[A]
+            class Child[A] extends Parent[String]
+            test[Child[Int], Parent[String]]
+        }
+        "supertype with type parameter" - {
+            test[String, Comparable[String]]
         }
     }
 
@@ -120,6 +89,12 @@ class TagTest extends Test:
             class Test[-A, +B]
             class NestedTest[+V, -W]
             test[Test[NestedTest[String, Any], Any], Test[NestedTest[Any, String], String]]
+        }
+
+        "recursive mixin with variance" - {
+            trait C[-A]
+            trait X extends C[X]
+            test[X, C[Any]]
         }
     }
 
@@ -166,25 +141,54 @@ class TagTest extends Test:
         }
     }
 
-    opaque type Test  = String
-    opaque type Test1 = String
-    opaque type Test2 = Int
+    object OpaqueTypes:
+        opaque type Test  = String
+        opaque type Test1 = String
+        opaque type Test2 = Int
 
-    class Super
-    class Sub extends Super
-    opaque type OpaqueSub   = Sub
-    opaque type OpaqueSuper = Super
+        class Super
+        class Sub extends Super
+        opaque type OpaqueSub   = Sub
+        opaque type OpaqueSuper = Super
 
-    class Test3[+A]
-    opaque type OpaqueString = String
-    opaque type OpaqueAny    = Any
+        class Test3[+A]
+        opaque type OpaqueString = String
+        opaque type OpaqueAny    = Any
 
-    class TestContra[-A]
+        class TestContra[-A]
 
-    class TestNested[A]
-    opaque type OpaqueTest = TestNested[OpaqueString]
+        class TestNested[A]
+        opaque type OpaqueTest = TestNested[OpaqueString]
+
+        opaque type BoundedInt >: Int <: AnyVal       = Int
+        opaque type BoundedString >: String <: AnyRef = String
+
+        trait Animal
+        class Mammal extends Animal
+        class Cat    extends Mammal
+
+        opaque type BoundedCat >: Cat <: Animal = Mammal
+
+        opaque type UnionWithBounds >: Int <: Any = Int | String
+
+        trait Readable
+        trait Writable
+        class FileImpl extends Readable with Writable
+
+        opaque type IntersectionWithBounds >: FileImpl <: Readable = Readable & Writable
+
+        trait Graph[A]
+        trait Node extends Graph[Node]
+        opaque type GraphBounded >: Node <: Graph[Node] = Node
+
+        opaque type Box[A]     = List[A]
+        opaque type Pair[A, B] = (A, B)
+        opaque type Nested[A]  = Box[Box[A]]
+
+    end OpaqueTypes
 
     "with opaque types" - {
+        import OpaqueTypes.*
         "equal opaque types" - {
             test[Test, Test]
         }
@@ -212,99 +216,98 @@ class TagTest extends Test:
         "nested opaque types" - {
             test[OpaqueTest, TestNested[String]]
         }
-    }
 
-    trait UnsupportedTest:
-        type A
-    val test = new UnsupportedTest {}
+        "opaque types with explicit bounds" - {
+            test[BoundedInt, AnyVal]
+            test[Int, BoundedInt](skipIzumiWarning = true)
+            test[BoundedString, AnyRef]
+            test[String, BoundedString](skipIzumiWarning = true)
+        }
 
-    "unsupported types" in {
-        typeCheckFailure("Tag[Nothing]")("Tag cannot be created for Nothing as it has no values")
-        typeCheckFailure("Tag[UnsupportedTest#A]")("Please provide an implicit kyo.Tag[TagTest.this.UnsupportedTest#A] parameter")
-        typeCheckFailure("Tag[String & Int]")("Method doesn't accept intersection types. Found: scala.Predef.String & scala.Int")
-        typeCheckFailure("Tag[String | Int]")("Method doesn't accept union types. Found: scala.Predef.String | scala.Int.")
+        "opaque types with bounds different from underlying" - {
+            test[BoundedCat, Animal]
+            test[Cat, BoundedCat](skipIzumiWarning = true)
+            test[BoundedCat, Mammal]
+        }
+
+        "bounded opaque types with union underlying type" - {
+            test[UnionWithBounds, Any]
+            test[Int, UnionWithBounds](skipIzumiWarning = true)
+            test[String, UnionWithBounds]
+        }
+
+        "bounded opaque types with intersection underlying type" - {
+            test[IntersectionWithBounds, Readable]
+            test[FileImpl, IntersectionWithBounds](skipIzumiWarning = true)
+            test[IntersectionWithBounds, Writable]
+        }
+
+        "parameterized opaque types" - {
+            "equality with same type parameter" - {
+                test[Box[Int], Box[Int]]
+            }
+
+            "subtyping relationship with underlying type" - {
+                test[Box[Int], List[Int]]
+                test[List[Int], Box[Int]]
+            }
+
+            "multiple type parameters" - {
+                test[Pair[Int, String], Pair[Int, String]]
+                test[Pair[Int, String], (Int, String)]
+                test[(Int, String), Pair[Int, String]]
+            }
+
+            "nested parameterized opaque types" - {
+                test[Nested[Int], Box[Box[Int]]]
+                test[Nested[Int], List[List[Int]]]
+            }
+        }
+
     }
 
     "show" - {
 
         "compact" in {
-            assert(Tag[Object].show == "Tag[java.lang.Object]")
-            assert(Tag[Matchable].show == "Tag[scala.Matchable]")
-            assert(Tag[Any].show == "Tag[scala.Any]")
-            assert(Tag[String].show == "Tag[java.lang.String]")
+            assert(Tag[Object].show == "java.lang.Object")
+            assert(Tag[Matchable].show == "scala.Matchable")
+            assert(Tag[Any].show == "scala.Any")
+            assert(Tag[Nothing].show == "scala.Nothing")
+            assert(Tag[Null].show == "scala.Null")
+            assert(Tag[String].show == "java.lang.String")
         }
 
         "no type params" in {
-            assert(Tag[Int].show == "Tag[scala.Int]")
-            assert(Tag[Thread].show == "Tag[java.lang.Thread]")
+            assert(Tag[Int].show == "scala.Int")
+            assert(Tag[Thread].show == "java.lang.Thread")
         }
 
         "type params" in pendingUntilFixed {
             class Test[A]
-            assert(Tag[Test[Int]].show == s"Tag[${classOf[Test[?]].getName}[scala.Int]]")
+            assert(Tag[Test[Int]].show == s"${classOf[Test[?]].getName}[scala.Int]")
             ()
         }
-    }
-    "showTpe" - {
+
         "primitive" in {
-            assert(Tag[Int].showTpe == "scala.Int")
-            assert(Tag[Long].showTpe == "scala.Long")
-            assert(Tag[Float].showTpe == "scala.Float")
-            assert(Tag[Double].showTpe == "scala.Double")
-            assert(Tag[Boolean].showTpe == "scala.Boolean")
+            assert(Tag[Int].show == "scala.Int")
+            assert(Tag[Long].show == "scala.Long")
+            assert(Tag[Float].show == "scala.Float")
+            assert(Tag[Double].show == "scala.Double")
+            assert(Tag[Boolean].show == "scala.Boolean")
         }
         "custom" in {
             trait CustomType
-            assert(Tag[CustomType].showTpe == "kyo.TagTest._$CustomType")
+            assert(Tag[CustomType].show == "kyo.TagTest._$CustomType")
         }
     }
 
-    "type with large name" in pendingUntilFixed {
-        assertCompiles(
-            """
-            class A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
-            Tag[A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789]
-            """
-        )
+    "type with large name" in {
+        class A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+        val tag = Tag[A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789]
+        assert(tag =:= tag && tag <:< tag)
     }
 
     "type unions" - {
-
-        inline def test[T1, T2](using k1: Union[T1], i1: ITag[T1], k2: Union[T2], i2: ITag[T2]): Unit =
-            "T1 <:< T2" in {
-                val kresult = k1 <:< k2
-                val iresult = i1 <:< i2
-                assert(
-                    kresult == iresult,
-                    s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
-                )
-            }
-            "T2 <:< T1" in {
-                val kresult = k2 <:< k1
-                val iresult = i2 <:< i1
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
-                )
-            }
-            "T2 =:= T1" in {
-                val kresult = k2 =:= k1
-                val iresult = i2 =:= i1
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
-                )
-            }
-            "T2 =!= T1" in {
-                val kresult = k2 =!= k1
-                val iresult = !(i2 =:= i1)
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
-                )
-            }
-            ()
-        end test
 
         "union subtype" - {
             class A
@@ -372,6 +375,11 @@ class TagTest extends Test:
             test[A | Nothing, A]
         }
 
+        "union with Any" - {
+            class A
+            test[A | Any, A]
+        }
+
         "union with a subtype" - {
             class A
             class B extends A
@@ -407,69 +415,69 @@ class TagTest extends Test:
             test[B, A | B]
         }
 
-        "unsupported" in {
-            @nowarn
-            trait A
-            @nowarn
-            trait B
-            typeCheckFailure("Union[A & B]")("Union tags don't support type intersections. Found: A & B")
-            typeCheckFailure("Union[A & B | A]")("Union tags don't support type intersections. Found: A & B")
-            typeCheckFailure("Union[A | B & A]")("Union tags don't support type intersections. Found: B & A")
+        "union on both sides" - {
+            class A
+            class B extends A
+            class C extends A
+            class D
+            class E extends D
+            class F extends D
+
+            "union subtype of union (shared elements)" - {
+                test[B | C, A | D]
+            }
+
+            "union subtype of union (all elements are subtypes)" - {
+                test[B | C, A | A]
+            }
+
+            "union not subtype of union (no shared elements)" - {
+                test[B | C, D | E]
+            }
+
+            "complex union relationships" - {
+                test[B | E, A | D]
+            }
+
+            "union subtype with mixed class hierarchies" - {
+                class X
+                class Y extends X
+                class Z extends Y
+
+                test[Y | Z, X | Z]
+            }
+
+            "union with equality on both sides" - {
+                test[A | D, A | D]
+            }
+
+            "union with reordered elements" - {
+                test[A | D, D | A]
+            }
+
+            "union with repeated types" - {
+                test[A | A | B, A | C]
+            }
         }
 
-        "showTpe" - {
+        "show" - {
+            def showSet[A](tag: Tag[A]) = tag.show.drop(1).dropRight(1).split('|').map(_.trim).toSet
             "primitive" in {
-                assert(Union[Int].showTpe == "scala.Int")
-                assert(Union[Int | Boolean].showTpe == "scala.Int | scala.Boolean")
-                assert(Union[Int | Boolean | String].showTpe == "scala.Int | scala.Boolean | java.lang.String")
+                assert(Tag[Int].show == "scala.Int")
+                assert(showSet(Tag[Int | Boolean]) == Set("scala.Int", "scala.Boolean"))
+                assert(showSet(Tag[Int | Boolean | String]) == Set("java.lang.String", "scala.Int", "scala.Boolean"))
             }
             "custom" in {
                 trait A
                 trait B
 
-                assert(Union[A].showTpe == "kyo.TagTest._$A")
-                assert(Union[A | B].showTpe == "kyo.TagTest._$A | kyo.TagTest._$B")
+                assert(Tag[A].show == "kyo.TagTest._$A")
+                assert(showSet(Tag[A | B]) == Set("kyo.TagTest._$B", "kyo.TagTest._$A"))
             }
         }
     }
 
     "type intersections" - {
-
-        inline def test[T1, T2](using k1: Intersection[T1], i1: ITag[T1], k2: Intersection[T2], i2: ITag[T2]): Unit =
-            "T1 <:< T2" in {
-                val kresult = k1 <:< k2
-                val iresult = i1 <:< i2
-                assert(
-                    kresult == iresult,
-                    s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
-                )
-            }
-            "T2 <:< T1" in {
-                val kresult = k2 <:< k1
-                val iresult = i2 <:< i1
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
-                )
-            }
-            "T2 =:= T1" in {
-                val kresult = k2 =:= k1
-                val iresult = i2 =:= i1
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
-                )
-            }
-            "T2 =!= T1" in {
-                val kresult = k2 =!= k1
-                val iresult = !(i2 =:= i1)
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
-                )
-            }
-            ()
-        end test
 
         "intersection subtype" - {
             trait A
@@ -576,71 +584,147 @@ class TagTest extends Test:
             class B extends A
             test[B & A, B]
         }
+    }
 
-        "unsupported" in {
-            @nowarn
-            trait A
-            @nowarn
-            trait B
-            typeCheckFailure("Intersection[A | B]")("Intersection tags don't support type unions. Found: A | B")
-            typeCheckFailure("Intersection[A & B | A]")("Intersection tags don't support type unions. Found: A & B | A")
-            typeCheckFailure("Intersection[A | B & A]")("Intersection tags don't support type unions. Found: A | B & A")
+    "mixed unions and intersections" - {
+        trait A
+        trait B extends A
+        trait C extends B
+        trait D
+        trait E extends D
+        trait F extends E
+
+        "intersection subtype of union" - {
+            test[B & C, A | D]
         }
 
-        "showTpe" - {
-            "primitive" in {
-                assert(Intersection[Int].showTpe == "scala.Int")
-                assert(Intersection[Int & Boolean].showTpe == "scala.Int & scala.Boolean")
-                assert(Intersection[Int & Boolean & String].showTpe == "scala.Int & scala.Boolean & java.lang.String")
-            }
-            "custom" in {
-                trait A
-                trait B
-
-                assert(Intersection[A].showTpe == "kyo.TagTest._$A")
-                assert(Intersection[A & B].showTpe == "kyo.TagTest._$A & kyo.TagTest._$B")
-            }
+        "union subtype of intersection" - {
+            test[B | F, A & D]
         }
 
+        "union of intersections on both sides" - {
+            test[(B & C) | (E & F), (A & B) | (D & E)]
+        }
+
+        "intersection of unions on both sides" - {
+            test[(B | C) & (E | F), (A | C) & (D | F)]
+        }
+
+        "complex nested type relationships" - {
+            test[(B & C) | (E & F), (A | D) & ((B | C) | (E | F))]
+        }
+
+        "multiple nested unions and intersections" - {
+            test[((A & B) | (C & D)) & ((E | F) & (A | B)), ((A & B) | (C & D)) | ((E & F) | (A & C))]
+        }
+
+        "union and intersection with Nothing and Any" - {
+            test[(A | Nothing) & (B | Any), A & B]
+        }
+
+        "distribution of union over intersection" - {
+            test[(A | B) & C, (A & C) | (B & C)]
+        }
+
+        "distribution of intersection over union" - {
+            test[(A & C) | (B & C), (A | B) & C]
+        }
+    }
+
+    "distributive properties" - {
+        trait A
+        trait B
+        trait C
+
+        "union distributes over intersection (left)" - {
+            test[A | (B & C), (A | B) & (A | C)]
+        }
+
+        "union distributes over intersection (right)" - {
+            test[(A & B) | C, (A | C) & (B | C)]
+        }
+
+        "intersection distributes over union (left)" - {
+            test[A & (B | C), (A & B) | (A & C)]
+        }
+
+        "intersection distributes over union (right)" - {
+            test[(A | B) & C, (A & C) | (B & C)]
+        }
+    }
+
+    "base types" - {
+        "Nothing" - {
+            test[Nothing, Any]
+            test[Nothing, AnyRef]
+            test[Nothing, AnyVal]
+            test[List[Nothing], List[Int]]
+        }
+        "Null" - {
+            test[Null, AnyRef]
+            test[Null, String]
+            test[List[Null], List[String]]
+        }
+        "Any" - {
+            test[Any, Any]
+            test[Any, AnyRef](skipIzumiWarning = true) // known izumi limitation
+            test[Any, AnyVal]
+            test[List[Any], List[Int]]
+        }
+    }
+
+    "bounded" - {
+        "upper" - {
+            trait Bounded[A <: Number]
+            test[Bounded[java.lang.Integer], Bounded[java.lang.Double]]
+        }
+        "lower" - {
+            trait Bounded[A >: Null]
+            test[Bounded[String], Bounded[AnyRef]]
+        }
+    }
+
+    "higher kinded types" - {
+        type Id[A] = A
+        trait Higher[F[_]]
+        trait Monad[F[_]]
+        "simple higher kinded equality" - {
+            test[Higher[List], Higher[List]]
+        }
+
+        "different higher kinded types" - {
+            test[Higher[List], Higher[Vector]]
+        }
+
+        "nested higher kinded types" - {
+            test[Monad[Id], Monad[List]]
+        }
+    }
+
+    "members" - {
+        object Big:
+            trait Small
+            class Sub extends Small
+
+        "equal" - {
+            test[Big.Small, Big.Small]
+        }
+
+        "subtype" - {
+            test[Big.Sub, Big.Small]
+        }
+
+        "generic" - {
+            class Box[A]
+            test[Box[Big.Small], Box[Big.Small]]
+
+            class Box2[A]
+            def test2[A: Tag: izumi.reflect.Tag] = test[Box2[A], Box2[A]]
+            test2[Big.Sub]
+        }
     }
 
     "mixing tag types" - {
-
-        inline def test[T1, T2](using k1: Tag.Set[T1], i1: ITag[T1], k2: Tag.Set[T2], i2: ITag[T2]): Unit =
-            "T1 <:< T2" in {
-                val kresult = k1 <:< k2
-                val iresult = i1 <:< i2
-                assert(
-                    kresult == iresult,
-                    s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
-                )
-            }
-            "T2 <:< T1" in {
-                val kresult = k2 <:< k1
-                val iresult = i2 <:< i1
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
-                )
-            }
-            "T2 =:= T1" in {
-                val kresult = k2 =:= k1
-                val iresult = i2 =:= i1
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
-                )
-            }
-            "T2 =!= T1" in {
-                val kresult = k2 =!= k1
-                val iresult = !(i2 =:= i1)
-                assert(
-                    kresult == iresult,
-                    s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
-                )
-            }
-            ()
-        end test
 
         class A
         class B extends A
@@ -706,16 +790,16 @@ class TagTest extends Test:
             assertCompiles("testGeneric[String]")
         }
 
-        "nested generic" in {
-            def testNestedGeneric[A, B](using Tag[A], Tag[B]) = Tag[Map[A, List[B]]]
-            assertCompiles("testNestedGeneric[String, Int]")
-            assertCompiles("testNestedGeneric[Int, Boolean]")
-        }
-
         "generic with bounds" in {
             def testBounded[A <: AnyVal](using Tag[A]) = Tag[Option[A]]
             assertCompiles("testBounded[Int]")
             assertCompiles("testBounded[Double]")
+        }
+
+        "nested generic" in {
+            def testNestedGeneric[A, B](using Tag[A], Tag[B]) = Tag[Map[A, List[B]]]
+            assertCompiles("testNestedGeneric[String, Int]")
+            assertCompiles("testNestedGeneric[Int, Boolean]")
         }
 
         "generic with variance" - {
@@ -785,8 +869,198 @@ class TagTest extends Test:
     opaque type Inner[A]  = List[A]
     opaque type Outer[B]  = Inner[B]
 
-    "hash" in {
-        assert(Tag[Int].hash == Tag[Int].hash)
+    "type lambdas in super types" - {
+        "simple super type with type lambda" - {
+            trait Higher[F[_]]
+            class StringBox extends Higher[[X] =>> List[X]]
+            test[StringBox, Higher[[X] =>> List[X]]]
+        }
+
+        "applied type lambda in super type" - {
+            trait Container[A]
+            type BoxMaker = [X] =>> Container[X]
+            class IntBox extends BoxMaker[Int]
+            test[IntBox, Container[Int]]
+        }
+
+        "ArrowEffect" - {
+            type Const[A] = [B] =>> A
+            abstract class ArrowEffect[-Input[_], +Output[_]]
+            sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
+            test[TestEffect1, ArrowEffect[Const[Int], Const[Thread]]]
+        }
+
+        "ArrowEffect/Join" - {
+            type Join[A] = [B] =>> (A, B)
+            abstract class ArrowEffect[-Input[_], +Output[_]]
+            sealed trait TestEffect1 extends ArrowEffect[Join[Int], Join[String]]
+            test[TestEffect1, ArrowEffect[Join[Int], Join[String]]]
+        }
     }
+
+    "literal type tests" - {
+        "numeric literal types" - {
+            "integer literal types" - {
+                "equality of same literal" in {
+                    assert(Tag[1] =:= Tag[1])
+                    assert(!(Tag[1] =:= Tag[2]))
+                }
+
+                "subtyping with Int" in {
+                    assert(Tag[1] <:< Tag[Int])
+                    assert(!(Tag[Int] <:< Tag[1]))
+                }
+
+                "mixing multiple integer literals" in {
+                    assert(Tag[1 | 2 | 3] <:< Tag[Int])
+                    assert(!(Tag[1 | 2] <:< Tag[3 | 4]))
+                }
+            }
+
+            "floating-point literal types" - {
+                "equality of same literal" in {
+                    assert(Tag[1.0] =:= Tag[1.0])
+                    assert(!(Tag[1.0] =:= Tag[2.0]))
+                }
+
+                "subtyping with Double" in {
+                    assert(Tag[1.0] <:< Tag[Double])
+                    assert(!(Tag[Double] <:< Tag[1.0]))
+                }
+
+                "mixing multiple float literals" in {
+                    assert(Tag[1.0 | 2.0 | 3.0] <:< Tag[Double])
+                    assert(!(Tag[1.0 | 2.0] <:< Tag[3.0 | 4.0]))
+                }
+            }
+        }
+
+        "string literal types" - {
+            "equality of same literal" in {
+                assert(Tag["hello"] =:= Tag["hello"])
+                assert(!(Tag["hello"] =:= Tag["world"]))
+            }
+
+            "subtyping with String" in {
+                assert(Tag["hello"] <:< Tag[String])
+                assert(!(Tag[String] <:< Tag["hello"]))
+            }
+
+            "mixing multiple string literals" in {
+                assert(Tag["hello" | "world"] <:< Tag[String])
+                assert(!(Tag["hello" | "hi"] <:< Tag["world" | "bye"]))
+            }
+
+            "empty string literal" in {
+                assert(Tag[""] =:= Tag[""])
+                assert(Tag[""] <:< Tag[String])
+            }
+        }
+
+        "boolean literal types" - {
+            "true and false literals" in {
+                assert(Tag[true] =:= Tag[true])
+                assert(Tag[false] =:= Tag[false])
+                assert(!(Tag[true] =:= Tag[false]))
+            }
+
+            "subtyping with Boolean" in {
+                assert(Tag[true] <:< Tag[Boolean])
+                assert(Tag[false] <:< Tag[Boolean])
+                assert(!(Tag[Boolean] <:< Tag[true]))
+            }
+        }
+
+        "char literal types" - {
+            "equality of same literal" in {
+                assert(Tag['a'] =:= Tag['a'])
+                assert(!(Tag['a'] =:= Tag['b']))
+            }
+
+            "subtyping with Char" in {
+                assert(Tag['a'] <:< Tag[Char])
+                assert(!(Tag[Char] <:< Tag['a']))
+            }
+
+            "mixing multiple char literals" in {
+                assert(Tag['a' | 'b' | 'c'] <:< Tag[Char])
+                assert(!(Tag['a' | 'b'] <:< Tag['c' | 'd']))
+            }
+        }
+
+        "union of different literal types" in {
+            val unionTag = Tag[1 | "hello" | 'a' | true]
+            assert(!(unionTag <:< Tag[Int]))
+            assert(!(unionTag <:< Tag[String]))
+            assert(!(unionTag <:< Tag[Char]))
+            assert(!(unionTag <:< Tag[Boolean]))
+            assert(unionTag <:< Tag[Int | String | Char | Boolean])
+            assert(unionTag <:< Tag[AnyVal | String])
+        }
+
+        "literal types with variance" - {
+            "covariance with literal types" in {
+                class Box[+A]
+
+                assert(Tag[Box[1]] <:< Tag[Box[Int]])
+                assert(Tag[Box["hello"]] <:< Tag[Box[String]])
+                assert(!(Tag[Box[Int]] <:< Tag[Box[1]]))
+            }
+
+            "contravariance with literal types" in {
+                class Box[-A]
+
+                assert(Tag[Box[Int]] <:< Tag[Box[1]])
+                assert(Tag[Box[String]] <:< Tag[Box["hello"]])
+                assert(!(Tag[Box[1]] <:< Tag[Box[Int]]))
+            }
+        }
+
+        "literal types in collections and tuples" - {
+            "list of literal types" in {
+                assert(Tag[List[1]] <:< Tag[List[Int]])
+                assert(Tag[List[1 | 2]] <:< Tag[List[Int]])
+            }
+
+            "tuple with literal types" in {
+                assert(Tag[(1, "hello")] <:< Tag[(Int, String)])
+                assert(!(Tag[(Int, String)] <:< Tag[(1, "hello")]))
+            }
+
+            "union of tuples with literals" in {
+                assert(Tag[(1, "a") | (2, "b")] <:< Tag[(Int, String)])
+            }
+        }
+
+        "different types with similar string representation" - {
+            test[1, 1.0]
+            test[1, 1L](skipIzumiWarning = true)
+            test['a', "a"]
+            test[true, "true"]
+            test[1.0f, 1.0](skipIzumiWarning = true)
+            test[0, 0.0]
+            test[0, 0L](skipIzumiWarning = true)
+            class Box[A]
+            test[Box[1], Box[1.0]]
+        }
+    }
+
+    "subtype and supertype with different type argument (bug #551)" - {
+        class Super[A]
+        class Sub[A] extends Super[String]
+        test[Sub[Int], Super[String]]
+    }
+
+    "intersection subtype 3 (bug #552)" - {
+        trait A
+        trait B
+        class C extends A with B
+        test[C, A & B]
+    }
+
+    // TODO: fix this to use `pendingUntilFixed` instead of `ignore`
+    given RegisterFunction = (name, test, pending) =>
+        if pending then name ignore Future.successful(test)
+        else name in Future.successful(test)
 
 end TagTest

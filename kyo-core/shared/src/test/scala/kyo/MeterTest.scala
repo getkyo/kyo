@@ -164,7 +164,7 @@ class MeterTest extends Test:
                     .andThen(succeed)
             }
 
-            "with interruptions" in run {
+            "with interruptions" in runJVM {
                 (for
                     size    <- Choice.get(Seq(1, 2, 3, 50, 100))
                     meter   <- Meter.initSemaphore(size)

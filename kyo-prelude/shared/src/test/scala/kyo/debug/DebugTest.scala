@@ -214,7 +214,7 @@ class DebugTest extends Test:
             testOutput(
                 "DebugTest.scala:73:77",
                 """"List(1, 2, 3)" -> List(1, 2, 3)""",
-                """"Env.get[Int]" -> Kyo(Tag"""
+                """"Env.get[Int]" -> Kyo("""
             ) {
                 complexValuesComputation
             }
