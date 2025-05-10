@@ -1316,7 +1316,7 @@ class AbortTest extends Test:
             val local = Local.init("default")
             val combined = Kyo.lift {
                 local.let("custom") {
-                    Choice.get(Seq(1, 2)).flatMap { n =>
+                    Choice.eval(Seq(1, 2)).flatMap { n =>
                         if n % 2 == 0 then n * 10
                         else Abort.fail(s"odd: $n")
                     }

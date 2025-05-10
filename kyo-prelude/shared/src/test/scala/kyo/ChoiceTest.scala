@@ -6,51 +6,51 @@ class ChoiceTest extends Test:
 
     "eval with a single choice" in {
         assert(
-            Choice.run(Choice.eval(Seq(1))(i => (i + 1))).eval == Seq(2)
+            Choice.run(Choice.evalWith(Seq(1))(i => (i + 1))).eval == Seq(2)
         )
     }
 
     "eval with multiple choices" in {
         assert(
-            Choice.run(Choice.eval(Seq(1, 2, 3))(i => (i + 1))).eval == Seq(2, 3, 4)
+            Choice.run(Choice.evalWith(Seq(1, 2, 3))(i => (i + 1))).eval == Seq(2, 3, 4)
         )
     }
 
     "nested eval" in {
         assert(
-            Choice.run(Choice.eval(Seq(1, 2, 3))(i =>
-                Choice.get(Seq(i * 10, i * 100))
+            Choice.run(Choice.evalWith(Seq(1, 2, 3))(i =>
+                Choice.eval(Seq(i * 10, i * 100))
             )).eval == Seq(10, 100, 20, 200, 30, 300)
         )
     }
 
     "drop" in {
         assert(
-            Choice.run(Choice.eval(Seq(1, 2, 3))(i =>
-                if i < 2 then Choice.drop else Choice.get(Seq(i * 10, i * 100))
+            Choice.run(Choice.evalWith(Seq(1, 2, 3))(i =>
+                if i < 2 then Choice.drop else Choice.eval(Seq(i * 10, i * 100))
             )).eval == Seq(20, 200, 30, 300)
         )
     }
 
     "filter" in {
         assert(
-            Choice.run(Choice.eval(Seq(1, 2, 3))(i =>
-                Choice.dropIf(i < 2).map(_ => Choice.get(Seq(i * 10, i * 100)))
+            Choice.run(Choice.evalWith(Seq(1, 2, 3))(i =>
+                Choice.dropIf(i < 2).map(_ => Choice.eval(Seq(i * 10, i * 100)))
             )).eval == Seq(20, 200, 30, 300)
         )
     }
 
     "empty choices" in {
         assert(
-            Choice.run(Choice.eval(Seq.empty[Int])(_ => 42)).eval == Seq.empty[Int]
+            Choice.run(Choice.evalWith(Seq.empty[Int])(_ => 42)).eval == Seq.empty[Int]
         )
     }
 
     "nested drop" in {
         assert(
             Choice.run(
-                Choice.eval(Seq(1, 2, 3))(i =>
-                    Choice.eval(Seq(i * 10, i * 100))(j =>
+                Choice.evalWith(Seq(1, 2, 3))(i =>
+                    Choice.evalWith(Seq(i * 10, i * 100))(j =>
                         if j > 100 then Choice.drop else j
                     )
                 )
@@ -61,9 +61,9 @@ class ChoiceTest extends Test:
     "nested filter" in {
         assert(
             Choice.run(
-                Choice.eval(Seq(1, 2, 3))(i =>
+                Choice.evalWith(Seq(1, 2, 3))(i =>
                     Choice.dropIf(i % 2 != 0).map(_ =>
-                        Choice.eval(Seq(i * 10, i * 100))(j =>
+                        Choice.evalWith(Seq(i * 10, i * 100))(j =>
                             Choice.dropIf(j >= 300).map(_ => j)
                         )
                     )
@@ -76,7 +76,7 @@ class ChoiceTest extends Test:
         val largeChoice = Seq.range(0, 100000)
         try
             assert(
-                Choice.run(Choice.get(largeChoice)).eval == largeChoice
+                Choice.run(Choice.eval(largeChoice)).eval == largeChoice
             )
         catch
             case ex: StackOverflowError => fail()
@@ -85,9 +85,9 @@ class ChoiceTest extends Test:
 
     "large number of suspensions" taggedAs notNative in pendingUntilFixed {
         // https://github.com/getkyo/kyo/issues/208
-        var v = Choice.get(Seq(1))
+        var v = Choice.eval(Seq(1))
         for _ <- 0 until 100000 do
-            v = v.map(_ => Choice.get(Seq(1)))
+            v = v.map(_ => Choice.eval(Seq(1)))
         try
             assert(
                 Choice.run(v).eval == Seq(1)
@@ -102,7 +102,7 @@ class ChoiceTest extends Test:
         "foreach" in {
             val result = Choice.run(
                 Kyo.foreach(List("x", "y")) { str =>
-                    Choice.get(List(true, false)).map(b =>
+                    Choice.eval(List(true, false)).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -118,7 +118,7 @@ class ChoiceTest extends Test:
         "collect" in {
             val effects =
                 List("x", "y").map { str =>
-                    Choice.get(List(true, false)).map(b =>
+                    Choice.eval(List(true, false)).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -134,7 +134,7 @@ class ChoiceTest extends Test:
         "foldLeft" in {
             val result = Choice.run(
                 Kyo.foldLeft(List(1, 1))(0) { (acc, _) =>
-                    Choice.get(List(0, 1)).map(n => acc + n)
+                    Choice.eval(List(0, 1)).map(n => acc + n)
                 }
             ).eval
 
@@ -147,7 +147,7 @@ class ChoiceTest extends Test:
         "foreach - array" in {
             val result = Choice.run(
                 Kyo.foreach(Array("x", "y")) { str =>
-                    Choice.get(Seq(true, false)).map(b =>
+                    Choice.eval(Seq(true, false)).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -163,7 +163,7 @@ class ChoiceTest extends Test:
         "collect - array" in {
             val effects =
                 Array("x", "y").map { str =>
-                    Choice.get(Seq(true, false)).map(b =>
+                    Choice.eval(Seq(true, false)).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -179,7 +179,7 @@ class ChoiceTest extends Test:
         "foldLeft - array" in {
             val result = Choice.run(
                 Kyo.foldLeft(Array(1, 1))(0) { (acc, _) =>
-                    Choice.get(Seq(0, 1)).map(n => acc + n)
+                    Choice.eval(Seq(0, 1)).map(n => acc + n)
                 }
             ).eval
 

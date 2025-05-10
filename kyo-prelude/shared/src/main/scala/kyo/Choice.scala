@@ -36,7 +36,7 @@ object Choice:
       * @return
       *   A computation that represents the selection of values from the sequence
       */
-    inline def get[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
+    inline def eval[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
         ArrowEffect.suspend[A](Tag[Choice], seq)
 
     /** Evaluates a function for each value in a sequence, introducing multiple computation paths.
@@ -48,7 +48,7 @@ object Choice:
       * @return
       *   A computation that represents multiple paths, one for each input value
       */
-    inline def eval[A, B, S](seq: Seq[A])(inline f: A => B < S)(using inline frame: Frame): B < (Choice & S) =
+    inline def evalWith[A, B, S](seq: Seq[A])(inline f: A => B < S)(using inline frame: Frame): B < (Choice & S) =
         seq match
             case Seq(head) => f(head)
             case seq       => ArrowEffect.suspendWith[A](Tag[Choice], seq)(f)

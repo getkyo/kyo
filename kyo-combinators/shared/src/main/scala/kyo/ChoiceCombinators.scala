@@ -31,7 +31,7 @@ extension [A, S](effect: A < (S & Choice))
     def choiceDropToAbsent(using Frame): A < (Choice & Abort[Absent] & S) =
         Choice.run(effect).map:
             case seq if seq.isEmpty => Abort.fail(Absent)
-            case other              => Choice.get(other)
+            case other              => Choice.eval(other)
 
     /** Handles dropped Choice effects as NoSuchElementException aborts
       *
@@ -41,7 +41,7 @@ extension [A, S](effect: A < (S & Choice))
     def choiceDropToThrowable(using Frame): A < (Choice & Abort[NoSuchElementException] & S) =
         Choice.run(effect).map:
             case seq if seq.isEmpty => Abort.catching(Chunk.empty.head)
-            case other              => Choice.get(other)
+            case other              => Choice.eval(other)
 
     /** Handles dropped Choice effects as Aborts of a specified instance of E
       *
@@ -53,6 +53,6 @@ extension [A, S](effect: A < (S & Choice))
     def choiceDropToFailure[E](error: => E)(using Frame): A < (Choice & Abort[E] & S) =
         Choice.run(effect).map:
             case seq if seq.isEmpty => Abort.fail(error)
-            case other              => Choice.get(other)
+            case other              => Choice.eval(other)
 
 end extension

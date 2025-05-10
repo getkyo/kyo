@@ -119,7 +119,7 @@ class MeterTest extends Test:
 
             "run" in run {
                 (for
-                    size    <- Choice.get(Seq(1, 2, 3, 50, 100))
+                    size    <- Choice.eval(Seq(1, 2, 3, 50, 100))
                     meter   <- Meter.initSemaphore(size)
                     counter <- AtomicInt.init(0)
                     results <-
@@ -139,7 +139,7 @@ class MeterTest extends Test:
 
             "close" in run {
                 (for
-                    size    <- Choice.get(Seq(1, 2, 3, 50, 100))
+                    size    <- Choice.eval(Seq(1, 2, 3, 50, 100))
                     meter   <- Meter.initSemaphore(size)
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
@@ -166,7 +166,7 @@ class MeterTest extends Test:
 
             "with interruptions" in runJVM {
                 (for
-                    size    <- Choice.get(Seq(1, 2, 3, 50, 100))
+                    size    <- Choice.eval(Seq(1, 2, 3, 50, 100))
                     meter   <- Meter.initSemaphore(size)
                     started <- Latch.init(100)
                     latch   <- Latch.init(1)

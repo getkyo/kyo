@@ -60,8 +60,8 @@ class DebugTest extends Test:
         Debug.trace {
             Choice.run {
                 for
-                    x <- Choice.get(Seq(1, 2, 3))
-                    y <- Choice.get(Seq(4, 5, 6))
+                    x <- Choice.eval(Seq(1, 2, 3))
+                    y <- Choice.eval(Seq(4, 5, 6))
                 yield x + y
             }
         }
