@@ -75,6 +75,8 @@ object Tag:
           */
         infix def =:=[B](that: Tag[B]): Boolean =
             self.fastPathEqual(that) || {
+                // if any of the tags is concrete, then fastPathEqual should
+                // already have returned true in case the tags are equal
                 !self.isConcrete && !that.isConcrete &&
                 checkTypes(self, that, Mode.Equality)
             }
@@ -247,17 +249,17 @@ object Tag:
             case object NothingEntry extends Entry
             case object NullEntry    extends Entry
 
-            final case class IntersectionEntry(set: Chunk.Indexed[Id]) extends Entry
+            final case class IntersectionEntry(set: Chain[Id]) extends Entry
 
-            final case class UnionEntry(set: Chunk.Indexed[Id]) extends Entry
+            final case class UnionEntry(set: Chain[Id]) extends Entry
 
             final case class LiteralEntry(widened: Id, value: String) extends Entry
 
             final case class ClassEntry(
                 className: String,
-                variances: Chunk.Indexed[Variance],
-                params: Chunk.Indexed[Id],
-                parents: Chunk.Indexed[Id]
+                variances: Chain[Variance],
+                params: Chain[Id],
+                parents: Chain[Id]
             ) extends Entry:
                 require(variances.size == params.size)
             end ClassEntry
@@ -269,9 +271,9 @@ object Tag:
             end Variance
 
             final case class LambdaEntry(
-                params: Chunk.Indexed[String],
-                lowerBounds: Chunk.Indexed[Id],
-                upperBounds: Chunk.Indexed[Id],
+                params: Chain[String],
+                lowerBounds: Chain[Id],
+                upperBounds: Chain[Id],
                 body: Id
             ) extends Entry
 
@@ -279,8 +281,8 @@ object Tag:
                 name: String,
                 lowerBound: Id,
                 upperBound: Id,
-                variances: Chunk.Indexed[Variance],
-                params: Chunk.Indexed[Id]
+                variances: Chain[Variance],
+                params: Chain[Id]
             ) extends Entry
 
         end Entry
@@ -290,8 +292,6 @@ object Tag:
 
         import Type.*
         import Type.Entry.*
-
-        private val typeCache = new ConcurrentHashMap[Tag[Any], Type[?]]()
 
         private val threadSlots  = Runtime.getRuntime().availableProcessors() * 8
         private val cacheEntries = 128
@@ -384,18 +384,18 @@ object Tag:
                     case IntersectionEntry(aSet) =>
                         bEntry match
                             case IntersectionEntry(bSet) =>
-                                forall(bSet) { bElemId =>
-                                    exists(aSet) { aElemId =>
+                                bSet.forall { bElemId =>
+                                    aSet.exists { aElemId =>
                                         isSubtype(aOwner, bOwner, aElemId, bElemId)
                                     }
                                 }
                             case _ =>
-                                exists(aSet) { aElemId =>
+                                aSet.exists { aElemId =>
                                     isSubtype(aOwner, bOwner, aElemId, bId)
                                 }
 
                     case UnionEntry(aSet) =>
-                        forall(aSet) { aElemId =>
+                        aSet.forall { aElemId =>
                             isSubtype(aOwner, bOwner, aElemId, bId)
                         }
 
@@ -409,10 +409,10 @@ object Tag:
                             case AnyEntry => true
                             case LambdaEntry(bParams, bLower, bUpper, bBody) =>
                                 aParams.size == bParams.size &&
-                                forall(aLower, bLower) { (aLowerId, bLowerId) =>
+                                Chain.forallZip(aLower, bLower) { (aLowerId, bLowerId) =>
                                     isSubtype(bOwner, aOwner, bLowerId, aLowerId)
                                 } &&
-                                forall(aUpper, bUpper) { (aUpperId, bUpperId) =>
+                                Chain.forallZip(aUpper, bUpper) { (aUpperId, bUpperId) =>
                                     isSubtype(aOwner, bOwner, aUpperId, bUpperId)
                                 } &&
                                 isSubtype(aOwner, bOwner, aBody, bBody)
@@ -422,7 +422,7 @@ object Tag:
                         bEntry match
                             case OpaqueEntry(bName, bLower, _, bVariances, bParams) if aName == bName =>
                                 aParams.size == bParams.size &&
-                                forall(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
+                                Chain.forallZip(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
                                     variance match
                                         case Variance.Invariant =>
                                             isSubtype(aOwner, bOwner, aParamId, bParamId) &&
@@ -442,12 +442,12 @@ object Tag:
                             case NullEntry    => false
 
                             case IntersectionEntry(bSet) =>
-                                forall(bSet) { bElemId =>
+                                bSet.forall { bElemId =>
                                     isSubtype(aOwner, bOwner, aId, bElemId)
                                 }
 
                             case UnionEntry(bSet) =>
-                                exists(bSet) { bElemId =>
+                                bSet.exists { bElemId =>
                                     isSubtype(aOwner, bOwner, aId, bElemId)
                                 }
 
@@ -457,7 +457,7 @@ object Tag:
 
                             case OpaqueEntry(_, lower, upper, variances, params) =>
                                 isSubtype(aOwner, bOwner, aId, lower) && {
-                                    forall(variances, params) { (variance, paramId) =>
+                                    Chain.forallZip(variances, params) { (variance, paramId) =>
                                         isSameType(aOwner, bOwner, aId, paramId)
                                     }
                                 }
@@ -465,7 +465,7 @@ object Tag:
                             case bClass: ClassEntry =>
                                 if aClass.className == bClass.className then
                                     aClass.params.size == bClass.params.size &&
-                                    forall(aClass.variances, aClass.params, bClass.params) { (variance, aParam, bParam) =>
+                                    Chain.forallZip(aClass.variances, aClass.params, bClass.params) { (variance, aParam, bParam) =>
                                         variance match
                                             case Variance.Invariant =>
                                                 isSubtype(aOwner, bOwner, aParam, bParam) &&
@@ -476,7 +476,7 @@ object Tag:
                                                 isSubtype(bOwner, aOwner, bParam, aParam)
                                     }
                                 else
-                                    exists(aClass.parents) { parentId =>
+                                    aClass.parents.exists { parentId =>
                                         isSubtype(aOwner, bOwner, parentId, bId)
                                     }
                 end match
@@ -501,13 +501,13 @@ object Tag:
                     case IntersectionEntry(aSet) =>
                         bEntry match
                             case IntersectionEntry(bSet) =>
-                                aSet.size == bSet.size && forall(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
+                                aSet.size == bSet.size && Chain.forallZip(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
 
                     case UnionEntry(aSet) =>
                         bEntry match
                             case UnionEntry(bSet) =>
-                                aSet.size == bSet.size && forall(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
+                                aSet.size == bSet.size && Chain.forallZip(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
 
                     case LiteralEntry(aId, value) =>
@@ -519,8 +519,8 @@ object Tag:
                         bEntry match
                             case LambdaEntry(bParams, bLower, bUpper, bBody) =>
                                 aParams.size == bParams.size &&
-                                forall(aLower, bLower)(isSameType(aOwner, bOwner, _, _)) &&
-                                forall(aUpper, bUpper)(isSameType(aOwner, bOwner, _, _))
+                                Chain.forallZip(aLower, bLower)(isSameType(aOwner, bOwner, _, _)) &&
+                                Chain.forallZip(aUpper, bUpper)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
 
                     case OpaqueEntry(name, aLower, aUpper, aVariances, aParams) =>
@@ -529,51 +529,16 @@ object Tag:
                                 aParams.size == bParams.size &&
                                 isSameType(aOwner, bOwner, aLower, bLower) &&
                                 isSameType(aOwner, bOwner, aUpper, bUpper) &&
-                                forall(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
+                                Chain.forallZip(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
                             case _ =>
                                 false
 
-                    case ClassEntry(name, variances, aParams, aParents) =>
+                    case ClassEntry(name, aVariances, aParams, aParents) =>
                         bEntry match
-                            case ClassEntry(`name`, `variances`, bParams, bParents) =>
-                                aParams.size == bParams.size && forall(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
+                            case ClassEntry(`name`, bVariances, bParams, bParents) if aVariances.is(bVariances) =>
+                                aParams.size == bParams.size && Chain.forallZip(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
                 end match
-
-        // avoids regular exists since it allocates an iterator
-        private def exists[A](c: Chunk.Indexed[A])(f: A => Boolean): Boolean =
-            val size = c.size
-            @tailrec def loop(idx: Int): Boolean =
-                idx != size && (f(c(idx)) || loop(idx + 1))
-            loop(0)
-        end exists
-
-        private inline def forall[A](c: Chunk.Indexed[A])(inline f: A => Boolean): Boolean =
-            val size = c.size
-            @tailrec def loop(idx: Int): Boolean =
-                idx == size || (f(c(idx)) && loop(idx + 1))
-            loop(0)
-        end forall
-
-        private inline def forall[A, B](a: Chunk.Indexed[A], b: Chunk.Indexed[B])(inline f: (A, B) => Boolean): Boolean =
-            val size = a.size
-            require(size == b.size)
-            @tailrec def loop(idx: Int): Boolean =
-                idx == size || (f(a(idx), b(idx)) && loop(idx + 1))
-            loop(0)
-        end forall
-
-        private inline def forall[A, B, C](
-            a: Chunk.Indexed[A],
-            b: Chunk.Indexed[B],
-            c: Chunk.Indexed[C]
-        )(inline f: (A, B, C) => Boolean): Boolean =
-            val size = a.size
-            require(size == b.size && size == c.size)
-            @tailrec def loop(idx: Int): Boolean =
-                idx == size || (f(a(idx), b(idx), c(idx)) && loop(idx + 1))
-            loop(0)
-        end forall
 
         def encode[A](staticDB: Map[Type.Entry.Id, Type.Entry]): String =
             def encodeEntry(entry: Entry): String =
@@ -639,17 +604,17 @@ object Tag:
                 case "N" :: Nil                     => NothingEntry
                 case "U" :: Nil                     => NullEntry
                 case "L" :: widened :: value :: Nil => LiteralEntry(widened, value)
-                case "I" :: set                     => IntersectionEntry(Chunk.Indexed.from(set))
-                case "U" :: set                     => UnionEntry(Chunk.Indexed.from(set))
+                case "I" :: set                     => IntersectionEntry(Chain.from(set))
+                case "U" :: set                     => UnionEntry(Chain.from(set))
 
                 case "M" :: body :: size :: rest =>
                     val n  = size.toInt
                     val it = rest.iterator
                     LambdaEntry(
                         body = body,
-                        params = Chunk.Indexed.from(it.take(n)),
-                        lowerBounds = Chunk.Indexed.from(it.take(n)),
-                        upperBounds = Chunk.Indexed.from(it.take(n))
+                        params = Chain.from(it.take(n)),
+                        lowerBounds = Chain.from(it.take(n)),
+                        upperBounds = Chain.from(it.take(n))
                     )
 
                 case "O" :: name :: lower :: upper :: size :: rest =>
@@ -659,8 +624,8 @@ object Tag:
                         name = name,
                         lowerBound = lower,
                         upperBound = upper,
-                        variances = Chunk.Indexed.from(it.take(n).map(v => Variance.fromOrdinal(v.toInt))),
-                        params = Chunk.Indexed.from(it.take(n))
+                        variances = Chain.from(it.take(n).map(v => Variance.fromOrdinal(v.toInt))),
+                        params = Chain.from(it.take(n))
                     )
 
                 case "C" :: name :: size :: rest =>
@@ -668,17 +633,17 @@ object Tag:
                         case 0 =>
                             ClassEntry(
                                 className = name,
-                                variances = Chunk.Indexed.empty,
-                                params = Chunk.Indexed.empty,
-                                parents = Chunk.Indexed.from(rest.drop(2).filter(_.nonEmpty))
+                                variances = Chain.empty,
+                                params = Chain.empty,
+                                parents = Chain.from(rest.drop(2).filter(_.nonEmpty))
                             )
                         case size =>
                             val it = rest.iterator
                             ClassEntry(
                                 className = name,
-                                variances = Chunk.Indexed.from(it.take(size).map(v => Variance.fromOrdinal(v.toInt))),
-                                params = Chunk.Indexed.from(it.take(size)),
-                                parents = Chunk.Indexed.from(it)
+                                variances = Chain.from(it.take(size).map(v => Variance.fromOrdinal(v.toInt))),
+                                params = Chain.from(it.take(size)),
+                                parents = Chain.from(it)
                             )
 
                 case fields =>
