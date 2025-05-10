@@ -1,7 +1,7 @@
 package kyo
 
 import java.util.concurrent.ConcurrentHashMap
-import kyo.Tag.Type.Entry.*
+import kyo.Tag.internal.Type.Entry.*
 import kyo.internal.TagMacro
 import scala.annotation.tailrec
 import scala.collection.immutable.HashMap
@@ -180,118 +180,118 @@ object Tag:
 
     end extension
 
-    /** Base class for type representations in the Tag system. Type provides a structured representation of Scala types that can be
-      * manipulated at runtime.
-      *
-      * @tparam A
-      *   The Scala type represented by this Type
-      */
-    final case class Type[A](staticDB: Map[Type.Entry.Id, Type.Entry], dynamicDB: Map[Type.Entry.Id, Tag[Any]]):
-
-        def entryId: Type.Entry.Id = "0"
-
-        def narrowOwner(owner: Type[?], id: Type.Entry.Id): (Type[?], Type.Entry.Id) =
-            if staticDB.contains(id) then
-                (owner, id)
-            else if dynamicDB.contains(id) then
-                val tpe = dynamicDB(id).tpe
-                (tpe, tpe.entryId)
-            else
-                bug("Tag: can't narrow entry id owner")
-
-        private def render(owner: Type[?], id: Type.Entry.Id): String =
-            val (nowner, nid) = narrowOwner(owner, id)
-            if nowner ne owner then
-                render(nowner, nid)
-            else
-                owner.staticDB(id) match
-                    case AnyEntry                     => "scala.Any"
-                    case NothingEntry                 => "scala.Nothing"
-                    case NullEntry                    => "scala.Null"
-                    case LiteralEntry(widened, value) => value
-                    case IntersectionEntry(set)       => "(" + set.map(render(owner, _)).mkString(" & ") + ")"
-                    case UnionEntry(set)              => "(" + set.map(render(owner, _)).mkString(" | ") + ")"
-                    case LambdaEntry(params, _, _, body) =>
-                        s"[${params.mkString(", ")}] => ${render(owner, body)}"
-                    case OpaqueEntry(name, lower, upper, variances, params) =>
-                        if params.isEmpty then
-                            s"($name >: ${render(owner, lower)} <: ${render(owner, upper)})"
-                        else
-                            val size = variances.size
-                            @tailrec def loop(idx: Int, acc: Chunk[String]): String =
-                                if idx == size then acc.mkString(", ")
-                                else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
-                            s"($name[${loop(0, Chunk.empty)}] >: ${render(owner, lower)} <: ${render(owner, upper)})"
-                    case ClassEntry(className, variances, params, parents) =>
-                        if params.isEmpty then
-                            className
-                        else
-                            val size = params.size
-                            @tailrec def loop(idx: Int, acc: Chunk[String]): String =
-                                if idx == size then acc.mkString(", ")
-                                else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
-                            s"$className[${loop(0, Chunk.empty)}]"
-            end if
-        end render
-
-        override def toString = render(this, entryId)
-
-    end Type
-
-    object Type:
-
-        sealed abstract class Entry extends Serializable with Product derives CanEqual
-
-        object Entry:
-            type Id = String
-
-            case object AnyEntry     extends Entry
-            case object NothingEntry extends Entry
-            case object NullEntry    extends Entry
-
-            final case class IntersectionEntry(set: KArray[Id]) extends Entry
-
-            final case class UnionEntry(set: KArray[Id]) extends Entry
-
-            final case class LiteralEntry(widened: Id, value: String) extends Entry
-
-            final case class ClassEntry(
-                className: String,
-                variances: KArray[Variance],
-                params: KArray[Id],
-                parents: KArray[Id]
-            ) extends Entry:
-                require(variances.size == params.size)
-            end ClassEntry
-
-            enum Variance(val show: String) extends Serializable derives CanEqual:
-                case Invariant     extends Variance("")
-                case Covariant     extends Variance("+")
-                case Contravariant extends Variance("-")
-            end Variance
-
-            final case class LambdaEntry(
-                params: KArray[String],
-                lowerBounds: KArray[Id],
-                upperBounds: KArray[Id],
-                body: Id
-            ) extends Entry
-
-            final case class OpaqueEntry(
-                name: String,
-                lowerBound: Id,
-                upperBound: Id,
-                variances: KArray[Variance],
-                params: KArray[Id]
-            ) extends Entry
-
-        end Entry
-    end Type
-
     private[kyo] object internal:
 
         import Type.*
         import Type.Entry.*
+
+        /** Base class for type representations in the Tag system. Type provides a structured representation of Scala types that can be
+          * manipulated at runtime.
+          *
+          * @tparam A
+          *   The Scala type represented by this Type
+          */
+        final case class Type[A](staticDB: Map[Type.Entry.Id, Type.Entry], dynamicDB: Map[Type.Entry.Id, Tag[Any]]):
+
+            private[kyo] def entryId: Type.Entry.Id = "0"
+
+            private def narrowOwner(owner: Type[?], id: Type.Entry.Id): (Type[?], Type.Entry.Id) =
+                if staticDB.contains(id) then
+                    (owner, id)
+                else if dynamicDB.contains(id) then
+                    val tpe = dynamicDB(id).tpe
+                    (tpe, tpe.entryId)
+                else
+                    bug("Tag: can't narrow entry id owner")
+
+            private def render(owner: Type[?], id: Type.Entry.Id): String =
+                val (nowner, nid) = narrowOwner(owner, id)
+                if nowner ne owner then
+                    render(nowner, nid)
+                else
+                    owner.staticDB(id) match
+                        case AnyEntry                     => "scala.Any"
+                        case NothingEntry                 => "scala.Nothing"
+                        case NullEntry                    => "scala.Null"
+                        case LiteralEntry(widened, value) => value
+                        case IntersectionEntry(set)       => "(" + set.map(render(owner, _)).mkString(" & ") + ")"
+                        case UnionEntry(set)              => "(" + set.map(render(owner, _)).mkString(" | ") + ")"
+                        case LambdaEntry(params, _, _, body) =>
+                            s"[${params.mkString(", ")}] => ${render(owner, body)}"
+                        case OpaqueEntry(name, lower, upper, variances, params) =>
+                            if params.isEmpty then
+                                s"($name >: ${render(owner, lower)} <: ${render(owner, upper)})"
+                            else
+                                val size = variances.size
+                                @tailrec def loop(idx: Int, acc: Chunk[String]): String =
+                                    if idx == size then acc.mkString(", ")
+                                    else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
+                                s"($name[${loop(0, Chunk.empty)}] >: ${render(owner, lower)} <: ${render(owner, upper)})"
+                        case ClassEntry(className, variances, params, parents) =>
+                            if params.isEmpty then
+                                className
+                            else
+                                val size = params.size
+                                @tailrec def loop(idx: Int, acc: Chunk[String]): String =
+                                    if idx == size then acc.mkString(", ")
+                                    else loop(idx + 1, acc.append(variances(idx).show + render(owner, params(idx))))
+                                s"$className[${loop(0, Chunk.empty)}]"
+                end if
+            end render
+
+            override def toString = render(this, entryId)
+
+        end Type
+
+        object Type:
+
+            sealed abstract class Entry extends Serializable with Product derives CanEqual
+
+            object Entry:
+                type Id = String
+
+                case object AnyEntry     extends Entry
+                case object NothingEntry extends Entry
+                case object NullEntry    extends Entry
+
+                final case class IntersectionEntry(set: KArray[Id]) extends Entry
+
+                final case class UnionEntry(set: KArray[Id]) extends Entry
+
+                final case class LiteralEntry(widened: Id, value: String) extends Entry
+
+                final case class ClassEntry(
+                    className: String,
+                    variances: KArray[Variance],
+                    params: KArray[Id],
+                    parents: KArray[Id]
+                ) extends Entry:
+                    require(variances.size == params.size)
+                end ClassEntry
+
+                enum Variance(val show: String) extends Serializable derives CanEqual:
+                    case Invariant     extends Variance("")
+                    case Covariant     extends Variance("+")
+                    case Contravariant extends Variance("-")
+                end Variance
+
+                final case class LambdaEntry(
+                    params: KArray[String],
+                    lowerBounds: KArray[Id],
+                    upperBounds: KArray[Id],
+                    body: Id
+                ) extends Entry
+
+                final case class OpaqueEntry(
+                    name: String,
+                    lowerBound: Id,
+                    upperBound: Id,
+                    variances: KArray[Variance],
+                    params: KArray[Id]
+                ) extends Entry
+
+            end Entry
+        end Type
 
         private val threadSlots  = Runtime.getRuntime().availableProcessors() * 8
         private val cacheEntries = 128
@@ -359,26 +359,26 @@ object Tag:
                 val res =
                     mode match
                         case Mode.Equality => isSameType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
-                        case Mode.Subtype  => isSubtype(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
+                        case Mode.Subtype  => isSubType(aTpe, bTpe, aTpe.entryId, bTpe.entryId)
                 cache(idx) = if res then hash else -hash
                 res
             end if
         end checkTypes
 
-        private def isSubtype(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
+        private def isSubType(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
             if !aOwner.staticDB.contains(aId) then
                 val aType = aOwner.dynamicDB(aId).tpe
-                isSubtype(aType, bOwner, aType.entryId, bId)
+                isSubType(aType, bOwner, aType.entryId, bId)
             else if !bOwner.staticDB.contains(bId) then
                 val bType = bOwner.dynamicDB(bId).tpe
-                isSubtype(aOwner, bType, aId, bType.entryId)
+                isSubType(aOwner, bType, aId, bType.entryId)
             else
                 val aEntry = aOwner.staticDB(aId)
                 val bEntry = bOwner.staticDB(bId)
 
                 aEntry match
                     case NothingEntry => true
-                    case AnyEntry     => bEntry == AnyEntry
+                    case AnyEntry     => bEntry eq AnyEntry
                     case NullEntry    => true
 
                     case IntersectionEntry(aSet) =>
@@ -386,23 +386,23 @@ object Tag:
                             case IntersectionEntry(bSet) =>
                                 bSet.forall { bElemId =>
                                     aSet.exists { aElemId =>
-                                        isSubtype(aOwner, bOwner, aElemId, bElemId)
+                                        isSubType(aOwner, bOwner, aElemId, bElemId)
                                     }
                                 }
                             case _ =>
                                 aSet.exists { aElemId =>
-                                    isSubtype(aOwner, bOwner, aElemId, bId)
+                                    isSubType(aOwner, bOwner, aElemId, bId)
                                 }
 
                     case UnionEntry(aSet) =>
                         aSet.forall { aElemId =>
-                            isSubtype(aOwner, bOwner, aElemId, bId)
+                            isSubType(aOwner, bOwner, aElemId, bId)
                         }
 
                     case LiteralEntry(aWidened, value) =>
                         bEntry match
-                            case LiteralEntry(bWidened, bValue) => isSubtype(aOwner, bOwner, aWidened, bWidened) & value.equals(bValue)
-                            case _                              => isSubtype(aOwner, bOwner, aWidened, bId)
+                            case LiteralEntry(bWidened, bValue) => isSubType(aOwner, bOwner, aWidened, bWidened) & value.equals(bValue)
+                            case _                              => isSubType(aOwner, bOwner, aWidened, bId)
 
                     case LambdaEntry(aParams, aLower, aUpper, aBody) =>
                         bEntry match
@@ -410,12 +410,12 @@ object Tag:
                             case LambdaEntry(bParams, bLower, bUpper, bBody) =>
                                 aParams.size == bParams.size &&
                                 KArray.forallZip(aLower, bLower) { (aLowerId, bLowerId) =>
-                                    isSubtype(bOwner, aOwner, bLowerId, aLowerId)
+                                    isSubType(bOwner, aOwner, bLowerId, aLowerId)
                                 } &&
                                 KArray.forallZip(aUpper, bUpper) { (aUpperId, bUpperId) =>
-                                    isSubtype(aOwner, bOwner, aUpperId, bUpperId)
+                                    isSubType(aOwner, bOwner, aUpperId, bUpperId)
                                 } &&
-                                isSubtype(aOwner, bOwner, aBody, bBody)
+                                isSubType(aOwner, bOwner, aBody, bBody)
                             case _ => false
 
                     case OpaqueEntry(aName, _, aUpper, aVariances, aParams) =>
@@ -425,15 +425,15 @@ object Tag:
                                 KArray.forallZip(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
                                     variance match
                                         case Variance.Invariant =>
-                                            isSubtype(aOwner, bOwner, aParamId, bParamId) &&
-                                            isSubtype(bOwner, aOwner, bParamId, aParamId)
+                                            isSubType(aOwner, bOwner, aParamId, bParamId) &&
+                                            isSubType(bOwner, aOwner, bParamId, aParamId)
                                         case Variance.Covariant =>
-                                            isSubtype(aOwner, bOwner, aParamId, bParamId)
+                                            isSubType(aOwner, bOwner, aParamId, bParamId)
                                         case Variance.Contravariant =>
-                                            isSubtype(bOwner, aOwner, bParamId, aParamId)
+                                            isSubType(bOwner, aOwner, bParamId, aParamId)
                                 }
                             case _ =>
-                                isSubtype(aOwner, bOwner, aUpper, bId)
+                                isSubType(aOwner, bOwner, aUpper, bId)
 
                     case aClass: ClassEntry =>
                         bEntry match
@@ -443,12 +443,12 @@ object Tag:
 
                             case IntersectionEntry(bSet) =>
                                 bSet.forall { bElemId =>
-                                    isSubtype(aOwner, bOwner, aId, bElemId)
+                                    isSubType(aOwner, bOwner, aId, bElemId)
                                 }
 
                             case UnionEntry(bSet) =>
                                 bSet.exists { bElemId =>
-                                    isSubtype(aOwner, bOwner, aId, bElemId)
+                                    isSubType(aOwner, bOwner, aId, bElemId)
                                 }
 
                             case _: LiteralEntry => false
@@ -456,31 +456,34 @@ object Tag:
                             case _: LambdaEntry => false
 
                             case OpaqueEntry(_, lower, upper, variances, params) =>
-                                isSubtype(aOwner, bOwner, aId, lower) && {
+                                isSubType(aOwner, bOwner, aId, lower) && {
                                     KArray.forallZip(variances, params) { (variance, paramId) =>
                                         isSameType(aOwner, bOwner, aId, paramId)
                                     }
                                 }
 
                             case bClass: ClassEntry =>
-                                if aClass.className == bClass.className then
+                                if isSameString(aClass.className, bClass.className) then
                                     aClass.params.size == bClass.params.size &&
                                     KArray.forallZip(aClass.variances, aClass.params, bClass.params) { (variance, aParam, bParam) =>
                                         variance match
                                             case Variance.Invariant =>
-                                                isSubtype(aOwner, bOwner, aParam, bParam) &&
-                                                isSubtype(bOwner, aOwner, bParam, aParam)
+                                                isSubType(aOwner, bOwner, aParam, bParam) &&
+                                                isSubType(bOwner, aOwner, bParam, aParam)
                                             case Variance.Covariant =>
-                                                isSubtype(aOwner, bOwner, aParam, bParam)
+                                                isSubType(aOwner, bOwner, aParam, bParam)
                                             case Variance.Contravariant =>
-                                                isSubtype(bOwner, aOwner, bParam, aParam)
+                                                isSubType(bOwner, aOwner, bParam, aParam)
                                     }
                                 else
                                     aClass.parents.exists { parentId =>
-                                        isSubtype(aOwner, bOwner, parentId, bId)
+                                        isSubType(aOwner, bOwner, parentId, bId)
                                     }
                 end match
-        end isSubtype
+        end isSubType
+
+        private def isSameString(a: String, b: String): Boolean =
+            (a eq b) || (a.hashCode() == b.hashCode() && a.equals(b))
 
         private def isSameType(aOwner: Type[?], bOwner: Type[?], aId: Entry.Id, bId: Entry.Id): Boolean =
             if !aOwner.staticDB.contains(aId) then
@@ -494,9 +497,9 @@ object Tag:
                 val bEntry = bOwner.staticDB(bId)
 
                 aEntry match
-                    case NothingEntry => bEntry == NothingEntry
-                    case AnyEntry     => bEntry == AnyEntry
-                    case NullEntry    => bEntry == NullEntry
+                    case NothingEntry => bEntry eq NothingEntry
+                    case AnyEntry     => bEntry eq AnyEntry
+                    case NullEntry    => bEntry eq NullEntry
 
                     case IntersectionEntry(aSet) =>
                         bEntry match
@@ -565,8 +568,9 @@ object Tag:
 
             val concreteFlag =
                 staticDB("0") match
-                    case ClassEntry(_, _, params, _) if params.isEmpty => "*"
-                    case _                                             => "."
+                    case ClassEntry(_, _, params, _) if params.isEmpty     => "*"
+                    case OpaqueEntry(_, _, _, _, params) if params.isEmpty => "*"
+                    case _                                                 => "."
 
             concreteFlag +
                 staticDB.map { (id, entry) =>

@@ -128,7 +128,7 @@ object ArrowEffect:
         @nowarn("msg=anonymous")
         def handleLoop(v: A < (E & S & S2), context: Context)(using Safepoint): A < (S & S2) =
             v match
-                case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag =:= kyo.tag =>
+                case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle[Any](kyo.input, kyo(_, context)),
                         continue = handleLoop(_, context),
@@ -177,13 +177,13 @@ object ArrowEffect:
         @nowarn("msg=anonymous")
         def handle2Loop(kyo: A < (E1 & E2 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
             kyo match
-                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked if effect1Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle1[Any](kyo.input, kyo(_, context)),
                         suspend = handle2Loop(kyo, context),
                         continue = handle2Loop(_, context)
                     )
-                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked if effect2Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle2[Any](kyo.input, kyo(_, context)),
                         suspend = handle2Loop(kyo, context),
@@ -241,19 +241,19 @@ object ArrowEffect:
         @nowarn("msg=anonymous")
         def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
             v match
-                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect1Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle1[Any](kyo.input, kyo(_, context)),
                         suspend = handle3Loop(kyo, context),
                         continue = handle3Loop(_, context)
                     )
-                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect2Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle2[Any](kyo.input, kyo(_, context)),
                         suspend = handle3Loop(kyo, context),
                         continue = handle3Loop(_, context)
                     )
-                case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect3Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked if effect3Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle3[Any](kyo.input, kyo(_, context)),
                         suspend = handle3Loop(kyo, context),
@@ -317,25 +317,25 @@ object ArrowEffect:
         @nowarn("msg=anonymous")
         def handle4Loop(v: A < (E1 & E2 & E3 & E4 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
             v match
-                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect1Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect1Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle1[Any](kyo.input, kyo(_, context)),
                         suspend = handle4Loop(kyo, context),
                         continue = handle4Loop(_, context)
                     )
-                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect2Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect2Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle2[Any](kyo.input, kyo(_, context)),
                         suspend = handle4Loop(kyo, context),
                         continue = handle4Loop(_, context)
                     )
-                case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect3Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect3Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle3[Any](kyo.input, kyo(_, context)),
                         suspend = handle4Loop(kyo, context),
                         continue = handle4Loop(_, context)
                     )
-                case kyo: KyoSuspend[I4, O4, E4, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect4Tag =:= kyo.tag =>
+                case kyo: KyoSuspend[I4, O4, E4, Any, A, E1 & E2 & E3 & E4 & S & S2] @unchecked if effect4Tag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         eval = handle4[Any](kyo.input, kyo(_, context)),
                         suspend = handle4Loop(kyo, context),
@@ -380,7 +380,7 @@ object ArrowEffect:
         @nowarn("msg=anonymous")
         def handleFirstLoop(v: A < (E & S), context: Context)(using Safepoint): B < (S & S2) =
             v match
-                case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag =:= kyo.tag =>
+                case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag <:< kyo.tag =>
                     Safepoint.handle(kyo.input)(
                         suspend = handleFirstLoop(kyo, context),
                         continue = handle[Any](kyo.input, kyo(_, context))
@@ -433,7 +433,7 @@ object ArrowEffect:
                     v.map(handleLoopLoop(_, context))
                 case continue: Loop.Continue[A < (E & S)] @unchecked =>
                     continue._1 match
-                        case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag =:= kyo.tag =>
+                        case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag <:< kyo.tag =>
                             handleLoopLoop(handle(kyo.input, kyo(_, context)), context)
                         case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
                             new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
@@ -527,7 +527,7 @@ object ArrowEffect:
                 case continue: Loop.Continue2[State, A < (E & S)] @unchecked =>
                     val state = continue._1
                     continue._2 match
-                        case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag =:= kyo.tag =>
+                        case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag <:< kyo.tag =>
                             handleLoopLoop(handle(kyo.input, state, kyo(_, context)), context)
                         case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
                             new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
@@ -560,7 +560,7 @@ object ArrowEffect:
         @nowarn("msg=anonymous")
         def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
             v match
-                case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag =:= kyo.tag && accept(kyo.input) =>
+                case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag <:< kyo.tag && accept(kyo.input) =>
                     Safepoint.handle(kyo.input)(
                         eval = handle[Any](kyo.input, kyo(_, context)),
                         continue = handleLoop(_, context),
@@ -610,15 +610,15 @@ object ArrowEffect:
                 v match
                     case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] =>
                         type Suspend[I[_], O[_], E <: ArrowEffect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & S & S2]
-                        if kyo.tag =:= Tag[Defer] then
+                        if kyo.tag <:< Tag[Defer] then
                             val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
                             partialLoop(k((), context), context)
                         else
                             safepoint.pushFrame(kyo.frame)
-                            if tag1 =:= kyo.tag then
+                            if tag1 <:< kyo.tag then
                                 val k = kyo.asInstanceOf[Suspend[I1, O1, E1]]
                                 partialLoop(handle1[Any](k.input, k(_, context)), context)
-                            else if tag2 =:= kyo.tag then
+                            else if tag2 <:< kyo.tag then
                                 val k = kyo.asInstanceOf[Suspend[I2, O2, E2]]
                                 partialLoop(handle2[Any](k.input, k(_, context)), context)
                             else

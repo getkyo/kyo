@@ -2,7 +2,6 @@ package kyo
 
 import izumi.reflect.Tag as ITag
 import kyo.*
-import kyo.Tag.Type.*
 import kyo.internal.RegisterFunction
 import kyo.internal.TagTestMacro.test
 import scala.annotation.nowarn

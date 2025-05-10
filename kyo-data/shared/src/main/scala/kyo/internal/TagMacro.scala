@@ -2,8 +2,9 @@ package kyo.internal
 
 import kyo.*
 import kyo.Tag.*
-import kyo.Tag.Type.Entry
-import kyo.Tag.Type.Entry.*
+import kyo.Tag.internal.*
+import kyo.Tag.internal.Type.*
+import kyo.Tag.internal.Type.Entry.*
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.immutable.HashMap
@@ -48,7 +49,7 @@ private[kyo] object TagMacro:
 
         def visit(t: TypeRepr): Type.Entry.Id =
 
-            val tpe = t.dealias.simplified.dealias
+            val tpe = t.dealiasKeepOpaques.simplified.dealiasKeepOpaques
             val key =
                 tpe.typeSymbol.isNoSymbol match
                     case true => tpe
@@ -144,8 +145,6 @@ private[kyo] object TagMacro:
                                 case '[t] =>
                                     Expr.summon[Tag[t]] match
                                         case Some(tag) =>
-                                            if tpe.show.contains("kyo.Var.internal.Op") then
-                                                println("WHAT " + tpe.dealias)
                                             dynamic = dynamic.updated(id, tpe -> '{ $tag.asInstanceOf[Tag[Any]] })
                                             null
                                         case None =>
