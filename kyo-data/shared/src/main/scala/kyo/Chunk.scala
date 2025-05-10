@@ -16,9 +16,9 @@ import scala.reflect.ClassTag
   * Chunk uses structural sharing to optimize operations that would normally require copying data. This makes it particularly valuable when
   * performing slicing operations or working with large collections.
   *
-  * Note that Chunk boxes primitive types, unlike Chain which doesn't. This means Chain is more memory-efficient when working with primitive
-  * values like Int, Long, Double, etc. Consider using Chain instead when you need simpler, more predictable performance characteristics or
-  * when memory efficiency with primitive types is your primary concern.
+  * Note that Chunk boxes primitive types, unlike KArray which doesn't. This means KArray is more memory-efficient when working with
+  * primitive values like Int, Long, Double, etc. Consider using KArray instead when you need simpler, more predictable performance
+  * characteristics or when memory efficiency with primitive types is your primary concern.
   *
   * @tparam A
   *   the type of elements in this Chunk
