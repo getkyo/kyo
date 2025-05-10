@@ -164,14 +164,13 @@ class TypeMapBench extends BaseBench:
     def unionKyo() =
         kyoEnv.union(kyoEnvSmall)
 
-    // TODO: prune to an intersection once Kyo Tags support Intersections as String
     @Benchmark
     def pruneZIO() =
-        zioEnv.prune[Foo001] // & Foo002 & Foo003]
+        zioEnv.prune[Foo001 & Foo002 & Foo003]
 
     @Benchmark
     def pruneKyo() =
-        kyoEnv.prune[Foo001] // & Foo002 & Foo003]
+        kyoEnv.prune[Foo001 & Foo002 & Foo003]
 
 end TypeMapBench
 
