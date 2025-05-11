@@ -499,7 +499,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 }
             }
 
-            "FOO first element" in {
+            "first element" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
                         val status    = code.toStatus
