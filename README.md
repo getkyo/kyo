@@ -623,7 +623,7 @@ val b: Int < Abort[Nothing] =
 
 ### Env: Dependency Injection
 
-`Env` is similar to ZIO's environment feature but offers more granular control. Unlike ZIO, which has built-in layering for dependencies, `Env` allows you to inject individual services directly. However, it lacks ZIO's structured dependency management; you manage and initialize your services yourself.
+`Env` is similar to ZIO's environment feature but offers more granular control. Unlike ZIO, which has built-in layering for dependencies, `Env` allows you to inject individual services directly. Env can be combined with Layers for automated dependency injection.
 
 ```scala
 import kyo.*
