@@ -75,10 +75,6 @@ private[kyo] object TagMacro:
                             IntersectionEntry(KArray.from(flattenAnd(tpe).map(visit)))
 
                         case tpe @ OrType(_, _) =>
-                            def flatten(tpe: TypeRepr): Seq[TypeRepr] =
-                                tpe match
-                                    case OrType(a, b) => flatten(a) ++ flatten(b)
-                                    case tpe          => Seq(tpe)
                             UnionEntry(KArray.from(flattenOr(tpe).map(visit)))
 
                         case tpe @ ConstantType(const) =>
