@@ -531,7 +531,7 @@ class ChannelTest extends Test:
 
         "offer and close" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -561,7 +561,7 @@ class ChannelTest extends Test:
 
         "offer and poll" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -581,7 +581,7 @@ class ChannelTest extends Test:
 
         "put and take" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 putFiber <- Async.run(
@@ -600,7 +600,7 @@ class ChannelTest extends Test:
 
         "offer to full channel during close" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 _       <- Kyo.foreach(1 to size)(i => channel.offer(i))
                 latch   <- Latch.init(1)
@@ -627,7 +627,7 @@ class ChannelTest extends Test:
 
         "concurrent close attempts" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -655,7 +655,7 @@ class ChannelTest extends Test:
 
         "offer, poll, put, take, and close" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -695,7 +695,7 @@ class ChannelTest extends Test:
 
         "putBatch and take" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 
@@ -718,7 +718,7 @@ class ChannelTest extends Test:
 
         "putBatch and takeExactly" in run {
             (for
-                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 

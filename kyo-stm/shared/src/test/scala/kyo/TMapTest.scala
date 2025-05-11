@@ -371,7 +371,7 @@ class TMapTest extends Test:
 
         "concurrent modifications" in runNotJS {
             (for
-                size     <- Choice.get(Seq(1, 10, 100))
+                size     <- Choice.eval(Seq(1, 10, 100))
                 map      <- STM.run(TMap.init[Int, Int]())
                 _        <- Async.foreach(1 to size, size)(i => STM.run(map.put(i, i)))
                 snapshot <- STM.run(map.snapshot)
@@ -385,7 +385,7 @@ class TMapTest extends Test:
 
         "concurrent reads and writes" in runNotJS {
             (for
-                size  <- Choice.get(Seq(1, 10, 100))
+                size  <- Choice.eval(Seq(1, 10, 100))
                 map   <- STM.run(TMap.init[Int, Int]())
                 latch <- Latch.init(1)
 
@@ -420,7 +420,7 @@ class TMapTest extends Test:
 
         "concurrent updates" in runNotJS {
             (for
-                size <- Choice.get(Seq(1, 10, 100))
+                size <- Choice.eval(Seq(1, 10, 100))
                 map  <- STM.run(TMap.init[Int, Int]())
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, 1))
@@ -443,7 +443,7 @@ class TMapTest extends Test:
 
         "concurrent removals" in runNotJS {
             (for
-                size <- Choice.get(Seq(1, 10, 100))
+                size <- Choice.eval(Seq(1, 10, 100))
                 map  <- STM.run(TMap.init[Int, Int]())
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))
@@ -459,7 +459,7 @@ class TMapTest extends Test:
 
         "concurrent bulk operations" in runNotJS {
             (for
-                size <- Choice.get(Seq(1, 10, 100))
+                size <- Choice.eval(Seq(1, 10, 100))
                 map  <- STM.run(TMap.init[Int, Int]())
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))

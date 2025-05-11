@@ -193,8 +193,8 @@ class PreludeTest extends Test:
         "basic choices" in run {
             val effect =
                 defer {
-                    val x = Choice.get(Seq(1, 2, 3)).now
-                    val y = Choice.get(Seq("a", "b")).now
+                    val x = Choice.eval(Seq(1, 2, 3)).now
+                    val y = Choice.eval(Seq("a", "b")).now
                     s"$x$y"
                 }
 
@@ -206,8 +206,8 @@ class PreludeTest extends Test:
         "choice with conditions" in run {
             val effect =
                 defer {
-                    val x = Choice.get(Seq(1, -2, -3)).now
-                    val y = Choice.get(Seq("ab", "cde")).now
+                    val x = Choice.eval(Seq(1, -2, -3)).now
+                    val y = Choice.eval(Seq("ab", "cde")).now
                     if x > 0 then y.length * x
                     else y.length
                 }
@@ -220,7 +220,7 @@ class PreludeTest extends Test:
         "choice with filtering" in run {
             val effect =
                 defer {
-                    val x = Choice.get(Seq(1, 2, 3, 4)).now
+                    val x = Choice.eval(Seq(1, 2, 3, 4)).now
                     Choice.dropIf(x % 2 == 0).now
                     x
                 }
@@ -358,8 +358,8 @@ class PreludeTest extends Test:
     }
 
     "Choice" in run {
-        val x = Choice.get(Seq(1, -2, -3))
-        val y = Choice.get(Seq("ab", "cde"))
+        val x = Choice.eval(Seq(1, -2, -3))
+        val y = Choice.eval(Seq("ab", "cde"))
 
         val v: Int < Choice =
             defer {
@@ -376,8 +376,8 @@ class PreludeTest extends Test:
     }
 
     "Choice + filter" in run {
-        val x = Choice.get(Seq(1, -2, -3))
-        val y = Choice.get(Seq("ab", "cde"))
+        val x = Choice.eval(Seq(1, -2, -3))
+        val y = Choice.eval(Seq("ab", "cde"))
 
         val v: Int < Choice =
             defer {

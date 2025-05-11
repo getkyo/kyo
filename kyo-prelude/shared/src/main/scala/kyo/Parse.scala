@@ -139,7 +139,7 @@ object Parse:
       *   Result from the single successful parser, fails if zero or multiple parsers succeed
       */
     def anyOf[A, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
-        Choice.eval(seq)(identity)
+        Choice.evalWith(seq)(identity)
 
     private def firstOf[A, S](seq: Seq[() => A < (Parse & S)])(using Frame): A < (Parse & S) =
         Loop(seq) {

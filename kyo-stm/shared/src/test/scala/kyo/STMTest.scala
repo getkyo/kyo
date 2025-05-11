@@ -555,7 +555,7 @@ class STMTest extends Test:
 
         "concurrent updates" in runNotJS {
             (for
-                size  <- Choice.get(sizes)
+                size  <- Choice.eval(sizes)
                 ref   <- TRef.init(0)
                 _     <- Async.fill(size, size)(STM.run(ref.update(_ + 1)))
                 value <- STM.run(ref.get)
@@ -566,7 +566,7 @@ class STMTest extends Test:
 
         "concurrent reads and writes" in runNotJS {
             (for
-                size  <- Choice.get(sizes)
+                size  <- Choice.eval(sizes)
                 ref   <- TRef.init(0)
                 latch <- Latch.init(1)
                 writeFiber <- Async.run(
@@ -586,7 +586,7 @@ class STMTest extends Test:
 
         "concurrent nested transactions" in runNotJS {
             (for
-                size <- Choice.get(sizes)
+                size <- Choice.eval(sizes)
                 ref  <- TRef.init(0)
                 _ <- Async.fill(size, size) {
                     STM.run {
