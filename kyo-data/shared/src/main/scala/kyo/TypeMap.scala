@@ -12,11 +12,6 @@ opaque type TypeMap[+A] = TreeSeqMap[Tag[Any], Any]
 
 object TypeMap:
 
-    // TODO Tags of tags aren't supported yet. This marker trait reproduces the type-level
-    // behavior of `TypeMap` since `A` is covariant.
-    private trait TypeMapMarker[+A]
-    inline given [A]: Tag[TypeMap[A]] = Tag[TypeMapMarker[A]].asInstanceOf[Tag[TypeMap[A]]]
-
     extension [A](self: TypeMap[A])
 
         private inline def fatal[T](using t: Tag[T]): Nothing =

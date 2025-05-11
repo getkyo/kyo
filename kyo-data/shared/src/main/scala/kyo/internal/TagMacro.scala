@@ -2,8 +2,9 @@ package kyo.internal
 
 import kyo.*
 import kyo.Tag.*
-import kyo.Tag.Type.Entry
-import kyo.Tag.Type.Entry.*
+import kyo.Tag.internal.*
+import kyo.Tag.internal.Type.*
+import kyo.Tag.internal.Type.Entry.*
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.immutable.HashMap
@@ -29,11 +30,12 @@ private[kyo] object TagMacro:
                 s"Dynamic tags aren't allowed in the kyo package for performance reasons. Please modify the method to take an implicit 'Tag[${TypeRepr.of[A].show}]'. Dynamic types: ${missing.mkString(", ")}."
             )
         else
-            val reifiedDB = dynamicDB.map {
-                case (id, (_, tag)) =>
-                    '{ ${ Expr(id) } -> $tag }
-            }.toSeq
-            '{ Tag.internal.Dynamic($encoded, Map(${ Expr.ofSeq(reifiedDB) }*)) }
+            val reifiedDB =
+                dynamicDB.foldLeft('{ Map.empty[Entry.Id, Tag[Any]] }) {
+                    case (map, (id, (_, tag))) =>
+                        '{ $map.updated(${ Expr(id) }, $tag) }
+                }
+            '{ Tag.internal.Dynamic($encoded, $reifiedDB) }
         end if
     end deriveImpl
 
@@ -48,7 +50,7 @@ private[kyo] object TagMacro:
 
         def visit(t: TypeRepr): Type.Entry.Id =
 
-            val tpe = t.dealias.simplified.dealias
+            val tpe = t.dealiasKeepOpaques.simplified.dealiasKeepOpaques
             val key =
                 tpe.typeSymbol.isNoSymbol match
                     case true => tpe
@@ -74,10 +76,6 @@ private[kyo] object TagMacro:
                             IntersectionEntry(KArray.from(flattenAnd(tpe).map(visit)))
 
                         case tpe @ OrType(_, _) =>
-                            def flatten(tpe: TypeRepr): Seq[TypeRepr] =
-                                tpe match
-                                    case OrType(a, b) => flatten(a) ++ flatten(b)
-                                    case tpe          => Seq(tpe)
                             UnionEntry(KArray.from(flattenOr(tpe).map(visit)))
 
                         case tpe @ ConstantType(const) =>
@@ -144,12 +142,10 @@ private[kyo] object TagMacro:
                                 case '[t] =>
                                     Expr.summon[Tag[t]] match
                                         case Some(tag) =>
-                                            if tpe.show.contains("kyo.Var.internal.Op") then
-                                                println("WHAT " + tpe.dealias)
                                             dynamic = dynamic.updated(id, tpe -> '{ $tag.asInstanceOf[Tag[Any]] })
                                             null
                                         case None =>
-                                            report.errorAndAbort("Missing tag! " + tpe.show)
+                                            report.errorAndAbort(s"Please provide an implicit kyo.Tag[${tpe.show}] parameter.")
 
                 val entry = loop(tpe)
                 if entry != null then

@@ -16,8 +16,6 @@ opaque type TRefLog = Map[TRef[Any], TRefLog.Entry[Any]]
 
 private[kyo] object TRefLog:
 
-    given tag: Tag[Var[TRefLog]] = Tag[Var[Map[TRef[Any], TRefLog.Entry[Any]]]]
-
     val empty: TRefLog = Map.empty
 
     extension (self: TRefLog)
@@ -35,7 +33,7 @@ private[kyo] object TRefLog:
         def toMap: Map[TRef[Any], TRefLog.Entry[Any]] = self
     end extension
 
-    val isolate = Var.isolate.update[TRefLog](using tag)
+    val isolate = Var.isolate.update[TRefLog]
 
     sealed abstract class Entry[A] extends Serializable:
         def tid: Long
