@@ -148,7 +148,7 @@ private[kyo] object TagMacro:
                                             dynamic = dynamic.updated(id, tpe -> '{ $tag.asInstanceOf[Tag[Any]] })
                                             null
                                         case None =>
-                                            report.errorAndAbort("Missing tag! " + tpe.show)
+                                            report.errorAndAbort(s"Please provide an implicit kyo.Tag[${tpe.show}] parameter.")
 
                 val entry = loop(tpe)
                 if entry != null then
