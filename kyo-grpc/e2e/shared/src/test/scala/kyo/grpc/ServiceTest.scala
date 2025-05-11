@@ -404,7 +404,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
     }
 
     "bidirectional streaming" - {
-        "FOO empty" in run {
+        "empty" in run {
             val successes = Chunk.empty[Request]
             val requests  = Stream(Emit.value(successes))
             for
@@ -442,7 +442,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
         }
 
         "fail" - {
-            "FOO producing stream on first element" in {
+            "producing stream on first element" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
                         val status    = code.toStatus
