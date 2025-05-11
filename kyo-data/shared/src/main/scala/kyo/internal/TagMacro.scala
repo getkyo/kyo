@@ -30,11 +30,12 @@ private[kyo] object TagMacro:
                 s"Dynamic tags aren't allowed in the kyo package for performance reasons. Please modify the method to take an implicit 'Tag[${TypeRepr.of[A].show}]'. Dynamic types: ${missing.mkString(", ")}."
             )
         else
-            val reifiedDB = dynamicDB.map {
-                case (id, (_, tag)) =>
-                    '{ ${ Expr(id) } -> $tag }
-            }.toSeq
-            '{ Tag.internal.Dynamic($encoded, Map(${ Expr.ofSeq(reifiedDB) }*)) }
+            val reifiedDB =
+                dynamicDB.foldLeft('{ Map.empty[Entry.Id, Tag[Any]] }) {
+                    case (map, (id, (_, tag))) =>
+                        '{ $map.updated(${ Expr(id) }, $tag) }
+                }
+            '{ Tag.internal.Dynamic($encoded, $reifiedDB) }
         end if
     end deriveImpl
 
