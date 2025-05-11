@@ -468,7 +468,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 }
             }
 
-            "FOO producing stream after some elements" in {
+            "producing stream after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
                         val status    = code.toStatus
