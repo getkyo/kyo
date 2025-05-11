@@ -189,4 +189,146 @@ class ChoiceTest extends Test:
             assert(result.size == 4)
         }
     }
+
+    "runStream" - {
+        "returns all possible outcomes" in {
+            val computation = Choice.eval(Seq(1, 2, 3))
+            val stream      = Choice.runStream(computation)
+            val result      = stream.run.eval
+
+            assert(result == Chunk(1, 2, 3))
+        }
+
+        "handles empty choices" in {
+            val stream = Choice.runStream(Choice.eval(Seq.empty[Int]))
+            val result = stream.run.eval
+            assert(result.isEmpty)
+        }
+
+        "supports incremental consumption" in {
+            val computation = Choice.eval(Seq(1, 2, 3, 4, 5))
+            val stream      = Choice.runStream(computation)
+
+            val firstThree = stream.take(3).run.eval
+
+            assert(firstThree.size == 3)
+            assert(firstThree.forall(n => n >= 1 && n <= 5))
+        }
+
+        "works with filtering" in {
+            val computation =
+                for
+                    x <- Choice.eval(Seq(1, 2, 3, 4))
+                    _ <- Choice.dropIf(x % 2 == 0)
+                yield x
+
+            val result = Choice.runStream(computation).run.eval
+
+            assert(result == Chunk(1, 3))
+        }
+
+        "integrates with stream operations" in {
+            val computation = Choice.eval(Seq(1, 2, 3, 4, 5))
+            val stream      = Choice.runStream(computation)
+
+            val result = stream
+                .filter(_ % 2 == 1)
+                .map(_ * 10)
+                .run.eval
+
+            assert(result == Chunk(10, 30, 50))
+        }
+
+        "interaction with other effects" - {
+            "with Var" in {
+                val computation =
+                    for
+                        x       <- Choice.eval(Seq(1, 2, 3))
+                        _       <- Var.update[Int](_ + x)
+                        current <- Var.get[Int]
+                    yield current
+
+                val stream = Choice.runStream(computation)
+                val result = Var.runTuple(0)(stream.run).eval
+
+                assert(result._1 == 6)
+                assert(result._2 == Chunk(1, 3, 6))
+            }
+
+            "with Env" in {
+                val computation =
+                    for
+                        x          <- Choice.eval(Seq(1, 2, 3))
+                        multiplier <- Env.get[Int]
+                    yield x * multiplier
+
+                val stream = Choice.runStream(computation)
+                val result = Env.run(10)(stream.run).eval
+
+                assert(result == Chunk(10, 20, 30))
+            }
+
+            "with filtering" in {
+                val computation =
+                    for
+                        x <- Choice.eval(Seq(1, 2, 3, 4))
+                        _ <- Choice.dropIf(x % 2 == 0)
+                    yield x
+
+                val stream = Choice.runStream(computation)
+                val result = stream.run.eval
+
+                assert(result == Chunk(1, 3))
+            }
+
+            "with nested effects" in {
+                val computation =
+                    for
+                        x <- Choice.eval(Seq(1, 2, 3))
+                        y <- Env.use[Int](multiplier =>
+                            Var.updateWith[Int](_ + x) { current =>
+                                if current > 5 then Choice.drop else x * multiplier
+                            }
+                        )
+                    yield y
+
+                val stream = Choice.runStream(computation)
+                val result = Env.run(10)(Var.runTuple(0)(stream.run)).eval
+
+                assert(result._1 == 6)
+                assert(result._2 == Chunk(10, 20))
+            }
+
+            "with incremental consumption and state" in {
+                val computation =
+                    for
+                        x <- Choice.eval(Seq(1, 2, 3, 4, 5))
+                        _ <- Var.update[Int](_ + x)
+                    yield x
+
+                val stream = Choice.runStream(computation)
+                val result = Var.runTuple(0)(stream.take(3).run).eval
+
+                assert(result._1 == 15)
+                assert(result._2 == Chunk(1, 2, 3))
+            }
+
+            "with isolate" in {
+                val computation =
+                    for
+                        x <- Choice.eval(Seq(1, 2, 3))
+                        _ <- Var.isolate.discard[Int].run {
+                            Var.update[Int](_ + x * 10)
+                        }
+                    yield x
+
+                val stream = Choice.runStream(computation)
+                val result = Var.runTuple(0)(stream.run).eval
+
+                assert(result._1 == 0)
+                assert(result._2 == Chunk(1, 2, 3))
+            }
+        }
+    }
+
 end ChoiceTest
