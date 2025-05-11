@@ -632,7 +632,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 }
             }
 
-            "FOO after some elements" in {
+            "after some elements" in {
                 run {
                     val after = 5
                     val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
