@@ -281,7 +281,7 @@ object Record:
     type AsFields[+A] = AsFields.Type[A]
 
     object AsFields:
-        opaque type Type[+A] = Set[Field[?, ?]]
+        opaque type Type[+A] <: Set[Field[?, ?]] = Set[Field[?, ?]]
 
         def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
 
