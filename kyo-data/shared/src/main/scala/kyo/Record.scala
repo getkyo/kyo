@@ -121,7 +121,7 @@ object Record:
       */
     val empty: Record[Any] = Record[Any](Map())
 
-    private[kyo] def unsafeFrom[Fields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
+    private def unsafeFrom[Fields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
 
     inline def stage[Fields]: StageOps[Fields] = new StageOps[Fields](())
 
