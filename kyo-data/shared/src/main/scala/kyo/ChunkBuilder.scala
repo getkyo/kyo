@@ -62,7 +62,9 @@ end ChunkBuilder
 
 object ChunkBuilder:
 
-    private val bufferCache = ThreadLocal.withInitial(() => new ArrayDeque[ArrayDeque[?]])
+    private val bufferCache =
+        new ThreadLocal[ArrayDeque[ArrayDeque[?]]]:
+            override def initialValue() = new ArrayDeque[ArrayDeque[?]]
 
     private[kyo] def acquireBuffer[A](): ArrayDeque[A] =
         Maybe(bufferCache.get().poll()).getOrElse(new ArrayDeque).asInstanceOf[ArrayDeque[A]]
