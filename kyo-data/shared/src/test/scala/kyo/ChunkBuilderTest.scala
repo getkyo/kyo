@@ -17,7 +17,7 @@ class ChunkBuilderTest extends Test:
         }
 
         "clear" in {
-            val builder = ChunkBuilder.init[Boolean](10)
+            val builder = ChunkBuilder.init[Boolean]
             builder.addOne(true)
             builder.clear()
             assert(builder.knownSize == 0)
@@ -35,28 +35,27 @@ class ChunkBuilderTest extends Test:
         }
 
         "hint" in {
-            val builder = ChunkBuilder.init[Int](1000)
+            val builder = ChunkBuilder.init[Int]
             (0 until 1000).foreach(builder.addOne)
             assert(builder.result().length == 1000)
         }
 
         "knownSize" in {
-            val builder = ChunkBuilder.init[Int](20)
+            val builder = ChunkBuilder.init[Int]
             assert(builder.knownSize == 0)
             (0 until 10).foreach(builder.addOne)
             assert(builder.knownSize == 10)
         }
 
         "toString" in {
-            assert(ChunkBuilder.init[Int](10).toString() == "ChunkBuilder(size = 0, hint = 10)")
             assert(ChunkBuilder.init[Int].toString() == "ChunkBuilder(size = 0)")
             val builder = ChunkBuilder.init[Int]
             builder.sizeHint(1)
-            assert(builder.toString() == "ChunkBuilder(size = 0, hint = 1)")
+            assert(builder.toString() == "ChunkBuilder(size = 0)")
             val hinted = ChunkBuilder.init[Int]
             hinted.addOne(1)
             hinted.sizeHint(2)
-            assert(hinted.toString() == "ChunkBuilder(size = 1, hint = 2)")
+            assert(hinted.toString() == "ChunkBuilder(size = 1)")
         }
     }
 end ChunkBuilderTest

@@ -7,6 +7,7 @@ import scala.collection.IterableFactoryDefaults
 import scala.collection.StrictOptimizedSeqFactory
 import scala.collection.immutable.StrictOptimizedSeqOps
 import scala.reflect.ClassTag
+import scala.util.control.NoStackTrace
 
 /** An immutable, efficient sequence of elements with optimized structural operations.
   *
@@ -323,6 +324,110 @@ sealed abstract class Chunk[+A]
             Compact(unnested)
     end flattenChunk
 
+    override def map[B](f: A => B): Chunk[B] =
+        val builder = ChunkBuilder.initTransform[A, B]((b, v) => b.addOne(f(v)))
+        foreach(builder)
+        builder.result()
+    end map
+
+    override def filter(pred: A => Boolean): Chunk[A] =
+        val builder =
+            ChunkBuilder.initTransform[A, A] { (b, v) =>
+                if pred(v) then b.addOne(v)
+            }
+        foreach(builder)
+        builder.result()
+    end filter
+
+    override def takeWhile(pred: A => Boolean): Chunk[A] =
+        val builder =
+            ChunkBuilder.initTransform[A, A] {
+                (b, v) => if pred(v) then b.addOne(v) else throw StopException
+            }
+        try foreach(builder)
+        catch
+            case ex if StopException.equals(ex) =>
+        builder.result()
+    end takeWhile
+
+    override def dropWhile(p: A => Boolean): Chunk[A] =
+        var collect = false
+        val builder =
+            ChunkBuilder.initTransform[A, A] {
+                (b, v) =>
+                    collect ||= !p(v)
+                    if collect then b.addOne(v)
+            }
+        foreach(builder)
+        builder.result()
+    end dropWhile
+
+    override def collect[B](pf: PartialFunction[A, B]): Chunk[B] =
+        val builder =
+            ChunkBuilder.initTransform[A, B] { (b, v) =>
+                if pf.isDefinedAt(v) then b.addOne(pf(v))
+            }
+        foreach(builder)
+        builder.result()
+    end collect
+
+    override def foldLeft[B](z: B)(op: (B, A) => B): B =
+        var curr = z
+        foreach { v =>
+            curr = op(curr, v)
+        }
+        curr
+    end foldLeft
+
+    override def foreach[U](f: A => U): Unit =
+        if !isEmpty then
+            val buffer = ChunkBuilder.acquireBuffer[A]()
+            @tailrec def loop(c: Chunk[A], dropLeft: Int, dropRight: Int): Unit =
+                c match
+                    case c: Append[A] @unchecked =>
+                        if dropRight > 0 then
+                            loop(c.chunk, dropLeft, dropRight - 1)
+                        else if c.length > dropLeft then
+                            buffer.add(c.value)
+                            loop(c.chunk, dropLeft, dropRight)
+                        else
+                            loop(c.chunk, dropLeft, dropRight)
+                    case c: Drop[A] @unchecked =>
+                        loop(c.chunk, dropLeft + c.dropLeft, dropRight + c.dropRight)
+                    case c: Tail[A] @unchecked =>
+                        loop(c.chunk, dropLeft + c.offset, dropRight)
+                    case c: Compact[A] @unchecked =>
+                        val array  = c.array
+                        val length = c.array.length - dropRight
+                        @tailrec def loop(idx: Int): Unit =
+                            if idx < length then
+                                discard(f(array(idx)))
+                                loop(idx + 1)
+                        loop(dropLeft)
+                    case c: FromSeq[A] @unchecked =>
+                        val seq    = c.value
+                        val length = seq.length - dropRight
+                        @tailrec def loop(index: Int): Unit =
+                            if index < length then
+                                discard(f(seq(index)))
+                                loop(index + 1)
+                        loop(dropLeft)
+                    case c: Single[A] @unchecked =>
+                        if dropLeft == 0 && dropRight == 0 then
+                            discard(f(c.value))
+            loop(self, 0, 0)
+
+            @tailrec def flush(): Unit =
+                val v = buffer.pollLast()
+                if !isNull(v) then
+                    discard(f(v))
+                    flush()
+            end flush
+            flush()
+
+            ChunkBuilder.releaseBuffer(buffer)
+    end foreach
+
     /** Copies the elements of this Chunk to an array.
       *
       * @param array
@@ -596,6 +701,9 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
     override def newBuilder[A]: collection.mutable.Builder[A, Chunk[A]] = ChunkBuilder.init[A]
 
     private[kyo] object internal:
+
+        case object StopException extends NoStackTrace
+
         inline def erasedTag[A]: ClassTag[A] = ClassTag.Any.asInstanceOf[ClassTag[A]]
 
         val cachedEmpty = Compact(new Array[Any](0))
@@ -617,6 +725,25 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
             array: Array[A]
         ) extends Indexed[A]:
             def length = array.length
+
+            override def foreach[U](f: A => U): Unit =
+                @tailrec def loop(idx: Int): Unit =
+                    if idx < array.length then
+                        discard(f(array(idx)))
+                        loop(idx + 1)
+                loop(0)
+            end foreach
+
+            override def map[B](f: A => B): Chunk[B] =
+                val r = new Array[Any](array.length).asInstanceOf[Array[B]]
+                @tailrec def loop(idx: Int): Unit =
+                    if idx < array.length then
+                        r(idx) = f(array(idx))
+                        loop(idx + 1)
+                loop(0)
+                Compact(r)
+            end map
+
             override def apply(i: Int) =
                 if i >= length || i < 0 then
                     throw new IndexOutOfBoundsException(s"Index out of range: $i")
