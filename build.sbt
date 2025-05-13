@@ -279,7 +279,6 @@ lazy val `kyo-data` =
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.0",
             libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.2" % Test
         )
         .jvmSettings(mimaCheck(false))

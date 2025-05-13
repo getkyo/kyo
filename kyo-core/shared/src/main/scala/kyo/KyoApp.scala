@@ -46,8 +46,8 @@ object KyoApp:
 
         protected def exit(code: Int): Unit = kernel.Platform.exit(code)
 
-        protected def onResult(result: Result[Any, Any]): Unit =
-            if !result.exists(().equals(_)) then println(pprint.apply(result).plainText)
+        protected def onResult[E, A](result: Result[E, A])(using Render[Result[E, A]]): Unit =
+            if !result.exists(().equals(_)) then println(result.show)
             result match
                 case Error(e: Throwable) => throw e
                 case Error(_)            => exit(1)
