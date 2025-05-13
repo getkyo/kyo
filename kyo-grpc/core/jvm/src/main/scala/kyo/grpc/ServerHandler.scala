@@ -27,7 +27,7 @@ object ServerHandler:
         ServerCalls.asyncClientStreamingCall(responseObserver =>
             // TODO: Double check that the caller does not use the observer concurrently since it is not thread-safe.
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-            val requestObserver        = RequestStreamObserver.init(f, serverResponseObserver)
+            val requestObserver        = RequestStreamObserver.init(f, serverResponseObserver, "Requests")
             Abort.run(IO.Unsafe.run(requestObserver)).eval.getOrThrow
         )
 
@@ -45,7 +45,7 @@ object ServerHandler:
     ](f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncBidiStreamingCall(responseObserver =>
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-            val requestObserver = BidiRequestStreamObserver.init(f, serverResponseObserver)
+            val requestObserver = BidiRequestStreamObserver.init(f, serverResponseObserver, "Requests")
             Abort.run(IO.Unsafe.run(requestObserver)).eval.getOrThrow
         )
 

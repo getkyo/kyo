@@ -46,10 +46,11 @@ object RequestStreamObserver:
 
     def init[Request: Tag, Response: Tag](
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
-        responseObserver: ServerCallStreamObserver[Response]
+        responseObserver: ServerCallStreamObserver[Response],
+        name: String
     )(using Frame, AllowUnsafe): RequestStreamObserver[Request, Response] < IO =
         for
-            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
+            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors](name)
             observer = RequestStreamObserver(f, requestChannel, responseObserver)
             // TODO: This seems a bit sneaky.
             _ <- Async.run(observer.start)

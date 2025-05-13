@@ -13,19 +13,20 @@ import kyo.kernel.internal.Kyo
   * @see
   *   https://github.com/getkyo/kyo/issues/721.
   */
-class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], _producerClosed: AtomicBoolean)(using initFrame: Frame):
+class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], _producerClosed: AtomicBoolean, name: String)(using initFrame: Frame):
 
     def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
         for
             _ <- checkProduce
-            _ <- Log.debug(s"StreamChannel - Putting value: $value")
+            _ <- Log.debug(s"StreamChannel ($name) - Putting value: $value")
             _ <- channel.put(value)
+            _ <- Log.debug(s"StreamChannel ($name) - Value put: $value")
         yield ()
 
     def error(e: E)(using Frame): Unit < (Abort[Closed] & IO) =
         for
             _ <- checkProduce
-            _ <- Log.debug(s"StreamChannel - Setting error: $e")
+            _ <- Log.debug(s"StreamChannel ($name) - Setting error: $e")
             _ <- error.set(Maybe(e))
             _ <- closeProducer
         yield ()
@@ -41,7 +42,7 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
 
     def take(using Frame): A < (Abort[Closed | E] & Async) =
         for
-            _ <- Log.debug("StreamChannel - Taking value.")
+            _ <- Log.debug(s"StreamChannel ($name) - Taking value.")
             // This will only abort when it is empty.
             value <- Abort.recover(_ => errorOrClosedError)(channel.take)
             _     <- closeIfDone
@@ -53,16 +54,16 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
                 e <- error.getAndSet(Maybe.empty)
                 eOrClosed <- e match
                     case Present(e) =>
-                        Log.debug(s"StreamChannel - Aborting with error: $e").andThen(e)
+                        Log.debug(s"StreamChannel ($name) - Aborting with error: $e").andThen(e)
                     case _ =>
-                        Log.debug(s"StreamChannel - Aborting with Closed").andThen(closedError)
+                        Log.debug(s"StreamChannel ($name) - Aborting with Closed").andThen(closedError)
             yield eOrClosed
         pendingError.map(Abort.fail)
     end errorOrClosedError
 
     def closeProducer(using Frame): Unit < IO =
         for
-            _ <- Log.debug("StreamChannel - Closing producer.")
+            _ <- Log.debug(s"StreamChannel ($name) - Closing producer.")
             _ <- _producerClosed.set(true)
             _ <- closeIfEmpty
         yield ()
@@ -74,7 +75,7 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
             // Be careful here too. This might be called concurrently and so channel.empty might abort with Closed.
             shouldClose <- Abort.recover(_ => false)(channel.empty)
             _ <-
-                if shouldClose then Log.debug("StreamChannel - Closing channel.").andThen(channel.close)
+                if shouldClose then Log.debug(s"StreamChannel ($name) - Closing channel.").andThen(channel.close)
                 else Kyo.unit
         yield ()
 
@@ -104,20 +105,20 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], 
         if maxChunkSize <= 0 then ()
         else
             Loop(()): _ =>
-                Abort.recover[Closed](_ => Log.debug("StreamChannel - Stream complete.").andThen(Loop.done[Unit])):
+                Abort.recover[Closed](_ => Log.debug(s"StreamChannel ($name) - Stream complete.").andThen(Loop.done[Unit])):
                     for
-                        _ <- Log.debug("StreamChannel - Retrieving next chunk for stream.")
+                        _ <- Log.debug(s"StreamChannel ($name) - Retrieving next chunk for stream.")
                         // This will only abort when it is empty.
                         chunk <- Abort.recover(_ => errorOrClosedError)(channel.drainUpTo(maxChunkSize))
                         _ <-
                             if chunk.nonEmpty then
-                                Log.debug(s"StreamChannel - Emitting chunk: $chunk").andThen(Emit.value(chunk))
+                                Log.debug(s"StreamChannel ($name) - Emitting chunk: $chunk").andThen(Emit.value(chunk))
                             else
                                 for
-                                    _ <- Log.debug("StreamChannel - Blocking for next value.")
+                                    _ <- Log.debug(s"StreamChannel ($name) - Blocking for next value.")
                                     // This will only abort when it is empty.
                                     head <- Abort.recover(_ => errorOrClosedError)(channel.take)
-                                    _    <- Log.debug(s"StreamChannel - Emitting value: $head")
+                                    _    <- Log.debug(s"StreamChannel ($name) - Emitting value: $head")
                                     _    <- Emit.value(Chunk(head))
                                 yield ()
                         _ <- closeIfDone
@@ -131,12 +132,12 @@ object StreamChannel:
     // TODO: Set the capacity to something else that matches how we backpressure.
     final private[kyo] val Capacity = 42
 
-    def init[A: Tag, E](using Frame): StreamChannel[A, E] < IO =
+    def init[A: Tag, E](name: String)(using Frame): StreamChannel[A, E] < IO =
         for
             // TODO: Double check the access pattern here.
             channel        <- Channel.init[A](capacity = Capacity, access = Access.MultiProducerMultiConsumer)
             error          <- AtomicRef.init(Maybe.empty[E])
             producerClosed <- AtomicBoolean.init(false)
-        yield new StreamChannel[A, E](channel, error, producerClosed)
+        yield new StreamChannel[A, E](channel, error, producerClosed, name)
 
 end StreamChannel

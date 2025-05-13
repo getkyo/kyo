@@ -40,7 +40,7 @@ object ClientCall:
     )(using Frame): Stream[Response, GrpcRequest] =
         val responses =
             for
-                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]
+                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]("Responses")
                 // TODO: Do we have to cancel the observer returned here?
                 responseObserver <- IO.Unsafe(ResponseStreamObserver(responseChannel))
                 _ = ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver)
@@ -56,7 +56,7 @@ object ClientCall:
     )(using Frame): Stream[Response, GrpcRequest] =
         val responses =
             for
-                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]
+                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]("Responses")
                 // TODO: Do we have to cancel the observer returned here?
                 responseObserver <- IO.Unsafe(ResponseStreamObserver(responseChannel))
                 requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)

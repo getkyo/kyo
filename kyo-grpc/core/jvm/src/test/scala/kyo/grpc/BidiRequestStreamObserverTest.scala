@@ -37,7 +37,7 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
+            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver, "Test"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onCompleted())
@@ -71,7 +71,7 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
+            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver, "Test"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onError(statusException))
@@ -105,7 +105,7 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
+            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver, "Test"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onError(exception))
