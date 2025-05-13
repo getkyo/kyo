@@ -238,9 +238,9 @@ object Channel:
         ): Unit < (Emit[Chunk[A]] & Abort[Closed] & Async) =
             if maxChunkSize <= 0 then ()
             else if maxChunkSize == 1 then
-                Loop(()): _ =>
+                Loop.foreach:
                     Channel.take(self).map: v =>
-                        Emit.valueWith(Chunk(v))(Loop.continue(()))
+                        Emit.valueWith(Chunk(v))(Loop.continue)
             else
                 val drainEffect =
                     if maxChunkSize == Int.MaxValue then Channel.drain(self)
@@ -249,7 +249,7 @@ object Channel:
                 Loop[Unit, Unit, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
                         drainEffect.map: chunk =>
-                            Emit.valueWith(Chunk(a).concat(chunk))(Loop.continue(()))
+                            Emit.valueWith(Chunk(a).concat(chunk))(Loop.continue)
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than

@@ -48,13 +48,18 @@ private[kyo] object LayerMacros:
                         reportErrors(errors)
 
                 val exprFold = targetLayer.fold[Expr[Layer[?, ?]]](
-                    { case ('{ $left: Layer[out1, s1] }, '{ $right: Layer[out2, s2] }) =>
-                        '{ $left.and($right) }
+                    {
+                        case ('{ $left: Layer[out1, s1] }, '{ $right: Layer[out2, s2] }) =>
+                            '{ $left.and($right) }
+                        case _ => bug("macro expected layers")
                     },
-                    { case ('{ $left: Layer[out1, s1] }, right) =>
-                        right match
-                            case '{ $right: Layer[out2, Env[`out1`] & s2] } =>
-                                '{ $left.to($right) }
+                    {
+                        case ('{ $left: Layer[out1, s1] }, right) =>
+                            right match
+                                case '{ $right: Layer[out2, Env[`out1`] & s2] } =>
+                                    '{ $left.to($right) }
+                                case _ => bug("macro expected layers")
+                        case _ => bug("macro expected layers")
                     },
                     _.value, {
                         // TODO: MAke nIcEr PlZEaz

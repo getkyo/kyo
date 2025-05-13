@@ -148,6 +148,7 @@ object Env:
     given isolate[V]: Isolate.Contextual[Env[V], Any] = cachedIsolate.asInstanceOf[Isolate.Contextual[Env[V], Any]]
 
     given eliminateEnv: Reducible.Eliminable[Env[Any]] with {}
-    private inline def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
+
+    private def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
 
 end Env

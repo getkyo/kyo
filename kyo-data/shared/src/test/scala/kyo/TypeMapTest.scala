@@ -89,22 +89,6 @@ class TypeMapTest extends Test:
     }
 
     ".get" - {
-        "A & B" in {
-            typeCheckFailure(
-                """
-                  | def intersection[A, B](m: TypeMap[A & B]) =
-                  |     m.get[A & B]
-                  |""".stripMargin
-            )("Method doesn't accept intersection types. Found: A & B")
-        }
-        "A | B" in {
-            typeCheckFailure(
-                """
-                  | def union[A, B](m: TypeMap[A & B]) =
-                  |     m.get[A | B]
-                  |""".stripMargin
-            )("Method doesn't accept union types. Found: A | B")
-        }
         "subtype" in {
             abstract class A
             class B extends A
@@ -113,6 +97,8 @@ class TypeMapTest extends Test:
             val e: TypeMap[A & B] = TypeMap(b)
 
             assert(e.get[A] eq b)
+            assert(e.get[A & B] eq b)
+            assert(e.get[A | B] eq b)
         }
         "deterministic" in {
             trait A
@@ -205,22 +191,30 @@ class TypeMapTest extends Test:
             assert(e2.get[Boolean])
         }
         "A & B" in {
-            typeCheckFailure("""
-                  | def intersection[A, B](ab: A & B) =
-                  |     TypeMap.empty.add(ab)
-                  |""".stripMargin)(
-                "Method doesn't accept intersection types. Found: A & B"
-            )
+            given [A, B]: CanEqual[A, B] = CanEqual.derived
+            trait A
+            trait B
+            class C extends A with B
+            val c                        = new C
+            val e1: TypeMap[Int]         = TypeMap(42)
+            val e2: TypeMap[Int & A & B] = e1.add(c: A & B)
+            assert(e2.get[Int] == 42)
+            assert(e2.get[A] == c)
+            assert(e2.get[B] == c)
+            assert(e2.get[A & B] == c)
+            assert(e2.get[A | B] == c)
+            assert(e2.get[A | Thread] == c)
         }
         "A | B" in {
-            typeCheckFailure(
-                """
-                  | def union[A, B](ab: A | B) =
-                  |     TypeMap.empty.add(ab)
-                  |""".stripMargin
-            )(
-                "Method doesn't accept union types. Found: A | B"
-            )
+            given [A, B]: CanEqual[A, B] = CanEqual.derived
+            trait A
+            trait B
+            class C extends A
+            val c                          = new C
+            val e1: TypeMap[Int]           = TypeMap(42)
+            val e2: TypeMap[Int & (A | B)] = e1.add(c: A | B)
+            assert(e2.get[Int] == 42)
+            assert(e2.get[A | B] == c)
         }
         "subtype" in {
             abstract class A
@@ -288,12 +282,10 @@ class TypeMapTest extends Test:
             val p = e.prune[RuntimeException]
             assert(p.size == 3)
         }
-        "intersection" in pendingUntilFixed {
-            assertCompiles("""
-                |val e = TypeMap(true, "")
-                |val p = e.prune[Boolean & String]
-                |assert(p.size == 2)
-                |""".stripMargin)
+        "intersection" in {
+            val e = TypeMap(true, "")
+            val p = e.prune[Boolean | String]
+            assert(p.size == 2)
         }
     }
 
@@ -307,8 +299,8 @@ class TypeMapTest extends Test:
                     "scala.Char -> c, " +
                     "scala.Int -> 42, " +
                     "scala.None$ -> None, " +
-                    "scala.collection.immutable.List -> List(), " +
-                    "scala.collection.immutable.Map -> Map(k -> v)" +
+                    "scala.collection.immutable.List[+scala.Any] -> List(), " +
+                    "scala.collection.immutable.Map[scala.Char, +scala.Char] -> Map(k -> v)" +
                     ")"
             assert(t.show == expected)
         }

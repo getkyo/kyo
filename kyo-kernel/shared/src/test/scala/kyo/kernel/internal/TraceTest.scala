@@ -138,6 +138,13 @@ class TraceTest extends Test:
         }
     }
 
+    "bug #1172 null frames" in {
+        val safepoint = Safepoint.get // Trace.Owner
+        safepoint.pushFrame(null.asInstanceOf[Frame])
+        safepoint.enrich(new Exception)
+        succeed
+    }
+
     def assertTrace[A](f: => A, expected: String) =
         try
             f

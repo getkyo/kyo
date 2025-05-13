@@ -361,6 +361,27 @@ object Abort:
             case Failure(e) => onFail(e)
             case Panic(thr) => throw thr
 
+    /** Recovers from an Abort failure or panic by applying the provided function to the Error value.
+      *
+      * This method allows you to handle both failures and panics in an Abort effect with a single handler function that receives the
+      * complete Error value (either Failure or Panic).
+      *
+      * @param onError
+      *   A function that takes the Error value (either Failure[E] or Panic) and returns a new computation
+      * @param v
+      *   The original computation that may fail or panic
+      * @return
+      *   A computation that either succeeds with the original value or the recovered value
+      */
+    def recoverError[E](
+        using Frame
+    )[A, B, S, ER](onError: Error[E] => B < S)(v: => A < (Abort[E | ER] & S))(
+        using
+        ct: SafeClassTag[E],
+        reduce: Reducible[Abort[ER]]
+    ): (A | B) < (S & reduce.SReduced & Abort[Nothing]) =
+        runWith[E](v)(_.foldError(identity, onError))
+
     /** Recovers from an Abort failure by applying the provided function.
       *
       * This method allows you to handle failures in an Abort effect and potentially continue the computation with a new value. It only
@@ -440,6 +461,32 @@ object Abort:
             case Success(a) => onSuccess(a)
             case Failure(e) => onFail(e)
             case Panic(thr) => throw thr
+
+    /** Handles an Abort effect by applying the provided functions to the success value or error.
+      *
+      * This method allows you to handle both the success case and error cases (both failures and panics) in an Abort effect. Unlike
+      * [[fold]], this method provides the complete Error value to the error handler function.
+      *
+      * @param onSuccess
+      *   A function that takes the success value of type A and returns a new computation
+      * @param onError
+      *   A function that takes the Error value (either Failure[E] or Panic) and returns a new computation
+      * @param v
+      *   The original computation that may fail
+      * @return
+      *   A computation that applies the appropriate handler function based on the result
+      */
+    def foldError[E](
+        using Frame
+    )[A, B, S, ER](
+        onSuccess: A => B < S,
+        onError: Error[E] => B < S
+    )(v: => A < (Abort[E | ER] & S))(
+        using
+        ct: SafeClassTag[E],
+        reduce: Reducible[Abort[ER]]
+    ): B < (S & reduce.SReduced) =
+        runWith[E](v)(_.foldError(onSuccess, onError))
 
     /** Catches exceptions of type E and converts them to Abort failures.
       *

@@ -254,7 +254,7 @@ class SignalTest extends Test:
                     ))
                 writers <-
                     Async.run(Async.fill(10, 10)(
-                        Loop(()) { _ =>
+                        Loop.foreach {
                             ref.get.map { v =>
                                 if v < 10 then
                                     ref.compareAndSet(v, v + 1).andThen(Loop.continue)

@@ -307,12 +307,12 @@ class AbortCombinatorsTest extends Test:
             }
 
             "should convert empty choice to absent abort" in {
-                val failure: Int < Choice                     = Choice.get(Seq())
+                val failure: Int < Choice                     = Choice.eval(Seq())
                 val converted: Int < (Choice & Abort[Absent]) = failure.choiceDropToAbsent
                 val handled                                   = Abort.run(Choice.run(converted))
                 assert(handled.eval == Result.fail(Absent))
 
-                val success: Int < Choice                      = Choice.get(Seq(23))
+                val success: Int < Choice                      = Choice.eval(Seq(23))
                 val converted2: Int < (Choice & Abort[Absent]) = success.choiceDropToAbsent
                 val handled2                                   = Abort.run(Choice.run(converted2))
                 assert(handled2.eval == Result.succeed(Chunk(23)))

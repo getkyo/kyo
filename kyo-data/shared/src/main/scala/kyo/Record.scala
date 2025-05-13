@@ -69,11 +69,6 @@ import scala.language.implicitConversions
   * (record.value: String) // Returns "string"
   * (record.value: Int)    // Returns 42
   * }}}
-  *
-  * =Known Limitations=
-  *
-  *   - Nested records cannot be created directly
-  *   - Tag derivation for Records is not currently supported
   */
 final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
 
@@ -289,12 +284,6 @@ object Record:
 
     given [Fields, T](using TypeIntersection.Aux[Fields, T], CanEqual[T, T]): CanEqual[Record[Fields], Record[Fields]] =
         CanEqual.derived
-
-    inline given [Fields]: Tag[Record[Fields]] =
-        scala.compiletime.error(
-            "Cannot derive Tag for Record type. This commonly occurs when trying to nest Records, " +
-                "which is not currently supported by the Tag implementation."
-        )
 
     private object RenderInliner extends Inliner[(String, Render[?])]:
         inline def apply[T]: (String, Render[?]) =

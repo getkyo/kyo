@@ -45,6 +45,24 @@ object Emit:
     inline def value[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Unit < Emit[V] =
         ArrowEffect.suspend[Any](tag, value)
 
+    /** Emits a single value when a condition is true.
+      *
+      * @param cond
+      *   The condition that determines whether to emit the value
+      * @param value
+      *   The value to emit if the condition is true
+      * @return
+      *   An effect that emits the given value if the condition is true, otherwise does nothing
+      */
+    inline def valueWhen[V, S](cond: Boolean < S)(inline value: V)(using
+        inline tag: Tag[Emit[V]],
+        inline frame: Frame
+    ): Unit < (Emit[V] & S) =
+        cond.map {
+            case false => ()
+            case true  => Emit.value(value)
+        }
+
     /** Emits a single value and maps the resulting Ack.
       *
       * @param value
@@ -69,8 +87,8 @@ object Emit:
       *   A tuple of the collected values and the result of the computation
       */
     def run[V](using Frame)[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): (Chunk[V], A) < S =
-        ArrowEffect.handleState(tag, Chunk.empty[V], v)(
-            handle = [C] => (input, state, cont) => (state.append(input), cont(())),
+        ArrowEffect.handleLoop(tag, Chunk.empty[V], v)(
+            handle = [C] => (input, state, cont) => Loop.continue(state.append(input), cont(())),
             done = (state, res) => (state, res)
         )
 
@@ -88,10 +106,10 @@ object Emit:
     def runFold[V](
         using Frame
     )[A, S, B, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(using tag: Tag[Emit[V]]): (A, B) < (S & S2) =
-        ArrowEffect.handleState(tag, acc, v)(
+        ArrowEffect.handleLoop(tag, acc, v)(
             handle = [C] =>
                 (input, state, cont) =>
-                    f(state, input).map(a => (a, cont(()))),
+                    f(state, input).map(a => Loop.continue(a, cont(()))),
             done = (state, res) => (state, res)
         )
 
@@ -135,8 +153,13 @@ object Emit:
       *   The result of the computation
       */
     def runWhile[V](using Frame)[A, S, S2](v: A < (Emit[V] & S))(f: V => Boolean < S2)(using tag: Tag[Emit[V]]): A < (S & S2) =
-        ArrowEffect.handleState(tag, true, v)(
-            [C] => (input, cond, cont) => if cond then f(input).map(c => (c, cont(()))) else (cond, cont(()))
+        ArrowEffect.handleLoop(tag, true, v)(
+            [C] =>
+                (input, cond, cont) =>
+                    if cond then
+                        f(input).map(c => Loop.continue(c, cont(())))
+                    else
+                        Loop.continue(cond, cont(()))
         )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
@@ -172,7 +195,7 @@ object Emit:
           * @return
           *   An isolate that preserves emitted values
           */
-        def merge[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+        def merge[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
             new Isolate.Stateful[Emit[V], Any]:
 
                 type State = Chunk[V]
@@ -205,7 +228,7 @@ object Emit:
           * @return
           *   An isolate that discards emitted values
           */
-        def discard[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+        def discard[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
             new Isolate.Stateful[Emit[V], Any]:
 
                 type State = Chunk[V]

@@ -85,7 +85,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         if isNull(curr) || !isPending() then
             finalizers.run()
             finalizers = Finalizers.empty
-            if !isNull(trace) then
+            if trace ne null then
                 safepoint.releaseTrace(trace)
                 trace = null.asInstanceOf[Trace]
             curr = nullResult

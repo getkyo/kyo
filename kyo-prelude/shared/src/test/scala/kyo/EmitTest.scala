@@ -575,4 +575,73 @@ class EmitTest extends Test:
             }
         }
     }
+
+    "valueWhen" - {
+        "emits value when condition is true" in {
+            val v: String < Emit[Int] =
+                for
+                    _ <- Emit.valueWhen(true)(1)
+                    _ <- Emit.valueWhen(true)(2)
+                    _ <- Emit.valueWhen(true)(3)
+                yield "a"
+
+            assert(Emit.run(v).eval == (Chunk(1, 2, 3), "a"))
+        }
+
+        "doesn't emit value when condition is false" in {
+            val v: String < Emit[Int] =
+                for
+                    _ <- Emit.valueWhen(false)(1)
+                    _ <- Emit.valueWhen(false)(2)
+                    _ <- Emit.valueWhen(false)(3)
+                yield "a"
+
+            assert(Emit.run(v).eval == (Chunk.empty, "a"))
+        }
+
+        "mixed conditions" in {
+            val v: String < Emit[Int] =
+                for
+                    _ <- Emit.valueWhen(true)(1)
+                    _ <- Emit.valueWhen(false)(2)
+                    _ <- Emit.valueWhen(true)(3)
+                yield "a"
+
+            assert(Emit.run(v).eval == (Chunk(1, 3), "a"))
+        }
+
+        "with effects in condition" in {
+            val result = Var.runTuple(0) {
+                Emit.run {
+                    for
+                        counter <- Var.get[Int]
+                        _       <- Emit.valueWhen(Var.get[Int].map(_ == 0))(1)
+                        _       <- Var.update[Int](_ + 1)
+                        _       <- Emit.valueWhen(Var.get[Int].map(_ == 1))(2)
+                        _       <- Var.update[Int](_ + 1)
+                        _       <- Emit.valueWhen(Var.get[Int].map(_ == 3))(3)
+                    yield "done"
+                }
+            }.eval
+
+            assert(result == (2, (Chunk(1, 2), "done")))
+        }
+
+        "with complex conditions" in run {
+            val isEven     = (n: Int) => n % 2 == 0
+            val isPositive = (n: Int) => n > 0
+
+            val result = Emit.run {
+                for
+                    _ <- Emit.valueWhen(isEven(1) && isPositive(1))("one")
+                    _ <- Emit.valueWhen(isEven(2) && isPositive(2))("two")
+                    _ <- Emit.valueWhen(isEven(3) || isPositive(3))("three")
+                    _ <- Emit.valueWhen(isEven(-4) || isPositive(-4))("four")
+                    _ <- Emit.valueWhen(isEven(-5) && isPositive(-5))("five")
+                yield "done"
+            }
+
+            assert(result.eval == (Chunk("two", "three", "four"), "done"))
+        }
+    }
 end EmitTest

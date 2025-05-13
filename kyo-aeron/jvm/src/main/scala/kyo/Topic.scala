@@ -127,7 +127,11 @@ object Topic:
     def publish[A: ReadWriter](
         aeronUri: String,
         retrySchedule: Schedule = defaultRetrySchedule
-    )[S](stream: Stream[A, S])(using frame: Frame, tag: Tag[A]): Unit < (Topic & S & Abort[Closed | Backpressured] & Async) =
+    )[S](stream: Stream[A, S])(using
+        frame: Frame,
+        tag: Tag[A],
+        etag: Tag[Emit[Chunk[A]]]
+    ): Unit < (Topic & S & Abort[Closed | Backpressured] & Async) =
         Env.use[Aeron] { aeron =>
             IO {
                 // register the publication with Aeron using type's hash as stream ID
@@ -147,7 +151,7 @@ object Topic:
                                 if !publication.isConnected() then backpressured
                                 else
                                     // serialize messages with type tag for runtime verification
-                                    val bytes  = writeBinary((tag.raw, messages))
+                                    val bytes  = writeBinary((tag.show, messages))
                                     val result = publication.tryClaim(bytes.length, bufferClaim)
                                     if result > 0 then
                                         // write directly to claimed buffer region
@@ -197,7 +201,7 @@ object Topic:
     def stream[A: ReadWriter](
         aeronUri: String,
         retrySchedule: Schedule = defaultRetrySchedule
-    )(using tag: Tag[A], frame: Frame): Stream[A, Topic & Abort[Backpressured] & Async] =
+    )(using tag: Tag[A], etag: Tag[Emit[Chunk[A]]], frame: Frame): Stream[A, Topic & Abort[Backpressured] & Async] =
         Stream {
             Env.use[Aeron] { aeron =>
                 IO {
@@ -232,12 +236,12 @@ object Topic:
                                             backpressured
                                         else
                                             result match
-                                                case Present((tag2, messages)) =>
+                                                case Present((tag2String, messages)) =>
                                                     // verify message type matches expected type
-                                                    if tag2 != tag.raw then
+                                                    if tag2String != tag.show then
                                                         Abort.panic(
                                                             new IllegalStateException(
-                                                                s"Expected messages of type ${tag.show} but got ${Tag.fromRaw(tag2).show}"
+                                                                s"Expected messages of type ${tag.show} but got ${tag2String}"
                                                             )
                                                         )
                                                     else

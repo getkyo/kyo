@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Maybe
+import kyo.internal.FindEnclosing
 import scala.annotation.tailrec
 import scala.quoted.*
 
@@ -109,25 +110,21 @@ object Frame:
         val pos      = quotes.reflect.Position.ofMacroExpansion
         val fileName = pos.sourceFile.name
 
-        if !internal then
-            findEnclosing { sym =>
-                sym.fullName.startsWith("kyo") && !allowKyoFileSuffixes.exists(fileName.endsWith)
-            }.foreach { sym =>
-                report.errorAndAbort(
-                    s"""Frame cannot be derived within the kyo package: ${sym.owner.fullName}
-                       |
-                       |To resolve this issue:
-                       |1. Propagate the Frame from user code via a `using` parameter.
-                       |2. If absolutely necessary, you can use Frame.internal, but this is not recommended for general use.
-                       |
-                       |Example of propagating Frame:
-                       |def myMethod[A](a: A)(using Frame): Unit = ...""".stripMargin
-                )
-            }
+        if !internal && FindEnclosing.isInternal then
+            report.errorAndAbort(
+                s"""Frame cannot be derived within the kyo package.
+                    |
+                    |To resolve this issue:
+                    |1. Propagate the Frame from user code via a `using` parameter.
+                    |2. If absolutely necessary, you can use Frame.internal, but this is not recommended for general use.
+                    |
+                    |Example of propagating Frame:
+                    |def myMethod[A](a: A)(using Frame): Unit = ...""".stripMargin
+            )
         end if
 
-        val cls    = findEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
-        val method = if internal then "?" else findEnclosing(_.isDefDef).map(_.name).getOrElse("?")
+        val cls    = FindEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
+        val method = if internal then "?" else FindEnclosing(_.isDefDef).map(_.name).getOrElse("?")
 
         val snippet =
             if internal then "<internal>"
@@ -148,17 +145,5 @@ object Frame:
         else if symbol.isDefDef then symbol.name
         else ""
     end render
-
-    private def findEnclosing(using Quotes)(predicate: quotes.reflect.Symbol => Boolean): Maybe[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-
-        @tailrec
-        def findSymbol(sym: Symbol): Maybe[Symbol] =
-            if predicate(sym) then Maybe(sym)
-            else if sym.isNoSymbol then Maybe.empty
-            else findSymbol(sym.owner)
-
-        findSymbol(Symbol.spliceOwner)
-    end findEnclosing
 
 end Frame

@@ -28,7 +28,7 @@ object Loop:
       *   The type of the single state value maintained between iterations
       */
     sealed abstract class Continue[A] extends Serializable:
-        private[Loop] def _1: A
+        private[kyo] def _1: A
 
     /** Represents the state of two values to be carried forward to the next iteration.
       *
@@ -38,8 +38,8 @@ object Loop:
       *   The type of the second state value
       */
     sealed abstract class Continue2[A, B] extends Serializable:
-        private[Loop] def _1: A
-        private[Loop] def _2: B
+        private[kyo] def _1: A
+        private[kyo] def _2: B
 
     /** Represents the state of three values to be carried forward to the next iteration.
       *
@@ -51,9 +51,9 @@ object Loop:
       *   The type of the third state value
       */
     sealed abstract class Continue3[A, B, C] extends Serializable:
-        private[Loop] def _1: A
-        private[Loop] def _2: B
-        private[Loop] def _3: C
+        private[kyo] def _1: A
+        private[kyo] def _2: B
+        private[kyo] def _3: C
     end Continue3
 
     /** Represents the state of four values to be carried forward to the next iteration.
@@ -68,10 +68,10 @@ object Loop:
       *   The type of the fourth state value
       */
     sealed abstract class Continue4[A, B, C, D] extends Serializable:
-        private[Loop] def _1: A
-        private[Loop] def _2: B
-        private[Loop] def _3: C
-        private[Loop] def _4: D
+        private[kyo] def _1: A
+        private[kyo] def _2: B
+        private[kyo] def _3: C
+        private[kyo] def _4: D
     end Continue4
 
     /** Represents the result of a loop iteration, which can either continue with new state or complete with a final value.
@@ -539,19 +539,18 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
-    inline def foreach[S](inline run: Safepoint ?=> Outcome[Unit, Unit] < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
+    inline def foreach[A, S](inline run: Safepoint ?=> Outcome[Unit, A] < S)(using inline _frame: Frame, safepoint: Safepoint): A < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome[Unit, Unit] < S)(using Safepoint): Unit < S =
+        @tailrec def loop(v: Outcome[Unit, A] < S)(using Safepoint): A < S =
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(run)
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, Unit], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, A], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, A, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))
-                case res =>
-                    ()
+                case res => res.asInstanceOf[A]
         loop(Loop.continue)
     end foreach
 

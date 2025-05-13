@@ -623,7 +623,7 @@ val b: Int < Abort[Nothing] =
 
 ### Env: Dependency Injection
 
-`Env` is similar to ZIO's environment feature but offers more granular control. Unlike ZIO, which has built-in layering for dependencies, `Env` allows you to inject individual services directly. However, it lacks ZIO's structured dependency management; you manage and initialize your services yourself.
+`Env` is similar to ZIO's environment feature but offers more granular control. Unlike ZIO, which has built-in layering for dependencies, `Env` allows you to inject individual services directly. Env can be combined with Layers for automated dependency injection.
 
 ```scala
 import kyo.*
@@ -973,7 +973,7 @@ import kyo.*
 // Note how 'get' takes a 'Seq[T]'
 // and returns a 'T < Choice'
 val a: Int < Choice =
-    Choice.get(Seq(1, 2, 3, 4))
+    Choice.eval(Seq(1, 2, 3, 4))
 
 // 'dropIf' discards the current element if
 // a condition is not met. Produces a 'Seq(1, 2)'
@@ -1346,6 +1346,51 @@ val result: Chunk[String] < (Env[Config] & Async) =
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
 
 Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unnecessarily lifting them to return `A < Any` will result in performance loss.
+
+#### Sink: stream evaluation
+
+While typically it is sufficient to use the built-in methods on `Stream` to run streams and evaluate them to some value or outcome, it can also be useful to abstract the evaluation into a separate type that can be composed and manipulated separately from any actual stream. For this purpose, Kyo includes a `Sink[V, A, S]` type, inspired by ZIO's `ZSink`, which represents the processing of a stream of element type `V` into an output value of type `A` using effect types `S`.
+
+To run a stream into a sink, you can use `Stream#into` or `Sink#consume`
+
+All of the evaluation methods available on `Stream` are available as constructors for `Sink`s, e.g:
+
+```scala
+import kyo.*
+
+val stream = Stream.init(1 to 10)
+
+val collectValuesSink: Sink[Int, Chunk[Int], Any] = Sink.collect[Int]
+val collectedValues: Chunk[Int] < Any = stream.into(collectValuesSink)
+
+val printValuesSink: Sink[Int, Unit, IO] = Sink.foreach((v: Int) => Console.printLine(s"Value: $v"))
+val printedValues: Unit < IO = stream.into(printValuesSink)
+
+val sumValuesSink: Sink[Int, Int, Any] = Sink.fold(0)((a: Int, v: Int) => a + v)
+val summedValues: Int < Any = stream.into(sumValuesSink)
+```
+
+Sinks can then be combined and transformed to produce new sinks:
+
+```scala
+import kyo.*
+
+// built in sink to count elements in stream
+val countSink: Sink[Int, Int, Any] = Sink.count[Int]
+// add all integers in stream together
+val sumSink: Sink[Int, Int, Any] = Sink.fold(0)((a: Int, v: Int) => a + v)
+// `zip` combines sinks together, applying them to same stream elements in tandem, and
+// producing a tuple of the output values of each sink.
+// `map` transforms the output value
+val averageSink: Sink[Int, Double, Any] = sumSink.zip(countSink).map { 
+    case (sum, count) => sum / count
+}
+// contramap transforms the sink to consume a different stream type
+val avgStringLengthSink = averageSink.contramap((str: String) => str.length)
+
+val strings = Stream.init(Seq("one", "two", "three"))
+val avgStringLength: Double < Any = strings.into(avgStringLengthSink)
+```
 
 ### Var: Stateful Computations
 
