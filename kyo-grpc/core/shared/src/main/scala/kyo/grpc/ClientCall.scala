@@ -23,7 +23,7 @@ object ClientCall:
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         requests: Stream[Request, GrpcRequest]
-    )(using Frame): Response < GrpcRequest =
+    )(using Frame, Tag[Emit[Chunk[Request]]]): Response < GrpcRequest =
         for
             promise          <- Promise.init[GrpcResponse.Errors, Response]
             responseObserver <- IO.Unsafe(UnaryResponseStreamObserver(promise))
@@ -37,7 +37,7 @@ object ClientCall:
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         request: Request
-    )(using Frame): Stream[Response, GrpcRequest] =
+    )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, GrpcRequest] =
         val responses =
             for
                 responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]("Responses")
@@ -53,7 +53,7 @@ object ClientCall:
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         requests: Stream[Request, GrpcRequest]
-    )(using Frame): Stream[Response, GrpcRequest] =
+    )(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): Stream[Response, GrpcRequest] =
         val responses =
             for
                 responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]("Responses")

@@ -12,7 +12,7 @@ class BidiRequestStreamObserver[Request: Tag, Response: Tag] private (
     f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
     requestChannel: StreamChannel[Request, GrpcRequest.Errors],
     responseObserver: ServerCallStreamObserver[Response]
-)(using Frame, AllowUnsafe) extends StreamObserver[Request]:
+)(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]) extends StreamObserver[Request]:
 
     private val responses = Stream.embed(f(requestChannel.stream))
 
@@ -44,7 +44,7 @@ object BidiRequestStreamObserver:
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response],
         name: String
-    )(using Frame, AllowUnsafe): BidiRequestStreamObserver[Request, Response] < IO =
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): BidiRequestStreamObserver[Request, Response] < IO =
         for
             requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors](name)
             observer = BidiRequestStreamObserver(f, requestChannel, responseObserver)

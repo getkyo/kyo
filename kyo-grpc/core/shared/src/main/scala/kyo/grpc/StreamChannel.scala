@@ -13,7 +13,7 @@ import kyo.kernel.internal.Kyo
   * @see
   *   https://github.com/getkyo/kyo/issues/721.
   */
-class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], _producerClosed: AtomicBoolean, name: String)(using initFrame: Frame):
+class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]], _producerClosed: AtomicBoolean, name: String)(using initFrame: Frame, emitTag: Tag[Emit[Chunk[A]]]):
 
     def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
         for
@@ -132,7 +132,7 @@ object StreamChannel:
     // TODO: Set the capacity to something else that matches how we backpressure.
     final private[kyo] val Capacity = 42
 
-    def init[A: Tag, E](name: String)(using Frame): StreamChannel[A, E] < IO =
+    def init[A: Tag, E](name: String)(using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < IO =
         for
             // TODO: Double check the access pattern here.
             channel        <- Channel.init[A](capacity = Capacity, access = Access.MultiProducerMultiConsumer)

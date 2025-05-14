@@ -15,7 +15,7 @@ class RequestStreamObserver[Request: Tag, Response](
     f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
     requestChannel: StreamChannel[Request, GrpcRequest.Errors],
     responseObserver: ServerCallStreamObserver[Response]
-)(using Frame, AllowUnsafe) extends StreamObserver[Request]:
+)(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]) extends StreamObserver[Request]:
 
     private val response = f(requestChannel.stream)
 
@@ -48,7 +48,7 @@ object RequestStreamObserver:
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response],
         name: String
-    )(using Frame, AllowUnsafe): RequestStreamObserver[Request, Response] < IO =
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request, Response] < IO =
         for
             requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors](name)
             observer = RequestStreamObserver(f, requestChannel, responseObserver)

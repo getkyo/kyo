@@ -28,7 +28,7 @@ private[grpc] object StreamNotifier:
     def notifyObserver[A: Tag, E <: Throwable: SafeClassTag, S](
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
-    )(using Frame): Unit < (IO & S) =
+    )(using Frame, Tag[Emit[Chunk[A]]]): Unit < (IO & S) =
         def handleValue(value: A) =
             for
                 _ <- Log.debug(s"StreamNotifier - Sending next value to observer: $value")

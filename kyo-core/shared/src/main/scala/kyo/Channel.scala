@@ -603,6 +603,8 @@ object Channel:
                     if i == 0 then Result.Success(current)
                     else
                         val next = queue.drainUpTo(i)
+                        // TODO: Remove this.
+                        IO.Unsafe.evalOrThrow(Log.debug(s"drainUpTo: $i, $next"))
                         next match
                             case Result.Success(c) =>
                                 if c.isEmpty then Result.Success(current)

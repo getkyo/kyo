@@ -29,7 +29,7 @@ object GrpcRequest:
                         p.complete(Result.fail(ex))
                     case Failure(ex) =>
                         p.complete(Result.panic(ex))
-                }(ExecutionContext.parasitic)
+                }(using ExecutionContext.parasitic)
                 p
             }
             response <- Async.get(p)

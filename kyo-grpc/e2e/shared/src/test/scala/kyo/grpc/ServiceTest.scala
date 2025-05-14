@@ -599,7 +599,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                           |
                           |""".stripMargin)
                         client <- createClientAndServer
-                        (responses, tail) <- client.manyToMany(requests).splitAt(5)
+                        (responses, tail) <- client.manyToMany(requests).splitAt(after)
                         failedResponse    <- Abort.run[StatusException](tail.run)
                         _ <- Log.debug(s"Failed response: $failedResponse, expected = $expected")
                     yield

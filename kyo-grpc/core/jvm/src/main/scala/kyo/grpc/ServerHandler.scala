@@ -22,7 +22,7 @@ object ServerHandler:
         }
 
     def clientStreaming[Request: Tag, Response: Tag](f: Stream[Request, GrpcRequest] => Response < GrpcResponse)(using
-        Frame
+        Frame, Tag[Emit[Chunk[Request]]]
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncClientStreamingCall(responseObserver =>
             // TODO: Double check that the caller does not use the observer concurrently since it is not thread-safe.
@@ -32,7 +32,7 @@ object ServerHandler:
         )
 
     def serverStreaming[Request: Tag, Response: Tag](f: Request => Stream[Response, GrpcResponse] < GrpcResponse)(using
-        Frame
+        Frame, Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
             val completed = StreamNotifier.notifyObserver(Stream.embed(f(request)), responseObserver)
@@ -42,7 +42,7 @@ object ServerHandler:
     def bidiStreaming[
         Request: Tag,
         Response: Tag
-    ](f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
+    ](f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse)(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): ServerCallHandler[Request, Response] =
         ServerCalls.asyncBidiStreamingCall(responseObserver =>
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
             val requestObserver = BidiRequestStreamObserver.init(f, serverResponseObserver, "Requests")
