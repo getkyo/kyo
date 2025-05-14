@@ -407,4 +407,97 @@ class QueueTest extends Test:
             yield assert(result == 42)
         }
     }
+
+    "closeAwaitEmpty" - {
+        "returns true when queue is already empty" in run {
+            for
+                queue  <- Queue.init[Int](10)
+                result <- queue.closeAwaitEmpty
+            yield assert(result)
+        }
+
+        "returns true when queue becomes empty after closing" in run {
+            for
+                queue  <- Queue.init[Int](10)
+                _      <- queue.offer(1)
+                _      <- queue.offer(2)
+                fiber  <- Async.run(queue.closeAwaitEmpty)
+                _      <- queue.poll
+                _      <- queue.poll
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "returns false if queue is already closed" in run {
+            for
+                queue  <- Queue.init[Int](10)
+                _      <- queue.close
+                result <- queue.closeAwaitEmpty
+            yield assert(!result)
+        }
+
+        "unbounded queue" - {
+            "returns true when queue is already empty" in run {
+                for
+                    queue  <- Queue.Unbounded.init[Int]()
+                    result <- queue.closeAwaitEmpty
+                yield assert(result)
+            }
+
+            "returns true when queue becomes empty after closing" in run {
+                for
+                    queue  <- Queue.Unbounded.init[Int]()
+                    _      <- queue.add(1)
+                    _      <- queue.add(2)
+                    fiber  <- Async.run(queue.closeAwaitEmpty)
+                    _      <- queue.poll
+                    _      <- queue.poll
+                    result <- fiber.get
+                yield assert(result)
+            }
+        }
+
+        "concurrent polling and waiting" in run {
+            for
+                queue  <- Queue.init[Int](10)
+                _      <- Kyo.foreach(1 to 5)(i => queue.offer(i))
+                fiber  <- Async.run(queue.closeAwaitEmpty)
+                _      <- Async.foreach(1 to 5)(_ => queue.poll)
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "sliding queue" in run {
+            for
+                queue  <- Queue.Unbounded.initSliding[Int](2)
+                _      <- queue.add(1)
+                _      <- queue.add(2)
+                fiber  <- Async.run(queue.closeAwaitEmpty)
+                _      <- queue.poll
+                _      <- queue.poll
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "dropping queue" in run {
+            for
+                queue  <- Queue.Unbounded.initDropping[Int](2)
+                _      <- queue.add(1)
+                _      <- queue.add(2)
+                fiber  <- Async.run(queue.closeAwaitEmpty)
+                _      <- queue.poll
+                _      <- queue.poll
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "zero capacity queue" in run {
+            for
+                queue  <- Queue.init[Int](0)
+                result <- queue.closeAwaitEmpty
+            yield assert(result)
+        }
+
+    }
+
 end QueueTest

@@ -924,4 +924,63 @@ class ChannelTest extends Test:
         }
     }
 
+    "closeAwaitEmpty" - {
+        "returns true when channel is already empty" in run {
+            for
+                c      <- Channel.init[Int](10)
+                result <- c.closeAwaitEmpty
+            yield assert(result)
+        }
+
+        "returns true when channel becomes empty after closing" in run {
+            for
+                c      <- Channel.init[Int](10)
+                _      <- c.put(1)
+                _      <- c.put(2)
+                fiber  <- Async.run(c.closeAwaitEmpty)
+                _      <- c.take
+                _      <- c.take
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "returns false if channel is already closed" in run {
+            for
+                c      <- Channel.init[Int](10)
+                _      <- c.close
+                result <- c.closeAwaitEmpty
+            yield assert(!result)
+        }
+
+        "concurrent taking and waiting" in run {
+            for
+                c      <- Channel.init[Int](10)
+                _      <- Kyo.foreach(1 to 5)(i => c.put(i))
+                fiber  <- Async.run(c.closeAwaitEmpty)
+                _      <- Async.foreach(1 to 5)(_ => c.take)
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "zero capacity channel" in run {
+            for
+                c      <- Channel.init[Int](0)
+                result <- c.closeAwaitEmpty
+            yield assert(result)
+        }
+
+        "should discard new takes" in run {
+            for
+                c      <- Channel.init[Int](2)
+                _      <- c.put(1)
+                _      <- c.put(2)
+                fiber  <- Async.run(c.closeAwaitEmpty)
+                _      <- c.take
+                _      <- c.take
+                take   <- Abort.run(c.take)
+                result <- fiber.get
+            yield assert(result && take.isFailure)
+        }
+    }
+
 end ChannelTest
