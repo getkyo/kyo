@@ -211,11 +211,10 @@ object Channel:
         def close(using Frame): Maybe[Seq[A]] < IO = IO.Unsafe(self.close())
 
         /** Closes the channel and asynchronously waits until it's empty.
-          * 
-          * This method closes the channel to new elements and returns a fiber that completes
-          * when all elements have been consumed. Unlike the regular `close` method, this
-          * allows consumers to process all remaining elements before considering the channel
-          * fully closed.
+          *
+          * This method closes the channel to new elements and returns a computation that completes when all elements have been consumed.
+          * Unlike the regular `close` method, this allows consumers to process all remaining elements before considering the channel fully
+          * closed.
           *
           * @return
           *   true if the channel was successfully closed and emptied, false if it was already closed
