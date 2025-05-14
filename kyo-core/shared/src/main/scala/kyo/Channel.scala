@@ -210,6 +210,17 @@ object Channel:
           */
         def close(using Frame): Maybe[Seq[A]] < IO = IO.Unsafe(self.close())
 
+        /** Closes the channel and asynchronously waits until it's empty.
+          *
+          * This method closes the channel to new elements and returns a computation that completes when all elements have been consumed.
+          * Unlike the regular `close` method, this allows consumers to process all remaining elements before considering the channel fully
+          * closed.
+          *
+          * @return
+          *   true if the channel was successfully closed and emptied, false if it was already closed
+          */
+        def closeAwaitEmpty(using Frame): Boolean < Async = IO.Unsafe(self.closeAwaitEmpty().safe.get)
+
         /** Checks if the channel is closed.
           *
           * @return
@@ -328,6 +339,7 @@ object Channel:
         def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
         def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]]
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
+        def closeAwaitEmpty()(using Frame, AllowUnsafe): Fiber.Unsafe[Nothing, Boolean]
 
         def empty()(using AllowUnsafe): Result[Closed, Boolean]
         def full()(using AllowUnsafe): Result[Closed, Boolean]
@@ -495,6 +507,9 @@ object Channel:
                     Present(Chunk.empty)
             end close
 
+            def closeAwaitEmpty()(using Frame, AllowUnsafe) =
+                Fiber.Unsafe.init(Result.succeed(close().isDefined))
+
             def empty()(using AllowUnsafe)  = asResult(true)
             def full()(using AllowUnsafe)   = asResult(true)
             def closed()(using AllowUnsafe) = isClosed.get()
@@ -641,6 +656,12 @@ object Channel:
                     flush()
                     backlog
                 }
+
+            def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe) =
+                val r = queue.closeAwaitEmpty()
+                r.onComplete(_ => flush())
+                r
+            end closeAwaitEmpty
 
             def empty()(using AllowUnsafe)  = queue.empty()
             def full()(using AllowUnsafe)   = queue.full()
