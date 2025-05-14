@@ -362,7 +362,7 @@ object Queue:
 
         private enum State derives CanEqual:
             case Open
-            case HalfClosed(p: Promise.Unsafe[Nothing, Boolean], r: Result.Error[Closed])
+            case HalfOpen(p: Promise.Unsafe[Nothing, Boolean], r: Result.Error[Closed])
             case FullyClosed(r: Result.Error[Closed])
         end State
 
@@ -378,7 +378,7 @@ object Queue:
             final def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe): Fiber.Unsafe[Nothing, Boolean] =
                 val fail = Result.Failure(Closed("Queue", initFrame))
                 val p    = Promise.Unsafe.init[Nothing, Boolean]()
-                if state.compareAndSet(State.Open, State.HalfClosed(p, fail)) then
+                if state.compareAndSet(State.Open, State.HalfOpen(p, fail)) then
                     handleHalfOpen()
                     p
                 else
@@ -410,9 +410,9 @@ object Queue:
 
             private def offerClosed: Maybe[Result.Error[Closed]] =
                 state.get() match
-                    case State.Open             => Absent
-                    case State.HalfClosed(_, r) => Present(r)
-                    case State.FullyClosed(r)   => Present(r)
+                    case State.Open           => Absent
+                    case State.HalfOpen(_, r) => Present(r)
+                    case State.FullyClosed(r) => Present(r)
 
             protected inline def offerOp[A](inline f: => Boolean, inline raceRepair: => Boolean): Result[Closed, Boolean] =
                 offerClosed.getOrElse {
@@ -426,7 +426,7 @@ object Queue:
 
             private def handleHalfOpen(): Unit =
                 state.get() match
-                    case s: State.HalfClosed if _isEmpty() && state.compareAndSet(s, State.FullyClosed(s.r)) =>
+                    case s: State.HalfOpen if _isEmpty() && state.compareAndSet(s, State.FullyClosed(s.r)) =>
                         s.p.completeDiscard(Result.succeed(true))
                     case _ =>
 
