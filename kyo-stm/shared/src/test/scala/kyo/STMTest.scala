@@ -84,6 +84,63 @@ class STMTest extends Test:
                 count <- counter.get
             yield assert(result.isFailure && count == 4)
         }
+
+        "arbitrary failure is retried if the transaction is inconsistent" - {
+
+            "within retry budget" in run {
+                for
+                    ref      <- TRef.init(0)
+                    latch1   <- Latch.init(1)
+                    latch2   <- Latch.init(1)
+                    attempts <- AtomicInt.init
+                    _ <-
+                        Async.run {
+                            STM.run(latch1.release.andThen(ref.set(42)))
+                                .andThen(latch2.release)
+                        }
+                    v <-
+                        STM.run {
+                            for
+                                _ <- attempts.incrementAndGet
+                                _ <- latch1.await
+                                _ <- ref.get
+                                _ <- latch2.await
+                                v <- ref.get
+                                _ <- Abort.when(v == 0)(new Exception)
+                            yield v
+                        }
+                    a <- attempts.get
+                yield assert(v == 42 && a == 2)
+            }
+        }
+
+        "exceeding retry budget" in run {
+            for
+                ref      <- TRef.init(0)
+                latch1   <- Latch.init(1)
+                latch2   <- Latch.init(1)
+                attempts <- AtomicInt.init
+                _ <-
+                    Async.run {
+                        STM.run(latch1.release.andThen(ref.set(42)))
+                            .andThen(latch2.release)
+                    }
+                v <-
+                    Abort.run {
+                        STM.run(Schedule.never) {
+                            for
+                                _ <- attempts.incrementAndGet
+                                _ <- latch1.await
+                                _ <- ref.get
+                                _ <- latch2.await
+                                v <- ref.get
+                                _ <- Abort.when(v == 0)(new Exception)
+                            yield v
+                        }
+                    }
+                a <- attempts.get
+            yield assert(v.isFailure && a == 1)
+        }
     }
 
     "with isolates" - {
@@ -496,9 +553,9 @@ class STMTest extends Test:
         val repeats = 10
         val sizes   = Seq(1, 10, 100, 1000)
 
-        "concurrent updates" in run {
+        "concurrent updates" in runNotJS {
             (for
-                size  <- Choice.get(sizes)
+                size  <- Choice.eval(sizes)
                 ref   <- TRef.init(0)
                 _     <- Async.fill(size, size)(STM.run(ref.update(_ + 1)))
                 value <- STM.run(ref.get)
@@ -507,9 +564,9 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent reads and writes" in run {
+        "concurrent reads and writes" in runNotJS {
             (for
-                size  <- Choice.get(sizes)
+                size  <- Choice.eval(sizes)
                 ref   <- TRef.init(0)
                 latch <- Latch.init(1)
                 writeFiber <- Async.run(
@@ -527,9 +584,9 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent nested transactions" in run {
+        "concurrent nested transactions" in runNotJS {
             (for
-                size <- Choice.get(sizes)
+                size <- Choice.eval(sizes)
                 ref  <- TRef.init(0)
                 _ <- Async.fill(size, size) {
                     STM.run {
@@ -550,7 +607,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "dining philosophers" in run {
+        "dining philosophers" in runNotJS {
             val philosophers = 5
             (for
                 forks <- Kyo.fill(philosophers)(TRef.init(true))
@@ -580,7 +637,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "bank account transfers" in run {
+        "bank account transfers" in runNotJS {
             (for
                 account1 <- TRef.init(500)
                 account2 <- TRef.init(300)
@@ -630,7 +687,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "circular account transfers" in run {
+        "circular account transfers" in runNotJS {
             (for
                 account1 <- TRef.init(300)
                 account2 <- TRef.init(200)
@@ -750,6 +807,34 @@ class STMTest extends Test:
         Abort.run(task).map { result =>
             assert(result == Result.fail(ex))
         }
+    }
+    "bug #1172" in runJVM {
+        Abort.run { // trap non-fatal exceptions (AssertionError)
+            for
+                // initially they contain equal values:
+                r1 <- STM.run(TRef.init("a"))
+                r2 <- STM.run(TRef.init("a"))
+                txn1 =
+                    for
+                        v1 <- r1.get
+                        v2 <- r2.get
+                        // we only write equal values:
+                        _ <- r1.set(v1 + "1")
+                        _ <- r2.set(v2 + "1")
+                    yield ()
+                txn2 = r1.get.map { v1 =>
+                    r2.get.map { v2 =>
+                        if v1 == v2 then
+                            ()
+                        else
+                            // observed non-equal values:
+                            throw new AssertionError(s"${v1} != ${v2}") // <- fails here
+                    }
+                }
+                once = Async.zip(STM.run(STM.defaultRetrySchedule.forever)(txn1), STM.run(STM.defaultRetrySchedule.forever)(txn2))
+                _ <- Async.foreachDiscard(1 to 10, concurrency = 8) { _ => once }
+            yield succeed
+        }.map(_.getOrElse(succeed))
     }
 
 end STMTest

@@ -179,7 +179,6 @@ object Memory:
 
     object Arena:
         opaque type State = JArena
-        given Tag[State] = Tag[JArena]
 
         /** Runs an operation that requires an Arena, ensuring proper cleanup.
           *

@@ -219,13 +219,13 @@ class RecordTest extends Test:
         "type tag behavior" in {
             val record = "num" ~ 42
             val field  = record.fields.head
-            assert(field.tag == Tag[Int])
+            assert(field.tag =:= Tag[Int])
         }
 
         "handle generic types" in {
             val record = "list" ~ List(1, 2, 3)
             val field  = record.fields.head
-            assert(field.tag == Tag[List[Int]])
+            assert(field.tag =:= Tag[List[Int]])
         }
 
         "handle recursive types" in {
@@ -298,6 +298,7 @@ class RecordTest extends Test:
                 Column[Value](field.name)(using summonInline[AsColumn[Value]])
 
         "build record if all inlined" in {
+            assertCompiles("""
             type Person = "name" ~ String & "age" ~ Int
 
             val columns = Record.stage[Person](ColumnInline)
@@ -307,6 +308,7 @@ class RecordTest extends Test:
             assert(columns.name == Column[String]("name"))
             assert(columns.age == Column[Int]("age"))
             assert(columns == result)
+            """)
         }
 
         "compile error when inlining failed" in {
@@ -381,7 +383,7 @@ class RecordTest extends Test:
         }
     }
 
-    "nested records" in pendingUntilFixed {
+    "nested records" in {
         val inner = "x" ~ 1 & "y" ~ 2
         assertCompiles("""("nested" ~ inner)""")
     }
@@ -538,12 +540,11 @@ class RecordTest extends Test:
     }
 
     "Tag derivation" - {
-        "derives tags for record" in pendingUntilFixed {
-            val record = "name" ~ "Alice" & "age" ~ 30
+        "derives tags for record" in {
             assertCompiles("""summon[Tag[Record["name" ~ String & "age" ~ Int]]]""")
         }
 
-        "doesn't limit the use of nested records" in pendingUntilFixed {
+        "doesn't limit the use of nested records" in {
             val inner = "x" ~ 1 & "y" ~ 2
             assertCompiles(""""z" ~ inner""")
         }
@@ -671,6 +672,220 @@ class RecordTest extends Test:
                     record.compact
                 """)(error)
             }
+        }
+    }
+
+    "nested records" - {
+
+        "creation and access" in {
+            val inner = "x" ~ 1 & "y" ~ 2
+            val outer = "nested" ~ inner & "name" ~ "test"
+
+            assert(outer.nested.x == 1)
+            assert(outer.nested.y == 2)
+            assert(outer.name == "test")
+        }
+
+        "multi-level nesting" in {
+            val deepest = "value" ~ "deep" & "num" ~ 42
+            val middle  = "deepRecord" ~ deepest & "flag" ~ true
+            val outer   = "middleRecord" ~ middle & "name" ~ "test"
+
+            assert(outer.middleRecord.deepRecord.value == "deep")
+            assert(outer.middleRecord.deepRecord.num == 42)
+            assert(outer.middleRecord.flag == true)
+            assert(outer.name == "test")
+        }
+
+        "adding fields to nested records" in {
+            val inner = "x" ~ 1 & "y" ~ 2
+            val outer = "nested" ~ inner & "name" ~ "test"
+
+            val outerWithExtra = outer & "extra" ~ "value"
+            assert(outerWithExtra.extra == "value")
+            assert(outerWithExtra.nested.x == 1)
+
+            val innerWithExtra = inner & "z" ~ 3
+            val newOuter       = "nested" ~ innerWithExtra & "name" ~ "test"
+            assert(newOuter.nested.z == 3)
+            assert(newOuter.nested.x == 1)
+        }
+
+        "combining records with nested fields" in {
+            val inner1 = "x" ~ 1 & "y" ~ 2
+            val outer1 = "nested" ~ inner1 & "name" ~ "test1"
+
+            val inner2 = "a" ~ "A" & "b" ~ "B"
+            val outer2 = "nested2" ~ inner2 & "count" ~ 5
+
+            val combined = outer1 & outer2
+
+            assert(combined.nested.x == 1)
+            assert(combined.nested.y == 2)
+            assert(combined.name == "test1")
+            assert(combined.nested2.a == "A")
+            assert(combined.nested2.b == "B")
+            assert(combined.count == 5)
+        }
+
+        "duplicate field names in nested records" in {
+            val inner1 = "value" ~ "string" & "count" ~ 1
+            val inner2 = "value" ~ 42 & "count" ~ "two"
+
+            val outer = "data" ~ inner1 & "info" ~ inner2
+
+            assert((outer.data.value: String) == "string")
+            assert((outer.data.count: Int) == 1)
+            assert((outer.info.value: Int) == 42)
+            assert((outer.info.count: String) == "two")
+        }
+
+        "nested record type safety" in {
+            val inner1 = "x" ~ 1 & "y" ~ 2
+            val inner2 = "x" ~ "string" & "y" ~ true
+
+            val outer1 = "nested" ~ inner1 & "name" ~ "test1"
+            val outer2 = "nested" ~ inner2 & "name" ~ "test2"
+
+            typeCheckFailure("""
+                val fail: Record["nested" ~ Record["x" ~ Int & "y" ~ Int] & "name" ~ String] = outer2
+            """)("""Required: kyo.Record[("nested" : String)""")
+        }
+
+        "case class conversion with nested records" in {
+            case class Point(x: Int, y: Int)
+            case class NamedPoint(point: Point, name: String)
+
+            val point      = Point(10, 20)
+            val namedPoint = NamedPoint(point, "Origin")
+
+            val record = Record.fromProduct(namedPoint)
+
+            assert(record.point.x == 10)
+            assert(record.point.y == 20)
+            assert(record.name == "Origin")
+
+            case class Container(record: Record["x" ~ Int & "y" ~ Int], label: String)
+            val innerRecord = "x" ~ 5 & "y" ~ 10
+            val container   = Container(innerRecord, "Container")
+
+            val containerRecord = Record.fromProduct(container)
+            assert(containerRecord.record.x == 5)
+            assert(containerRecord.record.y == 10)
+            assert(containerRecord.label == "Container")
+        }
+
+        "recursive nested records" in {
+            val leaf1  = "value" ~ "leaf1" & "leaf" ~ true
+            val leaf2  = "value" ~ "leaf2" & "leaf" ~ true
+            val branch = "left" ~ leaf1 & "right" ~ leaf2 & "branch" ~ true
+            val root   = "main" ~ branch & "root" ~ true
+
+            assert(root.main.left.value == "leaf1")
+            assert(root.main.left.leaf == true)
+            assert(root.main.right.value == "leaf2")
+            assert(root.main.branch == true)
+            assert(root.root == true)
+        }
+
+        "equality and hashCode with nested records" in {
+            val inner1 = "x" ~ 1 & "y" ~ 2
+            val inner2 = "x" ~ 1 & "y" ~ 2
+            val inner3 = "x" ~ 1 & "y" ~ 3
+
+            val outer1 = "nested" ~ inner1 & "name" ~ "test"
+            val outer2 = "nested" ~ inner2 & "name" ~ "test"
+            val outer3 = "nested" ~ inner3 & "name" ~ "test"
+
+            assert(outer1 == outer2)
+            assert(outer1.hashCode == outer2.hashCode)
+            assert(outer1 != outer3)
+        }
+
+        "render with nested records" in {
+            val inner = "x" ~ 1 & "y" ~ 2
+            val outer = "nested" ~ inner & "name" ~ "test"
+
+            val rendered = Render.asText(outer).show
+            assert(rendered.contains("nested ~"))
+            assert(rendered.contains("name ~ test"))
+        }
+
+        "mixed complex nested structures" in {
+            case class Point(x: Int, y: Int)
+            case class Circle(center: Point, radius: Int)
+
+            val circleRecord = Record.fromProduct(Circle(Point(0, 0), 10))
+
+            val manual = "width" ~ 100 & "height" ~ 200
+            val mixed  = "circle" ~ circleRecord & "rectangle" ~ manual & "name" ~ "shapes"
+
+            assert(mixed.circle.center.x == 0)
+            assert(mixed.circle.center.y == 0)
+            assert(mixed.circle.radius == 10)
+            assert(mixed.rectangle.width == 100)
+            assert(mixed.rectangle.height == 200)
+            assert(mixed.name == "shapes")
+        }
+
+        "nested option fields" in {
+            val inner = "x" ~ 1 & "y" ~ 2
+
+            val withSome = "nested" ~ Some(inner) & "name" ~ "hasValue"
+            val withNone = "nested" ~ Option.empty[Record["x" ~ Int & "y" ~ Int]] & "name" ~ "noValue"
+
+            assert(withSome.nested.isDefined)
+            assert(withSome.nested.get.x == 1)
+            assert(withSome.nested.get.y == 2)
+            assert(withSome.name == "hasValue")
+
+            assert(withNone.nested.isEmpty)
+            assert(withNone.name == "noValue")
+        }
+
+        "nested collection fields" in {
+            val record1 = "id" ~ 1 & "value" ~ "one"
+            val record2 = "id" ~ 2 & "value" ~ "two"
+            val record3 = "id" ~ 3 & "value" ~ "three"
+
+            val listRecord = "items" ~ List(record1, record2, record3) & "count" ~ 3
+
+            val items = listRecord.items
+            assert(items.length == 3)
+            assert(items(0).id == 1)
+            assert(items(1).value == "two")
+            assert(items(2).id == 3)
+
+            // Map of records
+            val mapRecord = "mapping" ~ Map(
+                "first"  -> record1,
+                "second" -> record2
+            ) & "size" ~ 2
+
+            val mapping = mapRecord.mapping
+            assert(mapping.size == 2)
+            assert(mapping("first").id == 1)
+            assert(mapping("second").value == "two")
+        }
+
+        "paths with mixed nested records and case classes" in {
+            case class Location(lat: Double, lng: Double)
+            case class Address(street: String, location: Location)
+            case class Company(name: String, address: Address)
+
+            val company       = Company("Acme", Address("123 Main St", Location(37.7749, -122.4194)))
+            val companyRecord = Record.fromProduct(company)
+
+            val department = "id" ~ 42 & "title" ~ "Engineering"
+            val employee   = "name" ~ "Alice" & "company" ~ companyRecord & "department" ~ department
+
+            assert(employee.name == "Alice")
+            assert(employee.company.name == "Acme")
+            assert(employee.company.address.street == "123 Main St")
+            assert(employee.company.address.location.lat == 37.7749)
+            assert(employee.company.address.location.lng == -122.4194)
+            assert(employee.department.id == 42)
+            assert(employee.department.title == "Engineering")
         }
     }
 end RecordTest

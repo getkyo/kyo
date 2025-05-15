@@ -148,6 +148,14 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                 super.set(0)
         end match
     end unlock
+
+    override def toString() =
+        val lockState = get() match
+            case 0            => "free"
+            case Int.MaxValue => "writer"
+            case i            => s"$i readers"
+        s"TRef(state=$currentState, lock=$lockState)"
+    end toString
 end TRefImpl
 
 object TRef:

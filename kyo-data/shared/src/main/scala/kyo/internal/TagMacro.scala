@@ -2,174 +2,188 @@ package kyo.internal
 
 import kyo.*
 import kyo.Tag.*
-import scala.quoted.*
+import kyo.Tag.internal.*
+import kyo.Tag.internal.Type.*
+import kyo.Tag.internal.Type.Entry.*
+import scala.annotation.tailrec
+import scala.collection.immutable
+import scala.collection.immutable.HashMap
+import scala.quoted.{Type as SType, *}
 
-object TagMacro:
+private[kyo] object TagMacro:
 
-    def tagImpl[A: Type](using Quotes): Expr[String] =
+    private val compactNames = true
+
+    def deriveImpl[A: SType](using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
+        val (staticDB, dynamicDB) = deriveDB[A]
+        val encoded               = Expr(Tag.internal.encode(staticDB))
+        if dynamicDB.isEmpty then
+            encoded
+        else if FindEnclosing.isInternal then
+            val missing =
+                dynamicDB.map {
+                    case (_, (tpe, _)) =>
+                        tpe.show
+                }
+            report.errorAndAbort(
+                s"Dynamic tags aren't allowed in the kyo package for performance reasons. Please modify the method to take an implicit 'Tag[${TypeRepr.of[A].show}]'. Dynamic types: ${missing.mkString(", ")}."
+            )
+        else
+            val reifiedDB =
+                dynamicDB.foldLeft('{ Map.empty[Entry.Id, Tag[Any]] }) {
+                    case (map, (id, (_, tag))) =>
+                        '{ $map.updated(${ Expr(id) }, $tag) }
+                }
+            '{ Tag.internal.Dynamic($encoded, $reifiedDB) }
+        end if
+    end deriveImpl
 
-        encodeType(TypeRepr.of[A])
-    end tagImpl
-
-    def tags[A: Type](using q: Quotes)(flatten: q.reflect.TypeRepr => Seq[q.reflect.TypeRepr]): Expr[Seq[String]] =
+    private def deriveDB[A: SType](using
+        q: Quotes
+    ): (Map[Type.Entry.Id, Type.Entry], Map[Type.Entry.Id, (q.reflect.TypeRepr, Expr[Tag[Any]])]) =
         import quotes.reflect.*
-        Expr.ofSeq {
-            flatten(TypeRepr.of[A]).foldLeft(Seq.empty[Expr[String]]) {
-                (acc, repr) =>
-                    acc :+ encodeType(repr)
+        var nextId  = 0
+        var seen    = Map.empty[TypeRepr | Symbol, (TypeRepr, String)]
+        var static  = HashMap.empty[Type.Entry.Id, Type.Entry]
+        var dynamic = HashMap.empty[Type.Entry.Id, (TypeRepr, Expr[Tag[Any]])]
+
+        def visit(t: TypeRepr): Type.Entry.Id =
+
+            val tpe = t.dealiasKeepOpaques.simplified.dealiasKeepOpaques
+            val key =
+                tpe.typeSymbol.isNoSymbol match
+                    case true => tpe
+                    case false =>
+                        seen.get(tpe.typeSymbol) match
+                            case None                          => tpe.typeSymbol
+                            case Some((t, _)) if t.equals(tpe) => tpe.typeSymbol
+                            case _                             => tpe
+            if seen.contains(key) then
+                seen(key)._2
+            else
+                val id = nextId.toString
+                nextId += 1
+                seen += key -> (tpe, id)
+
+                def loop(tpe: TypeRepr): Entry =
+                    tpe match
+                        case tpe if tpe =:= TypeRepr.of[Any]     => AnyEntry
+                        case tpe if tpe =:= TypeRepr.of[Nothing] => NothingEntry
+                        case tpe if tpe =:= TypeRepr.of[Null]    => NullEntry
+
+                        case tpe @ AndType(_, _) =>
+                            IntersectionEntry(KArray.from(flattenAnd(tpe).map(visit)))
+
+                        case tpe @ OrType(_, _) =>
+                            UnionEntry(KArray.from(flattenOr(tpe).map(visit)))
+
+                        case tpe @ ConstantType(const) =>
+                            LiteralEntry(visit(tpe.widen), const.value.toString())
+
+                        case TypeLambda(names, bounds, body) if body.typeSymbol.equals(tpe.typeSymbol) =>
+                            loop(body.dealias.simplified)
+
+                        case TypeLambda(names, bounds, body) =>
+                            val params = names.map(_.toString)
+                            val lowerBounds = bounds.map {
+                                case TypeBounds(low, high) => visit(low)
+                            }
+                            val higherBounds = bounds.map {
+                                case TypeBounds(low, high) => visit(high)
+                            }
+                            LambdaEntry(
+                                KArray.from(params),
+                                KArray.from(lowerBounds),
+                                KArray.from(higherBounds),
+                                visit(body)
+                            )
+
+                        case tpe if tpe.typeSymbol.isClassDef =>
+                            val symbol = tpe.typeSymbol
+                            val name   = symbol.fullName
+                            val params = tpe.typeArgs.map(visit)
+                            val variances =
+                                symbol.declaredTypes.flatMap { v =>
+                                    if !v.isTypeParam then None
+                                    else if v.paramVariance.is(Flags.Contravariant) then Present(Variance.Contravariant)
+                                    else if v.paramVariance.is(Flags.Covariant) then Present(Variance.Covariant)
+                                    else Present(Variance.Invariant)
+                                    end if
+                                }
+                            require(params.size == variances.size)
+                            ClassEntry(
+                                name,
+                                KArray.from(variances),
+                                KArray.from(params),
+                                KArray.from(immediateParents(tpe).map(visit))
+                            )
+
+                        case tpe if tpe.typeSymbol.flags.is(Flags.Opaque) && tpe.typeSymbol.isTypeDef =>
+                            val name = tpe.typeSymbol.fullName
+                            tpe.typeSymbol.tree.asInstanceOf[TypeDef].rhs.asInstanceOf[TypeTree].tpe match
+                                case tpe @ TypeBounds(lower, upper) =>
+                                    val symbol = tpe.typeSymbol
+                                    val params = tpe.typeArgs.map(visit)
+                                    val variances =
+                                        symbol.declarations.flatMap { v =>
+                                            if !v.isTypeParam then None
+                                            else if v.paramVariance.is(Flags.Contravariant) then Present(Variance.Contravariant)
+                                            else if v.paramVariance.is(Flags.Covariant) then Present(Variance.Covariant)
+                                            else Present(Variance.Invariant)
+                                            end if
+                                        }
+                                    require(params.size == variances.size)
+                                    OpaqueEntry(name, visit(lower), visit(upper), KArray.from(variances), KArray.from(params))
+                            end match
+
+                        case tpe =>
+                            tpe.asType match
+                                case '[t] =>
+                                    Expr.summon[Tag[t]] match
+                                        case Some(tag) =>
+                                            dynamic = dynamic.updated(id, tpe -> '{ $tag.asInstanceOf[Tag[Any]] })
+                                            null
+                                        case None =>
+                                            report.errorAndAbort(s"Please provide an implicit kyo.Tag[${tpe.show}] parameter.")
+
+                val entry = loop(tpe)
+                if entry != null then
+                    static = static.updated(id, loop(tpe))
+                id
+            end if
+        end visit
+
+        discard(visit(TypeRepr.of[A]))
+        (static, dynamic)
+    end deriveDB
+
+    private def immediateParents(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
+        import quotes.reflect.*
+        val all = tpe.baseClasses.tail.map(tpe.baseType)
+        all.filter { parent =>
+            !all.exists { otherAncestor =>
+                !otherAncestor.equals(parent) && otherAncestor.baseClasses.contains(parent.typeSymbol)
             }
         }
-    end tags
+    end immediateParents
 
-    def setImpl[A: Type](using q: Quotes): Expr[Set[A]] =
+    private def flattenAnd(using q: Quotes)(tpe: q.reflect.TypeRepr): Seq[q.reflect.TypeRepr] =
         import quotes.reflect.*
-        TypeRepr.of[A] match
-            case AndType(_, _) => intersectionImpl[A]
-            case _             => unionImpl[A]
-        end match
-    end setImpl
-
-    def unionImpl[A: Type](using q: Quotes): Expr[Union[A]] =
-        import quotes.reflect.*
-
-        def flatten(tpe: TypeRepr): Seq[TypeRepr] =
+        def loop(tpe: TypeRepr): Seq[TypeRepr] =
             tpe match
-                case OrType(a, b) => flatten(a) ++ flatten(b)
-                case tpe: AndType => report.errorAndAbort(s"Union tags don't support type intersections. Found: ${tpe.show}")
-                case tpe          => Seq(tpe)
-
-        '{ Union.raw[A](${ tags(using q)(flatten) }) }
-    end unionImpl
-
-    def intersectionImpl[A: Type](using q: Quotes): Expr[Intersection[A]] =
-        import quotes.reflect.*
-
-        def flatten(tpe: TypeRepr): Seq[TypeRepr] =
-            tpe match
-                case AndType(a, b) => flatten(a) ++ flatten(b)
-                case tpe: OrType   => report.errorAndAbort(s"Intersection tags don't support type unions. Found: ${tpe.show}")
+                case AndType(a, b) => loop(a) ++ loop(b)
                 case tpe           => Seq(tpe)
+        loop(tpe).sortBy(_.show)
+    end flattenAnd
 
-        '{ Intersection.raw[A](${ tags(using q)(flatten) }) }
-    end intersectionImpl
-
-    def encodeType(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[String] =
+    private def flattenOr(using q: Quotes)(tpe: q.reflect.TypeRepr): Seq[q.reflect.TypeRepr] =
         import quotes.reflect.*
+        def loop(tpe: TypeRepr): Seq[TypeRepr] =
+            tpe match
+                case OrType(a, b) => loop(a) ++ loop(b)
+                case tpe          => Seq(tpe)
+        loop(tpe).sortBy(_.show)
+    end flattenOr
 
-        tpe.dealias match
-            case AndType(_, _) =>
-                report.errorAndAbort(
-                    s"Method doesn't accept intersection types. Found: ${tpe.show}."
-                )
-            case OrType(_, _) =>
-                report.errorAndAbort(
-                    s"Method doesn't accept union types. Found: ${tpe.show}."
-                )
-            case tpe if tpe.typeSymbol.fullName == "scala.Nothing" =>
-                report.errorAndAbort(
-                    s"Tag cannot be created for Nothing as it has no values. Use a different type or add explicit type parameters if needed."
-                )
-            case tpe if tpe.typeSymbol.isClassDef =>
-                val sym = tpe.typeSymbol
-                val path = tpe.dealias.baseClasses.map { sym =>
-                    val name = toCompact.getOrElse(sym.fullName, sym.fullName)
-                    val size = IntEncoder.encode(name.length())
-                    val hash = IntEncoder.encodeHash(name.hashCode())
-                    s"$size$hash$name"
-                }.mkString(";") + ";"
-                val variances = sym.typeMembers.flatMap { v =>
-                    if !v.isTypeParam then None
-                    else if v.flags.is(Flags.Contravariant) then Some("-")
-                    else if v.flags.is(Flags.Covariant) then Some("+")
-                    else Some("=")
-                }
-                val params = tpe.typeArgs.map(encodeType)
-                if params.isEmpty then
-                    Expr(path)
-                else
-                    concat(
-                        Expr(s"$path[") ::
-                            (variances.zip(params).map((v, p) => Expr(v) :: p :: Nil)
-                                .reduce((a, b) =>
-                                    a ::: Expr(",") :: b
-                                ) :+ Expr("]"))
-                    )
-                end if
-            case _ =>
-                tpe.asType match
-                    case '[tpe] =>
-                        Expr.summon[Tag[tpe]] match
-                            case None =>
-                                failMissing(TypeRepr.of[tpe])
-                            case Some(value) =>
-                                '{ $value.raw }
-        end match
-    end encodeType
-
-    def failMissing(using Quotes)(missing: quotes.reflect.TypeRepr) =
-        import quotes.reflect.*
-        report.errorAndAbort(
-            report.errorAndAbort(s"Please provide an implicit kyo.Tag[${missing.show}] parameter.")
-        )
-    end failMissing
-
-    def concat(l: List[Expr[String]])(using Quotes): Expr[String] =
-        def loop(l: List[Expr[String]], acc: String, exprs: List[Expr[String]]): Expr[String] =
-            l match
-                case Nil =>
-                    (Expr(acc) :: exprs).reverse match
-                        case Nil => Expr("")
-                        case exprs =>
-                            exprs.filter {
-                                case Expr("") => false
-                                case _        => true
-                            }.reduce((a, b) => '{ $a + $b })
-                case Expr(s: String) :: next =>
-                    loop(next, acc + s, exprs)
-                case head :: next =>
-                    loop(next, "", head :: Expr(acc) :: exprs)
-        loop(l, "", Nil)
-    end concat
-
-    val toCompact = Map(
-        "java.lang.Object"                -> "0",
-        "scala.Matchable"                 -> "1",
-        "scala.Any"                       -> "2",
-        "scala.AnyVal"                    -> "3",
-        "java.lang.String"                -> "4",
-        "scala.Int"                       -> "5",
-        "scala.Long"                      -> "6",
-        "scala.Float"                     -> "7",
-        "scala.Double"                    -> "8",
-        "scala.Boolean"                   -> "9",
-        "scala.Unit"                      -> "a",
-        "scala.Option"                    -> "b",
-        "scala.Some"                      -> "c",
-        "scala.None"                      -> "d",
-        "scala.Left"                      -> "e",
-        "scala.Right"                     -> "f",
-        "scala.Tuple2"                    -> "g",
-        "scala.collection.immutable.List" -> "h",
-        "scala.collection.immutable.Nil"  -> "i",
-        "scala.collection.immutable.Map"  -> "j",
-        "scala.Nothing"                   -> "k",
-        "java.lang.CharSequence"          -> "l",
-        "java.lang.Comparable"            -> "m",
-        "java.io.Serializable"            -> "n",
-        "scala.Product"                   -> "o",
-        "scala.Equals"                    -> "p",
-        "kyo.kernel.Effect"               -> "q",
-        "kyo.kernel.ContextEffect"        -> "r",
-        "kyo.kernel.ArrowEffect"          -> "s",
-        "kyo.Abort"                       -> "t",
-        "kyo.Async$package$.Async$.Join"  -> "u",
-        "kyo.Emit"                        -> "v",
-        "scala.Char"                      -> "w",
-        "java.lang.Throwable"             -> "x",
-        "java.lang.Exception"             -> "y",
-        "kyo.kernel.internal.Defer"       -> "z"
-    )
-
-    val fromCompact = toCompact.map(_.swap).toMap
 end TagMacro

@@ -123,8 +123,7 @@ object TypeIntersection:
                 case _      => TypeRepr.of[EmptyTuple]
 
         tupled(decompose(TypeRepr.of[A].dealias)).asType match
-            case '[
-                type x <: Tuple; x] =>
+            case '[type x <: Tuple; x] =>
                 '{
                     cached.asInstanceOf[TypeIntersection.Aux[A, x]]
                 }

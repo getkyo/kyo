@@ -37,7 +37,7 @@ class BytecodeTest extends Test:
 
     "handle" in {
         val map = methodBytecodeSize[TestHandle]
-        assert(map == Map("test" -> 26, "anonfun" -> 8, "handleLoop" -> 267))
+        assert(map == Map("test" -> 26, "anonfun" -> 8, "handleLoop" -> 273))
     }
 
     def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

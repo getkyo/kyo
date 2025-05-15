@@ -7,7 +7,7 @@ import kyo.kernel.ArrowEffect
 object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
 
-    private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[V], Frame) =
+    private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[Emit[Chunk[V]]], Frame) =
         val emit = Loop.foreach:
             channel.take.map:
                 case Absent =>
@@ -17,7 +17,7 @@ object StreamCoreExtensions:
         Abort.run(emit).unit
     end emitMaybeChunksFromChannel
 
-    private def emitMaybeElementsFromChannel[V](channel: Channel[Maybe[V]])(using Tag[V], Frame) =
+    private def emitMaybeElementsFromChannel[V](channel: Channel[Maybe[V]])(using Tag[Emit[Chunk[V]]], Frame) =
         val emit = Loop(()): _ =>
             channel.take.map: v =>
                 channel.drain.map: chunk =>
@@ -47,7 +47,7 @@ object StreamCoreExtensions:
             using
             Isolate.Contextual[S, IO],
             Isolate.Stateful[S, Abort[E] & Async],
-            Tag[V],
+            Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, S & Async] =
             Stream:
@@ -78,7 +78,7 @@ object StreamCoreExtensions:
             using
             Isolate.Contextual[S, IO],
             Isolate.Stateful[S, Abort[E] & Async],
-            Tag[V],
+            Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, S & Async] =
             Stream:
@@ -114,7 +114,7 @@ object StreamCoreExtensions:
             Isolate.Contextual[S, IO],
             Isolate.Stateful[S, Abort[E] & Async],
             SafeClassTag[E],
-            Tag[V],
+            Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Abort[E] & S & Async] =
             val streams: Seq[Stream[V, Abort[E] & S & Async]] = Seq(stream, other)
@@ -136,7 +136,7 @@ object StreamCoreExtensions:
             Isolate.Contextual[S, IO],
             Isolate.Stateful[S, Abort[E] & Async],
             SafeClassTag[E],
-            Tag[V],
+            Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Abort[E] & S & S2 & Async] =
             Stream.collectAllHalting[V, E, S](Seq(stream, other))
@@ -158,7 +158,7 @@ object StreamCoreExtensions:
             Isolate.Contextual[S, IO],
             Isolate.Stateful[S, Abort[E] & Async],
             SafeClassTag[E],
-            Tag[V],
+            Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Abort[E] & S & Async] =
             Stream:
@@ -192,7 +192,7 @@ object StreamCoreExtensions:
             i1: Isolate.Contextual[S, IO],
             i2: Isolate.Stateful[S, Abort[E] & Async],
             sct: SafeClassTag[E],
-            t: Tag[V],
+            t: Tag[Emit[Chunk[V]]],
             f: Frame
         ): Stream[V, Abort[E] & S & Async] =
             other.mergeHaltingLeft(stream)(using i1, i2, sct, t, f)

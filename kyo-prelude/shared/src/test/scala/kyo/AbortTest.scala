@@ -1316,7 +1316,7 @@ class AbortTest extends Test:
             val local = Local.init("default")
             val combined = Kyo.lift {
                 local.let("custom") {
-                    Choice.get(Seq(1, 2)).flatMap { n =>
+                    Choice.eval(Seq(1, 2)).flatMap { n =>
                         if n % 2 == 0 then n * 10
                         else Abort.fail(s"odd: $n")
                     }
@@ -1327,6 +1327,89 @@ class AbortTest extends Test:
             assert(results.length == 2)
             assert(results(0) == Result.fail("odd: 1"))
             assert(results(1) == Result.succeed(20))
+        }
+    }
+
+    "recoverError" - {
+        case class CustomError(message: String) derives CanEqual
+
+        "handles failures" in {
+            val computation = Abort.fail(CustomError("Expected error"))
+            val recovered =
+                Abort.recoverError[CustomError] {
+                    error => s"Recovered: ${error.show}"
+                }(computation)
+
+            assert(Abort.run(recovered).eval == Result.succeed("Recovered: Failure(CustomError(Expected error))"))
+        }
+
+        "handles panics" in {
+            val ex          = new RuntimeException("Panic message")
+            val computation = Abort.panic(ex)
+            val recovered = Abort.recoverError[CustomError] {
+                error => s"Recovered: ${error.show}"
+            }(computation)
+
+            assert(Abort.run(recovered).eval == Result.succeed("Recovered: Panic(java.lang.RuntimeException: Panic message)"))
+        }
+
+        "doesn't affect successful computations" in {
+            val computation: String < Abort[CustomError] = "success"
+            var called                                   = false
+            val recovered =
+                Abort.recoverError[CustomError] { _ =>
+                    called = true
+                    "Should not be called"
+                }(computation)
+
+            assert(called == false)
+            assert(Abort.run(recovered).eval == Result.succeed("success"))
+        }
+    }
+
+    "foldError" - {
+        case class CustomError(message: String) derives CanEqual
+
+        "handles success case" in {
+            val computation: Int < Abort[CustomError] = 42
+            val result = Abort.foldError[CustomError](
+                onSuccess = i => s"Success: $i",
+                onError = error => s"Error: ${error.show}"
+            )(computation)
+
+            assert(result.eval == "Success: 42")
+        }
+
+        "handles failure case" in {
+            val computation = Abort.fail(CustomError("Expected error"))
+            val result = Abort.foldError[CustomError](
+                onSuccess = i => s"Success: $i",
+                onError = error => s"Error: ${error.show}"
+            )(computation)
+
+            assert(result.eval == "Error: Failure(CustomError(Expected error))")
+        }
+
+        "handles panic case" in {
+            val ex          = new RuntimeException("Panic message")
+            val computation = Abort.panic(ex)
+            val result = Abort.foldError[CustomError](
+                onSuccess = i => s"Success: $i",
+                onError = error => s"Error: ${error.show}"
+            )(computation)
+
+            assert(result.eval == "Error: Panic(java.lang.RuntimeException: Panic message)")
+        }
+
+        "removes Abort from the effect set" in {
+            val computation = Abort.fail(CustomError("Expected error"))
+            val folded = Abort.foldError[CustomError](
+                onSuccess = i => s"Success: $i",
+                onError = _ => "Error handled"
+            )(computation)
+
+            val _: String < Any = folded
+            succeed
         }
     }
 

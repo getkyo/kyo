@@ -135,7 +135,7 @@ object Actor:
       * @return
       *   A Subject[A] representing the current actor's message interface
       */
-    def self[A: Tag](using Frame): Subject[A] < Context[A] =
+    def self[A](using Frame, Tag[Subject[A]]): Subject[A] < Context[A] =
         Env.get
 
     /** Retrieves the current actor's Subject from the environment and applies a function to it.
@@ -150,7 +150,7 @@ object Actor:
       * @return
       *   The result of applying function f to the actor's Subject
       */
-    def selfWith[A: Tag](using Frame)[B, S](f: Subject[A] => B < S): B < (Context[A] & S) =
+    def selfWith[A](using Frame)[B, S](f: Subject[A] => B < S)(using Tag[Subject[A]]): B < (Context[A] & S) =
         Env.use(f)
 
     /** Sends a message to the actor designated as the current subject in the environment.
@@ -164,7 +164,7 @@ object Actor:
       * @return
       *   An effect representing the message enqueuing
       */
-    def reenqueue[A: Tag](msg: A)(using Frame): Unit < Context[A] =
+    def reenqueue[A](msg: A)(using Frame, Tag[Subject[A]]): Unit < Context[A] =
         Env.use[Subject[A]](_.send(msg))
 
     /** Receives and processes a single message from the actor's mailbox.
@@ -177,7 +177,7 @@ object Actor:
       * @tparam A
       *   The type of messages being received
       */
-    def receiveAll[A: Tag](using Frame)[S](f: A => Any < S): Unit < (Context[A] & S) =
+    def receiveAll[A](using Frame)[S](f: A => Any < S)(using Tag[Poll[A]]): Unit < (Context[A] & S) =
         Poll.values[A](f)
 
     /** Receives and processes up to n messages from the actor's mailbox.
@@ -192,7 +192,7 @@ object Actor:
       * @tparam A
       *   The type of messages being received
       */
-    def receiveMax[A: Tag](max: Int)[S](f: A => Any < S)(using Frame): Unit < (Context[A] & S) =
+    def receiveMax[A](max: Int)[S](f: A => Any < S)(using Frame, Tag[Poll[A]]): Unit < (Context[A] & S) =
         Poll.values[A](max)(f)
 
     /** Receives and processes messages from the actor's mailbox in a loop until a termination condition is met.
@@ -214,7 +214,7 @@ object Actor:
       * @return
       *   An effect representing the message processing loop
       */
-    def receiveLoop[A: Tag](using Frame)[S](f: A => Loop.Outcome[Unit, Unit] < S): Unit < (Context[A] & S) =
+    def receiveLoop[A](using Frame)[S](f: A => Loop.Outcome[Unit, Unit] < S)(using Tag[Poll[A]]): Unit < (Context[A] & S) =
         Loop.foreach {
             Poll.one[A].map {
                 case Absent     => Loop.done
@@ -243,11 +243,11 @@ object Actor:
       * @return
       *   The final state value after the loop completes
       */
-    def receiveLoop[A: Tag](
+    def receiveLoop[A](
         using Frame
     )[State, S](state: State)(
         f: (A, State) => Loop.Outcome[State, State] < S
-    ): State < (Context[A] & S) =
+    )(using Tag[Poll[A]]): State < (Context[A] & S) =
         Loop(state) { state =>
             Poll.one[A].map {
                 case Absent     => Loop.done(state)
@@ -278,11 +278,11 @@ object Actor:
       * @return
       *   A tuple containing the final state values after the loop completes
       */
-    def receiveLoop[A: Tag](
+    def receiveLoop[A](
         using Frame
     )[State1, State2, S](state1: State1, state2: State2)(
         f: (A, State1, State2) => Loop.Outcome2[State1, State2, (State1, State2)] < S
-    ): (State1, State2) < (Context[A] & S) =
+    )(using Tag[Poll[A]]): (State1, State2) < (Context[A] & S) =
         Loop(state1, state2) { (s1, s2) =>
             Poll.one[A].map {
                 case Absent     => Loop.done((s1, s2))
@@ -315,11 +315,11 @@ object Actor:
       * @return
       *   A tuple containing the final state values after the loop completes
       */
-    def receiveLoop[A: Tag](
+    def receiveLoop[A](
         using Frame
     )[State1, State2, State3, S](state1: State1, state2: State2, state3: State3)(
         f: (A, State1, State2, State3) => Loop.Outcome3[State1, State2, State3, (State1, State2, State3)] < S
-    ): (State1, State2, State3) < (Context[A] & S) =
+    )(using Tag[Poll[A]]): (State1, State2, State3) < (Context[A] & S) =
         Loop(state1, state2, state3) { (s1, s2, s3) =>
             Poll.one[A].map {
                 case Absent     => Loop.done((s1, s2, s3))
@@ -354,11 +354,11 @@ object Actor:
       * @return
       *   A tuple containing the final state values after the loop completes
       */
-    def receiveLoop[A: Tag](
+    def receiveLoop[A](
         using Frame
     )[State1, State2, State3, State4, S](state1: State1, state2: State2, state3: State3, state4: State4)(
         f: (A, State1, State2, State3, State4) => Loop.Outcome4[State1, State2, State3, State4, (State1, State2, State3, State4)] < S
-    ): (State1, State2, State3, State4) < (Context[A] & S) =
+    )(using Tag[Poll[A]]): (State1, State2, State3, State4) < (Context[A] & S) =
         Loop(state1, state2, state3, state4) { (s1, s2, s3, s4) =>
             Poll.one[A].map {
                 case Absent     => Loop.done((s1, s2, s3, s4))
@@ -390,6 +390,7 @@ object Actor:
         using
         Tag[Poll[A]],
         Tag[Emit[A]],
+        Tag[Subject[A]],
         Frame
     ): Actor[E, A, B] < (Resource & Async & S) =
         run(defaultCapacity)(behavior)
@@ -430,6 +431,7 @@ object Actor:
         using
         Tag[Poll[A]],
         Tag[Emit[A]],
+        Tag[Subject[A]],
         Frame
     ): Actor[E, A, B] < (Resource & Async & S) =
         for

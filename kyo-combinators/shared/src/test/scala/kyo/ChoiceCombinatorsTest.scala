@@ -12,14 +12,14 @@ class ChoiceCombinatorTest extends Test:
 
         "handle" - {
             "should handle" in {
-                val effect: Int < Choice = Choice.get(Seq(1, 2, 3))
+                val effect: Int < Choice = Choice.eval(Seq(1, 2, 3))
                 assert(effect.handleChoice.eval == Seq(1, 2, 3))
             }
         }
 
         "filter" - {
             "should filter" in {
-                val effect: Int < Choice = Choice.get(Seq(1, 2, 3))
+                val effect: Int < Choice = Choice.eval(Seq(1, 2, 3))
                 val filteredEffect       = effect.filterChoice(_ < 3)
                 assert(filteredEffect.handleChoice.eval == Seq(1, 2))
             }

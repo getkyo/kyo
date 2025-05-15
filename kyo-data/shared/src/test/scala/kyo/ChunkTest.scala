@@ -311,10 +311,28 @@ class ChunkTest extends Test:
             val result = chunk.map(_ * 2)
             assert(result == Chunk(2, 4, 6, 8, 10))
         }
+
         "with an empty chunk" in {
             val chunk  = Chunk.empty[Int]
             val result = chunk.map(_ * 2)
             assert(result.isEmpty)
+        }
+
+        "with complex chunk structures" in {
+            val appended = Chunk(1, 2).append(3).append(4).append(5)
+            assert(appended.map(_ * 2) == Chunk(2, 4, 6, 8, 10))
+
+            val dropped = Chunk(0, 1, 2, 3, 4, 5, 6).dropLeft(1).dropRight(1)
+            assert(dropped.map(_ * 2) == Chunk(2, 4, 6, 8, 10))
+
+            val sliced = Chunk(0, 1, 2, 3, 4, 5, 6).slice(1, 6)
+            assert(sliced.map(_ * 2) == Chunk(2, 4, 6, 8, 10))
+
+            val mixed = Chunk.from(Vector(1, 2, 3)).concat(Chunk(4, 5))
+            assert(mixed.map(_ * 2) == Chunk(2, 4, 6, 8, 10))
+
+            val nested = Chunk(0, 1, 2, 3, 4, 5, 6).dropLeft(1).slice(0, 5).append(6)
+            assert(nested.map(_ * 2) == Chunk(2, 4, 6, 8, 10, 12))
         }
     }
 
@@ -330,6 +348,25 @@ class ChunkTest extends Test:
             val result = chunk.filter(_ => false)
             assert(result.isEmpty)
         }
+
+        "with various chunk structures" in {
+            val predicate = (x: Int) => x % 2 == 0
+
+            val appended = Chunk.empty[Int].append(1).append(2).append(3).append(4).append(5)
+            assert(appended.filter(predicate) == Chunk(2, 4))
+
+            val dropped = Chunk(1, 2, 3, 4, 5, 6, 7).dropLeft(1).dropRight(1)
+            assert(dropped.filter(predicate) == Chunk(2, 4, 6))
+
+            val mixed = Chunk.from(Vector(1, 2, 3)).concat(Chunk(4, 5))
+            assert(mixed.filter(predicate) == Chunk(2, 4))
+
+            val sliced = Chunk(0, 1, 2, 3, 4, 5, 6, 7).slice(1, 6)
+            assert(sliced.filter(predicate) == Chunk(2, 4))
+
+            val nested = Chunk(0, 1, 2, 3, 4, 5, 6).dropLeft(1).slice(0, 5).append(6)
+            assert(nested.filter(predicate) == Chunk(2, 4, 6))
+        }
     }
 
     "foldLeft" - {
@@ -343,6 +380,41 @@ class ChunkTest extends Test:
             val chunk  = Chunk.empty[Int]
             val result = chunk.foldLeft(0)(_ + _)
             assert(result == 0)
+        }
+
+        "with sum operation" in {
+            val chunk = Chunk(1, 2, 3, 4, 5)
+            assert(chunk.foldLeft(0)(_ + _) == 15)
+
+            assert(Chunk.empty[Int].foldLeft(42)(_ + _) == 42)
+        }
+
+        "with complex chunk structures" in {
+            val appended = Chunk.empty[Int].append(1).append(2).append(3).append(4).append(5)
+            assert(appended.foldLeft(0)(_ + _) == 15)
+
+            val dropped = Chunk(0, 1, 2, 3, 4, 5, 6).dropLeft(1).dropRight(1)
+            assert(dropped.foldLeft(0)(_ + _) == 15)
+
+            val sliced = Chunk(0, 1, 2, 3, 4, 5, 6).slice(1, 6)
+            assert(sliced.foldLeft(0)(_ + _) == 15)
+
+            val mixed = Chunk.from(Vector(1, 2, 3)).concat(Chunk(4, 5))
+            assert(mixed.foldLeft(0)(_ + _) == 15)
+
+            val nested = Chunk(1, 2, 3).append(4).append(5).dropLeft(1).dropRight(1)
+            assert(nested.foldLeft(0)(_ + _) == 9)
+        }
+
+        "with complex accumulation" in {
+            val chunk = Chunk(1, 2, 3, 4, 5).dropLeft(1).append(6)
+            val result = chunk.foldLeft(Map.empty[String, Int]) { (map, n) =>
+                map + (s"key$n" -> (n * 10))
+            }
+
+            assert(result.size == 5)
+            assert(result("key2") == 20)
+            assert(result("key6") == 60)
         }
     }
 
@@ -886,6 +958,94 @@ class ChunkTest extends Test:
             var sum   = 0
             chunk.foreach(x => sum += x)
             assert(sum == 0)
+        }
+
+        "with complex nested structure" in {
+            val chunk = Chunk(1, 2, 3)
+                .append(4)
+                .append(5)
+                .dropLeft(1)
+                .dropRight(1)
+
+            var result = List.empty[Int]
+            chunk.foreach(x => result = result :+ x)
+            assert(result == List(2, 3, 4))
+        }
+
+        "with chained appends and nested drops" in {
+            val chunk = Chunk.empty[Int]
+                .append(1)
+                .append(2)
+                .append(3)
+                .append(4)
+                .append(5)
+                .dropLeft(1)
+                .dropRight(1)
+                .dropLeft(1)
+
+            var result = List.empty[Int]
+            chunk.foreach(x => result = result :+ x)
+            assert(result == List(3, 4))
+        }
+
+        "with slice operations" in {
+            val chunk = Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+                .slice(2, 8)
+                .slice(1, 5)
+
+            var result = List.empty[Int]
+            chunk.foreach(x => result = result :+ x)
+            assert(result == List(4, 5, 6, 7))
+        }
+
+        "with mixed chunk types" in {
+            val fromSeq = Chunk.from(Vector(1, 2, 3))
+            val compact = Chunk(4, 5, 6)
+            val mixed   = fromSeq.concat(compact).dropRight(2)
+
+            var result = List.empty[Int]
+            mixed.foreach(x => result = result :+ x)
+            assert(result == List(1, 2, 3, 4))
+        }
+
+        "with tail and append operations" in {
+            val chunk = Chunk(1, 2, 3, 4, 5)
+                .toIndexed
+                .tail
+                .append(6)
+                .append(7)
+
+            var result = List.empty[Int]
+            chunk.foreach(x => result = result :+ x)
+            assert(result == List(2, 3, 4, 5, 6, 7))
+        }
+
+        "with deeply nested drop operations" in {
+            val chunk = Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+                .dropLeft(1)
+                .dropRight(1)
+                .dropLeft(1)
+                .dropRight(1)
+                .dropLeft(1)
+                .dropRight(1)
+
+            var result = List.empty[Int]
+            chunk.foreach(x => result = result :+ x)
+            assert(result == List(4, 5, 6, 7))
+        }
+
+        "with single element chunks and operations" in {
+            val chunk1 = Chunk(42).dropLeft(0).dropRight(0)
+            val chunk2 = Chunk.empty[Int].append(99)
+
+            var result1 = List.empty[Int]
+            var result2 = List.empty[Int]
+
+            chunk1.foreach(x => result1 = result1 :+ x)
+            chunk2.foreach(x => result2 = result2 :+ x)
+
+            assert(result1 == List(42))
+            assert(result2 == List(99))
         }
     }
 

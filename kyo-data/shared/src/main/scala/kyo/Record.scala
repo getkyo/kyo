@@ -69,11 +69,6 @@ import scala.language.implicitConversions
   * (record.value: String) // Returns "string"
   * (record.value: Int)    // Returns 42
   * }}}
-  *
-  * =Known Limitations=
-  *
-  *   - Nested records cannot be created directly
-  *   - Tag derivation for Records is not currently supported
   */
 final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends AnyVal with Dynamic:
 
@@ -126,7 +121,7 @@ object Record:
       */
     val empty: Record[Any] = Record[Any](Map())
 
-    private def unsafeFrom[Fields: AsFields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
+    private def unsafeFrom[Fields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
 
     inline def stage[Fields]: StageOps[Fields] = new StageOps[Fields](())
 
@@ -134,12 +129,13 @@ object Record:
         /** Applies `StageAs` logic to each field. Called on a record type `n1 ~ v1 & ... & nk ~ vk`, returns a new record of type
           * `n1 ~ F[n1, v1] & ... & nk ~ F[nk, vk]`.
           */
-        inline def apply[F[_, _]](as: StageAs[F])(using
-            asFields: AsFields[Fields],
-            ev: TypeIntersection[Fields]
+        inline def apply[F[_, _]](as: Record.StageAs[F])(using
+            initFields: AsFields[Fields],
+            ev: TypeIntersection[Fields],
+            targetFields: AsFields[ev.Map[~.Map[F]]]
         ): Record[ev.Map[~.Map[F]]] =
-            unsafeFrom(TypeIntersection.inlineAll[Fields](as).view.map {
-                case (f, g) => (f.unwrap: Field[?, ?], g.unwrap)
+            Record.unsafeFrom(TypeIntersection.inlineAll[Fields](as).view.map {
+                case (f, g) => (AsFieldAny.toField(f), g.unwrap)
             }.toMap)
     end StageOps
 
@@ -260,16 +256,20 @@ object Record:
       * @tparam A
       *   The field type, typically in the form of `"fieldName" ~ ValueType`
       */
-    opaque type AsField[Name <: String, Value] = Field[Name, Value]
-
-    private[kyo] type AsFieldAny[n, v] = AsField[n & String, v]
-
+    type AsField[Name <: String, Value] = AsField.Type[Name, Value]
     object AsField:
+        opaque type Type[Name <: String, Value] = Field[Name, Value]
+
         inline given [N <: String, V](using tag: Tag[V]): AsField[N, V] =
             Field(constValue[N], tag)
 
-        private[kyo] def toField[Name <: String, Value](as: AsField[Name, Value]): Field[?, ?] = as
+        private[kyo] def fromField[Name <: String, Value](field: Field[Name, Value]): AsField[Name, Value] = field
+        private[kyo] def toField[Name <: String, Value](field: AsField[Name, Value]): Field[Name, Value]   = field
     end AsField
+
+    private[kyo] type AsFieldAny[n, v] = AsField[n & String, v]
+    private[kyo] object AsFieldAny:
+        def toField(as: ForSome2[AsFieldAny]): Field[?, ?] = AsField.toField(as.unwrap)
 
     /** Type class for working with sets of Record fields.
       *
@@ -278,9 +278,11 @@ object Record:
       * @tparam A
       *   The combined type of all fields in the set
       */
-    opaque type AsFields[+A] <: Set[Field[?, ?]] = Set[Field[?, ?]]
+    type AsFields[+A] = AsFields.Type[A]
 
     object AsFields:
+        opaque type Type[+A] <: Set[Field[?, ?]] = Set[Field[?, ?]]
+
         def apply[A](using af: AsFields[A]): Set[Field[?, ?]] = af
 
         inline given [Fields](using ev: TypeIntersection[Fields]): AsFields[Fields] =
@@ -289,12 +291,6 @@ object Record:
 
     given [Fields, T](using TypeIntersection.Aux[Fields, T], CanEqual[T, T]): CanEqual[Record[Fields], Record[Fields]] =
         CanEqual.derived
-
-    inline given [Fields]: Tag[Record[Fields]] =
-        scala.compiletime.error(
-            "Cannot derive Tag for Record type. This commonly occurs when trying to nest Records, " +
-                "which is not currently supported by the Tag implementation."
-        )
 
     private object RenderInliner extends Inliner[(String, Render[?])]:
         inline def apply[T]: (String, Render[?]) =
@@ -328,10 +324,9 @@ object Record:
                     val nextTag = summonInline[Tag[F[n, v]]]
 
                     (
-                        ForSome2.of[AsFieldAny](Field(name, nextTag)),
+                        ForSome2.of[AsFieldAny](AsField.fromField(Field(name, nextTag))),
                         ForSome2(stage[n, v](Field(name, prevTag)))
                     )
-        end apply
     end StageAs
 end Record
 
@@ -345,7 +340,6 @@ object AsFieldsInternal:
     end AsFieldInliner
 
     inline def summonAsField[Fields](using ev: TypeIntersection[Fields]): Set[Field[?, ?]] =
-        TypeIntersection.inlineAll[Fields](AsFieldInliner).map { x =>
-            Record.AsField.toField(x.unwrap)
-        }.toSet
+        TypeIntersection.inlineAll[Fields](AsFieldInliner).map(Record.AsFieldAny.toField).toSet
+    end summonAsField
 end AsFieldsInternal

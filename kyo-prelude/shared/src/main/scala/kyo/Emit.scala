@@ -45,6 +45,24 @@ object Emit:
     inline def value[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Unit < Emit[V] =
         ArrowEffect.suspend[Any](tag, value)
 
+    /** Emits a single value when a condition is true.
+      *
+      * @param cond
+      *   The condition that determines whether to emit the value
+      * @param value
+      *   The value to emit if the condition is true
+      * @return
+      *   An effect that emits the given value if the condition is true, otherwise does nothing
+      */
+    inline def valueWhen[V, S](cond: Boolean < S)(inline value: V)(using
+        inline tag: Tag[Emit[V]],
+        inline frame: Frame
+    ): Unit < (Emit[V] & S) =
+        cond.map {
+            case false => ()
+            case true  => Emit.value(value)
+        }
+
     /** Emits a single value and maps the resulting Ack.
       *
       * @param value
@@ -177,7 +195,7 @@ object Emit:
           * @return
           *   An isolate that preserves emitted values
           */
-        def merge[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+        def merge[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
             new Isolate.Stateful[Emit[V], Any]:
 
                 type State = Chunk[V]
@@ -210,7 +228,7 @@ object Emit:
           * @return
           *   An isolate that discards emitted values
           */
-        def discard[V: Tag]: Isolate.Stateful[Emit[V], Any] =
+        def discard[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
             new Isolate.Stateful[Emit[V], Any]:
 
                 type State = Chunk[V]
