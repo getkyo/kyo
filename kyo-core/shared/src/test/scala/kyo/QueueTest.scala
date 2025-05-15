@@ -498,6 +498,110 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
+        "race between closeAwaitEmpty and close" in run {
+            (for
+                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                _     <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
+                latch <- Latch.init(1)
+                closeAwaitEmptyFiber <- Async.run(
+                    latch.await.andThen(queue.closeAwaitEmpty)
+                )
+                closeFiber <- Async.run(
+                    latch.await.andThen(queue.close)
+                )
+                _        <- latch.release
+                _        <- Abort.run(queue.drain)
+                result1  <- closeAwaitEmptyFiber.get
+                result2  <- closeFiber.get
+                isClosed <- queue.closed
+            yield
+                assert(isClosed)
+                assert((result1 && result2.isEmpty) || (!result1 && result2.isDefined))
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+
+        "two producers calling closeAwaitEmpty" in run {
+            (for
+                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+
+                producerFiber1 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.closeAwaitEmpty)
+                    )
+                )
+                producerFiber2 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.closeAwaitEmpty)
+                    )
+                )
+
+                consumerFiber <- Async.run(
+                    latch.await.andThen(
+                        Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
+                    )
+                )
+
+                _        <- latch.release
+                result1  <- producerFiber1.getResult
+                result2  <- producerFiber2.getResult
+                isClosed <- queue.closed
+                _        <- consumerFiber.getResult
+            yield
+                assert(isClosed)
+                assert(Seq(result1, result2).count(_.contains(true)) == 1)
+                assert(Seq(result1, result2).count(r => r.contains(false) || r.isFailure) == 1)
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+
+        "producer calling closeAwaitEmpty and another calling close" in run {
+            (for
+                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+
+                producerFiber1 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.closeAwaitEmpty)
+                    )
+                )
+                producerFiber2 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.close)
+                    )
+                )
+
+                consumerFiber <- Async.run(
+                    latch.await.andThen(
+                        Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
+                    )
+                )
+
+                _        <- latch.release
+                result1  <- producerFiber1.getResult
+                result2  <- producerFiber2.getResult
+                isClosed <- queue.closed
+                _        <- consumerFiber.getResult
+            yield
+                assert(isClosed)
+                assert(
+                    (result1.isFailure || result1.contains(false)) && !result2.contains(Absent) ||
+                        (result1.contains(true)) && result2.contains(Absent)
+                )
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
     }
 
 end QueueTest
