@@ -338,13 +338,13 @@ class ChannelTest extends Test:
             }
         }
         "race with close" in run {
-            verifyRaceDrainWithClose(2, _.drain, _.close)
+            verifyDrainWithCloseRaces(2, _.drain, _.close)
         }
         "race with closeAwaitEmpty" in run {
-            verifyRaceDrainWithClose(2, _.drain, _.closeAwaitEmpty)
+            verifyDrainWithCloseRaces(2, _.drain, _.closeAwaitEmpty)
         }
         "race with close and zero capacity" in run {
-            verifyRaceDrainWithClose(2, _.drain, _.close)
+            verifyDrainWithCloseRaces(2, _.drain, _.close)
         }
     }
     "drainUpTo" - {
@@ -418,13 +418,13 @@ class ChannelTest extends Test:
             }
         }
         "race with close" in run {
-            verifyRaceDrainWithClose(2, _.drainUpTo(2), _.close)
+            verifyDrainWithCloseRaces(2, _.drainUpTo(2), _.close)
         }
         "race with closeAwaitEmpty" in run {
-            verifyRaceDrainWithClose(2, _.drainUpTo(2), _.closeAwaitEmpty)
+            verifyDrainWithCloseRaces(2, _.drainUpTo(2), _.closeAwaitEmpty)
         }
         "race with close and zero capacity" in run {
-            verifyRaceDrainWithClose(0, _.drainUpTo(Int.MaxValue), _.close)
+            verifyDrainWithCloseRaces(0, _.drainUpTo(Int.MaxValue), _.close)
         }
     }
     "close" - {
@@ -1120,52 +1120,46 @@ class ChannelTest extends Test:
         }
     }
 
-    private def verifyRaceDrainWithClose(
+    private def verifyDrainWithCloseRaces(
         capacity: Int,
-        drain: Channel[Int] => Any < (Abort[Closed] & IO),
+        drain: Channel[Int] => Chunk[Any] < (Abort[Closed] & IO),
+        close: Channel[Int] => (Any < Async)
+    ) = Kyo.fill(50)(verifyDrainWithCloseRace(capacity, drain, close)).map(_.last)
+
+    private def verifyDrainWithCloseRace(
+        capacity: Int,
+        drain: Channel[Int] => Chunk[Any] < (Abort[Closed] & IO),
         close: Channel[Int] => (Any < Async)
     ) =
         for
-            c0  <- Channel.init[Int](capacity)
-            ref <- AtomicRef.init(c0)
-            // Create a fiber that repeatedly puts and item and then checks to see if the channel
-            // has been drained. If it has then it closes the channel and creates a new one.
+            c <- Channel.init[Int](capacity)
+            // Create a producer that continuously puts items into the channel until the timing is just right for it to
+            // find the channel empty as the consumer continuously drains.
             producer <- Async.run {
-                Loop(()) { _ =>
+                Loop(0) { count =>
                     for
-                        c     <- ref.get
-                        _     <- c.put(1)
-                        empty <- c.empty
-                        _     <-
-                            // If it is empty then it could be that the consumer is in the middle of
-                            // draining. Attempt to close the channel right before the consumer
-                            // checks for more items.
-                            if empty then
-                                for
-                                    c2 <- Channel.init[Int](capacity)
-                                    _  <- ref.set(c2)
-                                    _  <- close(c)
-                                yield ()
-                            else Kyo.unit
-                            end if
-                    yield Loop.continue(())
+                        _ <- c.put(1)
+                        // This will eventually be empty when it interleaves with the consumer.
+                        // Ideally while the consumer is still in the drain loop.
+                        empty   <- c.empty
+                        outcome <-
+                            // The goal here is to close the channel while the consumer is in the middle of draining.
+                            if empty then close(c).andThen(Loop.done[Int, Int](count + 1))
+                            else Kyo.lift(Loop.continue(count + 1))
+                    yield outcome
                 }
             }
-            // Create a fiber that repeatedly drains the channel if it is not closed or empty.
-            // If it is closed or empty (and is about to be closed) then repeat until the consumer
-            // creates a new channel.
-            result <- Abort.run {
-                Async.fill(100_000, concurrency = 1) {
-                    for
-                        c             <- ref.get
-                        closedOrEmpty <- Abort.recover[Closed](_ => true)(c.empty)
-                        _             <- if closedOrEmpty then Kyo.unit else drain(c)
-                    yield ()
+            // Create a consumer that repeatedly drains the channel until it is closed.
+            drainCount <-
+                Loop(0) { count =>
+                    Abort.fold[Closed](
+                        (chunk: Chunk[Any]) => Loop.continue(count + chunk.length),
+                        _ => Loop.done[Int, Int](count)
+                    )(drain(c))
                 }
-            }
-            _ <- producer.interrupt
-        yield assert(result.isSuccess)
+            putCount <- producer.get
+        yield assert(drainCount == putCount)
         end for
-    end verifyRaceDrainWithClose
+    end verifyDrainWithCloseRace
 
 end ChannelTest
