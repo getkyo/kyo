@@ -337,6 +337,46 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
         }
+        "race with close" in run {
+            for
+                c <- Channel.init[Int](2)
+                closeFiber <- Async.run {
+                    Loop(()) { _ =>
+                        for
+                            _     <- c.put(1)
+                            empty <- c.empty
+                            _     <- if empty then c.close else Kyo.unit
+                        yield Loop.continue(())
+                    }
+                }
+                result <- Abort.run {
+                    Async.fill(100_000, concurrency = 1) {
+                        c.drain
+                    }
+                }
+                _ <- closeFiber.interrupt
+            yield assert(result.isSuccess)
+        }
+        "race with closeAwaitEmpty" in run {
+            for
+                c <- Channel.init[Int](2)
+                closeFiber <- Async.run {
+                    Loop(()) { _ =>
+                        for
+                            _     <- c.put(1)
+                            empty <- c.empty
+                            _     <- c.closeAwaitEmpty
+                        yield Loop.continue(())
+                    }
+                }
+                result <- Abort.run {
+                    Async.fill(100_000, concurrency = 1) {
+                        c.drain
+                    }
+                }
+                _ <- closeFiber.interrupt
+            yield assert(result.isSuccess)
+        }
     }
     "drainUpTo" - {
         "zero or negative" in run {
@@ -407,6 +447,46 @@ class ChannelTest extends Test:
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
+        }
+        "race with close" in run {
+            for
+                c <- Channel.init[Int](2)
+                closeFiber <- Async.run {
+                    Loop(()) { _ =>
+                        for
+                            _     <- c.put(1)
+                            empty <- c.empty
+                            _     <- if empty then c.close else Kyo.unit
+                        yield Loop.continue(())
+                    }
+                }
+                result <- Abort.run {
+                    Async.fill(100_000, concurrency = 1) {
+                        c.drainUpTo(Int.MaxValue)
+                    }
+                }
+                _ <- closeFiber.interrupt
+            yield assert(result.isSuccess)
+        }
+        "race with closeAwaitEmpty" in run {
+            for
+                c <- Channel.init[Int](2)
+                closeFiber <- Async.run {
+                    Loop(()) { _ =>
+                        for
+                            _     <- c.put(1)
+                            empty <- c.empty
+                            _     <- c.closeAwaitEmpty
+                        yield Loop.continue(())
+                    }
+                }
+                result <- Abort.run {
+                    Async.fill(100_000, concurrency = 1) {
+                        c.drainUpTo(Int.MaxValue)
+                    }
+                }
+                _ <- closeFiber.interrupt
+            yield assert(result.isSuccess)
         }
     }
     "close" - {
