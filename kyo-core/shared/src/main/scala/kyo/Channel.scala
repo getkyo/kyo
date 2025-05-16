@@ -395,8 +395,13 @@ object Channel:
         final class ZeroCapacityUnsafe[A](using initFrame: Frame, allow: AllowUnsafe) extends BaseUnsafe[A]:
             val isClosed = AtomicBoolean.Unsafe.init(false)
 
-            private val closedResult                     = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
-            def asResult[A](value: A): Result[Closed, A] = if isClosed.get() then closedResult else Result.succeed(value)
+            private val closedResult = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
+
+            private def asResult[A](value: A): Result[Closed, A] =
+                if isClosed.get() then closedResult else Result.succeed(value)
+
+            private def asOptimisticResult[A](value: Chunk[A]): Result[Closed, Chunk[A]] =
+                if value.isEmpty then asResult(value) else Result.succeed(value)
 
             def capacity = 0
 
@@ -459,7 +464,7 @@ object Channel:
                         Maybe(puts.poll()) match
                             case Absent =>
                                 flush()
-                                asResult(current)
+                                asOptimisticResult(current)
                             case Present(Put.Value(value, promise)) =>
                                 discard(promise.complete(Result.unit))
                                 loop(current.appended(value), i - 1)
@@ -469,7 +474,7 @@ object Channel:
                                 if remaining.nonEmpty then
                                     discard(puts.offer(Put.Batch(remaining, promise)))
                                     flush()
-                                    asResult(current.concat(taken))
+                                    asOptimisticResult(current.concat(taken))
                                 else
                                     discard(promise.complete(Result.unit))
                                     loop(current.concat(taken), i - taken.length)
@@ -486,7 +491,7 @@ object Channel:
                 def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
                     Maybe(puts.poll()) match
                         case Absent =>
-                            asResult(current)
+                            asOptimisticResult(current)
                         case Present(Put.Value(value, promise)) =>
                             discard(promise.complete(Result.unit))
                             loop(current.appended(value))
@@ -623,7 +628,8 @@ object Channel:
                                 else
                                     flush()
                                     loop(current.concat(c), i - c.length)
-                            case other => other
+                            case _ if current.nonEmpty => Result.Success(current)
+                            case other                 => other
                         end match
                     end if
                 end loop
@@ -633,19 +639,20 @@ object Channel:
 
             def drain()(using AllowUnsafe) =
                 @tailrec
-                def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
+                def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                     val next = queue.drain()
                     next match
                         case Result.Success(c) =>
                             if c.isEmpty then Result.Success(current)
                             else
                                 flush()
-                                loop(current.concat(c))
-                        case other => other
+                                loop(current.concat(c), i + 1)
+                        case _ if current.nonEmpty => Result.Success(current)
+                        case other                 => other
                     end match
                 end loop
 
-                loop(Chunk.empty)
+                loop(Chunk.empty, 0)
             end drain
 
             def close()(using frame: Frame, allow: AllowUnsafe) =
