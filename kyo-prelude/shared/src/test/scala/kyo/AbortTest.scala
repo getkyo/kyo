@@ -3,7 +3,7 @@ package kyo
 class AbortTest extends Test:
 
     case class Ex1() extends RuntimeException derives CanEqual
-    case class Ex2() derives CanEqual
+    case class Ex2() extends RuntimeException derives CanEqual
 
     val ex1 = new Ex1
     val ex2 = new Ex2
@@ -200,6 +200,14 @@ class AbortTest extends Test:
                 val p = new Exception
                 assert(
                     Abort.run[Ex1](Abort.get(Right(1)).map(_ => throw p)).eval ==
+                        Result.panic(p)
+                )
+            }
+            "lift + panic" in run {
+                val p           = new Exception
+                def unsafe: Int = throw p
+                assert(
+                    Abort.run[Ex1](Kyo.lift(unsafe)).eval ==
                         Result.panic(p)
                 )
             }
@@ -823,6 +831,34 @@ class AbortTest extends Test:
                 ).eval
 
                 assert(result == Result.succeed(42))
+            }
+
+            "mapped failure" - {
+                "success" in {
+                    assert(
+                        Abort.run[Ex2](Abort.catching[Ex1](_ => ex2)(5)).eval ==
+                            Result.succeed(5)
+                    )
+                }
+                "failure" in {
+                    assert(
+                        Abort.run[Ex2](Abort.catching[Ex1](_ => ex2)(throw ex1)).eval ==
+                            Result.fail(ex2)
+                    )
+                }
+                "panic" in {
+                    val p = Exception()
+                    assert(
+                        Abort.run[Ex2](Abort.catching[Ex1](_ => ex2)(throw p)).eval ==
+                            Result.panic(p)
+                    )
+                }
+                "panic before mapping remains panic" in {
+                    assert(
+                        Abort.run[Ex2](Abort.catching[Ex1](_ => ex2)(throw ex2)).eval ==
+                            Result.panic(ex2)
+                    )
+                }
             }
         }
     }
