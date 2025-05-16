@@ -1136,7 +1136,7 @@ class ChannelTest extends Test:
                         c     <- ref.get
                         _     <- c.put(1)
                         empty <- c.empty
-                        _ <-
+                        _     <-
                             // If it is empty then it could be that the consumer is in the middle of
                             // draining. Attempt to close the channel right before the consumer
                             // checks for more items.
@@ -1157,9 +1157,9 @@ class ChannelTest extends Test:
             result <- Abort.run {
                 Async.fill(100_000, concurrency = 1) {
                     for
-                        c     <- ref.get
+                        c             <- ref.get
                         closedOrEmpty <- Abort.recover[Closed](_ => true)(c.empty)
-                        _     <- if closedOrEmpty then Kyo.unit else drain(c)
+                        _             <- if closedOrEmpty then Kyo.unit else drain(c)
                     yield ()
                 }
             }
