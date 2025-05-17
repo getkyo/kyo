@@ -406,7 +406,7 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](0)
                 l <- h.listen
-                f <- h.putFiber(1)
+                f <- Async.run(h.put(1))
                 v <- l.take
                 d <- f.done
             yield assert(v == 1 && d)
