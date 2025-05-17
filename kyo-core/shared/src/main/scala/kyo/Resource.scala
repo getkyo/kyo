@@ -35,56 +35,6 @@ import kyo.kernel.ContextEffect
 sealed trait Resource extends ContextEffect[Resource.Finalizer]
 
 object Resource:
-    /** Represents a finalizer for a resource. */
-    sealed abstract class Finalizer:
-        def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO
-
-    object Finalizer:
-        sealed abstract class Awaitable extends Finalizer:
-            def close(using Frame): Unit < IO
-            def await(using Frame): Unit < Async
-
-        object Awaitable:
-            object Unsafe:
-                def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Awaitable =
-                    new Awaitable:
-                        val queue   = Queue.Unbounded.Unsafe.init[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer)
-                        val promise = Promise.Unsafe.init[Nothing, Unit]().safe
-
-                        def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO =
-                            IO.Unsafe {
-                                if !queue.offer(IO(v.unit)).contains(true) then
-                                    Abort.panic(new Closed(
-                                        "Finalizer",
-                                        frame,
-                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Resource.run' call."
-                                    ))
-                                else ()
-                            }
-                        end ensure
-
-                        def close(using Frame): Unit < IO =
-                            IO.Unsafe {
-                                queue.close() match
-                                    case Absent =>
-                                        Abort.panic(new Closed("Resource finalizer queue already closed.", frame))
-                                    case Present(tasks) =>
-                                        if tasks.isEmpty then
-                                            promise.completeDiscard(Result.unit)
-                                        else
-                                            Async.foreachDiscard(tasks, parallelism) { task =>
-                                                Abort.run[Throwable](task)
-                                                    .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
-                                            }
-                                                .handle(Async.run[Nothing, Unit, Any])
-                                                .map(promise.becomeDiscard)
-                            }
-
-                        def await(using Frame): Unit < Async = promise.get
-                end init
-            end Unsafe
-        end Awaitable
-    end Finalizer
 
     /** Ensures that the given effect is executed when the resource is released.
       *
@@ -95,8 +45,24 @@ object Resource:
       * @return
       *   A unit value wrapped in Resource and IO effects.
       */
-    def ensure(v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
-        ContextEffect.suspendWith(Tag[Resource])(_.ensure(IO(v.unit)))
+    inline def ensure(inline v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
+        ContextEffect.suspendWith(Tag[Resource])(_.ensure(_ => v))
+
+    /** Ensures that the given effect is executed when the resource is released, with information about the computation's outcome.
+      *
+      * This version provides the finalizer with information about whether the computation completed successfully or failed with an
+      * exception. The finalizer receives a `Maybe[Throwable]` which will be `Absent` if the computation succeeded, or `Present` if it
+      * failed.
+      *
+      * @param f
+      *   The finalizer function that receives information about the computation's outcome and performs cleanup actions.
+      * @param frame
+      *   The implicit Frame for context.
+      * @return
+      *   A unit value wrapped in Resource and IO effects.
+      */
+    inline def ensure(inline f: Maybe[Throwable] => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
+        ContextEffect.suspendWith(Tag[Resource])(_.ensure(f))
 
     /** Acquires a resource and provides a release function.
       *
@@ -124,7 +90,7 @@ object Resource:
       *   The acquired Closeable resource wrapped in Resource, IO, and S effects.
       */
     def acquire[A <: java.io.Closeable, S](resource: A < S)(using Frame): A < (Resource & IO & S) =
-        acquireRelease(resource)(r => IO(r.close()))
+        acquireRelease(resource)(_.close())
 
     /** Runs a resource-managed effect with default parallelism of 1.
       *
@@ -160,10 +126,75 @@ object Resource:
         IO.Unsafe {
             val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
             ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
-                .handle(IO.ensure(finalizer.close))
-                .map(result => finalizer.await.andThen(result))
+                .handle(
+                    IO.ensure(finalizer.close),
+                    Abort.run[Any]
+                ).map { result =>
+                    val io =
+                        result match
+                            case result @ Result.Error(e) =>
+                                val ex =
+                                    e match
+                                        case e: Throwable => e
+                                        case _            => new KyoException(s"Failed $e")
+                                finalizer.close(Present(ex))
+                            case _ => Kyo.unit
+                    io.andThen(finalizer.await).andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+                }
         }
 
     given Isolate.Contextual[Resource, Any] = Isolate.Contextual.derive[Resource, Any]
+
+    /** Represents a finalizer for a resource. */
+    sealed abstract class Finalizer:
+        def ensure(v: Maybe[Throwable] => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO
+
+    object Finalizer:
+        sealed abstract class Awaitable extends Finalizer:
+            def close(ex: Maybe[Throwable])(using Frame): Unit < IO
+            def await(using Frame): Unit < Async
+
+        object Awaitable:
+            object Unsafe:
+                def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Awaitable =
+                    new Awaitable:
+                        val queue = Queue.Unbounded.Unsafe.init[Maybe[Throwable] => Any < (Async & Abort[Throwable])](
+                            Access.MultiProducerSingleConsumer
+                        )
+                        val promise = Promise.Unsafe.init[Nothing, Unit]().safe
+
+                        def ensure(v: Maybe[Throwable] => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO =
+                            IO.Unsafe {
+                                if !queue.offer(v).contains(true) then
+                                    Abort.panic(new Closed(
+                                        "Finalizer",
+                                        frame,
+                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Resource.run' call."
+                                    ))
+                                else ()
+                            }
+                        end ensure
+
+                        def close(ex: Maybe[Throwable])(using Frame): Unit < IO =
+                            IO.Unsafe {
+                                queue.close() match
+                                    case Absent => ()
+                                    case Present(tasks) =>
+                                        if tasks.isEmpty then
+                                            promise.completeDiscard(Result.unit)
+                                        else
+                                            Async.foreachDiscard(tasks, parallelism) { task =>
+                                                Abort.run[Throwable](task(ex))
+                                                    .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
+                                            }
+                                                .handle(Async.run[Nothing, Unit, Any])
+                                                .map(promise.becomeDiscard)
+                            }
+
+                        def await(using Frame): Unit < Async = promise.get
+                end init
+            end Unsafe
+        end Awaitable
+    end Finalizer
 
 end Resource
