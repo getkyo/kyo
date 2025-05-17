@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Result.Panic
 import kyo.Tag
+import kyo.internal.AsyncPlatformSpecific
 import kyo.kernel.*
 import kyo.scheduler.*
 import scala.annotation.tailrec
@@ -40,7 +41,7 @@ import scala.util.control.NonFatal
   */
 opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
-object Async:
+object Async extends AsyncPlatformSpecific:
 
     /** Default concurrency level for collection operations.
       *

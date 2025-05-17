@@ -4,7 +4,6 @@ export Fiber.Promise
 import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
-import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
 import kyo.kernel.internal.*
 import kyo.scheduler.*
@@ -38,7 +37,7 @@ import scala.util.control.NoStackTrace
   */
 opaque type Fiber[+E, +A] = IOPromiseBase[E, A]
 
-object Fiber extends FiberPlatformSpecific:
+object Fiber:
 
     private val _unit  = IOPromise(Result.unit).mask()
     private val _never = IOPromise[Nothing, Unit]().mask()
