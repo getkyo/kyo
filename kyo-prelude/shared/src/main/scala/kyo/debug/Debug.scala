@@ -57,8 +57,8 @@ object Debug:
                 lastValue = Present(value)
                 true
             end enter
-            def addFinalizer(f: () => Unit): Unit    = ()
-            def removeFinalizer(f: () => Unit): Unit = ()
+            def addFinalizer(f: Maybe[Throwable] => Unit): Unit    = ()
+            def removeFinalizer(f: Maybe[Throwable] => Unit): Unit = ()
 
         Safepoint.propagating(interceptor) {
             Effect.catching {

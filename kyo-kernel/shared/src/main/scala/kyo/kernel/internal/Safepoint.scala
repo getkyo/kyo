@@ -3,6 +3,9 @@ package kyo.kernel.internal
 import Safepoint.*
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Frame
+import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import kyo.isNull
 import kyo.kernel.*
 import scala.annotation.nowarn
@@ -88,8 +91,8 @@ object Safepoint:
     end State
 
     abstract private[kyo] class Interceptor:
-        def addFinalizer(f: () => Unit): Unit
-        def removeFinalizer(f: () => Unit): Unit
+        def addFinalizer(f: Maybe[Throwable] => Unit): Unit
+        def removeFinalizer(f: Maybe[Throwable] => Unit): Unit
         def enter(frame: Frame, value: Any): Boolean
     end Interceptor
 
@@ -102,8 +105,8 @@ object Safepoint:
             if isNull(prev) || (prev eq p) then p
             else
                 new Interceptor:
-                    override def addFinalizer(f: () => Unit): Unit    = p.addFinalizer(f)
-                    override def removeFinalizer(f: () => Unit): Unit = p.removeFinalizer(f)
+                    override def addFinalizer(f: Maybe[Throwable] => Unit): Unit    = p.addFinalizer(f)
+                    override def removeFinalizer(f: Maybe[Throwable] => Unit): Unit = p.removeFinalizer(f)
                     def enter(frame: Frame, value: Any) =
                         p.enter(frame, value) && prev.enter(frame, value)
         safepoint.setInterceptor(np)
@@ -128,48 +131,56 @@ object Safepoint:
         immediate(p)(loop(v))
     end propagating
 
-    sealed abstract private[kyo] class Ensure extends AtomicBoolean with Function0[Unit]:
-        def run: Unit
-        final def apply(): Unit =
+    sealed abstract private[kyo] class Ensure
+        extends AtomicBoolean
+        with Function1[Maybe[Throwable], Unit]:
+
+        def run(v: Maybe[Throwable]): Unit
+
+        final def apply(v: Maybe[Throwable]): Unit =
             if compareAndSet(false, true) then
                 val safepoint = Safepoint.get
                 val prev      = safepoint.interceptor
                 safepoint.setInterceptor(null)
-                try run
+                try run(v)
                 finally safepoint.setInterceptor(prev)
     end Ensure
 
-    private inline def ensuring[A](ensure: Ensure)(inline thunk: => A)(using safepoint: Safepoint): A =
+    private inline def ensuring[A, B](ensure: Ensure)(inline thunk: => B)(using safepoint: Safepoint): B =
         val interceptor = safepoint.interceptor
         if !isNull(interceptor) then interceptor.addFinalizer(ensure)
         try thunk
         catch
             case ex if NonFatal(ex) =>
-                ensure()
+                ensure(Present(ex))
                 throw ex
         end try
     end ensuring
 
     @nowarn("msg=anonymous")
-    private[kyo] inline def ensure[A, S](inline f: => Any)(inline v: => A < S)(using safepoint: Safepoint, inline _frame: Frame): A < S =
+    private[kyo] inline def ensure[A, S](
+        inline f: Maybe[Throwable] => Any
+    )(
+        inline v: => A < S
+    )(using safepoint: Safepoint, inline _frame: Frame): A < S =
         // ensures the function is called once even if an
         // interceptor executes it multiple times
         val ensure = new Ensure:
-            def run: Unit =
-                val _ = f
+            def run(v: Maybe[Throwable]) =
+                val _ = f(v)
 
         def ensureLoop(v: A < S)(using safepoint: Safepoint): A < S =
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
                         def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint): A < S =
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
                             ensuring(ensure)(ensureLoop(kyo(v, context)))
-                case _ =>
+                case kyo =>
                     val interceptor = safepoint.interceptor
                     if !isNull(interceptor) then interceptor.removeFinalizer(ensure)
-                    ensure()
-                    v
+                    ensure(Absent)
+                    kyo.unsafeGet
         ensuring(ensure)(ensureLoop(v))
     end ensure
 
