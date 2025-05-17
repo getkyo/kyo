@@ -398,29 +398,27 @@ object Channel:
             private val closedResult = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
 
             /** Succeeds with the value if the channel is still open, otherwise fails with a [[Closed]] error.
-             *
-             * @param value
-             *   The value to succeed with
-             * @return
-             *   The successful value or a [[Closed]] error
-             */
+              *
+              * @param value
+              *   The value to succeed with
+              * @return
+              *   The successful value or a [[Closed]] error
+              */
             private def succeedIfOpen[B](value: B): Result[Closed, B] =
                 if isClosed.get() then closedResult else Result.succeed(value)
 
-            /** Succeeds with the value if it is non-empty or the channel is still open, otherwise fails with a
-             * [[Closed]] error.
-             *
-             * This is used in cases where the channel may be closed, but we still have a value to return. This
-             * typically occurs when the producer calls [[closeAwaitEmpty]] and the consumer calls [[drain]] or
-             * [[drainUpTo]] where the drain will close the channel once it has drained the last item, but we want the
-             * effect of the close occurring after the drain. This may also occur in a race condition where the producer
-             * checks if the channel is empty and closes it while the consumer is draining.
-             *
-             * @param value
-             *   The value to succeed with
-             * @return
-             *   The successful value or a [[Closed]] error
-             */
+            /** Succeeds with the value if it is non-empty or the channel is still open, otherwise fails with a [[Closed]] error.
+              *
+              * This is used in cases where the channel may be closed, but we still have a value to return. This typically occurs when the
+              * producer calls [[closeAwaitEmpty]] and the consumer calls [[drain]] or [[drainUpTo]] where the drain will close the channel
+              * once it has drained the last item, but we want the effect of the close occurring after the drain. This may also occur in a
+              * race condition where the producer checks if the channel is empty and closes it while the consumer is draining.
+              *
+              * @param value
+              *   The value to succeed with
+              * @return
+              *   The successful value or a [[Closed]] error
+              */
             private def succeedIfNonEmptyOrOpen[B](value: Chunk[B]): Result[Closed, Chunk[B]] =
                 if value.nonEmpty then Result.succeed(value) else succeedIfOpen(value)
 
@@ -660,20 +658,20 @@ object Channel:
 
             def drain()(using AllowUnsafe) =
                 @tailrec
-                def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
+                def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
                     val next = queue.drain()
                     next match
                         case Result.Success(c) =>
                             if c.isEmpty then Result.Success(current)
                             else
                                 flush()
-                                loop(current.concat(c), i + 1)
+                                loop(current.concat(c))
                         case _ if current.nonEmpty => Result.Success(current)
                         case other                 => other
                     end match
                 end loop
 
-                loop(Chunk.empty, 0)
+                loop(Chunk.empty)
             end drain
 
             def close()(using frame: Frame, allow: AllowUnsafe) =
