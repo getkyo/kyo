@@ -2,6 +2,7 @@ package kyo.interop.flow
 
 import kyo.*
 import kyo.Result.Failure
+import kyo.Result.Panic
 import kyo.Result.Success
 import kyo.interop.flow.StreamSubscriber.EmitStrategy
 import kyo.interop.flow.StreamSubscription.StreamCanceled
@@ -44,9 +45,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             _ = publisher.subscribe(subscriber)
             subscriberStream <- subscriber.stream
             result           <- Abort.run[Throwable](subscriberStream.discard)
-        yield result match
-            case Result.Error(e: Throwable) => assert(e == TestError)
-            case _                          => assert(false)
+        yield assert(result == Panic(TestError))
         end for
     }
 
