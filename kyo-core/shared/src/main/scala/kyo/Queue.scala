@@ -128,7 +128,8 @@ object Queue:
           * closed.
           *
           * @return
-          *   true if the queue was successfully closed and emptied, false if it was already closed
+          *   true if the queue was successfully closed and emptied, false if it was already closed or another closeAwaitEmpty is already
+          *   running.
           */
         def closeAwaitEmpty(using Frame): Boolean < Async = IO.Unsafe(self.closeAwaitEmpty().safe.get)
 
@@ -389,9 +390,9 @@ object Queue:
             final def closed()(using AllowUnsafe) =
                 state.get().isInstanceOf[State.FullyClosed]
 
-            final def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]] = op(_drain(Maybe.Present(max)))
+            final def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]] = pollOp(_drain(Maybe.Present(max)))
 
-            final def drain()(using AllowUnsafe): Result[Closed, Chunk[A]] = op(_drain())
+            final def drain()(using AllowUnsafe): Result[Closed, Chunk[A]] = pollOp(_drain())
 
             protected def _drain(max: Maybe[Int] = Maybe.Absent): Chunk[A]
             protected def _isEmpty(): Boolean
@@ -414,7 +415,20 @@ object Queue:
                     case State.HalfOpen(_, r) => Present(r)
                     case State.FullyClosed(r) => Present(r)
 
-            protected inline def offerOp[A](inline f: => Boolean, inline raceRepair: => Boolean): Result[Closed, Boolean] =
+            protected inline def pollOp[A](inline f: => A): Result[Closed, A] =
+                opClosed.getOrElse {
+                    val r = Result(f)
+                    handleHalfOpen()
+                    r
+                }
+
+            private def offerClosed: Maybe[Result.Error[Closed]] =
+                state.get() match
+                    case State.Open           => Absent
+                    case State.HalfOpen(_, r) => Present(r)
+                    case State.FullyClosed(r) => Present(r)
+
+            protected inline def offerOp(inline f: => Boolean, inline raceRepair: => Boolean): Result[Closed, Boolean] =
                 offerClosed.getOrElse {
                     val result = f
                     if result && closed() then
@@ -444,7 +458,7 @@ object Queue:
                         def empty()(using AllowUnsafe)             = op(true)
                         def full()(using AllowUnsafe)              = op(true)
                         def offer(v: A)(using AllowUnsafe)         = op(false)
-                        def poll()(using AllowUnsafe)              = op(Maybe.empty)
+                        def poll()(using AllowUnsafe)              = pollOp(Maybe.empty)
                         def peek()(using AllowUnsafe)              = op(Maybe.empty)
                         def _drain(max: Maybe[Int] = Maybe.Absent) = Chunk.empty
                         def _isEmpty()                             = true
@@ -457,7 +471,7 @@ object Queue:
                         def full()(using AllowUnsafe)  = op(state.get().isDefined)
                         def offer(v: A)(using AllowUnsafe) =
                             offerOp(state.compareAndSet(Maybe.empty, Maybe(v)), !state.compareAndSet(Maybe(v), Maybe.empty))
-                        def poll()(using AllowUnsafe) = op(state.getAndSet(Maybe.empty))
+                        def poll()(using AllowUnsafe) = pollOp(state.getAndSet(Maybe.empty))
                         def peek()(using AllowUnsafe) = op(state.get())
                         def _drain(max: Maybe[Int] = Maybe.Absent) =
                             max.fold(
@@ -498,7 +512,7 @@ object Queue:
                                 // The item will only be removed when the queue object itself is garbage collected.
                                 !q.contains(v)
                     )
-                def poll()(using AllowUnsafe) = op(Maybe(q.poll()))
+                def poll()(using AllowUnsafe) = pollOp(Maybe(q.poll()))
                 def peek()(using AllowUnsafe) = op(Maybe(q.peek()))
                 def _drain(max: Maybe[Int] = Maybe.Absent) =
                     val b = Chunk.newBuilder[A]
@@ -512,7 +526,7 @@ object Queue:
                     loop(0)
                     b.result()
                 end _drain
-                protected def _isEmpty() = q.isEmpty()
+                def _isEmpty() = q.isEmpty()
 
     end Unsafe
 

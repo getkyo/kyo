@@ -396,30 +396,54 @@ object Channel:
         final class ZeroCapacityUnsafe[A](using initFrame: Frame, allow: AllowUnsafe) extends BaseUnsafe[A]:
             val isClosed = AtomicBoolean.Unsafe.init(false)
 
-            private val closedResult                     = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
-            def asResult[A](value: A): Result[Closed, A] = if isClosed.get() then closedResult else Result.succeed(value)
+            private val closedResult = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
+
+            /** Succeeds with the value if the channel is still open, otherwise fails with a [[Closed]] error.
+              *
+              * @param value
+              *   The value to succeed with
+              * @return
+              *   The successful value or a [[Closed]] error
+              */
+            private def succeedIfOpen[B](value: B): Result[Closed, B] =
+                if isClosed.get() then closedResult else Result.succeed(value)
+
+            /** Succeeds with the value if it is non-empty or the channel is still open, otherwise fails with a [[Closed]] error.
+              *
+              * This is used in cases where the channel may be closed, but we still have a value to return. This typically occurs when the
+              * producer calls [[closeAwaitEmpty]] and the consumer calls [[drain]] or [[drainUpTo]] where the drain will close the channel
+              * once it has drained the last item, but we want the effect of the close occurring after the drain. This may also occur in a
+              * race condition where the producer checks if the channel is empty and closes it while the consumer is draining.
+              *
+              * @param value
+              *   The value to succeed with
+              * @return
+              *   The successful value or a [[Closed]] error
+              */
+            private def succeedIfNonEmptyOrOpen[B](value: Chunk[B]): Result[Closed, Chunk[B]] =
+                if value.nonEmpty then Result.succeed(value) else succeedIfOpen(value)
 
             def capacity = 0
 
-            def size()(using AllowUnsafe) = asResult(0)
+            def size()(using AllowUnsafe) = succeedIfOpen(0)
 
             def offer(value: A)(using AllowUnsafe) =
                 Maybe(takes.poll()) match
                     case Absent =>
-                        asResult(false)
+                        succeedIfOpen(false)
                     case Present(takePromise) =>
-                        if takePromise.complete(Result.succeed(value)) then asResult(true)
+                        if takePromise.complete(Result.succeed(value)) then succeedIfOpen(true)
                         else offer(value)
 
             def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]] =
                 @tailrec def loop(currentChunk: Chunk[A]): Result[Closed, Chunk[A]] =
                     currentChunk.headMaybe match
                         case Absent =>
-                            asResult(Chunk.empty)
+                            succeedIfOpen(Chunk.empty)
                         case Present(value) =>
                             Maybe(takes.poll()) match
                                 case Absent =>
-                                    asResult {
+                                    succeedIfOpen {
                                         currentChunk
                                     }
                                 case Present(takePromise) =>
@@ -430,7 +454,7 @@ object Channel:
             end offerAll
 
             def poll()(using AllowUnsafe) =
-                asResult {
+                succeedIfOpen {
                     Maybe(puts.poll()) match
                         case Absent =>
                             Absent
@@ -460,7 +484,7 @@ object Channel:
                         Maybe(puts.poll()) match
                             case Absent =>
                                 flush()
-                                asResult(current)
+                                succeedIfNonEmptyOrOpen(current)
                             case Present(Put.Value(value, promise)) =>
                                 discard(promise.complete(Result.unit))
                                 loop(current.appended(value), i - 1)
@@ -470,7 +494,7 @@ object Channel:
                                 if remaining.nonEmpty then
                                     discard(puts.offer(Put.Batch(remaining, promise)))
                                     flush()
-                                    asResult(current.concat(taken))
+                                    succeedIfNonEmptyOrOpen(current.concat(taken))
                                 else
                                     discard(promise.complete(Result.unit))
                                     loop(current.concat(taken), i - taken.length)
@@ -487,7 +511,7 @@ object Channel:
                 def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
                     Maybe(puts.poll()) match
                         case Absent =>
-                            asResult(current)
+                            succeedIfNonEmptyOrOpen(current)
                         case Present(Put.Value(value, promise)) =>
                             discard(promise.complete(Result.unit))
                             loop(current.appended(value))
@@ -510,8 +534,8 @@ object Channel:
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
                 Fiber.Unsafe.init(Result.succeed(close().isDefined))
 
-            def empty()(using AllowUnsafe)  = asResult(true)
-            def full()(using AllowUnsafe)   = asResult(true)
+            def empty()(using AllowUnsafe)  = succeedIfOpen(true)
+            def full()(using AllowUnsafe)   = succeedIfOpen(true)
             def closed()(using AllowUnsafe) = isClosed.get()
 
             @tailrec protected def flush(): Unit =
@@ -627,7 +651,7 @@ object Channel:
                                     flush()
                                     loop(current.concat(c), i - c.length)
                             case _ if current.nonEmpty => Result.Success(current)
-                            case other => other
+                            case other                 => other
                         end match
                     end if
                 end loop
@@ -646,7 +670,7 @@ object Channel:
                                 flush()
                                 loop(current.concat(c))
                         case _ if current.nonEmpty => Result.Success(current)
-                        case other => other
+                        case other                 => other
                     end match
                 end loop
 
