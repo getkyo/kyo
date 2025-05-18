@@ -95,12 +95,12 @@ lazy val kyoJVM = project
         name := "kyoJVM",
         `kyo-settings`,
         commands += Command.command("testOnlyUntilFailed") { state =>
-            "kyo-grpc-core/testOnly kyo.grpc.ServiceTest" :: "testOnlyUntilFailed" :: state
+            "kyo-grpc-e2e/testOnly kyo.grpc.ServiceTest" :: "testOnlyUntilFailed" :: state
         },
         commands += Command.args("testOnlyUntilFailed", "[times]") { (state, args) =>
           val times = args.headOption.flatMap(times => scala.util.Try(times.toInt).toOption).getOrElse(1)
           if (times > 0) {
-            "kyo-grpc-core/testOnly kyo.grpc.ServiceTest" :: s"testOnlyUntilFailed ${times - 1}" :: state
+            "kyo-grpc-e2e/testOnly kyo.grpc.ServiceTest" :: s"testOnlyUntilFailed ${times - 1}" :: state
           } else {
             state.log.info("testOnlyUntilFailed PASSED")
             state

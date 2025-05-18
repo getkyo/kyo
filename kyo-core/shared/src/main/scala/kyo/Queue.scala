@@ -403,17 +403,7 @@ object Queue:
                     case _                    => Absent
 
             protected inline def op[A](inline f: => A): Result[Closed, A] =
-                opClosed.getOrElse {
-                    val r = Result(f)
-                    handleHalfOpen()
-                    r
-                }
-
-            private def offerClosed: Maybe[Result.Error[Closed]] =
-                state.get() match
-                    case State.Open           => Absent
-                    case State.HalfOpen(_, r) => Present(r)
-                    case State.FullyClosed(r) => Present(r)
+                opClosed.getOrElse(Result(f))
 
             protected inline def pollOp[A](inline f: => A): Result[Closed, A] =
                 opClosed.getOrElse {
