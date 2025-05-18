@@ -42,7 +42,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(2)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver, "Test"))
+            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onCompleted())
@@ -69,7 +69,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(1)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver, "Test"))
+            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onError(statusException))
@@ -96,7 +96,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(1)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver, "Test"))
+            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onNext("next"))
             _        <- IO(observer.onError(exception))

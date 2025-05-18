@@ -38,7 +38,7 @@ class RequestStreamObserver[Request: Tag, Response](
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(fail).getOrThrow
 
     override def onCompleted(): Unit =
-        Abort.run(IO.Unsafe.run(requestChannel.closeProducer)).eval.getOrThrow
+        val _ = IO.Unsafe.evalOrThrow(Async.run(requestChannel.closeProducer))
 
 end RequestStreamObserver
 
@@ -46,11 +46,10 @@ object RequestStreamObserver:
 
     def init[Request: Tag, Response: Tag](
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
-        responseObserver: ServerCallStreamObserver[Response],
-        name: String
+        responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request, Response] < IO =
         for
-            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors](name)
+            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
             observer = RequestStreamObserver(f, requestChannel, responseObserver)
             // TODO: This seems a bit sneaky.
             _ <- Async.run(observer.start)

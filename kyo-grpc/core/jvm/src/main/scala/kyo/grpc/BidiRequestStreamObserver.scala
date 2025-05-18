@@ -34,7 +34,7 @@ class BidiRequestStreamObserver[Request: Tag, Response: Tag] private (
         KyoApp.Unsafe.runAndBlock(Duration.Infinity)(fail).getOrThrow
 
     override def onCompleted(): Unit =
-        Abort.run(IO.Unsafe.run(requestChannel.closeProducer)).eval.getOrThrow
+        val _ = IO.Unsafe.evalOrThrow(Async.run(requestChannel.closeProducer))
 
 end BidiRequestStreamObserver
 
@@ -42,11 +42,10 @@ object BidiRequestStreamObserver:
 
     def init[Request: Tag, Response: Tag](
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
-        responseObserver: ServerCallStreamObserver[Response],
-        name: String
+        responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): BidiRequestStreamObserver[Request, Response] < IO =
         for
-            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors](name)
+            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
             observer = BidiRequestStreamObserver(f, requestChannel, responseObserver)
             // TODO: This seems a bit sneaky.
             _ <- Async.run(observer.start)

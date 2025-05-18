@@ -422,7 +422,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
             end for
         }
 
-        "FOO success" in run {
+        "success" in run {
             val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = n - 2): Request))
             val expected  = Chunk.from((3 to 5).flatMap(n => Chunk.from((1 to (n - 2)).map(m => Echo(s"$n $m")))))
             val requests  = Stream(Emit.value(successes))
@@ -558,7 +558,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
         }
 
         "panic" - {
-            "FOO producing stream on first element" in {
+            "producing stream on first element" in {
                 run {
                     val message   = "Oh no!"
                     val panic     = Panic(message)
@@ -581,7 +581,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 }
             }
 
-            "FOO producing stream after some elements" in {
+            "producing stream after some elements" in {
                 run {
                     val after     = 5
                     val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
@@ -609,7 +609,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 }
             }
 
-            "FOO first element" in {
+            "first element" in {
                 run {
                     val message   = "Oh no!"
                     val panic     = Panic(message)

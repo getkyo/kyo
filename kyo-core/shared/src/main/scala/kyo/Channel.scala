@@ -626,6 +626,7 @@ object Channel:
                                 else
                                     flush()
                                     loop(current.concat(c), i - c.length)
+                            case _ if current.nonEmpty => Result.Success(current)
                             case other => other
                         end match
                     end if
@@ -644,6 +645,7 @@ object Channel:
                             else
                                 flush()
                                 loop(current.concat(c))
+                        case _ if current.nonEmpty => Result.Success(current)
                         case other => other
                     end match
                 end loop
