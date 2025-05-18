@@ -722,6 +722,7 @@ lazy val `kyo-bench` =
         .crossType(CrossType.Pure)
         .in(file("kyo-bench"))
         .enablePlugins(Fs2Grpc, JmhPlugin, LocalCodeGenPlugin)
+        .disablePlugins(MimaPlugin)
         .dependsOn(
             `kyo-core`,
             `kyo-grpc-core`,
@@ -730,7 +731,6 @@ lazy val `kyo-bench` =
             `kyo-stm`,
             `kyo-sttp`
         )
-        .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
             publish / skip := true,

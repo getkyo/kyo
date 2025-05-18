@@ -19,14 +19,11 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
     end catsBench
 
     override def kyoBenchFiber() =
-        // TODO: This is ugly.
         Resource.run:
-            GrpcRequest.run(
-                for
-                    _      <- createKyoServer
-                    client <- createKyoClient
-                yield client.oneToOne(request)
-            ).map(_.getOrThrow)
+            for
+                _      <- createKyoServer
+                client <- createKyoClient
+            yield client.oneToOne(request)
 
     override def zioBench() =
         ZIO.scoped:
