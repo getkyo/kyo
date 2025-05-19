@@ -16,9 +16,7 @@ private[grpc] object StreamNotifier:
         Abort.run[E](value).map {
             case Result.Success(value) =>
                 for
-                    _ <- Log.debug(s"StreamNotifier - Sending value to observer: $value")
                     _ <- IO(observer.onNext(value))
-                    _ <- Log.debug("StreamNotifier - Completing observer")
                     _ <- IO(observer.onCompleted())
                 yield ()
             // TODO: Why the unchecked warning here?
@@ -29,11 +27,7 @@ private[grpc] object StreamNotifier:
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
     )(using Frame, Tag[Emit[Chunk[A]]]): Unit < (IO & S) =
-        def handleValue(value: A) =
-            for
-                _ <- Log.debug(s"StreamNotifier - Sending next value to observer: $value")
-                _ <- IO(observer.onNext(value))
-            yield ()
+        def handleValue(value: A) = IO(observer.onNext(value))
         Abort.run[E](values.foreach(handleValue)).map(notifyCompleteOrError(_, observer))
     end notifyObserver
 
@@ -42,11 +36,7 @@ private[grpc] object StreamNotifier:
         observer: StreamObserver[?]
     )(using Frame): Unit < IO =
         complete match
-            case Result.Success(_) =>
-                for
-                    _ <- Log.debug("StreamNotifier - Completing observer")
-                    _ <- IO(observer.onCompleted())
-                yield ()
+            case Result.Success(_) => IO(observer.onCompleted())
             // TODO: Why the unchecked warning here?
             case result: Result.Error[E] => notifyError(result, observer)
         end match
@@ -58,16 +48,8 @@ private[grpc] object StreamNotifier:
     )(using Frame): Unit < IO =
         // TODO: Why the non-exhaustive match here?
         result match
-            case Result.Failure(s: E) =>
-                for
-                    _ <- Log.debug(s"StreamNotifier - Sending error to observer: $s")
-                    _ <- IO(requestObserver.onError(s))
-                yield ()
-            case Result.Panic(t)      =>
-                for
-                    _ <- Log.debug(s"StreamNotifier - Sending error to observer: $t")
-                    _ <- IO(requestObserver.onError(throwableToStatusException(t)))
-                yield ()
+            case Result.Failure(s: E) => IO(requestObserver.onError(s))
+            case Result.Panic(t)      => IO(requestObserver.onError(throwableToStatusException(t)))
     end notifyError
 
     // TODO: This doesn't belong here.

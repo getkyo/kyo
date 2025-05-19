@@ -9,11 +9,7 @@ import kyo.grpc.*
 object TestServiceImpl extends TestService:
 
     override def oneToOne(request: Request): Response < GrpcResponse =
-        for
-            _        <- Log.debug(s"TestServiceImpl - Received request: $request")
-            response <- requestToResponse(request)
-            _        <- Log.debug(s"TestServiceImpl - Sending response: $response")
-        yield response
+        requestToResponse(request)
     end oneToOne
 
     private def requestToResponse(request: Request): Response < GrpcResponse =
@@ -29,11 +25,7 @@ object TestServiceImpl extends TestService:
     end requestToResponse
 
     override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
-        for
-            _               <- Log.debug(s"TestServiceImpl - Received request: $request")
-            responses       <- requestToResponses(request)
-            loggedResponses <- responses.tap(response => Log.debug(s"TestServiceImpl - Sending response: $response"))
-        yield loggedResponses
+        requestToResponses(request)
     end oneToMany
 
     private def requestToResponses(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
@@ -73,10 +65,6 @@ object TestServiceImpl extends TestService:
         ).map(maybeMessage => Echo(maybeMessage.getOrElse("")))
 
     override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
-        Stream:
-            requests
-                .tap(request => Log.debug(s"TestServiceImpl - Received request: $request"))
-                .flatMap(requestToResponses)
-                .emit
+        requests.flatMap(requestToResponses)
 
 end TestServiceImpl

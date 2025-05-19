@@ -12,13 +12,10 @@ given statusEquality: Equality[Status] with
 end statusEquality
 
 given metadataEquality: Equality[Metadata] with
-    def areEqual(a: Metadata, b: Any): Boolean = {
-        println(s"a: ${a}")
-        println(s"b: ${b}")
+    def areEqual(a: Metadata, b: Any): Boolean =
         b match
             case b: Metadata => a.toString === b.toString
             case _ => false
-    }
 end metadataEquality
 
 given statusExceptionEquality: Equality[StatusException] with

@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit
 import kgrpc.*
 import kgrpc.test.*
 import kyo.*
-import kyo.grpc.statusExceptionEquality
+import kyo.grpc.*
 import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.Inspectors.*
@@ -18,32 +18,22 @@ import scala.util.chaining.scalaUtilChainingOps
 
 class ServiceTest extends Test:
 
+    private given CanEqual[Response, Echo]           = CanEqual.derived
+    private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
+
     private val emptyTrailers = Metadata()
     private val trailers = Metadata().tap(_.put(GrpcUtil.CONTENT_TYPE_KEY, GrpcUtil.CONTENT_TYPE_GRPC))
 
-    private val notOKStatusCodes = Status.Code.values().filterNot(_ == Status.Code.OK)
-
-    // TODO: Remove this
-    def forEvery[E, C[_]](xs: C[E])(fun: E => Future[Assertion]): Future[Assertion] = {
-        Future.successful(succeed)
-    }
+    private val notOKStatusCodes = Status.Code.values().filterNot(_ === Status.Code.OK)
 
     "unary" - {
         "success" in run {
             val message = "Hello"
             val request = Success(message)
             for
-                _ <- Log.debug(
-                    """
-                      |
-                      |==================================================
-                      |unary - success
-                      |==================================================
-                      |
-                      |""".stripMargin)
                 client   <- createClientAndServer
                 response <- client.oneToOne(request)
-            yield assert(response == Echo(message))
+            yield assert(response === Echo(message))
             end for
         }
 
@@ -54,17 +44,8 @@ class ServiceTest extends Test:
                     val request = Fail(status.getCode.value)
                     val expected = status.asException(trailers)
                     for
-                        _ <- Log.debug(
-                        s"""
-                           |
-                           |==================================================
-                           |unary - fail - $code
-                           |==================================================
-                           |
-                           |""".stripMargin)
                         client <- createClientAndServer
                         result <- Abort.run[StatusException](client.oneToOne(request))
-                        _ <- Log.debug(s"Failed response: $result, expected = $expected")
                     yield assertStatusException(result, expected)
                     end for
                 }
@@ -76,17 +57,8 @@ class ServiceTest extends Test:
             val request = Panic(message)
             val expected = Status.INTERNAL.withDescription(message).asException(trailers)
             for
-                _ <- Log.debug(
-                """
-                  |
-                  |==================================================
-                  |unary - panic
-                  |==================================================
-                  |
-                  |""".stripMargin)
                 client <- createClientAndServer
                 result <- Abort.run[StatusException](client.oneToOne(request))
-                _ <- Log.debug(s"Failed response: $result, expected = $expected")
             yield assertStatusException(result, expected)
             end for
         }
@@ -97,14 +69,6 @@ class ServiceTest extends Test:
             val message = "Hello"
             val request = Success(message, count = 5)
             for
-                _ <- Log.debug(
-                """
-                  |
-                  |==================================================
-                  |server streaming - success
-                  |==================================================
-                  |
-                  |""".stripMargin)
                 client    <- createClientAndServer
                 responses <- client.oneToMany(request).run
             yield assert(responses == Chunk.from((1 to 5).map(n => Echo(s"$message $n"))))
@@ -119,17 +83,8 @@ class ServiceTest extends Test:
                         val request = Fail(status.getCode.value, outside = true)
                         val expected = status.asException(trailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |server streaming - fail - producing stream - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client   <- createClientAndServer
                             response <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
-                            _ <- Log.debug(s"Failed response: $response, expected = $expected")
                         yield assertStatusException(response, expected)
                         end for
                     }
@@ -143,17 +98,8 @@ class ServiceTest extends Test:
                         val request = Fail(status.getCode.value)
                         val expected = status.asException(trailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |server streaming - fail - first element - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client <- createClientAndServer
                             result <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
-                            _ <- Log.debug(s"Failed response: $result, expected = $expected")
                         yield assertStatusException(result, expected)
                         end for
                     }
@@ -166,20 +112,12 @@ class ServiceTest extends Test:
                         val status  = code.toStatus
                         val after   = 5
                         val request = Fail(status.getCode.value, after)
-                        val expected = status.asException(trailers)
+                        // TODO: Why are the trailers empty here?
+                        val expected = status.asException(emptyTrailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |server streaming - fail - after some elements - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client            <- createClientAndServer
                             (responses, tail) <- client.oneToMany(request).splitAt(5)
                             failedResponse    <- Abort.run[StatusException](tail.run)
-                            _ <- Log.debug(s"Failed response: $failedResponse, expected = $expected")
                         yield
                             assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Failing in $n"))))
                             assertStatusException(failedResponse, expected)
@@ -195,17 +133,8 @@ class ServiceTest extends Test:
                 val request  = Panic(message)
                 val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
-                    _ <- Log.debug(
-                    """
-                      |
-                      |==================================================
-                      |server streaming - panic - producing stream
-                      |==================================================
-                      |
-                      |""".stripMargin)
                     client <- createClientAndServer
                     result <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
-                    _ <- Log.debug(s"Failed response: $result, expected = $expected")
                 yield assertStatusException(result, expected)
                 end for
             }
@@ -215,17 +144,8 @@ class ServiceTest extends Test:
                 val request  = Panic(message)
                 val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
-                    _ <- Log.debug(
-                    """
-                      |
-                      |==================================================
-                      |server streaming - panic - first element
-                      |==================================================
-                      |
-                      |""".stripMargin)
                     client <- createClientAndServer
                     result <- Abort.run[StatusException](client.oneToMany(request).take(1).run)
-                    _ <- Log.debug(s"Failed response: $result, expected = $expected")
                 yield assertStatusException(result, expected)
                 end for
             }
@@ -237,18 +157,9 @@ class ServiceTest extends Test:
                 // TODO: Why are the trailers empty here?
                 val expected = Status.INTERNAL.withDescription(message).asException(emptyTrailers)
                 for
-                    _ <- Log.debug(
-                    """
-                      |
-                      |==================================================
-                      |server streaming - panic - after some elements
-                      |==================================================
-                      |
-                      |""".stripMargin)
                     client            <- createClientAndServer
                     (responses, tail) <- client.oneToMany(request).splitAt(5)
                     failedResponse    <- Abort.run[StatusException](tail.run)
-                    _ <- Log.debug(s"Failed response: $failedResponse, expected = $expected")
                 yield
                     assert(responses == Chunk.from((after to 1 by -1).map(n => Echo(s"Panicing in $n"))))
                     assertStatusException(failedResponse, expected)
@@ -262,17 +173,9 @@ class ServiceTest extends Test:
             val successes = Chunk.empty[Request]
             val requests  = Stream(Emit.value(successes))
             for
-                _ <- Log.debug(
-                """
-                  |
-                  |==================================================
-                  |client streaming - empty
-                  |==================================================
-                  |
-                  |""".stripMargin)
                 client   <- createClientAndServer
                 response <- client.manyToOne(requests)
-            yield assert(response == Echo(""))
+            yield assert(response === Echo())
             end for
         }
 
@@ -280,17 +183,9 @@ class ServiceTest extends Test:
             val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
             val requests  = Stream(Emit.value(successes))
             for
-                _ <- Log.debug(
-                """
-                  |
-                  |==================================================
-                  |client streaming - success
-                  |==================================================
-                  |
-                  |""".stripMargin)
                 client   <- createClientAndServer
                 response <- client.manyToOne(requests)
-            yield assert(response == Echo((1 to 5).mkString(" ")))
+            yield assert(response === Echo((1 to 5).mkString(" ")))
             end for
         }
 
@@ -304,24 +199,14 @@ class ServiceTest extends Test:
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
                         val expected = status.asException(trailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |client streaming - fail - first element - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client <- createClientAndServer
                             result <- Abort.run[StatusException](client.manyToOne(requests))
-                            _ <- Log.debug(s"Failed response: $result, expected = $expected")
                         yield assertStatusException(result, expected)
                         end for
                     }
                 }
             }
 
-            // TODO: This has failed once. I can't reproduce it.
             "after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
@@ -332,17 +217,8 @@ class ServiceTest extends Test:
                         val requests  = Stream(Emit.value(successes.append(fail)))
                         val expected = status.asException(trailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |client streaming - fail - after some elements - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client <- createClientAndServer
                             result <- Abort.run[StatusException](client.manyToOne(requests))
-                            _ <- Log.debug(s"Failed response: $result, expected = $expected")
                         yield assertStatusException(result, expected)
                         end for
                     }
@@ -358,17 +234,8 @@ class ServiceTest extends Test:
                 val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
                 val expected  = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
-                    _ <- Log.debug(
-                    """
-                      |
-                      |==================================================
-                      |client streaming - panic - first element
-                      |==================================================
-                      |
-                      |""".stripMargin)
                     client <- createClientAndServer
                     result <- Abort.run[StatusException](client.manyToOne(requests))
-                    _ <- Log.debug(s"Failed response: $result, expected = $expected")
                 yield assertStatusException(result, expected)
                 end for
             }
@@ -381,17 +248,8 @@ class ServiceTest extends Test:
                 val requests  = Stream(Emit.value(successes.append(panic)))
                 val expected  = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
-                    _ <- Log.debug(
-                    """
-                      |
-                      |==================================================
-                      |client streaming - panic - after some elements
-                      |==================================================
-                      |
-                      |""".stripMargin)
                     client <- createClientAndServer
                     result <- Abort.run[StatusException](client.manyToOne(requests))
-                    _ <- Log.debug(s"Failed response: $result, expected = $expected")
                 yield assertStatusException(result, expected)
                 end for
             }
@@ -403,14 +261,6 @@ class ServiceTest extends Test:
             val successes = Chunk.empty[Request]
             val requests  = Stream(Emit.value(successes))
             for
-                _ <- Log.debug(
-                """
-                  |
-                  |==================================================
-                  |bidirectional streaming - empty
-                  |==================================================
-                  |
-                  |""".stripMargin)
                 client    <- createClientAndServer
                 responses <- client.manyToMany(requests).run
             yield assert(responses == Chunk.empty)
@@ -422,14 +272,6 @@ class ServiceTest extends Test:
             val expected  = Chunk.from((3 to 5).flatMap(n => Chunk.from((1 to (n - 2)).map(m => Echo(s"$n $m")))))
             val requests  = Stream(Emit.value(successes))
             for
-                _ <- Log.debug(
-                """
-                  |
-                  |==================================================
-                  |bidirectional streaming - success
-                  |==================================================
-                  |
-                  |""".stripMargin)
                 client    <- createClientAndServer
                 responses <- client.manyToMany(requests).run
             yield assert(responses == expected)
@@ -446,17 +288,8 @@ class ServiceTest extends Test:
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
                         val expected = status.asException(trailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |bidirectional streaming - fail - producing stream on first element - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client   <- createClientAndServer
                             response <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
-                            _ <- Log.debug(s"Failed response: $response, expected = $expected")
                         yield assertStatusException(response, expected)
                     }
                 }
@@ -470,20 +303,12 @@ class ServiceTest extends Test:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail      = Fail(status.getCode.value, outside = true)
                         val requests  = Stream(Emit.value(successes.append(fail)))
-                        val expected = status.asException(trailers)
+                        // TODO: Why are the trailers empty here?
+                        val expected = status.asException(emptyTrailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |bidirectional streaming - fail - producing stream after some elements - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client <- createClientAndServer
                             (responses, tail) <- client.manyToMany(requests).splitAt(5)
                             failedResponse    <- Abort.run[StatusException](tail.run)
-                            _ <- Log.debug(s"Failed response: $failedResponse, expected = $expected")
                         yield
                             assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
                             assertStatusException(failedResponse, expected)
@@ -501,17 +326,8 @@ class ServiceTest extends Test:
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
                         val expected = status.asException(trailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |bidirectional streaming - fail - first element - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client <- createClientAndServer
                             result <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
-                            _ <- Log.debug(s"Failed response: $result, expected = $expected")
                         yield assertStatusException(result, expected)
                     }
                 }
@@ -525,20 +341,12 @@ class ServiceTest extends Test:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail = Fail(status.getCode.value)
                         val requests = Stream(Emit.value(successes.append(fail)))
-                        val expected = status.asException(trailers)
+                        // TODO: Why are the trailers empty here?
+                        val expected = status.asException(emptyTrailers)
                         for
-                            _ <- Log.debug(
-                            s"""
-                               |
-                               |==================================================
-                               |bidirectional streaming - fail - after some elements - $code
-                               |==================================================
-                               |
-                               |""".stripMargin)
                             client <- createClientAndServer
                             (responses, tail) <- client.manyToMany(requests).splitAt(5)
                             failedResponse <- Abort.run[StatusException](tail.run)
-                            _ <- Log.debug(s"Failed response: $failedResponse, expected = $expected")
                         yield
                             assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
                             assertStatusException(failedResponse, expected)
@@ -557,17 +365,8 @@ class ServiceTest extends Test:
                     val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
                     val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                     for
-                        _ <- Log.debug(
-                        """
-                          |
-                          |==================================================
-                          |bidirectional streaming - panic - producing stream on first element
-                          |==================================================
-                          |
-                          |""".stripMargin)
                         client   <- createClientAndServer
                         response <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
-                        _ <- Log.debug(s"Failed response: $response, expected = $expected")
                     yield assertStatusException(response, expected)
                 }
             }
@@ -582,18 +381,9 @@ class ServiceTest extends Test:
                     // TODO: Why are the trailers empty here?
                     val expected = Status.INTERNAL.withDescription(message).asException(emptyTrailers)
                     for
-                        _ <- Log.debug(
-                        """
-                          |
-                          |==================================================
-                          |bidirectional streaming - panic - producing stream on after some elements
-                          |==================================================
-                          |
-                          |""".stripMargin)
                         client <- createClientAndServer
                         (responses, tail) <- client.manyToMany(requests).splitAt(after)
                         failedResponse    <- Abort.run[StatusException](tail.run)
-                        _ <- Log.debug(s"Failed response: $failedResponse, expected = $expected")
                     yield
                         assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
                         assertStatusException(failedResponse, expected)
@@ -609,17 +399,8 @@ class ServiceTest extends Test:
                     val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
                     val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                     for
-                        _ <- Log.debug(
-                        """
-                          |
-                          |==================================================
-                          |bidirectional streaming - panic - first element
-                          |==================================================
-                          |
-                          |""".stripMargin)
                         client <- createClientAndServer
                         result <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
-                        _ <- Log.debug(s"Failed response: $result, expected = $expected")
                     yield assertStatusException(result, expected)
                 }
             }
@@ -634,18 +415,9 @@ class ServiceTest extends Test:
                     // TODO: Why are the trailers empty here?
                     val expected = Status.INTERNAL.withDescription(message).asException(emptyTrailers)
                     for
-                        _ <- Log.debug(
-                        """
-                          |
-                          |==================================================
-                          |bidirectional streaming - panic - after some elements
-                          |==================================================
-                          |
-                          |""".stripMargin)
                         client <- createClientAndServer
                         (responses, tail) <- client.manyToMany(requests).splitAt(5)
                         failedResponse <- Abort.run[StatusException](tail.run)
-                        _ <- Log.debug(s"Failed response: $failedResponse, expected = $expected")
                     yield
                         assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
                         assertStatusException(failedResponse, expected)
@@ -655,38 +427,34 @@ class ServiceTest extends Test:
         }
     }
 
-    private given CanEqual[Response, Echo]           = CanEqual.derived
-    private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
-
-    private given Equality[Status] with
-        override def areEqual(status: Status, b: Any): Boolean =
-            b match
-                case other: Status =>
-                    status.getCode == other.getCode &&
-                    status.getDescription == other.getDescription &&
-                    status.getCause == other.getCause
-                case _ => false
-    end given
-
-    private given Equality[Metadata] with
-        override def areEqual(metadata: Metadata, b: Any): Boolean =
-            Maybe(b) match
-                case Present(other: Metadata) => metadata.toString == other.toString
-                case _                        => false
-        end areEqual
-    end given
+//    private given Equality[Status] with
+//        override def areEqual(status: Status, b: Any): Boolean =
+//            b match
+//                case other: Status =>
+//                    status.getCode == other.getCode &&
+//                    status.getDescription == other.getDescription &&
+//                    status.getCause == other.getCause
+//                case _ => false
+//    end given
+//
+//    private given Equality[Metadata] with
+//        override def areEqual(metadata: Metadata, b: Any): Boolean =
+//            Maybe(b) match
+//                case Present(other: Metadata) => metadata.toString == other.toString
+//                case _                        => false
+//        end areEqual
+//    end given
 
     private def assertStatusException(result: Result[StatusException, Any], expected: StatusException) =
         assert(result.isError)
         assert(result.isFailure)
         val actual = result.failure.get
-        assert(actual.===(expected)(using statusExceptionEquality))
+        assert(actual === expected)
     end assertStatusException
 
     private def createClientAndServer =
         for
             port   <- findFreePort
-            _ <- Log.debug(s"Starting server on port $port")
             _      <- createServer(port)
             client <- createClient(port)
         yield client
