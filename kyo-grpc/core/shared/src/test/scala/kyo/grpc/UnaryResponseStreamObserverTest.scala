@@ -2,7 +2,6 @@ package kyo.grpc
 
 import io.grpc.Status
 import io.grpc.StatusException
-import io.grpc.StatusRuntimeException
 import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*

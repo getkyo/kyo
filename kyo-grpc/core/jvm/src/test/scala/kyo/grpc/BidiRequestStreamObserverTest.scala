@@ -1,6 +1,6 @@
 package kyo.grpc
 
-import io.grpc.{Status, StatusException, StatusRuntimeException}
+import io.grpc.{Status, StatusException}
 import io.grpc.stub.{ServerCallStreamObserver, StreamObserver}
 import kyo.*
 import org.scalactic.TripleEquals.*
@@ -12,7 +12,7 @@ import scala.concurrent.Future
 class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
 
     private def mapRequests(requests: Stream[String, GrpcRequest]): Stream[String, GrpcResponse] =
-        Stream(GrpcRequest.mergeErrors(requests.map(_.toUpperCase(Locale.ENGLISH)).emit))
+        requests.map(_.toUpperCase(Locale.ENGLISH))
 
     "onComplete puts result of mapped requests" in run {
         val serverObserver = mock[ServerCallStreamObserver[String]]

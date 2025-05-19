@@ -74,7 +74,7 @@ private[grpc] object StreamNotifier:
     def throwableToStatusException(t: Throwable): StatusException =
         t match
             case e: StatusException        => e
-            case e: StatusRuntimeException => StatusException(e.getStatus()).tap(_.setStackTrace(e.getStackTrace))
+            case e: StatusRuntimeException => StatusException(e.getStatus, e.getTrailers).tap(_.setStackTrace(e.getStackTrace))
             case _                         => Status.INTERNAL.withDescription(t.getMessage).withCause(t).asException()
 
 end StreamNotifier

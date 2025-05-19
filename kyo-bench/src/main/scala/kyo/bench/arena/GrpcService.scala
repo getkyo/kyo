@@ -21,7 +21,7 @@ object GrpcService:
     given Frame = Frame.internal
 
     val host = "localhost"
-    val size = 100000L
+    val size = 100_000
 
     def createCatsServer(port: Int): cats.effect.Resource[cats.effect.IO, Server] =
         TestServiceFs2Grpc
@@ -86,7 +86,7 @@ object GrpcService:
 
 end GrpcService
 
-class CatsTestServiceImpl(size: Long) extends TestServiceFs2Grpc[cats.effect.IO, Metadata]:
+class CatsTestServiceImpl(size: Int) extends TestServiceFs2Grpc[cats.effect.IO, Metadata]:
 
     import cats.effect.*
 
@@ -96,18 +96,18 @@ class CatsTestServiceImpl(size: Long) extends TestServiceFs2Grpc[cats.effect.IO,
     override def oneToMany(request: Request, ctx: Metadata): fs2.Stream[IO, Response] =
         fs2.Stream.chunk(fs2.Chunk.constant(Response(request.message), size))
 
-    override def manyToOne(request: fs2.Stream[IO, Request], ctx: Metadata): IO[Response] =
-        request
+    override def manyToOne(requests: fs2.Stream[IO, Request], ctx: Metadata): IO[Response] =
+        requests
             .compile
             .last
             .map(maybe => Response(maybe.fold("")(_.message)))
 
-    override def manyToMany(request: fs2.Stream[IO, Request], ctx: Metadata): fs2.Stream[IO, Response] =
-        request.flatMap(oneToMany(_, ctx))
+    override def manyToMany(requests: fs2.Stream[IO, Request], ctx: Metadata): fs2.Stream[IO, Response] =
+        requests.flatMap(oneToMany(_, ctx))
 
 end CatsTestServiceImpl
 
-class KyoTestServiceImpl(size: Int) extends TestService:
+class KyoTestServiceImpl(size: Int)(using Frame) extends TestService:
 
     override def oneToOne(request: Request): Response < Any =
         Response(request.message)
@@ -116,23 +116,26 @@ class KyoTestServiceImpl(size: Int) extends TestService:
         Stream.init(Chunk.fill(size)(Response(request.message)))
 
     override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
-        Sink.last.drain(requests).map(maybe => Response(maybe.fold("")(_.message)))
+        //Sink.last.drain(requests).map(maybe => Response(maybe.fold("")(_.message)))
+        ???
 
     override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
         ???
 
 end KyoTestServiceImpl
 
-class ZIOTestServiceImpl(size: Long) extends ZioBench.TestService:
+class ZIOTestServiceImpl(size: Int) extends ZioBench.TestService:
 
     override def oneToOne(request: Request): ZIO[Any, StatusException, Response] =
         ZIO.succeed(Response(request.message))
 
     override def oneToMany(request: Request): stream.Stream[StatusException, Response] =
-        stream.ZStream.repeat(Response(request.message)).take(size)
+        stream.ZStream.fromChunk(zio.Chunk.fill(size)(Response(request.message)))
 
-    override def manyToOne(request: stream.Stream[StatusException, Request]): zio.IO[StatusException, Response] = ???
+    override def manyToOne(requests: stream.Stream[StatusException, Request]): zio.IO[StatusException, Response] =
+        requests.runLast.map(maybe => Response(maybe.fold("")(_.message)))
 
-    override def manyToMany(request: stream.Stream[StatusException, Request]): stream.Stream[StatusException, Response] = ???
+    override def manyToMany(requests: stream.Stream[StatusException, Request]): stream.Stream[StatusException, Response] =
+        requests.flatMap(oneToMany)
 
 end ZIOTestServiceImpl

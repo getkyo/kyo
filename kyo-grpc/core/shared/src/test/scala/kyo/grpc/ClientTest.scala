@@ -6,8 +6,6 @@ import io.grpc.ManagedChannelProvider
 import io.grpc.ManagedChannelProvider.ProviderNotFoundException
 import io.grpc.ManagedChannelRegistry
 import io.grpc.Status
-import io.grpc.StatusException
-import io.grpc.StatusRuntimeException
 import io.grpc.stub.StreamObserver
 import java.net.SocketAddress
 import kyo.*

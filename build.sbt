@@ -648,7 +648,7 @@ lazy val `kyo-grpc-e2e` =
         .crossType(CrossType.Full)
         .in(file("kyo-grpc") / "e2e")
         .enablePlugins(LocalCodeGenPlugin)
-        .dependsOn(`kyo-grpc-core`)
+        .dependsOn(`kyo-grpc-core` % "compile->compile;test->test")
         .settings(
             `kyo-settings`,
             publish / skip := true,

@@ -8,16 +8,17 @@ import java.util.concurrent.TimeUnit
 import kgrpc.*
 import kgrpc.test.*
 import kyo.*
+import kyo.grpc.statusExceptionEquality
 import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.Inspectors.*
-import org.scalatest.concurrent.AsyncCancelAfterFailure
 
 import scala.concurrent.Future
 import scala.util.chaining.scalaUtilChainingOps
 
-class ServiceTest extends Test with AsyncCancelAfterFailure:
+class ServiceTest extends Test:
 
+    private val emptyTrailers = Metadata()
     private val trailers = Metadata().tap(_.put(GrpcUtil.CONTENT_TYPE_KEY, GrpcUtil.CONTENT_TYPE_GRPC))
 
     private val notOKStatusCodes = Status.Code.values().filterNot(_ == Status.Code.OK)
@@ -51,8 +52,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 run {
                     val status  = code.toStatus
                     val request = Fail(status.getCode.value)
-                    // TODO: No StatusRuntimeExceptions
-                    val expected = status.asRuntimeException(trailers)
+                    val expected = status.asException(trailers)
                     for
                         _ <- Log.debug(
                         s"""
@@ -63,9 +63,9 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                            |
                            |""".stripMargin)
                         client <- createClientAndServer
-                        result <- Abort.run[StatusRuntimeException](client.oneToOne(request))
+                        result <- Abort.run[StatusException](client.oneToOne(request))
                         _ <- Log.debug(s"Failed response: $result, expected = $expected")
-                    yield assertStatusRuntimeException(result, expected)
+                    yield assertStatusException(result, expected)
                     end for
                 }
             }
@@ -74,8 +74,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
         "panic" in run {
             val message = "Oh no!"
             val request = Panic(message)
-            // TODO: No StatusRuntimeExceptions
-            val expected = Status.INTERNAL.withDescription(message).asRuntimeException(trailers)
+            val expected = Status.INTERNAL.withDescription(message).asException(trailers)
             for
                 _ <- Log.debug(
                 """
@@ -86,9 +85,9 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                   |
                   |""".stripMargin)
                 client <- createClientAndServer
-                result <- Abort.run[StatusRuntimeException](client.oneToOne(request))
+                result <- Abort.run[StatusException](client.oneToOne(request))
                 _ <- Log.debug(s"Failed response: $result, expected = $expected")
-            yield assertStatusRuntimeException(result, expected)
+            yield assertStatusException(result, expected)
             end for
         }
     }
@@ -118,8 +117,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                     run {
                         val status  = code.toStatus
                         val request = Fail(status.getCode.value, outside = true)
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -143,8 +141,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                     run {
                         val status  = code.toStatus
                         val request = Fail(status.getCode.value)
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -169,8 +166,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                         val status  = code.toStatus
                         val after   = 5
                         val request = Fail(status.getCode.value, after)
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -197,7 +193,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
             "producing stream" in run {
                 val message  = "Oh no!"
                 val request  = Panic(message)
-                val expected = Status.INTERNAL.withDescription(message).asException
+                val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
                     _ <- Log.debug(
                     """
@@ -217,7 +213,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
             "first element" in run {
                 val message  = "Oh no!"
                 val request  = Panic(message)
-                val expected = Status.INTERNAL.withDescription(message).asException
+                val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
                     _ <- Log.debug(
                     """
@@ -238,7 +234,8 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 val message  = "Oh no!"
                 val after    = 5
                 val request  = Panic(message, after)
-                val expected = Status.INTERNAL.withDescription(message).asException
+                // TODO: Why are the trailers empty here?
+                val expected = Status.INTERNAL.withDescription(message).asException(emptyTrailers)
                 for
                     _ <- Log.debug(
                     """
@@ -305,8 +302,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                         val fail      = Fail(status.getCode.value)
                         val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -334,8 +330,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
                         val fail      = Fail(status.getCode.value)
                         val requests  = Stream(Emit.value(successes.append(fail)))
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -361,7 +356,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 val panic     = Panic(message)
                 val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
                 val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
-                val expected  = Status.INTERNAL.withDescription(message).asException
+                val expected  = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
                     _ <- Log.debug(
                     """
@@ -384,7 +379,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                 val panic     = Panic(message)
                 val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
                 val requests  = Stream(Emit.value(successes.append(panic)))
-                val expected  = Status.INTERNAL.withDescription(message).asException
+                val expected  = Status.INTERNAL.withDescription(message).asException(trailers)
                 for
                     _ <- Log.debug(
                     """
@@ -449,8 +444,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                         val fail      = Fail(status.getCode.value, outside = true)
                         val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -476,8 +470,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail      = Fail(status.getCode.value, outside = true)
                         val requests  = Stream(Emit.value(successes.append(fail)))
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -506,8 +499,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                         val fail      = Fail(status.getCode.value)
                         val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -533,8 +525,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail = Fail(status.getCode.value)
                         val requests = Stream(Emit.value(successes.append(fail)))
-                        // TODO: Why no trailers here?
-                        val expected = status.asException
+                        val expected = status.asException(trailers)
                         for
                             _ <- Log.debug(
                             s"""
@@ -564,7 +555,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                     val panic     = Panic(message)
                     val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                     val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
-                    val expected = Status.INTERNAL.withDescription(message).asException
+                    val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                     for
                         _ <- Log.debug(
                         """
@@ -588,7 +579,8 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                     val message   = "Oh no!"
                     val panic     = Panic(message)
                     val requests  = Stream(Emit.value(successes.append(panic)))
-                    val expected = Status.INTERNAL.withDescription(message).asException
+                    // TODO: Why are the trailers empty here?
+                    val expected = Status.INTERNAL.withDescription(message).asException(emptyTrailers)
                     for
                         _ <- Log.debug(
                         """
@@ -615,7 +607,7 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                     val panic     = Panic(message)
                     val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                     val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
-                    val expected = Status.INTERNAL.withDescription(message).asException
+                    val expected = Status.INTERNAL.withDescription(message).asException(trailers)
                     for
                         _ <- Log.debug(
                         """
@@ -639,7 +631,8 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
                     val message   = "Oh no!"
                     val panic     = Panic(message)
                     val requests = Stream(Emit.value(successes.append(panic)))
-                    val expected = Status.INTERNAL.withDescription(message).asException
+                    // TODO: Why are the trailers empty here?
+                    val expected = Status.INTERNAL.withDescription(message).asException(emptyTrailers)
                     for
                         _ <- Log.debug(
                         """
@@ -684,20 +677,11 @@ class ServiceTest extends Test with AsyncCancelAfterFailure:
     end given
 
     private def assertStatusException(result: Result[StatusException, Any], expected: StatusException) =
+        assert(result.isError)
+        assert(result.isFailure)
         val actual = result.failure.get
-        // We can't compare the exception here because if it fails we run into https://github.com/scalatest/scalatest/issues/427.
-        assert(actual.getStatus === expected.getStatus)
-        assert((actual.getTrailers == null && expected.getTrailers == null) || actual.getTrailers === expected.getTrailers)
-        assert(actual.getMessage === expected.getMessage)
+        assert(actual.===(expected)(using statusExceptionEquality))
     end assertStatusException
-
-    private def assertStatusRuntimeException(result: Result[StatusRuntimeException, Any], expected: StatusRuntimeException) =
-        val actual = result.failure.get
-        // We can't compare the exception here because if it fails we run into https://github.com/scalatest/scalatest/issues/427.
-        assert(actual.getStatus === expected.getStatus)
-        assert((actual.getTrailers == null && expected.getTrailers == null) || actual.getTrailers === expected.getTrailers)
-        assert(actual.getMessage === expected.getMessage)
-    end assertStatusRuntimeException
 
     private def createClientAndServer =
         for
