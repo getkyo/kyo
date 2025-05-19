@@ -1,18 +1,20 @@
 package kyo.bench.arena
 
-import io.grpc.*
-import java.util.concurrent.{TimeUnit, TimeoutException}
+import io.grpc.ManagedChannel
+import io.grpc.ManagedChannelBuilder
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.TimeUnit
 import kgrpc.bench.*
 import kgrpc.bench.TestServiceGrpc.TestServiceBlockingStub
 import kyo.*
-import kyo.bench.arena.GrpcServerUnaryBench.*
+import kyo.bench.arena.GrpcServerOneToManyBench.*
 import kyo.bench.arena.GrpcService.*
 import org.openjdk.jmh.annotations.*
 import scala.compiletime.uninitialized
 import scalapb.zio_grpc.Server
 import zio.ZIO
 
-class GrpcServerUnaryBench extends ArenaBench.ForkOnly(reply):
+class GrpcServerOneToManyBench extends ArenaBench.ForkOnly(replies):
 
     private var port: Int = uninitialized
     private var channel: ManagedChannel = uninitialized
@@ -34,14 +36,14 @@ class GrpcServerUnaryBench extends ArenaBench.ForkOnly(reply):
     override def catsBench() =
         import cats.effect.*
         createCatsServer(port).use: _ =>
-            cats.effect.IO(blockingStub.oneToOne(request))
+            cats.effect.IO(blockingStub.oneToMany(request))
     end catsBench
 
     override def kyoBenchFiber() =
         Resource.run:
             for
                 _     <- createKyoServer(port)
-                reply <- IO(blockingStub.oneToOne(request))
+                reply <- IO(blockingStub.oneToMany(request))
             yield reply
 
     override def zioBench() =
@@ -49,16 +51,16 @@ class GrpcServerUnaryBench extends ArenaBench.ForkOnly(reply):
             val run =
                 for
                     _     <- createZioServer(port)
-                    reply <- ZIO.attempt(blockingStub.oneToOne(request))
+                    reply <- ZIO.attempt(blockingStub.oneToMany(request))
                 yield reply
             run.orDie
 
-end GrpcServerUnaryBench
+end GrpcServerOneToManyBench
 
-object GrpcServerUnaryBench:
+object GrpcServerOneToManyBench:
 
-    val message: String  = "Hello"
-    val request: Request = Request(message)
-    val reply: Response  = Response(message)
+    val message: String             = "Hello"
+    val request: Request            = Request(message)
+    val replies: Iterator[Response] = Iterator(Response(message))
 
-end GrpcServerUnaryBench
+end GrpcServerOneToManyBench

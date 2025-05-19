@@ -42,7 +42,8 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
         b match
             case b: Fork[A] =>
                 s"fork$target" in {
-                    assert(runFork(b) == b.expectedResult)
+                    val result = runFork(b)
+                    assert(result == b.expectedResult)
                     detectRuntimeLeak()
                 }
             case _ =>
