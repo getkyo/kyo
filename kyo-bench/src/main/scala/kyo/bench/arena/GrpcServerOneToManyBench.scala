@@ -1,66 +1,51 @@
 package kyo.bench.arena
 
-import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
-import java.util.concurrent.TimeoutException
-import java.util.concurrent.TimeUnit
+import io.grpc.*
 import kgrpc.bench.*
 import kgrpc.bench.TestServiceGrpc.TestServiceBlockingStub
 import kyo.*
+import kyo.bench.arena.GrpcServerBench.*
 import kyo.bench.arena.GrpcServerOneToManyBench.*
 import kyo.bench.arena.GrpcService.*
+import kyo.bench.arena.WarmupJITProfile.{CatsForkWarmup, KyoForkWarmup, ZIOForkWarmup}
+import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
-import scala.compiletime.uninitialized
-import scalapb.zio_grpc.Server
+import scalapb.zio_grpc
 import zio.ZIO
 
-class GrpcServerOneToManyBench extends ArenaBench.ForkOnly(replies):
+import java.util.concurrent.{TimeUnit, TimeoutException}
+import scala.compiletime.uninitialized
 
-    private var port: Int = uninitialized
-    private var channel: ManagedChannel = uninitialized
-    private var blockingStub: TestServiceBlockingStub = uninitialized
+class GrpcServerOneToManyBench extends ArenaBench2(replies):
 
-    @Setup
-    def buildChannel() =
-        port = findFreePort()
-        channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build
-        blockingStub = TestServiceGrpc.blockingStub(channel)
-    end buildChannel
-
-    @TearDown
-    def shutdownChannel() =
-        val shutdown = channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)
-        if !shutdown then throw TimeoutException("Channel did not shutdown within 10 seconds.")
-    end shutdownChannel
-
-    override def catsBench() =
-        import cats.effect.*
-        createCatsServer(port).use: _ =>
+    @Benchmark
+    def catsBench(warmup: CatsForkWarmup, state: CatsState): Iterator[Response] =
+        import state.{*, given}
+        forkCats:
             cats.effect.IO(blockingStub.oneToMany(request))
     end catsBench
 
-    override def kyoBenchFiber() =
-        Resource.run:
-            for
-                _     <- createKyoServer(port)
-                reply <- IO(blockingStub.oneToMany(request))
-            yield reply
+    @Benchmark
+    def kyoBench(warmup: KyoForkWarmup, state: KyoState): Iterator[Response] =
+        import state.*
+        forkKyo:
+            IO(blockingStub.oneToMany(request))
+    end kyoBench
 
-    override def zioBench() =
-        ZIO.scoped:
-            val run =
-                for
-                    _     <- createZioServer(port)
-                    reply <- ZIO.attempt(blockingStub.oneToMany(request))
-                yield reply
-            run.orDie
+    @Benchmark
+    def zioBench(warmup: ZIOForkWarmup, state: ZIOState): Iterator[Response] =
+        import state.{*, given}
+        forkZIO:
+            ZIO.attempt(blockingStub.oneToMany(request)).orDie
+    end zioBench
 
 end GrpcServerOneToManyBench
 
 object GrpcServerOneToManyBench:
 
-    val message: String             = "Hello"
-    val request: Request            = Request(message)
-    val replies: Iterator[Response] = Iterator(Response(message))
+    val message: String  = "Hello"
+    val request: Request = Request(message)
+    // TODO: Add more.
+    val replies: Iterator[Response]  = Iterator(Response(message))
 
 end GrpcServerOneToManyBench

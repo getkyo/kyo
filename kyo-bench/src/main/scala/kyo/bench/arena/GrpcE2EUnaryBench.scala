@@ -23,7 +23,7 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
 
     override def catsBench() =
         import cats.effect.*
-        createCatsServer(port).use: _ =>
+        createCatsServer(port, static = false).use: _ =>
             createCatsClient(port).use: client =>
                 client.oneToOne(request, Metadata())
     end catsBench
@@ -31,7 +31,7 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
     override def kyoBenchFiber() =
         Resource.run:
             for
-                _      <- createKyoServer(port)
+                _      <- createKyoServer(port, static = false)
                 client <- createKyoClient(port)
             yield client.oneToOne(request)
 
@@ -39,7 +39,7 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
         ZIO.scoped:
             val run =
                 for
-                    _      <- createZioServer(port)
+                    _      <- createZioServer(port, static = false)
                     client <- createZioClient(port)
                     reply  <- client.oneToOne(request)
                 yield reply
