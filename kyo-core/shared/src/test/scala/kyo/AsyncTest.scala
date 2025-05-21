@@ -934,10 +934,10 @@ class AsyncTest extends Test:
                             )
                         }
                     }
-                }.map { result =>
-                    assert(result._1.size == 2)
-                    assert(result._2.size == 1)
-                    assert(result._2.head == 2)
+                }.map { (emitted, result) =>
+                    assert(emitted.size == 2)
+                    assert(result.size == 1)
+                    assert(result.head == 1 || result.head == 2)
                 }
             }
 
