@@ -4,6 +4,10 @@ import java.util.concurrent.CompletionStage
 import kyo.*
 
 trait AsyncPlatformSpecific:
+
+    def fromFuture[A](cs: CompletionStage[A])(using Frame): A < Async =
+        fromCompletionStage(cs)
+
     def fromCompletionStage[A](cs: CompletionStage[A])(using Frame): A < Async =
         IO.Unsafe {
             val p = Promise.Unsafe.init[Nothing, A]()
