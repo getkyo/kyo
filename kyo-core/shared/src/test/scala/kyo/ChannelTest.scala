@@ -337,6 +337,15 @@ class ChannelTest extends Test:
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
         }
+        "race with close" in run {
+            verifyRaceDrainWithClose(2, _.drain, _.close)
+        }
+        "race with closeAwaitEmpty" in run {
+            verifyRaceDrainWithClose(2, _.drain, _.closeAwaitEmpty)
+        }
+        "race with close and zero capacity" in run {
+            verifyRaceDrainWithClose(2, _.drain, _.close)
+        }
     }
     "drainUpTo" - {
         "zero or negative" in run {
@@ -407,6 +416,15 @@ class ChannelTest extends Test:
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
+        }
+        "race with close" in run {
+            verifyRaceDrainWithClose(2, _.drainUpTo(2), _.close)
+        }
+        "race with closeAwaitEmpty" in run {
+            verifyRaceDrainWithClose(2, _.drainUpTo(2), _.closeAwaitEmpty)
+        }
+        "race with close and zero capacity" in run {
+            verifyRaceDrainWithClose(0, _.drainUpTo(Int.MaxValue), _.close)
         }
     }
     "close" - {
@@ -923,5 +941,231 @@ class ChannelTest extends Test:
             end for
         }
     }
+
+    "closeAwaitEmpty" - {
+        "returns true when channel is already empty" in run {
+            for
+                c      <- Channel.init[Int](10)
+                result <- c.closeAwaitEmpty
+            yield assert(result)
+        }
+
+        "returns true when channel becomes empty after closing" in run {
+            for
+                c       <- Channel.init[Int](10)
+                _       <- c.put(1)
+                _       <- c.put(2)
+                fiber   <- Async.run(c.closeAwaitEmpty)
+                closed1 <- c.closed
+                _       <- c.take
+                closed2 <- c.closed
+                _       <- c.take
+                result  <- fiber.get
+                closed3 <- c.closed
+            yield assert(result && !closed1 && !closed2 && closed3)
+        }
+
+        "returns false if channel is already closed" in run {
+            for
+                c      <- Channel.init[Int](10)
+                _      <- c.close
+                result <- c.closeAwaitEmpty
+            yield assert(!result)
+        }
+
+        "concurrent taking and waiting" in run {
+            for
+                c      <- Channel.init[Int](10)
+                _      <- Kyo.foreach(1 to 5)(i => c.put(i))
+                fiber  <- Async.run(c.closeAwaitEmpty)
+                _      <- Async.foreach(1 to 5)(_ => c.take)
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "zero capacity channel" in run {
+            for
+                c      <- Channel.init[Int](0)
+                result <- c.closeAwaitEmpty
+            yield assert(result)
+        }
+
+        "should discard new takes" in run {
+            for
+                c      <- Channel.init[Int](2)
+                _      <- c.put(1)
+                _      <- c.put(2)
+                fiber  <- Async.run(c.closeAwaitEmpty)
+                _      <- c.take
+                _      <- c.take
+                take   <- Abort.run(c.take)
+                result <- fiber.get
+            yield assert(result && take.isFailure)
+        }
+
+        "concurrent closeAwaitEmpty calls" in run {
+            for
+                c      <- Channel.init[Int](10)
+                _      <- c.put(1)
+                _      <- c.put(2)
+                fiber  <- Async.run(Async.fill(10)(c.closeAwaitEmpty))
+                _      <- c.take
+                _      <- c.take
+                closes <- fiber.get
+            yield assert(closes.count(identity) == 1)
+        }
+
+        "race between closeAwaitEmpty and close" in run {
+            (for
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                _       <- Kyo.foreach(1 to (size min 5))(i => channel.put(i))
+                latch   <- Latch.init(1)
+                closeAwaitEmptyFiber <- Async.run(
+                    latch.await.andThen(channel.closeAwaitEmpty)
+                )
+                closeFiber <- Async.run(
+                    latch.await.andThen(channel.close)
+                )
+                _        <- latch.release
+                _        <- Abort.run(channel.drain)
+                result1  <- closeAwaitEmptyFiber.get
+                result2  <- closeFiber.get
+                isClosed <- channel.closed
+            yield
+                assert(isClosed)
+                assert((result1 && result2.isEmpty) || (!result1 && result2.isDefined))
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+
+        "two producers calling closeAwaitEmpty" in run {
+            (for
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+
+                producerFiber1 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(1 to 25, 10)(i => Abort.run(channel.put(i)))
+                            .andThen(channel.closeAwaitEmpty)
+                    )
+                )
+                producerFiber2 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(26 to 50, 10)(i => Abort.run(channel.put(i)))
+                            .andThen(channel.closeAwaitEmpty)
+                    )
+                )
+
+                consumerFiber <- Async.run(
+                    latch.await.andThen(
+                        Async.fill(100, 10)(Abort.run(channel.take))
+                    )
+                )
+
+                _        <- latch.release
+                result1  <- producerFiber1.get
+                result2  <- producerFiber2.get
+                isClosed <- channel.closed
+
+                consumerResults <- consumerFiber.get
+            yield
+                assert(isClosed)
+                assert((!result1 && result2) || (result1 && !result2))
+                assert(consumerResults.count(_.isSuccess) <= 50)
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+
+        "producer calling closeAwaitEmpty and another calling close" in run {
+            (for
+                size    <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+
+                producerFiber1 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(1 to 25, 10)(i => Abort.run(channel.put(i)))
+                            .andThen(channel.closeAwaitEmpty)
+                    )
+                )
+                producerFiber2 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(26 to 50, 10)(i => Abort.run(channel.put(i)))
+                            .andThen(channel.close)
+                    )
+                )
+
+                consumerFiber <- Async.run(
+                    latch.await.andThen(
+                        Async.fill(100, 10)(Abort.run(channel.take))
+                    )
+                )
+
+                _               <- latch.release
+                result1         <- producerFiber1.get
+                result2         <- producerFiber2.get
+                isClosed        <- channel.closed
+                consumerResults <- consumerFiber.get
+            yield
+                assert(isClosed)
+                assert((result1 && result2.isEmpty) || (!result1 && result2.isDefined))
+                assert(consumerResults.count(_.isSuccess) <= 50)
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+    }
+
+    private def verifyRaceDrainWithClose(
+        capacity: Int,
+        drain: Channel[Int] => Any < (Abort[Closed] & IO),
+        close: Channel[Int] => (Any < Async)
+    ) =
+        for
+            c0  <- Channel.init[Int](capacity)
+            ref <- AtomicRef.init(c0)
+            // Create a fiber that repeatedly puts and item and then checks to see if the channel
+            // has been drained. If it has then it closes the channel and creates a new one.
+            producer <- Async.run {
+                Loop(()) { _ =>
+                    for
+                        c     <- ref.get
+                        _     <- c.put(1)
+                        empty <- c.empty
+                        _     <-
+                            // If it is empty then it could be that the consumer is in the middle of
+                            // draining. Attempt to close the channel right before the consumer
+                            // checks for more items.
+                            if empty then
+                                for
+                                    c2 <- Channel.init[Int](capacity)
+                                    _  <- ref.set(c2)
+                                    _  <- close(c)
+                                yield ()
+                            else Kyo.unit
+                            end if
+                    yield Loop.continue(())
+                }
+            }
+            // Create a fiber that repeatedly drains the channel if it is not closed or empty.
+            // If it is closed or empty (and is about to be closed) then repeat until the consumer
+            // creates a new channel.
+            result <- Abort.run {
+                Async.fill(100_000, concurrency = 1) {
+                    for
+                        c             <- ref.get
+                        closedOrEmpty <- Abort.recover[Closed](_ => true)(c.empty)
+                        _             <- if closedOrEmpty then Kyo.unit else drain(c)
+                    yield ()
+                }
+            }
+            _ <- producer.interrupt
+        yield assert(result.isSuccess)
+        end for
+    end verifyRaceDrainWithClose
 
 end ChannelTest
