@@ -3219,7 +3219,7 @@ val a: Unit < Routes =
     }
 ```
 
-For further examples, Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/examples/ledger) provides practical applications of these concepts.
+For further examples, refer to TechEmpower's benchmark [subproject](https://github.com/TechEmpower/FrameworkBenchmarks/tree/master/frameworks/Scala/kyo-tapir) for a simple runnable demonstration, and  Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/examples/ledger) for practical applications of these concepts.
 
 ### ZIOs: Integration with ZIO
 
