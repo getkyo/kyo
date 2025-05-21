@@ -38,7 +38,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         try
             val next: A < (Ctx & Async & Abort[E]) =
                 Isolate.restoring(trace, this) {
-                    ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
+                    ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], Tag[Async.Yield], curr, context)(
                         stop =
                             shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline),
                         [C] =>
@@ -64,7 +64,9 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                                 Scheduler.get.schedule(this)
                                             }
                                             nullResult
-                            }
+                            },
+                        [C] =>
+                            (_, cont) => IO(cont(()))
                     )
                 }
             if !isNull(next) then

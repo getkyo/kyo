@@ -1416,4 +1416,62 @@ class AsyncTest extends Test:
         }
     }
 
+    "yield" - {
+        "should yield" in run {
+            def computation(
+                name: String,
+                cur: Int < IO,
+                nextpred: Int => Boolean,
+                endPred: Int => Boolean,
+                next: Unit < IO
+            ) =
+                def loop: Unit < Async =
+                    for
+                        current <- cur
+                        _ <- if endPred(current) then
+                            Kyo.unit
+                        else if nextpred(current) then
+                            next.andThen(Async.yieldNow).andThen(loop)
+                        else
+                            Async.yieldNow.andThen(loop)
+                    yield ()
+                    end for
+                end loop
+                loop
+            end computation
+
+            for
+                counter <- AtomicInt.init(0)
+                list    <- AtomicRef.init[List[Int]](Nil)
+                _ <- Async.race(
+                    computation(
+                        "even",
+                        counter.get,
+                        _ % 2 == 0,
+                        _ >= 10,
+                        for
+                            cur <- counter.get
+                            _   <- list.getAndUpdate(cur :: _)
+                            _   <- counter.getAndIncrement
+                        yield ()
+                    ) ::
+                        computation(
+                            "odd",
+                            counter.get,
+                            _ % 2 == 1,
+                            _ >= 10,
+                            for
+                                cur <- counter.get
+                                _   <- list.getAndUpdate(cur :: _)
+                                _   <- counter.getAndIncrement
+                            yield ()
+                        ) ::
+                        Nil
+                )
+                result <- list.get
+            yield assert(result.reverse == List(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+            end for
+        }
+    }
+
 end AsyncTest

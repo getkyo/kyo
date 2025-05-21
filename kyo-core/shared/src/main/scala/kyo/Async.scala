@@ -38,7 +38,7 @@ import scala.util.control.NonFatal
   * @see
   *   [[Async.foreach]], [[Async.collect]], and their variants for concurrent collection processing with bounded concurrency
   */
-opaque type Async <: (IO & Async.Join) = Async.Join & IO
+opaque type Async <: (IO & Async.Join & Async.Yield) = Async.Join & Async.Yield & IO
 
 object Async:
 
@@ -772,10 +772,14 @@ object Async:
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
 
+    sealed trait Yield extends ArrowEffect[Const[Unit], Const[Unit]]
+
     private[kyo] def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
         ArrowEffect.suspend[A](Tag[Join], v)
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
         ArrowEffect.suspendWith[A](Tag[Join], v)(f)
+
+    def yieldNow(using Frame): Unit < Async = ArrowEffect.suspend[Unit](Tag[Yield], ())
 
 end Async
