@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Tag
+import kyo.debug.Debug
 import kyo.kernel.*
 
 /** Represents non-deterministic computations with multiple possible outcomes.
@@ -14,7 +15,7 @@ import kyo.kernel.*
   *
   * The primary operations include introducing choice points with `get`, evaluating functions across alternatives with `eval`, and pruning
   * invalid paths with `drop`. Computations using Choice can be collected with `run`, which gathers all successful outcomes into a single
-  * sequence.
+  * sequence, or streamed with `runStream`, which produces results incrementally as a stream.
   *
   * @see
   *   [[kyo.Choice.get]] for introducing choice points from sequences
@@ -24,6 +25,8 @@ import kyo.kernel.*
   *   [[kyo.Choice.drop]] for terminating unsuccessful computation branches
   * @see
   *   [[kyo.Choice.run]] for collecting all possible outcomes
+  * @see
+  *   [[kyo.Choice.runStream]] for streaming possible outcomes incrementally
   */
 sealed trait Choice extends ArrowEffect[Seq, Id]
 
@@ -36,7 +39,7 @@ object Choice:
       * @return
       *   A computation that represents the selection of values from the sequence
       */
-    inline def get[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
+    inline def eval[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
         ArrowEffect.suspend[A](Tag[Choice], seq)
 
     /** Evaluates a function for each value in a sequence, introducing multiple computation paths.
@@ -48,7 +51,7 @@ object Choice:
       * @return
       *   A computation that represents multiple paths, one for each input value
       */
-    inline def eval[A, B, S](seq: Seq[A])(inline f: A => B < S)(using inline frame: Frame): B < (Choice & S) =
+    inline def evalWith[A, B, S](seq: Seq[A])(inline f: A => B < S)(using inline frame: Frame): B < (Choice & S) =
         seq match
             case Seq(head) => f(head)
             case seq       => ArrowEffect.suspendWith[A](Tag[Choice], seq)(f)
@@ -85,5 +88,35 @@ object Choice:
                 (input, cont) =>
                     Kyo.foreach(input)(v => Choice.run(cont(v))).map(_.flattenChunk.flattenChunk)
         }
+
+    /** Handles the Choice effect by streaming all possible outcomes incrementally.
+      *
+      * Unlike `run` which collects all outcomes at once, `runStream` produces results incrementally as a stream, which can be more
+      * efficient for computations with many possible outcomes or when you want to process results as they become available.
+      *
+      * @param v
+      *   The computation with Choice effect to handle
+      * @return
+      *   A stream that produces the possible outcomes incrementally
+      */
+    def runStream[A, S](v: A < (Choice & S))(using Frame, Tag[Emit[Chunk[A]]]): Stream[A, S] =
+        Stream {
+            Loop(Chunk(v)) { curr =>
+                val (done, pending) = curr.partition(_.evalNow.isDefined)
+                Emit
+                    .valueWhen(done.nonEmpty)(done.asInstanceOf[Chunk[A]])
+                    .andThen {
+                        if pending.isEmpty then Loop.done
+                        else
+                            Kyo.foreach(pending) { v =>
+                                ArrowEffect.handleFirst(Tag[Choice], v)(
+                                    handle = [C] => (input, cont) => Chunk.from(input).map(cont),
+                                    done = r => Chunk(r: A < (Choice & S))
+                                )
+                            }.map(r => Loop.continue(r.flattenChunk))
+                    }
+            }
+        }
+    end runStream
 
 end Choice

@@ -623,7 +623,7 @@ val b: Int < Abort[Nothing] =
 
 ### Env: Dependency Injection
 
-`Env` is similar to ZIO's environment feature but offers more granular control. Unlike ZIO, which has built-in layering for dependencies, `Env` allows you to inject individual services directly. However, it lacks ZIO's structured dependency management; you manage and initialize your services yourself.
+`Env` is similar to ZIO's environment feature but offers more granular control. Unlike ZIO, which has built-in layering for dependencies, `Env` allows you to inject individual services directly. Env can be combined with Layers for automated dependency injection.
 
 ```scala
 import kyo.*
@@ -973,7 +973,7 @@ import kyo.*
 // Note how 'get' takes a 'Seq[T]'
 // and returns a 'T < Choice'
 val a: Int < Choice =
-    Choice.get(Seq(1, 2, 3, 4))
+    Choice.eval(Seq(1, 2, 3, 4))
 
 // 'dropIf' discards the current element if
 // a condition is not met. Produces a 'Seq(1, 2)'
@@ -3263,7 +3263,7 @@ val a: Unit < Routes =
     }
 ```
 
-For further examples, Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/examples/ledger) provides practical applications of these concepts.
+For further examples, refer to TechEmpower's benchmark [subproject](https://github.com/TechEmpower/FrameworkBenchmarks/tree/master/frameworks/Scala/kyo-tapir) for a simple runnable demonstration, and  Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/examples/ledger) for practical applications of these concepts.
 
 ### ZIOs: Integration with ZIO
 

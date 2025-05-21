@@ -187,9 +187,9 @@ class TChunkTest extends Test:
     "concurrency" - {
         val repeats = 100
 
-        "concurrent modifications" in run {
+        "concurrent modifications" in runNotJS {
             (for
-                size     <- Choice.get(Seq(1, 10, 100))
+                size     <- Choice.eval(Seq(1, 10, 100))
                 chunk    <- TChunk.init[Int]()
                 _        <- Async.foreach(1 to size, size)(i => STM.run(chunk.append(i)))
                 snapshot <- STM.run(chunk.snapshot)
@@ -201,9 +201,9 @@ class TChunkTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent filtering" in run {
+        "concurrent filtering" in runNotJS {
             (for
-                size  <- Choice.get(Seq(1, 10, 100))
+                size  <- Choice.eval(Seq(1, 10, 100))
                 chunk <- TChunk.init[Int]()
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
@@ -220,9 +220,9 @@ class TChunkTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent slice operations" in run {
+        "concurrent slice operations" in runNotJS {
             (for
-                size  <- Choice.get(Seq(1, 10, 100))
+                size  <- Choice.eval(Seq(1, 10, 100))
                 chunk <- TChunk.init[Int]()
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))
@@ -244,9 +244,9 @@ class TChunkTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent compaction" in run {
+        "concurrent compaction" in runNotJS {
             (for
-                size  <- Choice.get(Seq(1, 10, 100))
+                size  <- Choice.eval(Seq(1, 10, 100))
                 chunk <- TChunk.init[Int]()
                 _ <- STM.run {
                     Kyo.foreachDiscard((1 to size))(i => chunk.append(i))

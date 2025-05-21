@@ -69,7 +69,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that emits a value
       */
 
-    def emit[A](value: A)(using Tag[A], Frame): Unit < Emit[A] =
+    def emit[A](value: A)(using Tag[Emit[A]], Frame): Unit < Emit[A] =
         Emit.value(value)
 
     /** Creates an effect that fails with Abort[E].
@@ -188,7 +188,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that attempts to run the given effect and handles the sequence to Choice.
       */
     def fromSeq[A](sequence: Seq[A])(using Frame): A < Choice =
-        Choice.get(sequence)
+        Choice.eval(sequence)
 
     /** Creates an effect from a Try[A] and handles the Try to Abort[Throwable].
       *

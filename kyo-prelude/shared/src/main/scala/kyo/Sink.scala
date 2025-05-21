@@ -221,7 +221,7 @@ object Sink:
       * @return
       *   A sink that runs a stream without producing a value
       */
-    def discard[V](using Tag[V], Frame): Sink[V, Unit, Any] =
+    def discard[V](using Tag[Poll[Chunk[V]]], Frame): Sink[V, Unit, Any] =
         Sink:
             Loop.foreach:
                 Poll.andMap[Chunk[V]]:
@@ -234,7 +234,7 @@ object Sink:
       * @return
       *   A sink that produces a chunk of all elements emitted by the source stream
       */
-    def collect[V](using Tag[V], Frame): Sink[V, Chunk[V], Any] =
+    def collect[V](using Tag[Poll[Chunk[V]]], Frame): Sink[V, Chunk[V], Any] =
         Sink:
             Loop(Chunk.empty[V]): currentChunk =>
                 Poll.andMap[Chunk[V]]:
@@ -248,7 +248,7 @@ object Sink:
       * @return
       *   A sink that produces the count of all elements emitted by source stream
       */
-    def count[V](using Tag[V], Frame): Sink[V, Int, Any] =
+    def count[V](using Tag[Poll[Chunk[V]]], Frame): Sink[V, Int, Any] =
         Sink:
             Loop(0): count =>
                 Poll.andMap[Chunk[V]]:
@@ -264,7 +264,7 @@ object Sink:
       * @return
       *   A sink that applies an effectful function to each element of the source stream
       */
-    def foreach[V, S](f: V => Unit < S)(using Tag[V], Frame): Sink[V, Unit, S] =
+    def foreach[V, S](f: V => Unit < S)(using Tag[Poll[Chunk[V]]], Frame): Sink[V, Unit, S] =
         Sink:
             Loop.foreach:
                 Poll.andMap[Chunk[V]]:
@@ -280,7 +280,7 @@ object Sink:
       * @return
       *   A sink that applies an effectful function to each chunk of the source stream
       */
-    def foreachChunk[V, S](f: Chunk[V] => Unit < S)(using Tag[V], Frame): Sink[V, Unit, S] =
+    def foreachChunk[V, S](f: Chunk[V] => Unit < S)(using Tag[Poll[Chunk[V]]], Frame): Sink[V, Unit, S] =
         Sink:
             Loop.foreach:
                 Poll.andMap[Chunk[V]]:
@@ -301,7 +301,7 @@ object Sink:
       */
     def fold[A, V](acc: A)(f: (A, V) => A)(using
         t1: Tag[Emit[Chunk[V]]],
-        t2: Tag[V],
+        t2: Tag[Poll[Chunk[V]]],
         frame: Frame
     ): Sink[V, A, Any] =
         Sink:
@@ -324,7 +324,7 @@ object Sink:
       */
     def foldKyo[A, V, S](acc: A)(f: (A, V) => A < S)(using
         t1: Tag[Emit[Chunk[V]]],
-        t2: Tag[V],
+        t2: Tag[Poll[Chunk[V]]],
         frame: Frame
     ): Sink[V, A, S] =
         Sink:
@@ -338,19 +338,19 @@ object Sink:
 
     /** Combine two sinks, processing source stream in tandem.
       */
-    def zip[V, A, B, S](a: Sink[V, A, S], b: Sink[V, B, S])(using Tag[V], Frame): Sink[V, (A, B), S] =
+    def zip[V, A, B, S](a: Sink[V, A, S], b: Sink[V, B, S])(using Tag[Poll[Chunk[V]]], Frame): Sink[V, (A, B), S] =
         a.zip(b)
 
     /** Combine three sinks, processing source stream in tandem.
       */
-    def zip[V, A, B, C, S](a: Sink[V, A, S], b: Sink[V, B, S], c: Sink[V, C, S])(using Tag[V], Frame): Sink[V, (A, B, C), S] =
+    def zip[V, A, B, C, S](a: Sink[V, A, S], b: Sink[V, B, S], c: Sink[V, C, S])(using Tag[Poll[Chunk[V]]], Frame): Sink[V, (A, B, C), S] =
         a.zip(zip(b, c)).map:
             case (a, tail) => a *: tail
 
     /** Combine four sinks, processing source stream in tandem.
       */
     def zip[V, A, B, C, D, S](a: Sink[V, A, S], b: Sink[V, B, S], c: Sink[V, C, S], d: Sink[V, D, S])(using
-        Tag[V],
+        Tag[Poll[Chunk[V]]],
         Frame
     ): Sink[V, (A, B, C, D), S] =
         a.zip(zip(b, c, d)).map:
@@ -359,7 +359,7 @@ object Sink:
     /** Combine five sinks, processing source stream in tandem.
       */
     def zip[V, A, B, C, D, E, S](a: Sink[V, A, S], b: Sink[V, B, S], c: Sink[V, C, S], d: Sink[V, D, S], e: Sink[V, E, S])(using
-        Tag[V],
+        Tag[Poll[Chunk[V]]],
         Frame
     ): Sink[V, (A, B, C, D, E), S] =
         a.zip(zip(b, c, d, e)).map:
@@ -375,7 +375,7 @@ object Sink:
         e: Sink[V, E, S],
         f: Sink[V, F, S]
     )(using
-        Tag[V],
+        Tag[Poll[Chunk[V]]],
         Frame
     ): Sink[V, (A, B, C, D, E, F), S] =
         a.zip(zip(b, c, d, e, f)).map:
@@ -392,7 +392,7 @@ object Sink:
         f: Sink[V, F, S],
         g: Sink[V, G, S]
     )(using
-        Tag[V],
+        Tag[Poll[Chunk[V]]],
         Frame
     ): Sink[V, (A, B, C, D, E, F, G), S] =
         a.zip(zip(b, c, d, e, f, g)).map:
@@ -410,7 +410,7 @@ object Sink:
         g: Sink[V, G, S],
         h: Sink[V, H, S]
     )(using
-        Tag[V],
+        Tag[Poll[Chunk[V]]],
         Frame
     ): Sink[V, (A, B, C, D, E, F, G, H), S] =
         a.zip(zip(b, c, d, e, f, g, h)).map:
@@ -429,7 +429,7 @@ object Sink:
         h: Sink[V, H, S],
         i: Sink[V, I, S]
     )(using
-        Tag[V],
+        Tag[Poll[Chunk[V]]],
         Frame
     ): Sink[V, (A, B, C, D, E, F, G, H, I), S] =
         a.zip(zip(b, c, d, e, f, g, h, i)).map:
@@ -449,7 +449,7 @@ object Sink:
         i: Sink[V, I, S],
         j: Sink[V, J, S]
     )(using
-        Tag[V],
+        Tag[Poll[Chunk[V]]],
         Frame
     ): Sink[V, (A, B, C, D, E, F, G, H, I, J), S] =
         a.zip(zip(b, c, d, e, f, g, h, i, j)).map:

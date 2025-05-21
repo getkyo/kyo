@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Result.Panic
 import kyo.Tag
+import kyo.internal.AsyncPlatformSpecific
 import kyo.kernel.*
 import kyo.scheduler.*
 import scala.annotation.tailrec
@@ -40,9 +41,7 @@ import scala.util.control.NonFatal
   */
 opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
-object Async:
-
-    sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
+object Async extends AsyncPlatformSpecific:
 
     /** Default concurrency level for collection operations.
       *
@@ -772,8 +771,10 @@ object Async:
         reduce(x)
     end use
 
+    sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
+
     private[kyo] def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
-        ArrowEffect.suspend[A](Tag[Join], v).asInstanceOf[Result[E, A] < Async]
+        ArrowEffect.suspend[A](Tag[Join], v)
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
         ArrowEffect.suspendWith[A](Tag[Join], v)(f)
