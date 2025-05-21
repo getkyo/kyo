@@ -325,23 +325,23 @@ object Channel:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe[A] extends Serializable:
         def capacity: Int
-        def size()(using AllowUnsafe): Result[Closed, Int]
+        def size()(using AllowUnsafe, Frame): Result[Closed, Int]
 
-        def offer(value: A)(using AllowUnsafe): Result[Closed, Boolean]
-        def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]]
-        def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
+        def offer(value: A)(using AllowUnsafe, Frame): Result[Closed, Boolean]
+        def offerAll(values: Seq[A])(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
+        def poll()(using AllowUnsafe, Frame): Result[Closed, Maybe[A]]
 
-        def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
-        def putBatchFiber(values: Seq[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
-        def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A]
+        def putFiber(value: A)(using AllowUnsafe, Frame): Fiber.Unsafe[Closed, Unit]
+        def putBatchFiber(values: Seq[A])(using AllowUnsafe, Frame): Fiber.Unsafe[Closed, Unit]
+        def takeFiber()(using AllowUnsafe, Frame): Fiber.Unsafe[Closed, A]
 
-        def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
-        def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]]
+        def drain()(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
+        def drainUpTo(max: Int)(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
         def closeAwaitEmpty()(using Frame, AllowUnsafe): Fiber.Unsafe[Nothing, Boolean]
 
-        def empty()(using AllowUnsafe): Result[Closed, Boolean]
-        def full()(using AllowUnsafe): Result[Closed, Boolean]
+        def empty()(using AllowUnsafe, Frame): Result[Closed, Boolean]
+        def full()(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def closed()(using AllowUnsafe): Boolean
 
         def safe: Channel[A] = this
@@ -353,7 +353,7 @@ object Channel:
             capacity: Int,
             access: Access = Access.MultiProducerMultiConsumer
         )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
-            if capacity <= 0 then ZeroCapacityUnsafe[A]
+            if capacity <= 0 then ZeroCapacityUnsafe[A](initFrame)
             else NonZeroCapacityUnsafe(capacity, access)
 
         private[Unsafe] enum Put[A]:
@@ -366,9 +366,9 @@ object Channel:
             val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A]](8)
             val puts  = new MpmcUnboundedXaddArrayQueue[Put[A]](8)
 
-            protected def flush(): Unit
+            protected def flush()(using Frame): Unit
 
-            final def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
+            final def putFiber(value: A)(using AllowUnsafe, Frame): Fiber.Unsafe[Closed, Unit] =
                 val promise = Promise.Unsafe.init[Closed, Unit]()
                 val put     = Put.Value(value, promise)
                 puts.add(put)
@@ -376,7 +376,7 @@ object Channel:
                 promise
             end putFiber
 
-            final def putBatchFiber(values: Seq[A])(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
+            final def putBatchFiber(values: Seq[A])(using AllowUnsafe, Frame): Fiber.Unsafe[Closed, Unit] =
                 val promise = Promise.Unsafe.init[Closed, Unit]()
                 val put     = Put.Batch(Chunk.from(values), promise)
                 puts.add(put)
@@ -384,7 +384,7 @@ object Channel:
                 promise
             end putBatchFiber
 
-            final def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A] =
+            final def takeFiber()(using AllowUnsafe, Frame): Fiber.Unsafe[Closed, A] =
                 val promise = Promise.Unsafe.init[Closed, A]()
                 takes.add(promise)
                 flush()
@@ -392,10 +392,10 @@ object Channel:
             end takeFiber
         end BaseUnsafe
 
-        final class ZeroCapacityUnsafe[A](using initFrame: Frame, allow: AllowUnsafe) extends BaseUnsafe[A]:
+        final class ZeroCapacityUnsafe[A](val initFrame: Frame)(using allow: AllowUnsafe) extends BaseUnsafe[A]:
             val isClosed = AtomicBoolean.Unsafe.init(false)
 
-            private val closedResult = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
+            private def closedResult(using Frame) = Result.fail(Closed("Channel", initFrame, "zero-capacity"))
 
             /** Succeeds with the value if the channel is still open, otherwise fails with a [[Closed]] error.
               *
@@ -404,7 +404,7 @@ object Channel:
               * @return
               *   The successful value or a [[Closed]] error
               */
-            private def succeedIfOpen[B](value: B): Result[Closed, B] =
+            private def succeedIfOpen[B](value: B)(using Frame): Result[Closed, B] =
                 if isClosed.get() then closedResult else Result.succeed(value)
 
             /** Succeeds with the value if it is non-empty or the channel is still open, otherwise fails with a [[Closed]] error.
@@ -419,14 +419,14 @@ object Channel:
               * @return
               *   The successful value or a [[Closed]] error
               */
-            private def succeedIfNonEmptyOrOpen[B](value: Chunk[B]): Result[Closed, Chunk[B]] =
+            private def succeedIfNonEmptyOrOpen[B](value: Chunk[B])(using Frame): Result[Closed, Chunk[B]] =
                 if value.nonEmpty then Result.succeed(value) else succeedIfOpen(value)
 
             def capacity = 0
 
-            def size()(using AllowUnsafe) = succeedIfOpen(0)
+            def size()(using AllowUnsafe, Frame) = succeedIfOpen(0)
 
-            def offer(value: A)(using AllowUnsafe) =
+            def offer(value: A)(using AllowUnsafe, Frame) =
                 Maybe(takes.poll()) match
                     case Absent =>
                         succeedIfOpen(false)
@@ -434,7 +434,7 @@ object Channel:
                         if takePromise.complete(Result.succeed(value)) then succeedIfOpen(true)
                         else offer(value)
 
-            def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]] =
+            def offerAll(values: Seq[A])(using AllowUnsafe, Frame): Result[Closed, Chunk[A]] =
                 @tailrec def loop(currentChunk: Chunk[A]): Result[Closed, Chunk[A]] =
                     currentChunk.headMaybe match
                         case Absent =>
@@ -452,7 +452,7 @@ object Channel:
                 loop(Chunk.from(values))
             end offerAll
 
-            def poll()(using AllowUnsafe) =
+            def poll()(using AllowUnsafe, Frame) =
                 succeedIfOpen {
                     Maybe(puts.poll()) match
                         case Absent =>
@@ -475,7 +475,7 @@ object Channel:
                 }
             end poll
 
-            def drainUpTo(max: Int)(using AllowUnsafe) =
+            def drainUpTo(max: Int)(using AllowUnsafe, Frame) =
                 @tailrec
                 def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                     if i <= 0 then Result.Success(current)
@@ -505,7 +505,7 @@ object Channel:
                 loop(Chunk.empty, max)
             end drainUpTo
 
-            def drain()(using AllowUnsafe) =
+            def drain()(using AllowUnsafe, Frame) =
                 @tailrec
                 def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
                     Maybe(puts.poll()) match
@@ -533,11 +533,11 @@ object Channel:
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
                 Fiber.Unsafe.init(Result.succeed(close().isDefined))
 
-            def empty()(using AllowUnsafe)  = succeedIfOpen(true)
-            def full()(using AllowUnsafe)   = succeedIfOpen(true)
-            def closed()(using AllowUnsafe) = isClosed.get()
+            def empty()(using AllowUnsafe, Frame) = succeedIfOpen(true)
+            def full()(using AllowUnsafe, Frame)  = succeedIfOpen(true)
+            def closed()(using AllowUnsafe)       = isClosed.get()
 
-            @tailrec protected def flush(): Unit =
+            @tailrec protected def flush()(using Frame): Unit =
                 // This method ensures that all values are processed
                 // and handles interrupted fibers by discarding them.
 
@@ -600,15 +600,15 @@ object Channel:
         )(using initFrame: Frame, allow: AllowUnsafe) extends BaseUnsafe[A]:
             val queue = Queue.Unsafe.init[A](capacity, access)
 
-            def size()(using AllowUnsafe) = queue.size()
+            def size()(using AllowUnsafe, Frame) = queue.size()
 
-            def offer(value: A)(using AllowUnsafe) =
+            def offer(value: A)(using AllowUnsafe, Frame) =
                 val result = queue.offer(value)
                 if result.contains(true) then flush()
                 result
             end offer
 
-            def offerAll(values: Seq[A])(using AllowUnsafe): Result[Closed, Chunk[A]] =
+            def offerAll(values: Seq[A])(using AllowUnsafe, Frame): Result[Closed, Chunk[A]] =
                 @tailrec
                 def loop(current: Chunk[A], offered: Boolean = false): Result[Closed, Chunk[A]] =
                     if current.isEmpty then
@@ -629,13 +629,13 @@ object Channel:
                 loop(Chunk.from(values))
             end offerAll
 
-            def poll()(using AllowUnsafe) =
+            def poll()(using AllowUnsafe, Frame) =
                 val result = queue.poll()
                 if result.exists(_.nonEmpty) then flush()
                 result
             end poll
 
-            def drainUpTo(max: Int)(using AllowUnsafe) =
+            def drainUpTo(max: Int)(using AllowUnsafe, Frame) =
                 @tailrec
                 def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                     if i == 0 then Result.Success(current)
@@ -656,7 +656,7 @@ object Channel:
                 loop(Chunk.empty, max)
             end drainUpTo
 
-            def drain()(using AllowUnsafe) =
+            def drain()(using AllowUnsafe, Frame) =
                 @tailrec
                 def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
                     val next = queue.drain()
@@ -674,23 +674,23 @@ object Channel:
                 loop(Chunk.empty)
             end drain
 
-            def close()(using frame: Frame, allow: AllowUnsafe) =
+            def close()(using Frame, AllowUnsafe) =
                 queue.close().map { backlog =>
                     flush()
                     backlog
                 }
 
-            def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe) =
+            def closeAwaitEmpty()(using Frame, AllowUnsafe) =
                 val r = queue.closeAwaitEmpty()
                 r.onComplete(_ => flush())
                 r
             end closeAwaitEmpty
 
-            def empty()(using AllowUnsafe)  = queue.empty()
-            def full()(using AllowUnsafe)   = queue.full()
-            def closed()(using AllowUnsafe) = queue.closed()
+            def empty()(using AllowUnsafe, Frame) = queue.empty()
+            def full()(using AllowUnsafe, Frame)  = queue.full()
+            def closed()(using AllowUnsafe)       = queue.closed()
 
-            @tailrec protected def flush(): Unit =
+            @tailrec protected def flush()(using Frame): Unit =
                 // This method ensures that all values are processed
                 // and handles interrupted fibers by discarding them.
                 val queueClosed = queue.closed()
