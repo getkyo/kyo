@@ -1026,7 +1026,7 @@ class ChannelTest extends Test:
                     latch.await.andThen(channel.close)
                 )
                 _        <- latch.release
-                _        <- channel.drain
+                _        <- Abort.run(channel.drain)
                 result1  <- closeAwaitEmptyFiber.get
                 result2  <- closeFiber.get
                 isClosed <- channel.closed
