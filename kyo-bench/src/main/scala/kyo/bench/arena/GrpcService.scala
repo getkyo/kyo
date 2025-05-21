@@ -21,7 +21,7 @@ object GrpcService:
     given Frame = Frame.internal
 
     val host = "localhost"
-    val size = 100_000
+    val size = 10
 
     def createCatsServer(port: Int, static: Boolean): cats.effect.Resource[cats.effect.IO, Server] =
         val service = if static then StaticCatsTestService(size) else CatsTestService(size)
