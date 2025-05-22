@@ -226,6 +226,14 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
             assert(d.eval == Seq(1, 2))
         }
+        "partition" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = defer:
+                val (pTrue, _) = xsValues.partition(i => f(i).now)
+                pTrue.toSeq
+
+            assert(d.eval == Seq(1, 2))
+        }
 
         // partition
         // partitionMap

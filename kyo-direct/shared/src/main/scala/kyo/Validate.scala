@@ -56,7 +56,8 @@ private[kyo] object Validate:
                     "scanLeft",
                     "scanRight",
                     "span",
-                    "takeWhile"
+                    "takeWhile",
+                    "partition"
                 ).contains(methodName)
 
             validType && validName
