@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.BaseKyoCoreTest
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
+import scala.util.Try
 
 class ShiftHygieneTest extends Test:
     "invalid nested" in {
@@ -261,5 +262,39 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
             assert(d.eval == Seq(1, 2))
         }
+    }
+
+    "Try" - {
+        val x: Try[Int < Any] = Try(1)
+        val y: Try[Int]       = Try(1)
+        val z: Try[Int]       = Try(throw new Exception("z"))
+
+        given [X]: CanEqual[Try[X], Try[X]] = CanEqual.derived
+
+        "filter" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = defer:
+                y.filter(i => f(i).now)
+
+            assert(d.eval == Try(1))
+        }
+
+        "orElse" in {
+            val default: Try[Int] < Any = Try(2)
+
+            val d = defer:
+                z.orElse(default.now)
+
+            assert(d.eval == Try(2))
+        }
+
+        "getOrElse" in {
+            val default: Int < Any = 2
+            val d = defer:
+                z.getOrElse(default.now)
+
+            assert(d.eval == 2)
+        }
+
     }
 end ShiftMethodSupportTest

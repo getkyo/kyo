@@ -23,13 +23,16 @@ private[kyo] object Validate:
         def pure(tree: Tree): Boolean =
             !Trees.exists(tree) {
                 case Apply(TypeApply(Ident("now"), _), _) => true
-                // case _ => false
             }
         end pure
 
         def validAsyncShift(select: Select): Boolean =
             val Select(qualifier, methodName) = select
-            inline def validType              = qualifier.tpe <:< TypeRepr.of[Iterable[?]] | qualifier.tpe <:< TypeRepr.of[Option[?]]
+            inline def validType =
+                qualifier.tpe <:< TypeRepr.of[Iterable[?]] |
+                    qualifier.tpe <:< TypeRepr.of[Option[?]] |
+                    qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]]
+
             inline def validName =
                 Set(
                     "collectFirst",
@@ -60,7 +63,11 @@ private[kyo] object Validate:
                     "partition",
                     "partitionMap",
                     "tapEach",
-                    "withFilter"
+                    "withFilter",
+                    "orElse",
+                    "getOrElse",
+                    "recover",
+                    "recoverWith"
                 ).contains(methodName)
 
             validType && validName

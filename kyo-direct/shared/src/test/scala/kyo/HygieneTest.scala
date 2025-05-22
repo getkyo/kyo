@@ -242,5 +242,14 @@ class HygieneTest extends Test:
                f
              }""")("Method definitions containing .now are not supported inside `defer` blocks.")
     }
+    "asyncShift explicit .later" in {
+        typeCheckFailure(
+            """
+              val default:Int < Any = 2
+              val value = scala.util.Try(1)
+              defer(value.getOrElse(default))
+             """
+        )("Effectful computations must explicitly use either .now or .later in a defer block.")
+    }
 
 end HygieneTest
