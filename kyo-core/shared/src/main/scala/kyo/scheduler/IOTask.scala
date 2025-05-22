@@ -24,10 +24,10 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def onComplete() =
         doPreempt()
 
-    final override def addFinalizer(f: () => Unit) =
+    final override def addFinalizer(f: Maybe[Throwable] => Unit) =
         finalizers = finalizers.add(f)
 
-    final override def removeFinalizer(f: () => Unit) =
+    final override def removeFinalizer(f: Maybe[Throwable] => Unit) =
         finalizers = finalizers.remove(f)
 
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
@@ -88,8 +88,9 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         val safepoint = Safepoint.get
         val next      = eval(startMillis, clock, deadline)(using safepoint)
         if !isPending() then
-            finalizers.run()
-            finalizers = Finalizers.empty
+            if !finalizers.isEmpty then
+                finalizers.run(pollError())
+                finalizers = Finalizers.empty
             if trace ne null then
                 safepoint.releaseTrace(trace)
                 trace = null.asInstanceOf[Trace]
