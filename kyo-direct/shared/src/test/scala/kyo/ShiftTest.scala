@@ -234,11 +234,32 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
             assert(d.eval == Seq(1, 2))
         }
+        "partitionMap" in {
+            def f(i: Int): Either[String, Int] < Any = if i < 3 then
+                Left(i.toString)
+            else Right(i)
 
-        // partition
-        // partitionMap
-        // tapEach
-        // withFilter
+            val d = defer:
+                val (pLeft, pRight) = xsValues.partitionMap(i => f(i).now)
+                pLeft.toSeq
 
+            assert(d.eval == Seq("1", "2"))
+        }
+        "tapEach" in {
+            def f(i: Int): Unit < Emit[Int] = Emit.value(i)
+
+            val d: Seq[Int] < Emit[Int] = defer:
+                xsValues.tapEach(i => f(i).now).toSeq
+
+            val (es, res) = Emit.run(d).eval
+            assert(es == res)
+        }
+        "withFilter" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = defer:
+                xsValues.withFilter(i => f(i).now).map(x => x).toSeq
+
+            assert(d.eval == Seq(1, 2))
+        }
     }
 end ShiftMethodSupportTest
