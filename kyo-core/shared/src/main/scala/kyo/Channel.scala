@@ -173,22 +173,6 @@ object Channel:
                                 else Loop.continue(chunk2, size2)
                         end if
 
-        /** Creates a fiber that puts an element into the channel.
-          *
-          * @param value
-          *   The element to put
-          * @return
-          *   A fiber that completes when the element is put into the channel
-          */
-        def putFiber(value: A)(using Frame): Fiber[Closed, Unit] < IO = IO.Unsafe(self.putFiber(value).safe)
-
-        /** Creates a fiber that takes an element from the channel.
-          *
-          * @return
-          *   A fiber that completes with the taken element
-          */
-        def takeFiber(using Frame): Fiber[Closed, A] < IO = IO.Unsafe(self.takeFiber().safe)
-
         /** Drains all elements from the channel.
           *
           * @return
