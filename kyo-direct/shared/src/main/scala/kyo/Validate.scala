@@ -185,7 +185,7 @@ private[kyo] object Validate:
                        """.stripMargin
                 )
 
-            case tree @ ValDef(name, _, _) if tree.symbol.flags.is(Flags.Lazy) =>
+            case tree @ ValDef(_, _, _) if tree.symbol.flags.is(Flags.Lazy) =>
                 fail(
                     tree,
                     s"""${"`lazy val`".yellow} and ${"`object`".yellow} declarations are not allowed inside a ${"`defer`".yellow} block.
