@@ -10,15 +10,6 @@ private[kyo] object Validate:
     def apply(expr: Expr[Any])(using Quotes): Unit =
         import quotes.reflect.*
 
-        val s                   = expr.show
-        val forceDebug: Boolean = false && s.contains("collect") && s.contains("xs")
-
-        if forceDebug then
-            println("-" * 10)
-            println(s)
-            println(expr.asTerm)
-        end if
-
         def fail(tree: Tree, msg: String): Unit =
             report.error(msg, tree.pos)
 
@@ -83,17 +74,6 @@ private[kyo] object Validate:
 
             validType && validName
         end validAsyncShift
-
-        extension (inline e: Expr[Any] | Tree)
-            transparent inline def safeShow: String =
-                inline e match
-                    case expr: Expr[Any] => expr.asTerm.safeShow
-                    case tree: Tree =>
-                        if tree.symbol.exists && (tree.symbol.maybeOwner ne Symbol.noSymbol) then
-                            tree.show
-                        else
-                            s"<unnamed:${tree.getClass.getSimpleName.stripSuffix("$")}>"
-        end extension
 
         def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
             qualifiers match
