@@ -2,6 +2,8 @@ package kyo
 
 import kyo.Ansi.*
 import scala.annotation.tailrec
+import scala.collection.ArrayOps
+import scala.collection.MapOps
 import scala.quoted.*
 
 private[kyo] object Validate:
@@ -31,7 +33,16 @@ private[kyo] object Validate:
             inline def validType =
                 qualifier.tpe <:< TypeRepr.of[Iterable[?]] |
                     qualifier.tpe <:< TypeRepr.of[Option[?]] |
-                    qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]]
+                    qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
+                    qualifier.tpe <:< TypeRepr.of[MapOps[?, ?, ?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[ArrayOps[?]] |
+                    qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]]
+
+                // ?? WithFilter
+                // ?? PartialFunction[?, ?]
+                // ?? Function1[?, ?] (andThen / compose)
+                // ?? Using
 
             inline def validName =
                 Set(
