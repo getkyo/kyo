@@ -427,8 +427,6 @@ object `<`:
                 |Please remove the type constraint on Left Hand Side.
                 |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
         )
-
-        '{ ??? }
     end liftUnitImpl
 
     /** Converts a pure single-argument function to an effectful computation. */
