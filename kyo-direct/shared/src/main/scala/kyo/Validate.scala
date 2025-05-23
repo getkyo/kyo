@@ -7,7 +7,7 @@ import scala.collection.MapOps
 import scala.quoted.*
 
 private[kyo] object Validate:
-    def apply(expr: Expr[Any])(using Quotes): Unit =
+    def apply(expr: Expr[Any])(using quotes: Quotes): Unit =
         import quotes.reflect.*
 
         def fail(tree: Tree, msg: String): Unit =
