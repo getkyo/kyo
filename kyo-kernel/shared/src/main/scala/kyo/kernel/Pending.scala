@@ -419,7 +419,7 @@ object `<`:
 
     implicit inline def liftUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ liftUnitImpl[S1, S2]('v) }
 
-    def liftUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
+    private def liftUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
         import quotes.reflect.*
         val source = TypeRepr.of[S1].show
         report.errorAndAbort(
