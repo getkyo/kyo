@@ -234,6 +234,6 @@ class HygieneTest extends Test:
                  val x: Unit < Emit[Int] = defer(default.now)
                  
                """.stripMargin
-        )("Cannot lift `Unit < kyo.Abort[scala.Predef.String]` to the required type (`Unit < ?`)")
+        )("Cannot lift `Unit < kyo.Abort[scala.Predef.String]` to the expected type (`Unit < ?`).")
     }
 end HygieneTest
