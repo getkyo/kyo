@@ -422,7 +422,7 @@ object `<`:
     def liftUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
         import quotes.reflect.*
         val source = TypeRepr.of[S1].show
-        report.error(
+        report.errorAndAbort(
             s"""Cannot lift `Unit < $source` to the required type (`Unit < ?`).
                 |Please remove the type constraint on Left Hand Side.
                 |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
