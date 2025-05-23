@@ -35,42 +35,21 @@ private[kyo] object Validate:
                 // ?? Function1[?, ?] (andThen / compose)
                 // ?? Using
 
-            inline def validName =
-                Set(
-                    "collectFirst",
-                    "collect",
-                    "dropWhile",
-                    "map",
-                    "flatMap",
-                    "filter",
-                    "filterNot",
-                    "flatten",
-                    "groupBy",
-                    "groupMap",
-                    "fold",
-                    "groupMapReduce",
-                    "count",
-                    "foldRight",
-                    "foldLeft",
-                    "forall",
-                    "foreach",
-                    "exists",
-                    "corresponds",
-                    "find",
-                    "maxByOption",
-                    "scanLeft",
-                    "scanRight",
-                    "span",
-                    "takeWhile",
-                    "partition",
-                    "partitionMap",
-                    "tapEach",
-                    "withFilter",
-                    "orElse",
-                    "getOrElse",
-                    "recover",
-                    "recoverWith"
-                ).contains(methodName)
+            inline def validName: Boolean = methodName match
+                case "map" | "flatMap" | "flatten" | "collect" => true
+                case "collectFirst" | "find"                   => true
+                case "filter" | "filterNot" | "withFilter"     => true
+                case "dropWhile" | "takeWhile"                 => true
+                case "partition" | "partitionMap" | "span"     => true
+                case "fold" | "foldLeft" | "foldRight"         => true
+                case "groupBy" | "groupMap" | "groupMapReduce" => true
+                case "exists" | "forall" | "count"             => true
+                case "maxByOption" | "corresponds"             => true
+                case "foreach" | "tapEach"                     => true
+                case "orElse" | "getOrElse"                    => true
+                case "recover" | "recoverWith"                 => true
+                case "scanLeft" | "scanRight"                  => true
+                case _                                         => false
 
             validType && validName
         end validAsyncShift
