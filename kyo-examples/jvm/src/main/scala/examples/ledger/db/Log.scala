@@ -39,7 +39,7 @@ object Log:
         ): Unit < IO =
             q.add(Entry(balance, account, amount, desc))
 
-        private[Log] def flushLoop(interval: Duration): Unit < Async = defer {
+        private[Log] def flushLoop(interval: Duration): Unit < (Async & Abort[Closed]) = defer {
             Async.sleep(interval).now
             val entries = q.drain.now
             append(entries).now
