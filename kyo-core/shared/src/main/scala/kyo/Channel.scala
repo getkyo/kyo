@@ -74,6 +74,28 @@ object Channel:
           */
         def size(using Frame): Int < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.size()))
 
+        /** Returns the number of fibers currently waiting to put values into the channel.
+          *
+          * This method provides visibility into the backpressure state of the channel by counting how many producer fibers are currently
+          * suspended waiting for space to become available. A non-zero value indicates that producers are being throttled due to the
+          * channel being full.
+          *
+          * @return
+          *   The number of fibers waiting to put values into the channel
+          */
+        def pendingPuts(using Frame): Int < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.pendingPuts()))
+
+        /** Returns the number of fibers currently waiting to take values from the channel.
+          *
+          * This method provides visibility into the consumer demand state of the channel by counting how many consumer fibers are currently
+          * suspended waiting for values to become available. A non-zero value indicates that consumers are waiting for producers to add
+          * values.
+          *
+          * @return
+          *   The number of fibers waiting to take values from the channel
+          */
+        def pendingTakes(using Frame): Int < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.pendingTakes()))
+
         /** Attempts to offer an element to the channel without blocking.
           *
           * @param value
@@ -310,6 +332,8 @@ object Channel:
     sealed abstract class Unsafe[A] extends Serializable:
         def capacity: Int
         def size()(using AllowUnsafe, Frame): Result[Closed, Int]
+        def pendingPuts()(using AllowUnsafe, Frame): Result[Closed, Int]
+        def pendingTakes()(using AllowUnsafe, Frame): Result[Closed, Int]
 
         def offer(value: A)(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def offerAll(values: Seq[A])(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
@@ -409,6 +433,9 @@ object Channel:
             def capacity = 0
 
             def size()(using AllowUnsafe, Frame) = succeedIfOpen(0)
+
+            def pendingPuts()(using AllowUnsafe, Frame)  = succeedIfOpen(puts.size())
+            def pendingTakes()(using AllowUnsafe, Frame) = succeedIfOpen(takes.size())
 
             def offer(value: A)(using AllowUnsafe, Frame) =
                 Maybe(takes.poll()) match
@@ -585,6 +612,9 @@ object Channel:
             val queue = Queue.Unsafe.init[A](capacity, access)
 
             def size()(using AllowUnsafe, Frame) = queue.size()
+
+            def pendingPuts()(using AllowUnsafe, Frame)  = queue.size().map(_ => puts.size())
+            def pendingTakes()(using AllowUnsafe, Frame) = queue.size().map(_ => (takes.size()))
 
             def offer(value: A)(using AllowUnsafe, Frame) =
                 val result = queue.offer(value)
