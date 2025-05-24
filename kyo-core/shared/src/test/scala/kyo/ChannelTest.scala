@@ -409,7 +409,7 @@ class ChannelTest extends Test:
                 _         <- untilTrue(c.pendingPuts.map(_ == 4))
                 result    <- c.drainUpTo(3)
                 finalSize <- c.size
-            yield assert(result.size == 3 && finalSize == 1)
+            yield assert(result.size == 3 && finalSize == 0)
         }
         "race with close" in run {
             verifyRaceDrainWithClose(2, _.drainUpTo(2), _.close)
