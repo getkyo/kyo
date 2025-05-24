@@ -747,9 +747,9 @@ lazy val `kyo-bench` =
             codeGenClasspath          := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
             Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value,
             Test / testForkedParallel := true,
-            // Forks each test suite individually.
+            // Forks each test suite individually
             Test / testGrouping := {
-                val javaOptionsValue = javaOptions.value.toVector :+ "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5006"
+                val javaOptionsValue = javaOptions.value.toVector
                 val envsVarsValue    = envVars.value
                 (Test / definedTests).value map { test =>
                     Tests.Group(
