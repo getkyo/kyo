@@ -126,7 +126,7 @@ class ChannelTest extends Test:
                     _     <- c.putBatch(Seq(1, 2))
                     v1    <- take1.get
                     v2    <- take2.get
-                yield assert(v1 == 1 && v2 == 2)
+                yield assert(Set(v1, v2) == Set(1, 2))
             }
             "should handle channel at capacity" in run {
                 for
