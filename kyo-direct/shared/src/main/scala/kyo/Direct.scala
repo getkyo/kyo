@@ -151,11 +151,11 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                     args0
                 ),
                 args1
-            ) if t.tpe <:< TypeRepr.of[Maybe[Any]] =>
+            ) if t.tpe.typeSymbol.flags.is(Flags.Opaque) =>
 
             val newVal: Symbol = Symbol.newVal(
                 Symbol.spliceOwner,
-                freshName("genKyoOpaque"),
+                freshName("opaqueAlias"),
                 t.tpe,
                 Flags.Private,
                 Symbol.noSymbol
