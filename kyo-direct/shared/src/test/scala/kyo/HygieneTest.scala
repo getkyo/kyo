@@ -254,4 +254,13 @@ class HygieneTest extends Test:
         )("Effectful computations must explicitly use either .now or .later in a defer block.")
     }
 
+    "defer drop" in {
+        typeCheckFailure(
+            """
+                 val default: Unit < Abort[String] = ()
+                 val x: Unit < Emit[Int] = defer(default.now)
+                 
+               """.stripMargin
+        )("Cannot lift `Unit < kyo.Abort[scala.Predef.String]` to the expected type (`Unit < ?`).")
+    }
 end HygieneTest
