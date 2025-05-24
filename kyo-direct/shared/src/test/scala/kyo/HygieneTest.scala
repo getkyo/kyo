@@ -234,6 +234,7 @@ class HygieneTest extends Test:
     "nested nested var" in {
         typeCheckFailure("""defer {{val y = 1;{var x = 1; IO(x)}}.now}""")("`var` declarations are not allowed inside a `defer` block.")
     }
+
     "nested now in def" in {
         typeCheckFailure("""
              defer {
@@ -242,6 +243,7 @@ class HygieneTest extends Test:
                f
              }""")("Method definitions containing .now are not supported inside `defer` blocks.")
     }
+
     "asyncShift explicit .later" in {
         typeCheckFailure(
             """

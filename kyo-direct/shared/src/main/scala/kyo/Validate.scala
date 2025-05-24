@@ -3,7 +3,9 @@ package kyo
 import kyo.Ansi.*
 import scala.annotation.tailrec
 import scala.collection.ArrayOps
+import scala.collection.IterableOps
 import scala.collection.MapOps
+import scala.collection.WithFilter
 import scala.quoted.*
 
 private[kyo] object Validate:
@@ -23,17 +25,14 @@ private[kyo] object Validate:
             val Select(qualifier, methodName) = select
             inline def validType =
                 qualifier.tpe <:< TypeRepr.of[Iterable[?]] |
+                    qualifier.tpe <:< TypeRepr.of[IterableOps[?, ?, ?]] |
                     qualifier.tpe <:< TypeRepr.of[Option[?]] |
                     qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
                     qualifier.tpe <:< TypeRepr.of[MapOps[?, ?, ?, ?]] |
                     qualifier.tpe <:< TypeRepr.of[ArrayOps[?]] |
                     qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]]
-
-                // ?? WithFilter
-                // ?? PartialFunction[?, ?]
-                // ?? Function1[?, ?] (andThen / compose)
-                // ?? Using
+                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[WithFilter[?, ?]]
 
             inline def validName: Boolean = methodName match
                 case "map" | "flatMap" | "flatten" | "collect" => true

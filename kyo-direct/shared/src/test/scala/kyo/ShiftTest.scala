@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.BaseKyoCoreTest
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
+import scala.collection.IterableOps
 import scala.util.Try
 
 class ShiftHygieneTest extends Test:
@@ -295,6 +296,5 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
             assert(d.eval == 2)
         }
-
     }
 end ShiftMethodSupportTest
