@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.Result.Error
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.internal.Safepoint
@@ -56,13 +57,31 @@ object IO:
       *   Implicit frame for the computation.
       * @tparam A
       *   The result type of the main computation.
+      */
+    inline def ensure[A, S](inline f: => Any < IO)(v: A < S)(using inline frame: Frame): A < (IO & S) =
+        ensure(_ => f)(v)
+
+    /** Ensures that a finalizer is run after the computation, regardless of success or failure.
+      *
+      * This version provides the finalizer with information about whether the computation completed successfully or failed with an
+      * exception. The finalizer receives a `Maybe[Error[Any]]` which will be `Absent` if the computation succeeded, or `Present` if it
+      * failed.
+      *
+      * @param f
+      *   The finalizer function that receives information about potential errors and performs cleanup actions.
+      * @param v
+      *   The computation.
+      * @param frame
+      *   Implicit frame for the computation.
+      * @tparam A
+      *   The result type of the computation.
       * @tparam S
       *   Additional effects in the computation.
       * @return
-      *   The result of the main computation, with the finalizer guaranteed to run.
+      *   The result of the computation, with the finalizer guaranteed to run.
       */
-    def ensure[A, S](f: => Any < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
-        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f.unit))(v))
+    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < IO)(v: A < S)(using inline frame: Frame): A < (IO & S) =
+        Unsafe(Safepoint.ensure(ex => IO.Unsafe.evalOrThrow(f(ex)))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *
