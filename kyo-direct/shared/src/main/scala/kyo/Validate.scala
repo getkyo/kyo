@@ -1,10 +1,51 @@
 package kyo
 
 import kyo.Ansi.*
+import scala.annotation.tailrec
+import scala.collection.ArrayOps
+import scala.collection.IterableOps
+import scala.collection.MapOps
+import scala.collection.WithFilter
 import scala.quoted.*
 
+private val validMethodNamesForAsyncShift = Set(
+    "map",
+    "flatMap",
+    "flatten",
+    "collect",
+    "collectFirst",
+    "find",
+    "filter",
+    "filterNot",
+    "withFilter",
+    "dropWhile",
+    "takeWhile",
+    "partition",
+    "partitionMap",
+    "span",
+    "fold",
+    "foldLeft",
+    "foldRight",
+    "groupBy",
+    "groupMap",
+    "groupMapReduce",
+    "exists",
+    "forall",
+    "count",
+    "maxByOption",
+    "corresponds",
+    "foreach",
+    "tapEach",
+    "orElse",
+    "getOrElse",
+    "recover",
+    "recoverWith",
+    "scanLeft",
+    "scanRight"
+)
+
 private[kyo] object Validate:
-    def apply(expr: Expr[Any])(using Quotes): Unit =
+    def apply(expr: Expr[Any])(using quotes: Quotes): Unit =
         import quotes.reflect.*
 
         def fail(tree: Tree, msg: String): Unit =
@@ -13,11 +54,63 @@ private[kyo] object Validate:
         def pure(tree: Tree): Boolean =
             !Trees.exists(tree) {
                 case Apply(TypeApply(Ident("now"), _), _) => true
-                case _                                    => false
             }
+        end pure
 
-        Trees.traverse(expr.asTerm) {
+        def validAsyncShift(select: Select): Boolean =
+            val Select(qualifier, methodName) = select
+            inline def validType =
+                qualifier.tpe <:< TypeRepr.of[Iterable[?]] |
+                    qualifier.tpe <:< TypeRepr.of[IterableOps[?, ?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[Option[?]] |
+                    qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
+                    qualifier.tpe <:< TypeRepr.of[MapOps[?, ?, ?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[ArrayOps[?]] |
+                    qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[WithFilter[?, ?]]
+
+            inline def validName: Boolean = validMethodNamesForAsyncShift.contains(methodName)
+
+            validType && validName
+        end validAsyncShift
+
+        def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
+            qualifiers match
+                case List(Block(List(DefDef(_, _, _, Some(body))), _)) =>
+                    body match
+                        case Match(_, cases) =>
+                            cases.foreach:
+                                case CaseDef(_, _, body) => Trees.Step.goto(body)
+                        case _ => Trees.Step.goto(body)
+
+                case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
+
+        Trees.traverseGoto(expr.asTerm) {
+            case Apply(Apply(TypeApply(select: Select, _), argGroup0), argGroup1) if validAsyncShift(select) =>
+                Trees.Step.goto(select.qualifier)
+                asyncShiftDive(argGroup0)
+                asyncShiftDive(argGroup1)
+
+            case Apply(select: Select, argGroup0) if validAsyncShift(select) =>
+                Trees.Step.goto(select.qualifier)
+                asyncShiftDive(argGroup0)
+
+            case Apply(TypeApply(select: Select, _), argGroup0) if validAsyncShift(select) =>
+                Trees.Step.goto(select.qualifier)
+                asyncShiftDive(argGroup0)
+
             case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
+                @tailrec
+                def dive(qual: Tree): Unit =
+                    qual match
+                        case Block(quals, last) =>
+                            quals.foreach(Trees.Step.goto)
+                            dive(last)
+                        case _ =>
+
+                dive(qual)
+
                 Trees.traverse(qual) {
                     case tree @ Apply(TypeApply(Ident("now" | "later"), _), _) =>
                         fail(
@@ -81,7 +174,7 @@ private[kyo] object Validate:
                        |""".stripMargin
                 )
 
-            case tree @ ValDef(_, _, _) if tree.show.startsWith("var ") =>
+            case tree @ ValDef(_, _, _) if tree.symbol.flags.is(Flags.Mutable) =>
                 fail(
                     tree,
                     s"""${"`var`".yellow} declarations are not allowed inside a ${"`defer`".yellow} block.
@@ -94,7 +187,7 @@ private[kyo] object Validate:
                        """.stripMargin
                 )
 
-            case tree @ ValDef(_, _, _) if tree.show.startsWith("lazy val ") =>
+            case tree @ ValDef(_, _, _) if tree.symbol.flags.is(Flags.Lazy) =>
                 fail(
                     tree,
                     s"""${"`lazy val`".yellow} and ${"`object`".yellow} declarations are not allowed inside a ${"`defer`".yellow} block.

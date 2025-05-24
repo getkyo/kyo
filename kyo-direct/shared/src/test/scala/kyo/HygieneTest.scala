@@ -199,7 +199,7 @@ class HygieneTest extends Test:
             f(10)
           }
         """)(
-            "async lambda can't be result of expression"
+            "Method definitions containing .now are not supported inside `defer` blocks."
         )
     }
 
@@ -225,6 +225,33 @@ class HygieneTest extends Test:
         """)(
             "`synchronized` blocks are not allowed inside a `defer` block."
         )
+    }
+
+    "nested var" in {
+        typeCheckFailure("""defer {{var x = 1; IO(x)}.now}""")("`var` declarations are not allowed inside a `defer` block.")
+    }
+
+    "nested nested var" in {
+        typeCheckFailure("""defer {{val y = 1;{var x = 1; IO(x)}}.now}""")("`var` declarations are not allowed inside a `defer` block.")
+    }
+
+    "nested now in def" in {
+        typeCheckFailure("""
+             defer {
+               val i = IO(1).later
+               def f =  i.now > 0
+               f
+             }""")("Method definitions containing .now are not supported inside `defer` blocks.")
+    }
+
+    "asyncShift explicit .later" in {
+        typeCheckFailure(
+            """
+              val default:Int < Any = 2
+              val value = scala.util.Try(1)
+              defer(value.getOrElse(default))
+             """
+        )("Effectful computations must explicitly use either .now or .later in a defer block.")
     }
 
     "defer drop" in {
