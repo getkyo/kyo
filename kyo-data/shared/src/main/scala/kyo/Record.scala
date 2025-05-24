@@ -92,6 +92,26 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
     ): Value =
         toMap(Field(name, tag)).asInstanceOf[Value]
 
+    /** Retrieves a value from the Record by field name for any field name (even it's not a valid identifier).
+      *
+      * @param name
+      *   The field name to look up
+      */
+    def getField[Name <: String & Singleton, Value](using
+        @implicitNotFound("""
+        Invalid field access: ${Name}
+
+        Record[${Fields}]
+
+        Possible causes:
+          1. The field does not exist in this Record
+          2. The field exists but has a different type than expected
+        """)
+        ev: Fields <:< Name ~ Value,
+        tag: Tag[Value],
+        name: ValueOf[Name]
+    ): Value = toMap(Field(name.value, tag)).asInstanceOf[Value]
+
     /** Combines this Record with another Record.
       *
       * @param other
@@ -101,17 +121,6 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
       */
     def &[A](other: Record[A]): Record[Fields & A] =
         Record(toMap ++ other.toMap)
-
-    /** Returns the set of fields in this Record.
-      *
-      * @return
-      *   A Set of Field instances
-      */
-    def fields: Set[Field[?, ?]] = toMap.keySet
-
-    /** Returns the number of fields in this Record.
-      */
-    def size: Int = toMap.size
 end Record
 
 export Record.`~`
@@ -120,6 +129,19 @@ object Record:
     /** Creates an empty Record
       */
     val empty: Record[Any] = Record[Any](Map())
+
+    /** Returns the set of fields in this Record.
+      *
+      * @return
+      *   A Set of Field instances
+      */
+    def fieldsOf[Fields](record: Record[Fields]): Set[Field[?, ?]] =
+        record.toMap.keySet
+
+    /** Returns the number of fields in this Record.
+      */
+    def sizeOf[Fields](record: Record[Fields]): Int =
+        record.toMap.size
 
     private def unsafeFrom[Fields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
 
