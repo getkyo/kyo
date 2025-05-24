@@ -312,27 +312,29 @@ class ChannelTest extends Test:
             yield assert(r == Seq(1, 2))
         }
         "should consider pending puts" in run {
-            import AllowUnsafe.embrace.danger
             for
                 c         <- Channel.init[Int](2)
-                _         <- Async.run(c.put(1))
-                _         <- Async.run(c.put(2))
-                _         <- Async.run(c.put(3))
+                l         <- Latch.init(3)
+                _         <- Async.run(l.release.andThen(c.put(1)))
+                _         <- Async.run(l.release.andThen(c.put(2)))
+                _         <- Async.run(l.release.andThen(c.put(3)))
+                _         <- l.await
                 result    <- c.drain
                 finalSize <- c.size
-            yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            yield assert(result.sorted == Chunk(1, 2, 3) && finalSize == 0)
             end for
         }
         "should consider pending puts - zero capacity" in run {
-            import AllowUnsafe.embrace.danger
             for
                 c      <- Channel.init[Int](0)
-                _      <- Async.run(c.put(1))
-                _      <- Async.run(c.put(2))
-                _      <- Async.run(c.put(3))
+                l      <- Latch.init(3)
+                _      <- Async.run(l.release.andThen(c.put(1)))
+                _      <- Async.run(l.release.andThen(c.put(2)))
+                _      <- Async.run(l.release.andThen(c.put(3)))
+                _      <- l.await
                 result <- c.drain
                 _      <- untilTrue(c.size.map(_ == 0))
-            yield assert(result == Chunk(1, 2, 3))
+            yield assert(result.sorted == Chunk(1, 2, 3))
             end for
         }
         "race with close" in run {
