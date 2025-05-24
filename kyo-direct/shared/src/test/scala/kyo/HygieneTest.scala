@@ -237,7 +237,7 @@ class HygieneTest extends Test:
         )("Cannot lift `Unit < kyo.Abort[scala.Predef.String]` to the expected type (`Unit < ?`).")
     }
 
-    "issue 993" in {
+    "opaque types issue #993" in {
         val maybe1: Maybe[Int] < IO = Maybe(1)
         val maybe0: Maybe[Int]      = Maybe(0)
         defer:
