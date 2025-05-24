@@ -8,6 +8,42 @@ import scala.collection.MapOps
 import scala.collection.WithFilter
 import scala.quoted.*
 
+private val validMethodNamesForAsyncShift = Set(
+    "map",
+    "flatMap",
+    "flatten",
+    "collect",
+    "collectFirst",
+    "find",
+    "filter",
+    "filterNot",
+    "withFilter",
+    "dropWhile",
+    "takeWhile",
+    "partition",
+    "partitionMap",
+    "span",
+    "fold",
+    "foldLeft",
+    "foldRight",
+    "groupBy",
+    "groupMap",
+    "groupMapReduce",
+    "exists",
+    "forall",
+    "count",
+    "maxByOption",
+    "corresponds",
+    "foreach",
+    "tapEach",
+    "orElse",
+    "getOrElse",
+    "recover",
+    "recoverWith",
+    "scanLeft",
+    "scanRight"
+)
+
 private[kyo] object Validate:
     def apply(expr: Expr[Any])(using quotes: Quotes): Unit =
         import quotes.reflect.*
@@ -34,21 +70,7 @@ private[kyo] object Validate:
                     qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]] |
                     qualifier.tpe <:< TypeRepr.of[WithFilter[?, ?]]
 
-            inline def validName: Boolean = methodName match
-                case "map" | "flatMap" | "flatten" | "collect" => true
-                case "collectFirst" | "find"                   => true
-                case "filter" | "filterNot" | "withFilter"     => true
-                case "dropWhile" | "takeWhile"                 => true
-                case "partition" | "partitionMap" | "span"     => true
-                case "fold" | "foldLeft" | "foldRight"         => true
-                case "groupBy" | "groupMap" | "groupMapReduce" => true
-                case "exists" | "forall" | "count"             => true
-                case "maxByOption" | "corresponds"             => true
-                case "foreach" | "tapEach"                     => true
-                case "orElse" | "getOrElse"                    => true
-                case "recover" | "recoverWith"                 => true
-                case "scanLeft" | "scanRight"                  => true
-                case _                                         => false
+            inline def validName: Boolean = validMethodNamesForAsyncShift.contains(methodName)
 
             validType && validName
         end validAsyncShift
