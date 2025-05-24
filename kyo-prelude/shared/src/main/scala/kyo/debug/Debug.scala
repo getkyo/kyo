@@ -2,6 +2,7 @@ package kyo.debug
 
 import kyo.*
 import kyo.Ansi.*
+import kyo.Result.Error
 import kyo.kernel.Effect
 import kyo.kernel.internal.Safepoint
 import scala.collection.mutable.LinkedHashMap
@@ -57,8 +58,8 @@ object Debug:
                 lastValue = Present(value)
                 true
             end enter
-            def addFinalizer(f: () => Unit): Unit    = ()
-            def removeFinalizer(f: () => Unit): Unit = ()
+            def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = ()
+            def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = ()
 
         Safepoint.propagating(interceptor) {
             Effect.catching {

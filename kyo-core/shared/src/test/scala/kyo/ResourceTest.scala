@@ -2,6 +2,8 @@ package kyo
 
 import java.io.Closeable
 import kyo.*
+import kyo.Result.Error
+import kyo.Result.Panic
 import scala.util.control.NoStackTrace
 
 class ResourceTest extends Test:
@@ -39,32 +41,6 @@ class ResourceTest extends Test:
             }
     }
 
-    "acquire + effectful tranform + close" taggedAs jvmOnly in {
-        import AllowUnsafe.embrace.danger
-        val r1 = TestResource(1)
-        val r2 = TestResource(2)
-        val r =
-            Resource.acquire(r1()).map { _ =>
-                assert(r1.closes == 0)
-                Env.get[Int]
-            }.handle(Resource.run)
-                .handle(IO.Unsafe.run)
-        assert(r1.closes == 0)
-        assert(r2.closes == 0)
-        assert(r1.acquires == 1)
-        assert(r2.acquires == 0)
-        Async.runAndBlock(timeout)(r)
-            .handle(
-                Env.run(1),
-                Abort.run,
-                IO.Unsafe.evalOrThrow
-            )
-        assert(r1.closes == 1)
-        assert(r2.closes == 0)
-        assert(r1.acquires == 1)
-        assert(r2.acquires == 0)
-    }
-
     "two acquires + close" in run {
         val r1 = TestResource(1)
         val r2 = TestResource(2)
@@ -98,36 +74,6 @@ class ResourceTest extends Test:
             }
     }
 
-    "two acquires + effectful for-comp + close" taggedAs jvmOnly in {
-        import AllowUnsafe.embrace.danger
-        val r1 = TestResource(1)
-        val r2 = TestResource(2)
-        val io =
-            for
-                r1 <- Resource.acquire(r1())
-                i1 <- Env.get[Int].map(_ * r1.id)
-                r2 <- Resource.acquire(r2())
-                i2 <- Env.get[Int].map(_ * r2.id)
-            yield i1 + i2
-        val r =
-            io.handle(Resource.run)
-                .handle(IO.Unsafe.run)
-        assert(r1.closes == 0)
-        assert(r2.closes == 0)
-        assert(r1.acquires == 1)
-        assert(r2.acquires == 0)
-        r.handle(Env.run(3))
-            .handle(
-                Async.runAndBlock(timeout),
-                Abort.run,
-                IO.Unsafe.evalOrThrow
-            )
-        assert(r1.closes == 1)
-        assert(r2.closes == 1)
-        assert(r1.acquires == 1)
-        assert(r2.acquires == 1)
-    }
-
     "nested" in run {
         val r1 = TestResource(1)
         Resource.acquire(r1())
@@ -145,7 +91,7 @@ class ResourceTest extends Test:
         Resource.run("a").map(s => assert(s == "a"))
     }
 
-    "effectful acquireRelease" taggedAs jvmOnly in run {
+    "effectful acquireRelease" in run {
         val io =
             for
                 r          <- Resource.acquireRelease(EffectfulResource(1))(_.close)
@@ -153,30 +99,28 @@ class ResourceTest extends Test:
             yield
                 assert(closeCount == 0)
                 r
-        io.handle(Resource.run)
-            .handle(
-                Async.runAndBlock(timeout),
-                Abort.run
-            ).map { finalizedResource =>
-                finalizedResource.foldError(_.closes.get.map(i => assert(i == 1)), _ => ???)
-            }
+        io.handle(
+            Resource.run,
+            Abort.run
+        ).map { finalizedResource =>
+            finalizedResource.foldError(_.closes.get.map(i => assert(i == 1)), _ => ???)
+        }
     }
 
     "integration with other effects" - {
 
-        "ensure" taggedAs jvmOnly in run {
+        "ensure" in run {
             var closes = 0
             Resource.ensure(Async.run(closes += 1).map(_.get).unit)
                 .handle(
                     Resource.run,
-                    Async.runAndBlock(timeout),
                     Abort.run
                 ).map { _ =>
                     assert(closes == 1)
                 }
         }
 
-        "acquireRelease" taggedAs jvmOnly in run {
+        "acquireRelease" in run {
             var closes = 0
             // any effects in acquire
             val acquire = Abort.get(Some(42))
@@ -189,7 +133,6 @@ class ResourceTest extends Test:
             Resource.acquireRelease(acquire)(release)
                 .handle(
                     Resource.run,
-                    Async.runAndBlock(timeout),
                     Abort.run[Timeout],
                     Abort.run[Absent]
                 ).map { _ =>
@@ -197,12 +140,11 @@ class ResourceTest extends Test:
                 }
         }
 
-        "acquire" taggedAs jvmOnly in run {
+        "acquire" in run {
             val r = TestResource(1)
             Resource.acquire(Async.run(r).map(_.get))
                 .handle(
                     Resource.run,
-                    Async.runAndBlock(timeout),
                     Abort.run
                 ).map { _ =>
                     assert(r.closes == 1)
@@ -213,10 +155,9 @@ class ResourceTest extends Test:
     "failures" - {
         case object TestException extends NoStackTrace
 
-        "acquire fails" taggedAs jvmOnly in run {
-            val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => Kyo.unit)
+        "acquire fails" in run {
+            val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => ())
             Resource.run(io)
-                .handle(Async.runAndBlock(timeout))
                 .handle(Abort.run)
                 .map {
                     case Result.Panic(t) => assert(t eq TestException)
@@ -224,7 +165,7 @@ class ResourceTest extends Test:
                 }
         }
 
-        "release fails" taggedAs jvmOnly in run {
+        "release fails" in run {
             var acquired = false
             var released = false
             val io = Resource.acquireRelease(IO { acquired = true; "resource" }) { _ =>
@@ -233,13 +174,12 @@ class ResourceTest extends Test:
                     throw TestException
                 }
             }
-            Resource.run(io)
-                .handle(
-                    Async.runAndBlock(timeout),
-                    Abort.run
-                ).map { _ =>
-                    assert(acquired && released)
-                }
+            io.handle(
+                Resource.run,
+                Abort.run
+            ).map { _ =>
+                assert(acquired && released)
+            }
         }
 
         "ensure fails" in run {
@@ -268,7 +208,7 @@ class ResourceTest extends Test:
 
     "parallel close" - {
 
-        "cleans up resources in parallel" taggedAs jvmOnly in run {
+        "cleans up resources in parallel" in run {
             Latch.init(3).map { latch =>
                 def makeResource(id: Int) =
                     Resource.acquireRelease(IO(id))(_ => latch.release)
@@ -284,7 +224,7 @@ class ResourceTest extends Test:
             }
         }
 
-        "respects parallelism limit" taggedAs jvmOnly in run {
+        "respects parallelism limit" in run {
             AtomicInt.init.map { counter =>
                 def makeResource(id: Int) =
                     Resource.acquireRelease(IO(id)) { _ =>
@@ -304,6 +244,178 @@ class ResourceTest extends Test:
                     ids   <- close.get
                 yield assert(ids == (1 to 10))
                 end for
+            }
+        }
+    }
+
+    "backpressure" - {
+
+        "computation failure" in run {
+            var finalizerCalled = false
+            val io = Resource.ensure {
+                Async.sleep(50.millis).andThen { finalizerCalled = true }
+            }.map(_ => Abort.fail("Test failure"))
+
+            io.handle(
+                Resource.run,
+                Abort.run
+            ).map { result =>
+                assert(finalizerCalled)
+                assert(result.isFailure)
+            }
+        }
+
+        "finalizer failure" in run {
+            var mainActionExecuted = false
+            var finalizerStarted   = false
+            val io = Resource.ensure {
+                finalizerStarted = true
+                Async.sleep(50.millis)
+            }.map { _ =>
+                mainActionExecuted = true
+                "success"
+            }
+
+            Resource.run(io)
+                .handle(Abort.run)
+                .map { result =>
+                    assert(finalizerStarted)
+                    assert(mainActionExecuted)
+                    assert(result.isSuccess)
+                }
+        }
+
+        "chained resources" in run {
+            var firstFinalizerCalled  = false
+            var secondFinalizerCalled = false
+
+            val io =
+                for
+                    _ <- Resource.ensure {
+                        Async.sleep(50.millis).andThen { firstFinalizerCalled = true }
+                    }
+                    _ <- Resource.ensure {
+                        Async.sleep(25.millis).andThen { secondFinalizerCalled = true }
+                    }
+                    _ <- IO(Abort.fail("Fail after acquiring resources"))
+                yield ()
+
+            Resource.run(io)
+                .handle(Abort.run)
+                .map { result =>
+                    assert(firstFinalizerCalled)
+                    assert(secondFinalizerCalled)
+                    assert(result.isFailure)
+                }
+        }
+
+        "slow finalizers" in run {
+            val r1                = TestResource(1)
+            var slowFinalizerDone = false
+
+            val io =
+                for
+                    _ <- Resource.acquire(r1())
+                    _ <- Resource.ensure {
+                        Async.sleep(50.millis).andThen { slowFinalizerDone = true }
+                    }
+                yield "success"
+
+            Resource.run(io)
+                .map { result =>
+                    assert(r1.closes == 1)
+                    assert(slowFinalizerDone)
+                    assert(result == "success")
+                }
+        }
+    }
+
+    "ensure with Maybe[Error[Any]]" - {
+        case object TestException extends NoStackTrace
+
+        "receives Absent on normal completion" in run {
+            var receivedValue: Maybe[Error[Any]] = null
+
+            Resource.ensure { t =>
+                receivedValue = t
+                ()
+            }
+                .handle(Resource.run)
+                .map { _ =>
+                    assert(receivedValue == Absent)
+                }
+        }
+
+        "receives Present with exception on failure" in run {
+            var receivedValue: Maybe[Error[Any]] = null
+            val exception                        = TestException
+
+            val io = Resource.ensure { t =>
+                receivedValue = t
+                ()
+            }.map { _ =>
+                throw exception
+            }
+
+            io.handle(
+                Resource.run,
+                Abort.run
+            ).map { result =>
+                assert(receivedValue.isDefined)
+                assert(receivedValue.get == Panic(exception))
+                assert(result.panic.exists(_ == exception))
+            }
+        }
+
+        "with nested ensures passes correct exception to each handler" in run {
+            var outerException: Maybe[Error[Any]] = null
+            var innerException: Maybe[Error[Any]] = null
+            val testException                     = TestException
+
+            val io = Resource.ensure { t =>
+                outerException = t
+                ()
+            }.map { _ =>
+                Resource.ensure { t =>
+                    innerException = t
+                    ()
+                }.map { _ =>
+                    throw testException
+                }
+            }
+
+            io.handle(
+                Resource.run,
+                Resource.run,
+                Abort.run
+            ).map { result =>
+                assert(innerException.isDefined)
+                assert(innerException.get == Panic(testException))
+                assert(outerException.isDefined)
+                assert(outerException.get == Panic(testException))
+                assert(result.panic.exists(_ == testException))
+            }
+        }
+
+        "can use exception information for recovery" in run {
+            var recoveryAction = ""
+
+            val io = Resource.ensure { t =>
+                recoveryAction = t match
+                    case Present(Error(_: IllegalArgumentException)) => "IllegalArgument"
+                    case Present(Error(_: IllegalStateException))    => "IllegalState"
+                    case Present(_)                                  => "OtherException"
+                    case Absent                                      => "NoException"
+                ()
+            }.map { _ =>
+                throw new IllegalStateException("Test exception")
+            }
+
+            io.handle(
+                Resource.run,
+                Abort.run
+            ).map { _ =>
+                assert(recoveryAction == "IllegalState")
             }
         }
     }
