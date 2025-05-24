@@ -101,7 +101,7 @@ private def laterImpl[A: Type, S: Type](self: Expr[A < S])(using Quotes): Expr[A
     )
 end laterImpl
 
-private def impl[A: Type](body: Expr[A])(using Quotes): Expr[Any] =
+private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
     import quotes.reflect.*
 
     Validate(body)

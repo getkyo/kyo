@@ -3,6 +3,8 @@ package kyo.interop.flow
 import StreamSubscriber.*
 import java.util.concurrent.Flow.*
 import kyo.*
+import kyo.Result.Error
+import kyo.Result.Panic
 import scala.annotation.tailrec
 
 final private[kyo] class StreamSubscriber[V](
@@ -15,7 +17,7 @@ final private[kyo] class StreamSubscriber[V](
     private enum UpstreamState derives CanEqual:
         case Uninitialized                                                               extends UpstreamState
         case WaitForRequest(subscription: Subscription, items: Chunk[V], remaining: Int) extends UpstreamState
-        case Finished(reason: Maybe[Throwable], leftOver: Chunk[V])                      extends UpstreamState
+        case Finished(reason: Maybe[Error[Any]], leftOver: Chunk[V])                     extends UpstreamState
     end UpstreamState
 
     private val state = AtomicRef.Unsafe.init(
@@ -75,7 +77,7 @@ final private[kyo] class StreamSubscriber[V](
             val curState = state.get()
             curState match
                 case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
-                    val nextState = UpstreamState.Finished(Maybe(throwable), items) -> Absent
+                    val nextState = UpstreamState.Finished(Maybe(Panic(throwable)), items) -> Absent
                     if state.compareAndSet(curState, nextState) then
                         maybePromise.foreach(_.completeDiscard(Result.succeed(())))
                     else
@@ -176,8 +178,8 @@ final private[kyo] class StreamSubscriber[V](
         IO(handleRequest())
     end request
 
-    private[interop] def poll(using Frame): Result[Throwable | SubscriberDone, Chunk[V]] < IO =
-        @tailrec def handlePoll(): Result[Throwable | SubscriberDone, Chunk[V]] < IO =
+    private[interop] def poll(using Frame): Result[Error[Any] | SubscriberDone, Chunk[V]] < IO =
+        @tailrec def handlePoll(): Result[Error[Any] | SubscriberDone, Chunk[V]] < IO =
             val curState = state.get()
             curState match
                 case (UpstreamState.WaitForRequest(subscription, items, remaining), Absent) =>

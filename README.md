@@ -2448,15 +2448,6 @@ val b: Unit < (Async & Abort[Closed]) =
 val c: Int < (Async & Abort[Closed]) =
     a.map(_.take)
 
-// 'putFiber' returns a `Fiber` that
-// will complete once the put completes
-val d: Fiber[Closed, Unit] < IO =
-    a.map(_.putFiber(42))
-
-// 'takeFiber' also returns a fiber
-val e: Fiber[Closed, Int] < IO =
-    a.map(_.takeFiber)
-
 // Closes the channel. If successful,
 // returns a Some with the drained
 // elements. All pending puts and takes
@@ -2483,7 +2474,7 @@ val a: Hub[Int] < (IO & Resource) =
 
 // Hub provide APIs similar to
 // channels: size, offer, isEmpty,
-// isFull, putFiber, put
+// isFull, put
 val b: Boolean < (IO & Abort[Closed] & Resource) =
     a.map(_.offer(1))
 
@@ -2503,7 +2494,7 @@ val d: Listener[Int] < (IO & Abort[Closed] & Resource) =
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
-// poll, takeFiber, take
+// poll, take
 val e: Int < (Async & Abort[Closed] & Resource) =
     d.map(_.take)
 
