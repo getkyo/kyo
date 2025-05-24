@@ -126,7 +126,7 @@ class ChannelTest extends Test:
                     _     <- c.putBatch(Seq(1, 2))
                     v1    <- take1.get
                     v2    <- take2.get
-                yield assert(v1 == 1 && v2 == 2)
+                yield assert(Set(v1, v2) == Set(1, 2))
             }
             "should handle channel at capacity" in run {
                 for
@@ -312,27 +312,29 @@ class ChannelTest extends Test:
             yield assert(r == Seq(1, 2))
         }
         "should consider pending puts" in run {
-            import AllowUnsafe.embrace.danger
             for
                 c         <- Channel.init[Int](2)
-                _         <- Async.run(c.put(1))
-                _         <- Async.run(c.put(2))
-                _         <- Async.run(c.put(3))
+                l         <- Latch.init(3)
+                _         <- Async.run(l.release.andThen(c.put(1)))
+                _         <- Async.run(l.release.andThen(c.put(2)))
+                _         <- Async.run(l.release.andThen(c.put(3)))
+                _         <- l.await
                 result    <- c.drain
                 finalSize <- c.size
-            yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            yield assert(result.sorted == Chunk(1, 2, 3) && finalSize == 0)
             end for
         }
         "should consider pending puts - zero capacity" in run {
-            import AllowUnsafe.embrace.danger
             for
                 c      <- Channel.init[Int](0)
-                _      <- Async.run(c.put(1))
-                _      <- Async.run(c.put(2))
-                _      <- Async.run(c.put(3))
+                l      <- Latch.init(3)
+                _      <- Async.run(l.release.andThen(c.put(1)))
+                _      <- Async.run(l.release.andThen(c.put(2)))
+                _      <- Async.run(l.release.andThen(c.put(3)))
+                _      <- l.await
                 result <- c.drain
                 _      <- untilTrue(c.size.map(_ == 0))
-            yield assert(result == Chunk(1, 2, 3))
+            yield assert(result.sorted == Chunk(1, 2, 3))
             end for
         }
         "race with close" in run {
