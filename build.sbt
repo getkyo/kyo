@@ -747,7 +747,7 @@ lazy val `kyo-bench` =
             codeGenClasspath          := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
             Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value,
             Test / testForkedParallel := true,
-            // Forks each test suite individually
+            // Forks each test suite individually.
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector :+ "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5006"
                 val envsVarsValue    = envVars.value
@@ -769,9 +769,6 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            //Jmh / javaOptions += "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005",
-            Jmh / javaOptions += "-Dio.grpc.netty.shaded.io.netty.leakDetection.level=PARANOID",
-            Jmh / javaOptions += "-Dio.grpc.netty.shaded.io.netty.leakDetection.targetRecords=1000",
             libraryDependencies += "dev.zio"              %% "izumi-reflect"        % "3.0.2",
             libraryDependencies += "org.typelevel"        %% "cats-effect"          % catsVersion,
             libraryDependencies += "org.typelevel"        %% "log4cats-core"        % "2.7.0",

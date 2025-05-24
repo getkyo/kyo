@@ -16,36 +16,39 @@ import zio.ZIO
 import java.util.concurrent.{TimeUnit, TimeoutException}
 import scala.compiletime.uninitialized
 
-class GrpcServerOneToManyBench extends ArenaBench2(replies):
+class GrpcServerOneToManyBench extends ArenaBench2(10):
 
     @Benchmark
-    def catsBench(warmup: CatsForkWarmup, state: CatsState): Iterator[Response] =
+    def catsBench(warmup: CatsForkWarmup, state: CatsState): Int =
         import state.{*, given}
         forkCats:
-            cats.effect.IO(blockingStub.oneToMany(request))
+            cats.effect.IO(consume(blockingStub.oneToMany(request)))
     end catsBench
 
     @Benchmark
-    def kyoBench(warmup: KyoForkWarmup, state: KyoState): Iterator[Response] =
+    def kyoBench(warmup: KyoForkWarmup, state: KyoState): Int =
         import state.*
         forkKyo:
-            IO(blockingStub.oneToMany(request))
+            IO(consume(blockingStub.oneToMany(request)))
     end kyoBench
 
     @Benchmark
-    def zioBench(warmup: ZIOForkWarmup, state: ZIOState): Iterator[Response] =
+    def zioBench(warmup: ZIOForkWarmup, state: ZIOState): Int =
         import state.{*, given}
         forkZIO:
-            ZIO.attempt(blockingStub.oneToMany(request)).orDie
+            ZIO.attempt(consume(blockingStub.oneToMany(request))).orDie
     end zioBench
+
+    // Consume the iterator otherwise Netty has a hissy fit about resource leaks.
+    private def consume(replies: Iterator[Response]): Int =
+        scala.collection.immutable.LazyList.from(replies).foldLeft(0)((acc, _) => acc + 1)
 
 end GrpcServerOneToManyBench
 
 object GrpcServerOneToManyBench:
 
-    val message: String  = "Hello"
-    val request: Request = Request(message)
-    // TODO: Add more.
-    val replies: Iterator[Response]  = Iterator(Response(message))
+    val message: String    = "Hello"
+    val request: Request   = Request(message)
+    val response: Response = Response(message)
 
 end GrpcServerOneToManyBench
