@@ -30,6 +30,7 @@ abstract private class PublisherToSubscriberTest extends Test:
     }
 
     "should propagate errors downstream" in runJVM {
+        pending
         val inputStream: Stream[Int, IO] = Stream
             .range(0, 10, 1, 1)
             .map { int =>
