@@ -125,7 +125,7 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
         loop(l, Nil)
     end flatten
 
-    val pending =
+    val pending: TypeRepr =
         flatten(effects) match
             case Nil =>
                 TypeRepr.of[Any]
@@ -133,10 +133,46 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                 effects.reduce((a, b) => AndType(a, b))
     end pending
 
+    var genSym = 0
+    def freshName(name: String): String =
+        genSym = genSym + 1
+        s"${name}_N$genSym"
+
+    val preparedBody = Trees.transform(body.asTerm) {
+        case Apply(
+                Apply(
+                    TypeApply(
+                        Apply(
+                            ta: TypeApply,
+                            List(a @ Apply(TypeApply(Ident("now"), List(t, s)), List(_)))
+                        ),
+                        types0
+                    ),
+                    args0
+                ),
+                args1
+            ) if t.tpe.typeSymbol.flags.is(Flags.Opaque) =>
+
+            val newVal: Symbol = Symbol.newVal(
+                Symbol.spliceOwner,
+                freshName("opaqueAlias"),
+                t.tpe,
+                Flags.Private,
+                Symbol.noSymbol
+            )
+            Block(
+                List(ValDef(newVal, Some(a))),
+                Apply(
+                    Apply(TypeApply(Apply(ta, List(Ident(newVal.termRef))), types0), args0),
+                    args1
+                )
+            )
+    }
+
     pending.asType match
         case '[s] =>
             val transformedBody =
-                Trees.transform(body.asTerm) {
+                Trees.transform(preparedBody) {
                     case Apply(TypeApply(Ident("now"), List(t, s2)), List(qual)) =>
                         (t.tpe.asType, s2.tpe.asType) match
                             case ('[t], '[s2]) => '{
