@@ -134,17 +134,10 @@ object Resource:
                     IO.ensure(finalizer.close),
                     Abort.run[Any]
                 ).map { result =>
-                    val io =
-                        result match
-                            case result @ Result.Error(e) =>
-                                val ex =
-                                    e match
-                                        case e: Throwable => e
-                                        case _            => new KyoException(s"Failed $e")
-                                finalizer.close(Present(Panic(ex)))
-                            case _ =>
-                                finalizer.close(Absent)
-                    io.andThen(finalizer.await).andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+                    finalizer
+                        .close(result.error)
+                        .andThen(finalizer.await)
+                        .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
                 }
         }
 
