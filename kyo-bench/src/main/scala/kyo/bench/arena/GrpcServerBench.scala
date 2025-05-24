@@ -2,7 +2,7 @@ package kyo.bench.arena
 
 import io.grpc.*
 import kgrpc.bench.*
-import kgrpc.bench.TestServiceGrpc.TestServiceBlockingStub
+import kgrpc.bench.TestServiceGrpc.*
 import kyo.*
 import kyo.bench.arena.ArenaBench2.*
 import kyo.bench.arena.GrpcServerUnaryBench.*
@@ -22,7 +22,9 @@ object GrpcServerBench:
 
         protected var port: Int = uninitialized
         var channel: ManagedChannel = uninitialized
+
         var blockingStub: TestServiceBlockingStub = uninitialized
+        var stub: TestServiceStub = uninitialized
 
         protected var finalizers: List[() => Unit] = Nil
 
@@ -33,6 +35,7 @@ object GrpcServerBench:
             port = findFreePort()
             channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build
             blockingStub = TestServiceGrpc.blockingStub(channel)
+            stub = TestServiceGrpc.stub(channel)
         end setup
 
         @TearDown

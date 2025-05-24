@@ -18,7 +18,7 @@ abstract class ArenaBench2[A](val expectedResult: A) extends BaseBench:
         IO.Unsafe.evalOrThrow(Async.run(kyoBenchFiber).flatMap(_.block(Duration.Infinity))).getOrThrow
     end forkKyo
 
-    def forkZIO(zioBench: zio.UIO[A])(using zioRuntime: zio.Runtime[Any]): A = zio.Unsafe.unsafe(implicit u =>
+    def forkZIO(zioBench: zio.Task[A])(using zioRuntime: zio.Runtime[Any]): A = zio.Unsafe.unsafe(implicit u =>
         zioRuntime.unsafe.run(zio.ZIO.yieldNow.flatMap(_ => zioBench)).getOrThrow()
     )
 
