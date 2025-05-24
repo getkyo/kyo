@@ -57,15 +57,6 @@ final class Hub[A] private[kyo] (
       */
     def full(using Frame): Boolean < (IO & Abort[Closed]) = ch.full
 
-    /** Creates a fiber that puts an element into the Hub.
-      *
-      * @param v
-      *   the element to put
-      * @return
-      *   a Fiber that, when run, will put the element into the Hub
-      */
-    def putFiber(v: A)(using Frame): Fiber[Closed, Unit] < IO = ch.putFiber(v)
-
     /** Puts an element into the Hub, blocking if necessary until space is available.
       *
       * This operation will block when both a listener's buffer is full and preventing the Hub from processing, and the Hub's buffer is
@@ -304,13 +295,6 @@ object Hub:
           *   a Maybe containing the head element if available, or empty if the buffer is empty
           */
         def poll(using Frame): Maybe[A] < (IO & Abort[Closed]) = child.poll
-
-        /** Creates a fiber that takes an element from the Listener's buffer.
-          *
-          * @return
-          *   a Fiber that, when run, will take an element from the Listener's buffer
-          */
-        def takeFiber(using Frame): Fiber[Closed, A] < IO = child.takeFiber
 
         /** Takes an element from the Listener's buffer, potentially blocking if the buffer is empty.
           *

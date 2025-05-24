@@ -48,40 +48,40 @@ class ChannelTest extends Test:
         for
             c     <- Channel.init[Int](2)
             b     <- c.offer(1)
-            put   <- c.putFiber(2)
-            f     <- c.full
-            take1 <- c.takeFiber
-            take2 <- c.takeFiber
+            put   <- Async.run(c.put(2))
+            _     <- untilTrue(c.full)
+            take1 <- Async.run(c.take)
+            take2 <- Async.run(c.take)
             v1    <- take1.get
             _     <- put.get
             v2    <- take1.get
             v3    <- take2.get
-        yield assert(b && f && v1 == 1 && v2 == 1 && v3 == 2)
+        yield assert(b && v1 == 1 && v2 == 1 && v3 == 2)
     }
     "blocking put" in run {
         for
             c  <- Channel.init[Int](2)
             _  <- c.put(1)
             _  <- c.put(2)
-            f  <- c.putFiber(3)
+            f  <- Async.run(c.put(3))
             _  <- Async.sleep(10.millis)
             d1 <- f.done
             v1 <- c.poll
-            d2 <- f.done
+            _  <- untilTrue(f.done)
             v2 <- c.poll
             v3 <- c.poll
-        yield assert(!d1 && d2 && v1 == Maybe(1) && v2 == Maybe(2) && v3 == Maybe(3))
+        yield assert(!d1 && v1 == Maybe(1) && v2 == Maybe(2) && v3 == Maybe(3))
     }
     "blocking take" in run {
         for
             c  <- Channel.init[Int](2)
-            f  <- c.takeFiber
+            f  <- Async.run(c.take)
             _  <- Async.sleep(10.millis)
             d1 <- f.done
             _  <- c.put(1)
-            d2 <- f.done
+            _  <- untilTrue(f.done)
             v  <- f.get
-        yield assert(!d1 && d2 && v == 1)
+        yield assert(!d1 && v == 1)
     }
     "putBatch" - {
         "non-nested" - {
@@ -121,8 +121,8 @@ class ChannelTest extends Test:
             "should notify waiting takers immediately" in run {
                 for
                     c     <- Channel.init[Int](2)
-                    take1 <- c.takeFiber
-                    take2 <- c.takeFiber
+                    take1 <- Async.run(c.take)
+                    take2 <- Async.run(c.take)
                     _     <- c.putBatch(Seq(1, 2))
                     v1    <- take1.get
                     v2    <- take2.get
@@ -133,11 +133,11 @@ class ChannelTest extends Test:
                     c     <- Channel.init[Int](2)
                     _     <- c.put(1)
                     _     <- c.put(2)
-                    take1 <- c.takeFiber
+                    take1 <- Async.run(c.take)
                     fiber <- Async.run(c.putBatch(Seq(3, 4)))
                     v1    <- take1.get
                     done1 <- fiber.done
-                    take2 <- c.takeFiber
+                    take2 <- Async.run(c.take)
                     v2    <- take2.get
                     _     <- fiber.get
                 yield assert(v1 == 1 && v2 == 2 && !done1)
@@ -313,38 +313,36 @@ class ChannelTest extends Test:
         }
         "should consider pending puts" in run {
             import AllowUnsafe.embrace.danger
-            IO.Unsafe.evalOrThrow {
-                for
-                    c         <- Channel.init[Int](2)
-                    _         <- c.putFiber(1)
-                    _         <- c.putFiber(2)
-                    _         <- c.putFiber(3)
-                    result    <- c.drain
-                    finalSize <- c.size
-                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
-            }
+            for
+                c         <- Channel.init[Int](2)
+                _         <- Async.run(c.put(1))
+                _         <- Async.run(c.put(2))
+                _         <- Async.run(c.put(3))
+                result    <- c.drain
+                finalSize <- c.size
+            yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
+            end for
         }
         "should consider pending puts - zero capacity" in run {
             import AllowUnsafe.embrace.danger
-            IO.Unsafe.evalOrThrow {
-                for
-                    c         <- Channel.init[Int](0)
-                    _         <- c.putFiber(1)
-                    _         <- c.putFiber(2)
-                    _         <- c.putFiber(3)
-                    result    <- c.drain
-                    finalSize <- c.size
-                yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
-            }
+            for
+                c      <- Channel.init[Int](0)
+                _      <- Async.run(c.put(1))
+                _      <- Async.run(c.put(2))
+                _      <- Async.run(c.put(3))
+                result <- c.drain
+                _      <- untilTrue(c.size.map(_ == 0))
+            yield assert(result == Chunk(1, 2, 3))
+            end for
         }
         "race with close" in run {
-            verifyDrainWithCloseRaces(2, _.drain, _.close)
+            verifyRaceDrainWithClose(2, _.drain, _.close)
         }
         "race with closeAwaitEmpty" in run {
-            verifyDrainWithCloseRaces(2, _.drain, _.closeAwaitEmpty)
+            verifyRaceDrainWithClose(2, _.drain, _.closeAwaitEmpty)
         }
         "race with close and zero capacity" in run {
-            verifyDrainWithCloseRaces(2, _.drain, _.close)
+            verifyRaceDrainWithClose(2, _.drain, _.close)
         }
     }
     "drainUpTo" - {
@@ -394,10 +392,10 @@ class ChannelTest extends Test:
             IO.Unsafe.evalOrThrow {
                 for
                     c         <- Channel.init[Int](2)
-                    _         <- c.putFiber(1)
-                    _         <- c.putFiber(2)
-                    _         <- c.putFiber(3)
-                    _         <- c.putFiber(4)
+                    _         <- Async.run(c.put(1))
+                    _         <- Async.run(c.put(2))
+                    _         <- Async.run(c.put(3))
+                    _         <- Async.run(c.put(4))
                     result    <- c.drainUpTo(3)
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 1)
@@ -408,23 +406,23 @@ class ChannelTest extends Test:
             IO.Unsafe.evalOrThrow {
                 for
                     c         <- Channel.init[Int](0)
-                    _         <- c.putFiber(1)
-                    _         <- c.putFiber(2)
-                    _         <- c.putFiber(3)
-                    _         <- c.putFiber(4)
+                    _         <- Async.run(c.put(1))
+                    _         <- Async.run(c.put(2))
+                    _         <- Async.run(c.put(3))
+                    _         <- Async.run(c.put(4))
                     result    <- c.drainUpTo(3)
                     finalSize <- c.size
                 yield assert(result == Chunk(1, 2, 3) && finalSize == 0)
             }
         }
         "race with close" in run {
-            verifyDrainWithCloseRaces(2, _.drainUpTo(2), _.close)
+            verifyRaceDrainWithClose(2, _.drainUpTo(2), _.close)
         }
         "race with closeAwaitEmpty" in run {
-            verifyDrainWithCloseRaces(2, _.drainUpTo(2), _.closeAwaitEmpty)
+            verifyRaceDrainWithClose(2, _.drainUpTo(2), _.closeAwaitEmpty)
         }
         "race with close and zero capacity" in run {
-            verifyDrainWithCloseRaces(0, _.drainUpTo(Int.MaxValue), _.close)
+            verifyRaceDrainWithClose(0, _.drainUpTo(Int.MaxValue), _.close)
         }
     }
     "close" - {
@@ -447,7 +445,7 @@ class ChannelTest extends Test:
         "pending take" in run {
             for
                 c <- Channel.init[Int](2)
-                f <- c.takeFiber
+                f <- Async.run(c.take)
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.full)
@@ -458,7 +456,7 @@ class ChannelTest extends Test:
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
                 _ <- c.put(2)
-                f <- c.putFiber(3)
+                f <- Async.run(c.put(3))
                 r <- c.close
                 d <- f.getResult
                 e <- Abort.run(c.offer(1))
@@ -467,7 +465,7 @@ class ChannelTest extends Test:
         "no buffer w/ pending put" in run {
             for
                 c <- Channel.init[Int](0)
-                f <- c.putFiber(1)
+                f <- Async.run(c.put(1))
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.poll)
@@ -476,7 +474,7 @@ class ChannelTest extends Test:
         "no buffer w/ pending take" in run {
             for
                 c <- Channel.init[Int](0)
-                f <- c.takeFiber
+                f <- Async.run(c.take)
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run[Throwable](c.put(1))
@@ -486,7 +484,7 @@ class ChannelTest extends Test:
     "no buffer" in run {
         for
             c <- Channel.init[Int](0)
-            _ <- c.putFiber(1)
+            _ <- Async.run(c.put(1))
             v <- c.take
             f <- c.full
             e <- c.empty
@@ -1028,7 +1026,7 @@ class ChannelTest extends Test:
                     latch.await.andThen(channel.close)
                 )
                 _        <- latch.release
-                _        <- channel.drain
+                _        <- Abort.run(channel.drain)
                 result1  <- closeAwaitEmptyFiber.get
                 result2  <- closeFiber.get
                 isClosed <- channel.closed
@@ -1120,46 +1118,52 @@ class ChannelTest extends Test:
         }
     }
 
-    private def verifyDrainWithCloseRaces(
+    private def verifyRaceDrainWithClose(
         capacity: Int,
-        drain: Channel[Int] => Chunk[Any] < (Abort[Closed] & IO),
-        close: Channel[Int] => (Any < Async)
-    ) = Kyo.fill(50)(verifyDrainWithCloseRace(capacity, drain, close)).map(_.last)
-
-    private def verifyDrainWithCloseRace(
-        capacity: Int,
-        drain: Channel[Int] => Chunk[Any] < (Abort[Closed] & IO),
+        drain: Channel[Int] => Any < (Abort[Closed] & IO),
         close: Channel[Int] => (Any < Async)
     ) =
         for
-            c <- Channel.init[Int](capacity)
-            // Create a producer that continuously puts items into the channel until the timing is just right for it to
-            // find the channel empty as the consumer continuously drains.
+            c0  <- Channel.init[Int](capacity)
+            ref <- AtomicRef.init(c0)
+            // Create a fiber that repeatedly puts and item and then checks to see if the channel
+            // has been drained. If it has then it closes the channel and creates a new one.
             producer <- Async.run {
-                Loop(0) { count =>
+                Loop(()) { _ =>
                     for
-                        _ <- c.put(1)
-                        // This will eventually be empty when it interleaves with the consumer.
-                        // Ideally while the consumer is still in the drain loop.
-                        empty   <- c.empty
-                        outcome <-
-                            // The goal here is to close the channel while the consumer is in the middle of draining.
-                            if empty then close(c).andThen(Loop.done[Int, Int](count + 1))
-                            else Kyo.lift(Loop.continue(count + 1))
-                    yield outcome
+                        c     <- ref.get
+                        _     <- c.put(1)
+                        empty <- c.empty
+                        _     <-
+                            // If it is empty then it could be that the consumer is in the middle of
+                            // draining. Attempt to close the channel right before the consumer
+                            // checks for more items.
+                            if empty then
+                                for
+                                    c2 <- Channel.init[Int](capacity)
+                                    _  <- ref.set(c2)
+                                    _  <- close(c)
+                                yield ()
+                            else Kyo.unit
+                            end if
+                    yield Loop.continue(())
                 }
             }
-            // Create a consumer that repeatedly drains the channel until it is closed.
-            drainCount <-
-                Loop(0) { count =>
-                    Abort.fold[Closed](
-                        (chunk: Chunk[Any]) => Loop.continue(count + chunk.length),
-                        _ => Loop.done[Int, Int](count)
-                    )(drain(c))
+            // Create a fiber that repeatedly drains the channel if it is not closed or empty.
+            // If it is closed or empty (and is about to be closed) then repeat until the consumer
+            // creates a new channel.
+            result <- Abort.run {
+                Async.fill(100_000, concurrency = 1) {
+                    for
+                        c             <- ref.get
+                        closedOrEmpty <- Abort.recover[Closed](_ => true)(c.empty)
+                        _             <- if closedOrEmpty then Kyo.unit else drain(c)
+                    yield ()
                 }
-            putCount <- producer.get
-        yield assert(drainCount == putCount)
+            }
+            _ <- producer.interrupt
+        yield assert(result.isSuccess)
         end for
-    end verifyDrainWithCloseRace
+    end verifyRaceDrainWithClose
 
 end ChannelTest
