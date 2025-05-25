@@ -13,7 +13,6 @@ abstract class ArenaBench2[A](val expectedResult: A) extends BaseBench:
     def forkKyo(kyoBenchFiber: kyo.<[A, kyo.Async & kyo.Abort[Throwable]]): A =
         import kyo.*
         import AllowUnsafe.embrace.danger
-        // TODO: Why doesn't ArenaBench complain about this?
         given Frame = Frame.internal
         IO.Unsafe.evalOrThrow(Async.run(kyoBenchFiber).flatMap(_.block(Duration.Infinity))).getOrThrow
     end forkKyo

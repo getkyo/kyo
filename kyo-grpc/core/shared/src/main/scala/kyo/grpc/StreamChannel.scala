@@ -47,7 +47,7 @@ class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]])(
     private def emitChunks(maxChunkSize: Int = Int.MaxValue)(using Frame): Unit < (Emit[Chunk[A]] & Abort[E] & Async) =
         if maxChunkSize <= 0 then ()
         else
-            Loop(()): _ =>
+            Loop.foreach:
                 Abort.recover[Closed](_ => Loop.done[Unit]):
                     for
                         // This will only abort when it is empty.

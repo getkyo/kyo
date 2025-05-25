@@ -1129,7 +1129,7 @@ class ChannelTest extends Test:
             // Create a fiber that repeatedly puts and item and then checks to see if the channel
             // has been drained. If it has then it closes the channel and creates a new one.
             producer <- Async.run {
-                Loop(()) { _ =>
+                Loop.forever {
                     for
                         c     <- ref.get
                         _     <- c.put(1)
