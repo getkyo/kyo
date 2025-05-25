@@ -6,17 +6,35 @@ import sun.misc.Signal
 
 object Server:
 
-    // TODO: Await a maximum time and then call shutdownNow.
-    def shutdown(server: io.grpc.Server)(using Frame): Unit < Async =
-        Async.run(server.shutdown().awaitTermination()).map(_.get)
+    /** Shuts down the [[io.grpc.Server]] with orderly shutdown and timeout.
+      *
+      * First attempts graceful shutdown by calling [[io.grpc.Server.shutdown]] and waiting for termination.
+      * If the server doesn't terminate within the timeout, forces shutdown with [[io.grpc.Server.shutdownNow]].
+      *
+      * @param server
+      *   The Server to shut down
+      * @param timeout
+      *   The maximum duration to wait for graceful termination (default: 30 seconds)
+      * @return
+      *   `true` if the server is terminated or `false` if the server was forcibly shutdown, but it has not terminated
+      *   yet
+      */
+    def shutdown(server: io.grpc.Server, timeout: Duration = 30.seconds)(using Frame): Boolean < IO =
+        IO:
+            val terminated =
+                server
+                    .shutdown()
+                    .awaitTermination(timeout.toJava.toNanos, java.util.concurrent.TimeUnit.NANOSECONDS)
+            if terminated then true
+            else server.shutdownNow().isTerminated
 
-    def start(port: Int)(
+    def start(port: Int, timeout: Duration = 30.seconds)(
         configure: ServerBuilder[?] => ServerBuilder[?],
-        shutdown: io.grpc.Server => Frame ?=> Unit < Async = shutdown
+        shutdown: (io.grpc.Server, Duration) => Frame ?=> Any < IO = shutdown
     )(using Frame): io.grpc.Server < (Resource & IO) =
         Resource.acquireRelease(
             IO(configure(ServerBuilder.forPort(port)).build().start())
-        )(server => shutdown(server))
+        )(shutdown(_, timeout))
 
     // This is required until https://github.com/getkyo/kyo/issues/491 is done.
     // Put it here so that it can be converted to a no-op without breaking compatibility or behaviour.

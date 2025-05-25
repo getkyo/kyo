@@ -13,8 +13,9 @@ import java.net.ServerSocket
 import scala.language.implicitConversions
 import scalapb.zio_grpc
 import scalapb.zio_grpc.ScopedServer
-import scalapb.zio_grpc.ZManagedChannel
+import scalapb.zio_grpc.ZChannel
 import zio.{Scope, ZIO, stream}
+import zio.given
 
 object GrpcService:
 
@@ -57,8 +58,13 @@ object GrpcService:
     end createZioServer
 
     def createZioClient(port: Int): ZIO[Scope, Throwable, ZioBench.TestServiceClient] =
-        val channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext()
-        ZioBench.TestServiceClient.scoped(ZManagedChannel(channel))
+        val builder = ManagedChannelBuilder.forAddress(host, port).usePlaintext()
+        val channel = ZIO.acquireRelease {
+            ZIO.attempt(ZChannel(builder.build(), None, Nil))
+        } { c =>
+           c.shutdown().flatMap(_ => c.awaitTermination(30.seconds)).ignore
+        }
+        ZioBench.TestServiceClient.scoped(channel)
     end createZioClient
 
     def findFreePort(): Int =

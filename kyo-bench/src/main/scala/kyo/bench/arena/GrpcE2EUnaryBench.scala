@@ -8,34 +8,35 @@ import kyo.bench.arena.GrpcE2EUnaryBench.*
 import kyo.bench.arena.GrpcService.*
 import kyo.grpc.GrpcRequest
 import org.openjdk.jmh.annotations.*
+
 import scala.compiletime.uninitialized
 import scalapb.zio_grpc.Server
-import zio.ZIO
+import zio.{UIO, ZIO}
 
 class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
 
     private var port: Int = uninitialized
 
     @Setup
-    def buildChannel() =
+    def buildChannel(): Unit =
         port = findFreePort()
     end buildChannel
 
-    override def catsBench() =
+    override def catsBench(): cats.effect.IO[Response] =
         import cats.effect.*
         createCatsServer(port, static = false).use: _ =>
             createCatsClient(port).use: client =>
                 client.oneToOne(request, Metadata())
     end catsBench
 
-    override def kyoBenchFiber() =
+    override def kyoBenchFiber(): Response < GrpcRequest =
         Resource.run:
             for
                 _      <- createKyoServer(port, static = false)
                 client <- createKyoClient(port)
             yield client.oneToOne(request)
 
-    override def zioBench() =
+    override def zioBench(): UIO[Response] =
         ZIO.scoped:
             val run =
                 for
