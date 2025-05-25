@@ -464,7 +464,7 @@ defer {
 }
 
 val computations: Seq[Int < Abort[String]] = 
-  Seq(1, 2, Abort.fail("oups"))
+  Seq(1, 2, Abort.fail("Oops"))
 
 val sequenced: Seq[Int] < Abort[String] = defer {
   computations.map(_.now)
