@@ -448,6 +448,29 @@ defer {
 }
 ```
 
+In addition to control flow, the direct syntax also supports working directly with data structures such as `Option[?]`, `Try[?]`, `Either[?, ?]`, `Seq[?]`, and `Map[?, ?]`. 
+This enables effectful operations to be seamlessly integrated with common collections and containers:
+
+```scala
+import kyo.*
+
+def greet(name: String): Unit < IO =
+  Console.printLine(s"hello $name!")
+
+val maybeName: Option[String] = Some("Alice")
+
+defer {
+  maybeName.foreach(name => greet(name).now)
+}
+
+val computations: Seq[Int < Abort[String]] = 
+  Seq(1, 2, Abort.fail("oups"))
+
+val sequenced: Seq[Int] < Abort[String] = defer {
+  computations.map(_.now)
+}
+```
+
 The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `.now`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
