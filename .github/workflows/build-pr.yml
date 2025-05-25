@@ -23,7 +23,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libcurl4-openssl-dev libidn2-0-dev
-    - uses: olafurpg/setup-scala@v13
+    - uses: olafurpg/setup-scala@v14
       with:
         java-version: openjdk@21.0.2=tgz+https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz
 
