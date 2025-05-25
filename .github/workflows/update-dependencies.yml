@@ -1,0 +1,16 @@
+# .github/workflows/dependency-graph.yml
+name: Update Dependency Graph
+on:
+  push:
+    branches:
+      - main # default branch of the project
+jobs:
+  dependency-graph:
+    name: Update Dependency Graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: olafurpg/setup-scala@v13
+        with:
+          java-version: openjdk@21.0.2=tgz+https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz
+      - uses: scalacenter/sbt-dependency-submission@v3.1.0
