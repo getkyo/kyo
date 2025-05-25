@@ -41,28 +41,27 @@ class CoreTest extends Test:
         }
     }
 
-    // TODO Compiler crash because `Queue` is an opaque type without a type bound
-    // "queue operations" - {
-    //     "basic queue" in run {
-    //         defer {
-    //             val queue = Queue.init[Int](3).now
-    //             assert(queue.offer(1).now)
-    //             assert(queue.offer(2).now)
-    //             assert(queue.poll.now.contains(1))
-    //             assert(queue.size.now == 1)
-    //         }
-    //     }
+    "queue operations" - {
+        "basic queue" in run {
+            defer {
+                val queue = Queue.init[Int](3).now
+                assert(queue.offer(1).now)
+                assert(queue.offer(2).now)
+                assert(queue.poll.now.contains(1))
+                assert(queue.size.now == 1)
+            }
+        }
 
-    //     "unbounded queue" in run {
-    //         defer {
-    //             val queue = Queue.Unbounded.init[Int]().now
-    //             queue.add(1).now
-    //             queue.add(2).now
-    //             queue.add(3).now
-    //             assert(queue.drain.now == Chunk(1, 2, 3))
-    //         }
-    //     }
-    // }
+        "unbounded queue" in run {
+            defer {
+                val queue = Queue.Unbounded.init[Int]().now
+                queue.add(1).now
+                queue.add(2).now
+                queue.add(3).now
+                assert(queue.drain.now == Chunk(1, 2, 3))
+            }
+        }
+    }
 
     "random operations" - {
         "basic random" in run {
@@ -136,18 +135,17 @@ class CoreTest extends Test:
         }
     }
 
-    // TODO Compiler crash because `Queue` is an opaque type without a type bound
-    // "channel operations" in run {
-    //     defer {
-    //         val channel = Channel.init[Int](2).now
-    //         assert(channel.offer(1).now)
-    //         assert(channel.offer(2).now)
-    //         assert(!channel.offer(3).now) // Should be full
-    //         assert(channel.poll.now.contains(1))
-    //         assert(channel.poll.now.contains(2))
-    //         assert(channel.poll.now.isEmpty)
-    //     }
-    // }
+    "channel operations" in run {
+        defer {
+            val channel = Channel.init[Int](2).now
+            assert(channel.offer(1).now)
+            assert(channel.offer(2).now)
+            assert(!channel.offer(3).now) // Should be full
+            assert(channel.poll.now.contains(1))
+            assert(channel.poll.now.contains(2))
+            assert(channel.poll.now.isEmpty)
+        }
+    }
 
     "barrier operations" in run {
         defer {
