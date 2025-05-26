@@ -1,10 +1,11 @@
-package kyo.bench.arena
+package kyo.bench.arena.grpc
 
 import io.grpc.stub.StreamObserver
 import kgrpc.bench.*
 import kyo.*
-import kyo.bench.arena.GrpcServerBench.*
-import kyo.bench.arena.GrpcServerManyToManyBench.*
+import kyo.bench.arena.ArenaBench2
+import GrpcServerBench.*
+import GrpcServerManyToManyBench.*
 import kyo.bench.arena.WarmupJITProfile.{CatsForkWarmup, KyoForkWarmup, ZIOForkWarmup}
 import org.openjdk.jmh.annotations.*
 import zio.ZIO

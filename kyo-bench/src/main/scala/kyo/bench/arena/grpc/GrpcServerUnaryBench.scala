@@ -1,21 +1,21 @@
-package kyo.bench.arena
+package kyo.bench.arena.grpc
 
 import io.grpc.*
-
-import java.util.concurrent.{TimeUnit, TimeoutException}
 import kgrpc.bench.*
 import kgrpc.bench.TestServiceGrpc.TestServiceBlockingStub
 import kyo.*
-import kyo.bench.arena.GrpcServerBench.*
-import kyo.bench.arena.GrpcServerUnaryBench.*
-import kyo.bench.arena.GrpcService.*
+import kyo.bench.arena.ArenaBench2
+import GrpcServerBench.*
+import GrpcServerUnaryBench.*
+import GrpcService.*
 import kyo.bench.arena.WarmupJITProfile.{CatsForkWarmup, KyoForkWarmup, ZIOForkWarmup}
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
-
-import scala.compiletime.uninitialized
 import scalapb.zio_grpc
 import zio.ZIO
+
+import java.util.concurrent.{TimeUnit, TimeoutException}
+import scala.compiletime.uninitialized
 
 class GrpcServerUnaryBench extends ArenaBench2(reply):
 

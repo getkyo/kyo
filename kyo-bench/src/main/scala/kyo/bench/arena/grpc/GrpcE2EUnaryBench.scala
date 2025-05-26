@@ -1,17 +1,18 @@
-package kyo.bench.arena
+package kyo.bench.arena.grpc
 
 import io.grpc.{Grpc, Metadata}
 import kgrpc.*
 import kgrpc.bench.*
 import kyo.*
-import kyo.bench.arena.GrpcE2EUnaryBench.*
-import kyo.bench.arena.GrpcService.*
+import kyo.bench.arena.ArenaBench
+import GrpcE2EUnaryBench.*
+import GrpcService.*
 import kyo.grpc.GrpcRequest
 import org.openjdk.jmh.annotations.*
-
-import scala.compiletime.uninitialized
 import scalapb.zio_grpc.Server
 import zio.{UIO, ZIO}
+
+import scala.compiletime.uninitialized
 
 class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
 

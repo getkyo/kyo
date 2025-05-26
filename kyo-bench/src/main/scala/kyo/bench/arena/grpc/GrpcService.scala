@@ -1,8 +1,8 @@
-package kyo.bench.arena
+package kyo.bench.arena.grpc
 
 import cats.effect
+import cats.effect.IO as CIO
 import cats.effect.IO.given
-import cats.effect.{IO => CIO}
 import fs2.grpc.syntax.all.*
 import io.grpc
 import io.grpc.*
@@ -10,16 +10,13 @@ import io.grpc.netty.shaded.io.grpc.netty.*
 import kgrpc.bench.*
 import kyo.*
 import kyo.grpc.*
+import scalapb.zio_grpc
+import scalapb.zio_grpc.{ScopedServer, ZChannel}
+import zio.{Scope, ZIO, stream, given}
 
 import java.net.ServerSocket
-import scala.language.implicitConversions
-import scalapb.zio_grpc
-import scalapb.zio_grpc.ScopedServer
-import scalapb.zio_grpc.ZChannel
-import zio.{Scope, ZIO, stream}
-import zio.given
-
 import java.util.concurrent.TimeUnit
+import scala.language.implicitConversions
 
 object GrpcService:
 

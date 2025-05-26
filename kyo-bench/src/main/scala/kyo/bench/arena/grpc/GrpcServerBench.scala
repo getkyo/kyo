@@ -1,12 +1,12 @@
-package kyo.bench.arena
+package kyo.bench.arena.grpc
 
 import io.grpc.*
 import kgrpc.bench.*
 import kgrpc.bench.TestServiceGrpc.*
 import kyo.*
 import kyo.bench.arena.ArenaBench2.*
-import kyo.bench.arena.GrpcServerUnaryBench.*
-import kyo.bench.arena.GrpcService.*
+import GrpcServerUnaryBench.*
+import GrpcService.*
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
 import scalapb.zio_grpc
@@ -60,10 +60,10 @@ object GrpcServerBench:
 
             ioRuntime = runtime.ioRuntime
 
-            val (_: Server, catsFinalizer) = createCatsServer(port, static = true).allocated.unsafeRunSync()
+            val (_: Server, finalizer) = createCatsServer(port, static = true).allocated.unsafeRunSync()
 
             addFinalizer:
-                catsFinalizer.unsafeRunSync()
+                finalizer.unsafeRunSync()
         end setup
 
     end CatsState
@@ -77,14 +77,14 @@ object GrpcServerBench:
 
             import AllowUnsafe.embrace.danger
 
-            val kyoFinalizer = Resource.Finalizer.Awaitable.Unsafe.init(1)
+            val finalizer = Resource.Finalizer.Awaitable.Unsafe.init(1)
             val kyoServer = createKyoServer(port, static = true)
-            val result = ContextEffect.handle(Tag[Resource], kyoFinalizer, _ => kyoFinalizer)(kyoServer)
+            val result = ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(kyoServer)
             // TODO: Why doesn't orThrow work here?
             val _: Server = Abort.run(IO.Unsafe.run(result)).eval.getOrThrow
 
             addFinalizer:
-                Abort.run(IO.Unsafe.run(kyoFinalizer.close)).eval.getOrThrow
+                Abort.run(IO.Unsafe.run(finalizer.close)).eval.getOrThrow
         end setup
 
     end KyoState
