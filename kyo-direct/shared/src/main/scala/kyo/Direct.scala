@@ -251,13 +251,13 @@ object directInternal:
 
         override def map[F[_], B](c: CA, monad: CpsMonad[F])(f: A => F[B]): F[C[B]] =
             monad match
-                case _: KyoCpsMonad[?] if useLoop(c) => Kyo.foreach(c)(a => f(a))
-                case _                               => super.map(c, monad)(f)
+                case _: KyoCpsMonad[?] => Kyo.foreach(c)(a => f(a))
+                case _                 => super.map(c, monad)(f)
 
         override def foreach[F[_], U](c: CA, monad: CpsMonad[F])(f: A => F[U]): F[Unit] =
             monad match
-                case _: KyoCpsMonad[?] if useLoop(c) => Kyo.foreachDiscard(c)(a => f(a))
-                case _                               => super.foreach(c, monad)(f)
+                case _: KyoCpsMonad[?] => Kyo.foreachDiscard(c)(a => f(a))
+                case _                 => super.foreach(c, monad)(f)
     end KyoSeqAsyncShift
 
     class SeqToChunkAsyncShift[A] extends KyoSeqAsyncShift[A, Seq, Seq[A]]
