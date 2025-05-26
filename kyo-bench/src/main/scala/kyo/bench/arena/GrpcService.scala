@@ -1,6 +1,8 @@
 package kyo.bench.arena
 
 import cats.effect
+import cats.effect.IO.given
+import cats.effect.{IO => CIO}
 import fs2.grpc.syntax.all.*
 import io.grpc
 import io.grpc.*
@@ -8,14 +10,16 @@ import io.grpc.netty.shaded.io.grpc.netty.*
 import kgrpc.bench.*
 import kyo.*
 import kyo.grpc.*
-import java.net.ServerSocket
 
+import java.net.ServerSocket
 import scala.language.implicitConversions
 import scalapb.zio_grpc
 import scalapb.zio_grpc.ScopedServer
 import scalapb.zio_grpc.ZChannel
 import zio.{Scope, ZIO, stream}
 import zio.given
+
+import java.util.concurrent.TimeUnit
 
 object GrpcService:
 
@@ -24,24 +28,30 @@ object GrpcService:
     val host = "localhost"
     val size = 10
 
-    def createCatsServer(port: Int, static: Boolean): cats.effect.Resource[cats.effect.IO, Server] =
+    def createCatsServer(port: Int, static: Boolean): cats.effect.Resource[CIO, Server] =
         val service = if static then StaticCatsTestService(size) else CatsTestService(size)
         TestServiceFs2Grpc
-            .bindServiceResource[cats.effect.IO](service)
+            .bindServiceResource[CIO](service)
             .flatMap: service =>
-                NettyServerBuilder
+                 NettyServerBuilder
                     .forPort(port)
                     .addService(service)
-                    .resource[cats.effect.IO]
-                    .evalMap(server => cats.effect.IO(server.start()))
+                    .resourceWithShutdown { server =>
+                        for {
+                            _ <- CIO(server.shutdown())
+                            terminated <- CIO.interruptible(server.awaitTermination(30, TimeUnit.SECONDS))
+                            _ <- CIO.unlessA(terminated)(CIO.interruptible(server.shutdownNow().awaitTermination()))
+                        } yield ()
+                    }
+                    .evalMap(server => CIO(server.start()))
     end createCatsServer
 
-    def createCatsClient(port: Int): cats.effect.Resource[cats.effect.IO, TestServiceFs2Grpc[cats.effect.IO, Metadata]] =
+    def createCatsClient(port: Int): cats.effect.Resource[CIO, TestServiceFs2Grpc[CIO, Metadata]] =
         NettyChannelBuilder
             .forAddress(host, port)
             .usePlaintext()
-            .resource[cats.effect.IO]
-            .flatMap(TestServiceFs2Grpc.stubResource[cats.effect.IO](_))
+            .resource[CIO]
+            .flatMap(TestServiceFs2Grpc.stubResource[CIO](_))
     end createCatsClient
 
     def createKyoServer(port: Int, static: Boolean): grpc.Server < (Resource & IO) =
@@ -77,7 +87,7 @@ object GrpcService:
 
 end GrpcService
 
-class CatsTestService(size: Int) extends TestServiceFs2Grpc[cats.effect.IO, Metadata]:
+class CatsTestService(size: Int) extends TestServiceFs2Grpc[CIO, Metadata]:
 
     import cats.effect.*
 
@@ -130,7 +140,7 @@ class ZIOTestService(size: Int) extends ZioBench.TestService:
 
 end ZIOTestService
 
-class StaticCatsTestService(size: Int) extends TestServiceFs2Grpc[cats.effect.IO, Metadata]:
+class StaticCatsTestService(size: Int) extends TestServiceFs2Grpc[CIO, Metadata]:
 
     import cats.effect.*
 

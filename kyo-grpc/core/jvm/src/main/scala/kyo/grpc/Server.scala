@@ -4,29 +4,28 @@ import io.grpc.ServerBuilder
 import kyo.*
 import sun.misc.Signal
 
+import java.util.concurrent.TimeUnit
+
 object Server:
 
-    /** Shuts down the [[io.grpc.Server]] with orderly shutdown and timeout.
+    /** Attempts an orderly shut down of the [[io.grpc.Server]] within a timeout.
       *
-      * First attempts graceful shutdown by calling [[io.grpc.Server.shutdown]] and waiting for termination.
-      * If the server doesn't terminate within the timeout, forces shutdown with [[io.grpc.Server.shutdownNow]].
+      * First attempts graceful shutdown by calling [[io.grpc.Server.shutdown]] and waits up to `timeout` for
+      * termination. If the server doesn't terminate within the timeout, forces shutdown with
+      * [[io.grpc.Server.shutdownNow]] and then waits indefinitely for it to terminate.
       *
       * @param server
-      *   The Server to shut down
+      *   The server to shut down
       * @param timeout
       *   The maximum duration to wait for graceful termination (default: 30 seconds)
-      * @return
-      *   `true` if the server is terminated or `false` if the server was forcibly shutdown, but it has not terminated
-      *   yet
       */
-    def shutdown(server: io.grpc.Server, timeout: Duration = 30.seconds)(using Frame): Boolean < IO =
+    def shutdown(server: io.grpc.Server, timeout: Duration = 30.seconds)(using Frame): Unit < IO =
         IO:
             val terminated =
                 server
                     .shutdown()
-                    .awaitTermination(timeout.toJava.toNanos, java.util.concurrent.TimeUnit.NANOSECONDS)
-            if terminated then true
-            else server.shutdownNow().isTerminated
+                    .awaitTermination(timeout.toJava.toNanos, TimeUnit.NANOSECONDS)
+            if terminated then () else server.shutdownNow().awaitTermination()
 
     def start(port: Int, timeout: Duration = 30.seconds)(
         configure: ServerBuilder[?] => ServerBuilder[?],
