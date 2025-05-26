@@ -606,6 +606,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-stm`)
+        .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
         .dependsOn(`kyo-scheduler-cats`)
         .disablePlugins(MimaPlugin)

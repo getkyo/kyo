@@ -67,12 +67,12 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             d.map(res => assert(res == Option(1)))
         }
         "foreach" in {
-            val d: Int < Emit[Int] = defer:
+            val d: Unit < Emit[Int] = defer:
                 xs.foreach(i =>
                     val v = i.now
                     Emit.value(v).unit.now
                 )
-                1 // to avoid https://github.com/getkyo/kyo/issues/903
+
             Emit.run(d).map((vs, _) => assert(vs == Seq(1, 2, 3, 4)))
         }
         "corresponds" in {
@@ -297,4 +297,51 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(d.eval == 2)
         }
     }
+
+    "Chunk" - {
+        "map < Any" in {
+            val xs = Chunk(1, 2, 3)
+
+            def f(i: Int): Int < Any = i + 1
+            val d = defer:
+                xs.map(i => f(i).now)
+
+            assert(d.eval == Chunk(2, 3, 4))
+        }
+        "map < Abort" in {
+            val xs = Chunk(1, 2, 3)
+            def f(i: Int): Int < Abort[String] =
+                if i == 2 then Abort.fail("2") else i
+
+            val d = defer:
+                xs.map(i => f(i).now)
+
+            assert(Abort.run(d).eval == Result.fail("2"))
+        }
+
+        val xs = Chunk.fill(n = 0xffff + 1)(elem = 2)
+        "find" in {
+            def f(i: Int): Boolean < Any = i == 2
+            val d = defer:
+                xs.find(i => f(i).now)
+
+            assert(d.eval == Option(2))
+        }
+        "count" in {
+            def f(i: Int): Boolean < Any = i > 0
+            val d: Int < Any = defer:
+                xs.count(i => f(i).now)
+
+            assert(d.eval == 65536)
+        }
+        "foldLeft" in {
+            def f(i: Int): Int < Any = i + 1
+            val d = defer:
+                xs.foldLeft(0)((acc, e) => acc + f(e).now)
+
+            assert(d.eval == 196608)
+        }
+
+    }
+
 end ShiftMethodSupportTest
