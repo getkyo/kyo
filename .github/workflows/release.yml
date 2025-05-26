@@ -22,7 +22,7 @@ jobs:
       JAVA_OPTS: -Xms1G -Xmx1G
       JVM_OPTS:  -Xms1G -Xmx1G
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}

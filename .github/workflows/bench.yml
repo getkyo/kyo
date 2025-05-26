@@ -54,7 +54,7 @@ jobs:
       TH: ${{ github.event.inputs.threads || '1' }}
       PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v6
