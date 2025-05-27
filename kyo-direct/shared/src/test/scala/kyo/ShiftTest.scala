@@ -344,6 +344,25 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
     }
 
+    "Array" - {
+        "foldLeft" in {
+            val it: Iterable[Int] = Array(1, 4)
+
+            val effect: Int < kyo.Choice = defer:
+                it.foldLeft(0)((acc, n) =>
+                    acc + Choice.eval(List(0, 1)).now
+                )
+
+            val result = Choice.run(effect).eval
+
+            assert(result.contains(0))
+            assert(result.contains(1))
+            assert(result.contains(2))
+            assert(result.size == 4)
+        }
+
+    }
+
 end ShiftMethodSupportTest
 
 /*
