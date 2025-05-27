@@ -393,4 +393,102 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(result.size == 8)
         }
     }
+    "Choice" - {
+
+        "foreach" in {
+
+            val result = Choice.run(
+                defer:
+                    List("x", "y").map(str =>
+                        Choice.eval(List(true, false))
+                            .map(b => if b then str.toUpperCase else str).now
+                    )
+            ).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
+        "collect" in {
+            val effects =
+                List("x", "y").map { str =>
+                    Choice.eval(List(true, false)).map(b =>
+                        if b then str.toUpperCase else str
+                    )
+                }
+            val result = Choice.run(defer(effects.map(_.now))).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
+        "foldLeft" in {
+            val result = Choice.run(
+                defer:
+                    List(1, 1).foldLeft(0)((acc, _) => Choice.eval(List(0, 1)).map(n => acc + n).now)
+            ).eval
+
+            assert(result.contains(0))
+            assert(result.contains(1))
+            assert(result.contains(2))
+            assert(result.size == 4)
+        }
+
+        /*
+        //failing
+        "foreach - vector" in {
+            val result = Choice.run(
+                defer:
+                    Vector("x", "y").map(str =>
+                        Choice.eval(Seq(true, false)).map(b =>
+                            if b then str.toUpperCase else str
+                        ).now
+                    )
+            ).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
+        //failing
+        "collect - Vector" in {
+            val effects =
+                Vector("x", "y").map { str =>
+                    Choice.eval(Seq(true, false)).map(b =>
+                        if b then str.toUpperCase else str
+                    )
+                }
+            val result = Choice.run(defer(effects.map(_.now))).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }*/
+
+        "foldLeft - array" in {
+            val result = Choice.run(
+                defer:
+                    Array(1, 1).foldLeft(0)((acc, _) =>
+                        Choice.eval(Seq(0, 1)).map(n => acc + n).now
+                    )
+            ).eval
+
+            assert(result.contains(0))
+            assert(result.contains(1))
+            assert(result.contains(2))
+            assert(result.size == 4)
+        }
+    }
+
 end ShiftMethodSupportTest
