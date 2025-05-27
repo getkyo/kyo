@@ -374,4 +374,4 @@ class MutableIterator extends Test:
 
     }
 end MutableIterator
-*/
+ */
