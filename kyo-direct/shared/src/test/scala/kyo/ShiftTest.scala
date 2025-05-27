@@ -348,10 +348,10 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         "foldLeft" in {
             val it: Iterable[Int] = Array(1, 4)
 
+            val zeroOrOne: Int < Choice = Choice.eval(List(0, 1))
+
             val effect: Int < kyo.Choice = defer:
-                it.foldLeft(0)((acc, n) =>
-                    acc + Choice.eval(List(0, 1)).now
-                )
+                it.foldLeft(0)((acc, n) => acc + zeroOrOne.now)
 
             val result = Choice.run(effect).eval
 
@@ -363,34 +363,34 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
     }
 
-end ShiftMethodSupportTest
-
-/*
-class MutableIterator extends Test:
-    def oneShot(): IterableOnce[Int] =
+    // fake Iterable
+    def oneShot[A](a: A*): Iterable[A] =
         val used = new java.util.concurrent.atomic.AtomicBoolean(false)
-        new IterableOnce[Int]:
-            def iterator: Iterator[Int] =
+        new Iterable[A]:
+            def iterator: Iterator[A] =
                 if !used.compareAndSet(false, true) then
                     throw new IllegalStateException("Already consumed!")
-                else Iterator(1, 2, 3)
+                else Iterator(a*)
 
         end new
     end oneShot
 
-    "recall" in run {
-        val it: IterableOnce[Int] = oneShot()
+    "IterableOnce" - {
+        "foldLeft" in {
+            val it: Iterable[Int] = oneShot(1, 2, 3)
 
-        def process(i: Int): Int < (IO & Abort[String]) =
-            Console.printLine(s"processing $i").andThen(
-                if i == 2 then Abort.fail("abort on 2")
-                else i
-            )
+            val zeroOrOne: Int < Choice = Choice.eval(List(0, 1))
 
-        val prg: kyo.Chunk[Int] < (kyo.Async & kyo.Abort[String]) = Retry(Schedule.repeat(2))(Kyo.foreach(it)(i => process(i)))
+            val effect: Int < kyo.Choice = defer:
+                it.foldLeft(0)((acc, n) => acc + zeroOrOne.now)
 
-        Abort.run(prg).map(x => assert(x == Result.fail("abort on 2")))
+            val result = Choice.run(effect).eval
 
+            assert(result.contains(0))
+            assert(result.contains(1))
+            assert(result.contains(2))
+            assert(result.contains(3))
+            assert(result.size == 8)
+        }
     }
-end MutableIterator
- */
+end ShiftMethodSupportTest
