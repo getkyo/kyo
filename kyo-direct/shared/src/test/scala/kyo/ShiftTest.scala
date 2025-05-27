@@ -492,6 +492,22 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(result.size == 4)
         }
 
+        "collect - List" in {
+            val effects =
+                List("x", "y").map { str =>
+                    Choice.eval(Seq(true, false)).map(b =>
+                        if b then str.toUpperCase else str
+                    )
+                }
+            val result = Choice.run(defer(effects.map(_.now))).eval
+
+            assert(result.contains(Chunk("X", "Y")))
+            assert(result.contains(Chunk("X", "y")))
+            assert(result.contains(Chunk("x", "Y")))
+            assert(result.contains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
         "foldLeft - array" in {
             val result = Choice.run(
                 defer:
