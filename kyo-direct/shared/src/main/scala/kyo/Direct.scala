@@ -252,6 +252,21 @@ object directInternal:
                 case _: KyoCpsMonad[?] if useLoop(c) => directInternal.shiftedWhile(c)(prolog, condition, acc, epilog)
                 case _                               => super.shiftedWhile(c, monad)(prolog, condition, acc, epilog)
 
+        override def dropWhile[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[C[A]] =
+            monad match
+                case _: KyoCpsMonad[?] => Kyo.dropWhile(c)(a => p(a))
+                case _                 => super.dropWhile(c, monad)(p)
+
+        override def filter[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[C[A]] =
+            monad match
+                case _: KyoCpsMonad[?] => Kyo.filter(c)(a => p(a))
+                case _                 => super.filter(c, monad)(p)
+
+        override def takeWhile[F[_]](c: CA, monad: CpsMonad[F])(p: (A) => F[Boolean]): F[C[A]] =
+            monad match
+                case _: KyoCpsMonad[?] => Kyo.takeWhile(c)(a => p(a))
+                case _                 => super.takeWhile(c, monad)(p)
+
         override def map[F[_], B](c: CA, monad: CpsMonad[F])(f: A => F[B]): F[C[B]] =
             monad match
                 case _: KyoCpsMonad[?] => Kyo.foreach(c)(a => f(a))
@@ -269,9 +284,6 @@ object directInternal:
     transparent inline given shiftedSeqToChunk[A]: SeqToChunkAsyncShift[A] = new SeqToChunkAsyncShift[A]
     transparent inline given shiftedChunk[A]: ChunkAsyncShift[A]           = new ChunkAsyncShift[A]
 
-    /** from Dotty-Cps-Async override def shiftedWhile[F[_], S, R]( c: CA, monad: CpsMonad[F] )(prolog: S, condition: A => F[Boolean], acc:
-      * (S, Boolean, A) => S, epilog: S => R): F[R]
-      */
     private[kyo] def shiftedWhile[A, S, B, C](source: IterableOnce[A])(
         prolog: B,
         f: Safepoint ?=> A => Boolean < S,
