@@ -345,3 +345,33 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
     }
 
 end ShiftMethodSupportTest
+
+/*
+class MutableIterator extends Test:
+    def oneShot(): IterableOnce[Int] =
+        val used = new java.util.concurrent.atomic.AtomicBoolean(false)
+        new IterableOnce[Int]:
+            def iterator: Iterator[Int] =
+                if !used.compareAndSet(false, true) then
+                    throw new IllegalStateException("Already consumed!")
+                else Iterator(1, 2, 3)
+
+        end new
+    end oneShot
+
+    "recall" in run {
+        val it: IterableOnce[Int] = oneShot()
+
+        def process(i: Int): Int < (IO & Abort[String]) =
+            Console.printLine(s"processing $i").andThen(
+                if i == 2 then Abort.fail("abort on 2")
+                else i
+            )
+
+        val prg: kyo.Chunk[Int] < (kyo.Async & kyo.Abort[String]) = Retry(Schedule.repeat(2))(Kyo.foreach(it)(i => process(i)))
+
+        Abort.run(prg).map(x => assert(x == Result.fail("abort on 2")))
+
+    }
+end MutableIterator
+*/
