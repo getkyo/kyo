@@ -225,14 +225,13 @@ object directInternal:
     end KyoCpsMonad
 
     class KyoSeqAsyncShift[A, C[X] >: Chunk[X] <: Seq[X] & SeqOps[X, C, C[X]], CA <: C[A]] extends SeqAsyncShift[A, C, CA]:
-        private inline def useLoop(c: CA): Boolean = c.knownSize > 0xffff || c.knownSize == -1
 
         override def shiftedFold[F[_], Acc, B, R](
             c: CA,
             monad: CpsMonad[F]
         )(prolog: Acc, action: A => F[B], acc: (Acc, A, B) => Acc, epilog: Acc => R): F[R] =
             monad match
-                case _: KyoCpsMonad[?] if useLoop(c) =>
+                case _: KyoCpsMonad[?] =>
                     Kyo.foldLeft(c)(prolog)((state, a) =>
                         action(a).map(b => acc(state, a, b))
                     ).map(s => epilog(s))
@@ -241,16 +240,16 @@ object directInternal:
 
         override def shiftedStateFold[F[_], S, R](c: CA, monad: CpsMonad[F])(prolog: S, acc: (S, A) => F[S], epilog: S => R): F[R] =
             monad match
-                case _: KyoCpsMonad[?] if useLoop(c) => Kyo.foldLeft(c)(prolog)((s, a) => acc(s, a)).map(s => epilog(s))
-                case _                               => super.shiftedStateFold(c, monad)(prolog, acc, epilog)
+                case _: KyoCpsMonad[?] => Kyo.foldLeft(c)(prolog)((s, a) => acc(s, a)).map(s => epilog(s))
+                case _                 => super.shiftedStateFold(c, monad)(prolog, acc, epilog)
 
         override def shiftedWhile[F[_], S, R](
             c: CA,
             monad: CpsMonad[F]
         )(prolog: S, condition: A => F[Boolean], acc: (S, Boolean, A) => S, epilog: S => R): F[R] =
             monad match
-                case _: KyoCpsMonad[?] if useLoop(c) => directInternal.shiftedWhile(c)(prolog, condition, acc, epilog)
-                case _                               => super.shiftedWhile(c, monad)(prolog, condition, acc, epilog)
+                case _: KyoCpsMonad[?] => directInternal.shiftedWhile(c)(prolog, condition, acc, epilog)
+                case _                 => super.shiftedWhile(c, monad)(prolog, condition, acc, epilog)
 
         override def dropWhile[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[C[A]] =
             monad match
