@@ -26,8 +26,7 @@ import scala.util.control.NoStackTrace
   *   the type of elements in this Chunk
   */
 sealed abstract class Chunk[+A]
-    extends IndexedSeq[A]
-    with IndexedSeqOps[A, Chunk, Chunk[A]]
+    extends Seq[A]
     with StrictOptimizedSeqOps[A, Chunk, Chunk[A]]
     with IterableFactoryDefaults[A, Chunk]
     derives CanEqual:

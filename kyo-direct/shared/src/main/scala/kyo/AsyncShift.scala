@@ -75,7 +75,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         extension [S, X](chunk: Chunk[X] < S)
             def resultInto(c: CA): C[X] < S = chunk.map(ch =>
-                c.iterableFactory.newBuilder[X].addAll(ch).result()
+                c.iterableFactory.from(ch)
             )
         end extension
 
