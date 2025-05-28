@@ -5,6 +5,7 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableFactoryDefaults
 import scala.collection.StrictOptimizedSeqFactory
+import scala.collection.immutable.IndexedSeqOps
 import scala.collection.immutable.StrictOptimizedSeqOps
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
@@ -25,7 +26,8 @@ import scala.util.control.NoStackTrace
   *   the type of elements in this Chunk
   */
 sealed abstract class Chunk[+A]
-    extends Seq[A]
+    extends IndexedSeq[A]
+    with IndexedSeqOps[A, Chunk, Chunk[A]]
     with StrictOptimizedSeqOps[A, Chunk, Chunk[A]]
     with IterableFactoryDefaults[A, Chunk]
     derives CanEqual:
