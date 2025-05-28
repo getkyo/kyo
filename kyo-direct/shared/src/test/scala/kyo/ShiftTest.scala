@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.BaseKyoCoreTest
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
+import scala.collection.Factory
 import scala.collection.IterableOps
 import scala.util.Try
 
@@ -457,24 +458,23 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(result.contains(Chunk("x", "Y")))
             assert(result.contains(Chunk("x", "y")))
             assert(result.size == 4)
-        }
-
-        //failing
+        }*/
+        // failing
         "collect - Vector" in {
-            val effects =
-                Vector("x", "y").map { str =>
+            val effectVector =
+                Vector("xx", "yy").map { str =>
                     Choice.eval(Seq(true, false)).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
-            val result = Choice.run(defer(effects.map(_.now))).eval
+            val result = Choice.run(defer(effectVector.map(_.now))).eval
 
-            assert(result.contains(Chunk("X", "Y")))
-            assert(result.contains(Chunk("X", "y")))
-            assert(result.contains(Chunk("x", "Y")))
-            assert(result.contains(Chunk("x", "y")))
+            assert(result.contains(Chunk("XX", "YY")))
+            assert(result.contains(Chunk("XX", "yy")))
+            assert(result.contains(Chunk("xx", "YY")))
+            assert(result.contains(Chunk("xx", "yy")))
             assert(result.size == 4)
-        }*/
+        }
 
         "collect - Vector as Seq" in {
             val effects: Seq[String < Choice] =
@@ -483,6 +483,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                         if b then str.toUpperCase else str
                     )
                 }
+
             val result = Choice.run(defer(effects.map(_.now))).eval
 
             assert(result.contains(Chunk("X", "Y")))
