@@ -288,7 +288,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             }
 
             "Choice" - {
-                "foreach" in {
+                "map" in {
                     val result = Choice.run(
                         defer:
                             Coll("x", "y").map(str =>
@@ -363,7 +363,6 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
     iterableTests[Vector]("Vector", [X] => seq => Vector.from(seq))
     iterableTests[Chunk]("Chunk", [X] => seq => Chunk.from(seq))
     iterableTests[List]("List", [X] => seq => List.from(seq))
-    
 
     // fake Iterable
     def oneShot[A](a: A*): Iterable[A] =
@@ -372,13 +371,13 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             def iterator: Iterator[A] =
                 if !used.compareAndSet(false, true) then
                     throw new IllegalStateException("Already consumed!")
-                else Iterator(a *)
+                else Iterator(a*)
 
         end new
     end oneShot
 
     iterableTests[Iterable]("IterableOnce", [X] => seq => oneShot(seq*))
-    
+
     "Try" - {
         val x: Try[Int < Any] = Try(1)
         val y: Try[Int]       = Try(1)
@@ -429,20 +428,25 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(result.size == 4)
         }
 
-    }
-    
-    "foldLeft - array" in {
-        val result = Choice.run(
-            defer:
-                Array(1, 1).foldLeft(0)((acc, _) =>
-                    Choice.eval(Seq(0, 1)).map(n => acc + n).now
-                )
-        ).eval
+        "map" in {
+            val result: Chunk[Array[String]] = Choice.run(
+                defer:
+                    Array("x", "y").map(str =>
+                        Choice.eval(List(true, false))
+                            .map(b => if b then str.toUpperCase else str).now
+                    )
+            ).eval
 
-        assert(result.contains(0))
-        assert(result.contains(1))
-        assert(result.contains(2))
-        assert(result.size == 4)
+            def checkContains(chunk: Chunk[String]) =
+                result.exists(_.toSeq == chunk)
+                
+            assert(checkContains(Chunk("X", "Y")))
+            assert(checkContains(Chunk("X", "y")))
+            assert(checkContains(Chunk("x", "Y")))
+            assert(checkContains(Chunk("x", "y")))
+            assert(result.size == 4)
+        }
+
     }
 
 end ShiftMethodSupportTest

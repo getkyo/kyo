@@ -1,14 +1,14 @@
 package kyo
 
 import cps.CpsMonad
+import cps.runtime.ArrayOpsAsyncShift
 import cps.runtime.IterableOpsAsyncShift
-import directInternal.KyoCpsMonad
-import kyo.Kyo.toIndexed
-import kyo.kernel.Loop
+import kyo.directInternal.KyoCpsMonad
 import kyo.kernel.internal.Safepoint
 import scala.annotation.targetName
+import scala.collection.ArrayOps
 import scala.collection.IterableOps
-import scala.collection.immutable.LinearSeq
+import scala.reflect.ClassTag
 
 trait asyncShiftInternalLowPriorityImplicit1:
     transparent inline given shiftedIterableOps[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]]]
@@ -19,7 +19,8 @@ end asyncShiftInternalLowPriorityImplicit1
 object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
     given Frame = Frame.internal
 
-    transparent inline given shiftedChunk[A]: ChunkAsyncShift[A] = new ChunkAsyncShift[A]
+    transparent inline given shiftedChunk[A]: ChunkAsyncShift[A]       = new ChunkAsyncShift[A]
+    transparent inline given shiftedArrayOps[A]: ArrayOpsAsyncShift[A] = new KyoArrayOpsAsyncShift[A]
 
     class ChunkAsyncShift[A] extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
 
@@ -128,4 +129,15 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
                 case _: KyoCpsMonad[?] => Kyo.foreach(c)(x => f(x).andThen(x)).resultInto(c)
 
     end KyoSeqAsyncShift
+
+    class KyoArrayOpsAsyncShift[A] extends ArrayOpsAsyncShift[A]:
+        extension [S, X](chunk: Chunk[X] < S)
+            def toArray(using classTag: ClassTag[X]): Array[X] < S = chunk.map(ch => ch.toArray)
+        end extension
+
+        override def map[F[_], B](arr: ArrayOps[A], monad: CpsMonad[F])(f: A => F[B])(using ct: ClassTag[B]): F[Array[B]] =
+            monad match
+                case _: KyoCpsMonad[?] => Kyo.foreach(arr.iterator)(a => f(a)).toArray
+        end map
+    end KyoArrayOpsAsyncShift
 end asyncShiftInternal
