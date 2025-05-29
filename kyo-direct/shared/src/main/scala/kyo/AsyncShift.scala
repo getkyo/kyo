@@ -54,7 +54,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
             monad: CpsMonad[F]
         )(prolog: S, condition: A => F[Boolean], acc: (S, Boolean, A) => S, epilog: S => R): F[R] =
             monad match
-                case _: KyoCpsMonad[?] => asyncShiftInternal.shiftedWhile(c)(prolog, condition, acc, epilog)
+                case _: KyoCpsMonad[?] => Kyo.shiftedWhile(c)(prolog, condition, acc, epilog)
 
         override def dropWhile[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[C[A]] =
             monad match
@@ -128,36 +128,4 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
                 case _: KyoCpsMonad[?] => Kyo.foreach(c)(x => f(x).andThen(x)).resultInto(c)
 
     end KyoSeqAsyncShift
-
-    private[kyo] def shiftedWhile[A, S, B, C](source: IterableOnce[A])(
-        prolog: B,
-        f: Safepoint ?=> A => Boolean < S,
-        acc: (B, Boolean, A) => B,
-        epilog: B => C
-    )(using Frame, Safepoint): C < S =
-        source.knownSize match
-            case 0 => epilog(prolog)
-            case _ =>
-                source match
-                    case linearSeq: LinearSeq[A] => Loop(linearSeq, prolog): (seq, b) =>
-                            if seq.isEmpty then Loop.done(epilog(b))
-                            else
-                                val curr = seq.head
-                                f(curr).map:
-                                    case true  => Loop.continue(seq.tail, acc(b, true, curr))
-                                    case false => Loop.done(epilog(acc(b, false, curr)))
-
-                    case other =>
-                        val indexedSeq = toIndexed(other)
-                        val size       = indexedSeq.length
-                        Loop.indexed(prolog): (idx, b) =>
-                            if idx == size then Loop.done(epilog(b))
-                            else
-                                val curr = indexedSeq(idx)
-                                f(curr).map:
-                                    case true  => Loop.continue(acc(b, true, curr))
-                                    case false => Loop.done(epilog(acc(b, false, curr)))
-
-        end match
-    end shiftedWhile
 end asyncShiftInternal

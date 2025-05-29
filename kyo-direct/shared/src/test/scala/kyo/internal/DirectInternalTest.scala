@@ -1,7 +1,7 @@
 package kyo.internal
 
 import kyo.*
-import kyo.asyncShiftInternal.shiftedWhile
+import kyo.Kyo.shiftedWhile
 
 class DirectInternalTest extends Test:
     "shiftedWhile" in {
