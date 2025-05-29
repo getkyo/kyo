@@ -25,9 +25,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
     class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]] extends IterableOpsAsyncShift[A, C, CA]:
 
         extension [S, X](chunk: Chunk[X] < S)
-            def resultInto(c: CA): C[X] < S = chunk.map(ch =>
-                c.iterableFactory.from(ch)
-            )
+            def resultInto(c: CA): C[X] < S = chunk.map(ch => c.iterableFactory.from(ch))
         end extension
 
         override def shiftedFold[F[_], Acc, B, R](
@@ -36,9 +34,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
         )(prolog: Acc, action: A => F[B], acc: (Acc, A, B) => Acc, epilog: Acc => R): F[R] =
             monad match
                 case _: KyoCpsMonad[?] =>
-                    Kyo.foldLeft(c)(prolog)((state, a) =>
-                        action(a).map(b => acc(state, a, b))
-                    ).map(s => epilog(s))
+                    Kyo.foldLeft(c)(prolog)((state, a) => action(a).map(b => acc(state, a, b))).map(s => epilog(s))
         end shiftedFold
 
         override def shiftedStateFold[F[_], S, R](c: CA, monad: CpsMonad[F])(prolog: S, acc: (S, A) => F[S], epilog: S => R): F[R] =
@@ -76,6 +72,47 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
         override def foreach[F[_], U](c: CA, monad: CpsMonad[F])(f: A => F[U]): F[Unit] =
             monad match
                 case _: KyoCpsMonad[?] => Kyo.foreachDiscard(c)(a => f(a))
+
+        override def collect[F[_], B](c: CA, monad: CpsMonad[F])(pf: PartialFunction[A, F[B]]): F[C[B]] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def filterNot[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[C[A]] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def flatten[F[_], B](c: CA, monad: CpsMonad[F])(implicit asIterable: A => F[IterableOnce[B]]): F[C[B]] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def groupBy[F[_], K](c: CA, monad: CpsMonad[F])(f: A => F[K]): F[Map[K, C[A]]] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def groupMap[F[_], K, B](c: CA, monad: CpsMonad[F])(key: A => F[K])(f: A => F[B]): F[Map[K, C[B]]] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def partition[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[(C[A], C[A])] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def partitionMap[F[_], A1, A2](c: CA, monad: CpsMonad[F])(f: A => F[Either[A1, A2]]): F[(C[A1], C[A2])] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def scanLeft[F[_], B](c: CA, monad: CpsMonad[F])(z: B)(op: (B, A) => F[B]): F[C[B]] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def span[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[(C[A], C[A])] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
+        override def tapEach[F[_], U](c: CA, monad: CpsMonad[F])(f: A => F[U]): F[C[A]] =
+            monad match
+                case _: KyoCpsMonad[?] => ???
+
     end KyoSeqAsyncShift
 
     private[kyo] def shiftedWhile[A, S, B, C](source: IterableOnce[A])(
