@@ -378,6 +378,42 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
     iterableTests[Iterable]("IterableOnce", [X] => seq => oneShot(seq*))
 
+    "Option" - {
+        val x: Option[Int < Any] = Option(1)
+        val y: Option[Int]       = Option(1)
+        val z: Option[Int] < Any = None
+
+        "filter" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = defer:
+                y.filter(i => f(i).now)
+
+            assert(d.eval == Option(1))
+        }
+
+        "orElse" in {
+            val d = defer:
+                y.orElse(z.now)
+
+            assert(d.eval == Option(1))
+        }
+
+        "getOrElse" in {
+            val w: Int < Any = 3
+            val d = defer:
+                z.now.getOrElse(w.now)
+
+            assert(d.eval == 3)
+        }
+
+        "map" in {
+            val d = defer:
+                x.map(_.now + 1)
+
+            assert(d.eval == Option(2))
+        }
+    }
+
     "Try" - {
         val x: Try[Int < Any] = Try(1)
         val y: Try[Int]       = Try(1)
