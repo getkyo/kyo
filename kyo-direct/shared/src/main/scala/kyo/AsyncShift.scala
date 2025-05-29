@@ -1,77 +1,29 @@
 package kyo
 
 import cps.CpsMonad
-import cps.runtime.IndexedSeqAsyncShift
-import cps.runtime.SeqAsyncShift
+import cps.runtime.IterableOpsAsyncShift
 import directInternal.KyoCpsMonad
 import kyo.Kyo.toIndexed
 import kyo.kernel.Loop
 import kyo.kernel.internal.Safepoint
-import scala.collection.IndexedSeq
-import scala.collection.IndexedSeqOps
-import scala.collection.SeqOps
+import scala.collection.IterableOps
 import scala.collection.immutable.LinearSeq
-import scala.collection.mutable
 
 trait asyncShiftInternalLowPriorityImplicit1:
 
-    transparent inline given shiftedSeqOps[A, C[X] <: Seq[X] & SeqOps[X, C, C[X]]]
-        : SeqAsyncShift[A, C, C[A]] = asyncShiftInternal.KyoSeqAsyncShift[A, C, C[A]]()
-
+    transparent inline given shiftedIterableOps[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]]]
+        : asyncShiftInternal.KyoSeqAsyncShift[A, C, C[A]] =
+        asyncShiftInternal.KyoSeqAsyncShift[A, C, C[A]]()
 end asyncShiftInternalLowPriorityImplicit1
 
 object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
     given Frame = Frame.internal
 
-    /* transparent inline given shifedIndexedSeqToChunk[A]: KyoIndexedSeqAsyncShift[A, IndexedSeq, IndexedSeq[A]] =
-        new KyoIndexedSeqAsyncShift[A, IndexedSeq, IndexedSeq[A]]*/
-    transparent inline given shiftedSeqToChunk[A]: SeqAsyncShift[A, Seq, Seq[A]] = new SeqToChunkAsyncShift[A]
-    transparent inline given shiftedChunk[A]: ChunkAsyncShift[A]                 = new ChunkAsyncShift[A]
+    transparent inline given shiftedChunk[A]: ChunkAsyncShift[A] = new ChunkAsyncShift[A]
 
-    class SeqToChunkAsyncShift[A] extends KyoSeqAsyncShift[A, Seq, Seq[A]]:
-        extension [S, X](chunk: Chunk[X] < S) override def resultInto(c: Seq[A]): Seq[X] < S = chunk
+    class ChunkAsyncShift[A] extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
 
-    class ChunkAsyncShift[A] extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]:
-        extension [S, X](chunk: Chunk[X] < S) override def resultInto(c: Chunk[A]): Chunk[X] < S = chunk
-    // class IndexedSeqToChunkAsyncShift[A] extends KyoIndexedSeqAsyncShift[A, IndexedSeq, IndexedSeq[A]]
-
-    /*
-    class KyoIndexedSeqAsyncShift[A, C[X] <: IndexedSeq[X] & IndexedSeqOps[X, C, C[X]], CA <: C[A]]
-        extends KyoSeqAsyncShift[A, C, CA]:
-
-        override def indexWhere[F[_]](c: CA, m: CpsMonad[F])(p: A => F[Boolean], from: Int): F[Int] =
-            def run(n: Int): F[Int] =
-                if n < c.length then
-                    m.flatMap(p(c(n))) { c =>
-                        if c then m.pure(n)
-                        else run(n + 1)
-                    }
-                else m.pure(-1)
-
-            run(0)
-        end indexWhere
-
-        override def indexWhere[F[_]](c: CA, m: CpsMonad[F])(p: A => F[Boolean]): F[Int] =
-            indexWhere(c, m)(p, 0)
-
-        override def segmentLength[F[_]](c: CA, m: CpsMonad[F])(p: A => F[Boolean], from: Int): F[Int] =
-            def run(n: Int, acc: Int): F[Int] =
-                if n < c.length then
-                    m.flatMap(p(c(n))) { r =>
-                        if r then run(n + 1, acc + 1)
-                        else m.pure(acc)
-                    }
-                else m.pure(acc)
-
-            run(from, 0)
-        end segmentLength
-
-        override def segmentLength[F[_]](c: CA, m: CpsMonad[F])(p: A => F[Boolean]): F[Int] =
-            segmentLength(c, m)(p, 0)
-    end KyoIndexedSeqAsyncShift
-     */
-
-    class KyoSeqAsyncShift[A, C[X] <: Seq[X] & SeqOps[X, C, C[X]], CA <: C[A]] extends SeqAsyncShift[A, C, CA]:
+    class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]] extends IterableOpsAsyncShift[A, C, CA]:
 
         extension [S, X](chunk: Chunk[X] < S)
             def resultInto(c: CA): C[X] < S = chunk.map(ch =>

@@ -167,10 +167,11 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         }
         "dropWhile" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
-                xsValues.dropWhile(f(_).now).toSeq
 
-            assert(d.eval == Seq(3, 4))
+            val d = defer:
+                Seq(1, 2, 3, 4).dropWhile(f(_).now).toSeq
+
+            assert(d.eval == xsValues.dropWhile(_ < 3).toSeq)
         }
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3

@@ -475,7 +475,7 @@ object Kyo:
                                 val curr = seq.head
                                 f(curr).map:
                                     case true  => Loop.continue(seq.tail)
-                                    case false => Loop.done(Chunk.from(seq.tail))
+                                    case false => Loop.done(Chunk.from(seq))
                     case other =>
                         val indexedSeq = toIndexed(other)
                         val size       = indexedSeq.length

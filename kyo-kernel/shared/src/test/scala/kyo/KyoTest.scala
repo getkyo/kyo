@@ -247,6 +247,27 @@ class KyoTest extends Test:
             assert(TestEffect1.run(Kyo.fill(100)(TestEffect1(1))).map(_.size).eval == 100)
         }
 
+        "dropWhile" in {
+            def f(i: Int): Boolean < Any = true
+
+            def isEven(i: Int): Boolean < Any = i % 2 == 0
+
+            def lessThanThree(i: Int): Boolean < Any = i < 3
+
+            assert(Kyo.dropWhile(Seq.empty[Int])(a => f(a)).eval == Seq.empty)
+
+            assert(Kyo.dropWhile(Chunk(1, 2, 3, 4))(x => x < 3).eval == Chunk(3, 4))
+            assert(Kyo.dropWhile(List(1, 2, 3, 4))(x => x < 3).eval == Chunk(3, 4))
+
+            assert(Kyo.dropWhile(Seq.empty[Int])(x => f(x)).eval == Seq.empty)
+            assert(Kyo.dropWhile(Chunk(1, 2, 3))(x => f(x)).eval == Seq.empty)
+            assert(Kyo.dropWhile(Chunk(2, 4, 5, 6))(x => isEven(x)).eval == Chunk(5, 6))
+            assert(Kyo.dropWhile(Chunk(1, 2, 3, 4))(x => lessThanThree(x)).eval == Chunk(3, 4))
+            assert(Kyo.dropWhile(Chunk(2, 4, 5))(x => isEven(x)).eval == Chunk(5))
+            assert(Kyo.dropWhile(Chunk(1, 2, -1, 3))(x => lessThanThree(x)).eval == Chunk(3))
+            assert(Kyo.dropWhile(Chunk(4, 1, 2))(x => lessThanThree(x)).eval == Chunk(4, 1, 2))
+        }
+
         "takeWhile" in {
             def f(i: Int): Boolean < Any             = true
             def isEven(i: Int): Boolean < Any        = i % 2 == 0
