@@ -6,6 +6,7 @@ import directInternal.KyoCpsMonad
 import kyo.Kyo.toIndexed
 import kyo.kernel.Loop
 import kyo.kernel.internal.Safepoint
+import scala.annotation.targetName
 import scala.collection.IterableOps
 import scala.collection.immutable.LinearSeq
 
@@ -30,6 +31,10 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         extension [S, X, Y](chunks: (Chunk[X], Chunk[Y]) < S)
             def resultInto(c: CA): (C[X], C[Y]) < S = chunks.map((x, y) => (c.iterableFactory.from(x), c.iterableFactory.from(y)))
+
+        extension [S, K, V](chunks: Map[K, Chunk[V]] < S)
+            @targetName("resultIntoMap")
+            def resultInto(c: CA): Map[K, C[V]] < S = chunks.map(m => m.view.mapValues(ch => c.iterableFactory.from(ch)).toMap)
 
         override def shiftedFold[F[_], Acc, B, R](
             c: CA,
@@ -100,7 +105,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         override def groupMap[F[_], K, B](c: CA, monad: CpsMonad[F])(key: A => F[K])(f: A => F[B]): F[Map[K, C[B]]] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.groupMap(c)(key)(f).resultInto(c)
 
         override def partition[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[(C[A], C[A])] =
             monad match
