@@ -665,6 +665,39 @@ object Kyo:
                                 }
                         }
 
+    def groupBy[S, A, K](source: IterableOnce[A])(f: Safepoint ?=> A => K < S)(using
+        Frame,
+        Safepoint
+    ): Map[K, Chunk[A]] < S =
+        source.knownSize match
+            case 0 => Map.empty[K, Chunk[A]]
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Map.empty[K, Chunk[A]]) { (seq, acc) =>
+                            if seq.isEmpty then
+                                Loop.done(acc)
+                            else
+                                val a = seq.head
+                                f(a).map { k =>
+                                    val current = acc.getOrElse(k, Chunk.empty)
+                                    Loop.continue(seq.tail, acc.updated(k, current :+ a))
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Map.empty[K, Chunk[A]]) { (idx, acc) =>
+                            if idx == arr.length then
+                                Loop.done(acc)
+                            else
+                                val a = arr(idx)
+                                f(a).map { k =>
+                                    val current = acc.getOrElse(k, Chunk.empty)
+                                    Loop.continue(acc.updated(k, current :+ a))
+                                }
+                        }
+
     def groupMap[S, A, K, B](source: IterableOnce[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
         Frame,
         Safepoint

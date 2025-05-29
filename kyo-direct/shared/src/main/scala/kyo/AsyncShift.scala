@@ -101,7 +101,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         override def groupBy[F[_], K](c: CA, monad: CpsMonad[F])(f: A => F[K]): F[Map[K, C[A]]] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.groupBy(c)(f).resultInto(c)
 
         override def groupMap[F[_], K, B](c: CA, monad: CpsMonad[F])(key: A => F[K])(f: A => F[B]): F[Map[K, C[B]]] =
             monad match
