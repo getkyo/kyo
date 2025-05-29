@@ -17,14 +17,14 @@ trait asyncShiftInternalLowPriorityImplicit1:
 end asyncShiftInternalLowPriorityImplicit1
 
 object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
-    given Frame = Frame.internal
 
     transparent inline given shiftedChunk[A]: ChunkAsyncShift[A]       = new ChunkAsyncShift[A]
     transparent inline given shiftedArrayOps[A]: ArrayOpsAsyncShift[A] = new KyoArrayOpsAsyncShift[A]
 
-    class ChunkAsyncShift[A] extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
+    class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
 
-    class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]] extends IterableOpsAsyncShift[A, C, CA]:
+    class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]](using Frame)
+        extends IterableOpsAsyncShift[A, C, CA]:
 
         extension [S, X](chunk: Chunk[X] < S)
             def resultInto(c: CA): C[X] < S = chunk.map(ch => c.iterableFactory.from(ch))
@@ -130,7 +130,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
     end KyoSeqAsyncShift
 
-    class KyoArrayOpsAsyncShift[A] extends ArrayOpsAsyncShift[A]:
+    class KyoArrayOpsAsyncShift[A](using Frame) extends ArrayOpsAsyncShift[A]:
         extension [S, X](chunk: Chunk[X] < S)
             def toArray(using classTag: ClassTag[X]): Array[X] < S = chunk.map(ch => ch.toArray)
         end extension
