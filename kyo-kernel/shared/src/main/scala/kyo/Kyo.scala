@@ -3,6 +3,7 @@ package kyo
 import kernel.Loop
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
+import scala.collection.BuildFrom
 import scala.collection.immutable.LinearSeq
 
 /** Object containing utility functions for working with Kyo effects.
@@ -153,16 +154,22 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreach[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Chunk[B] < S =
+    def foreach[Coll[+X] <: Iterable[X], A, B, S](source: Coll[A])(f: Safepoint ?=> A => B < S)(
+        using
+        frame: Frame,
+        safePoint: Safepoint,
+        buildFrom: BuildFrom[Coll[A], B, Coll[B]]
+    ): Coll[B] < S =
         source.knownSize match
-            case 0 => Chunk.empty
+            case 0 => buildFrom.newBuilder(source).result()
             case 1 =>
                 val head = source.iterator.next()
-                f(head).map(Chunk(_))
+                f(head).map: res =>
+                    buildFrom.newBuilder(source).addOne(res).result()
             case _ =>
-                source match
+                val chunkEff = source match
                     case linearSeq: LinearSeq[A] =>
-                        Loop(linearSeq, Chunk.empty[B]): (seq, acc) =>
+                        Loop[LinearSeq[A], Chunk[B], Chunk[B], S](linearSeq, Chunk.empty[B]): (seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else f(seq.head).map(u => Loop.continue(seq.tail, acc.append(u)))
                     case other =>
@@ -171,6 +178,11 @@ object Kyo:
                         Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else f(indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
+                source match
+                    case _: Chunk[A] => chunkEff.asInstanceOf[Coll[B] < S]
+                    case _ => chunkEff.map: res =>
+                            buildFrom.newBuilder(source).addAll(res).result()
+                end match
     end foreach
 
     /** Applies an effect-producing function to each element of a sequence along with its index.
@@ -182,16 +194,22 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreachIndexed[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Chunk[B] < S =
+    def foreachIndexed[Coll[+X] <: Iterable[X], A, B, S](source: Coll[A])(f: Safepoint ?=> (Int, A) => B < S)(
+        using
+        frame: Frame,
+        safePoint: Safepoint,
+        buildFrom: BuildFrom[Coll[A], B, Coll[B]]
+    ): Coll[B] < S =
         source.knownSize match
-            case 0 => Chunk.empty
+            case 0 => buildFrom.newBuilder(source).result()
             case 1 =>
                 val head = source.iterator.next()
-                f(0, head).map(Chunk(_))
+                f(0, head).map: res =>
+                    buildFrom.newBuilder(source).addOne(res).result()
             case _ =>
-                source match
+                val chunkEff = source match
                     case linearSeq: LinearSeq[A] =>
-                        Loop.indexed(linearSeq, Chunk.empty[B]): (idx, seq, acc) =>
+                        Loop.indexed[LinearSeq[A], Chunk[B], Chunk[B], S](linearSeq, Chunk.empty[B]): (idx, seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else f(idx, seq.head).map(u => Loop.continue(seq.tail, acc.append(u)))
                     case other =>
@@ -200,6 +218,11 @@ object Kyo:
                         Loop.indexed(Chunk.empty[B]): (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else f(idx, indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
+                source match
+                    case _: Chunk[A] => chunkEff.asInstanceOf[Coll[B] < S]
+                    case _ => chunkEff.map: res =>
+                            buildFrom.newBuilder(source).addAll(res).result()
+                end match
     end foreachIndexed
 
     /** Applies an effect-producing function to each element of an `IterableOnce`, discarding the results.
@@ -241,13 +264,18 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of filtered elements
       */
-    def filter[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+    def filter[Coll[+X] <: Iterable[X], A, S](source: Coll[A])(f: Safepoint ?=> A => Boolean < S)(
+        using
+        frame: Frame,
+        safePoint: Safepoint,
+        buildFrom: BuildFrom[Coll[A], A, Coll[A]]
+    ): Coll[A] < S =
         source.knownSize match
-            case 0 => Chunk.empty
+            case 0 => buildFrom.newBuilder(source).result()
             case _ =>
-                source match
+                val chunkEff = source match
                     case linearSeq: LinearSeq[A] =>
-                        Loop(linearSeq, Chunk.empty[A]): (seq, acc) =>
+                        Loop[LinearSeq[A], Chunk[A], Chunk[A], S](linearSeq, Chunk.empty[A]): (seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else
                                 val head = seq.head
@@ -264,6 +292,11 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue(acc.append(curr))
                                     case false => Loop.continue(acc)
+                source match
+                    case _: Chunk[A] => chunkEff.asInstanceOf[Coll[A] < S]
+                    case _ => chunkEff.map: res =>
+                            buildFrom.newBuilder(source).addAll(res).result()
+                end match
         end match
     end filter
 
@@ -308,13 +341,18 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk containing only the Present values after transformation
       */
-    def collect[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Chunk[B] < S =
+    def collect[Coll[+X] <: Iterable[X], A, B, S](source: Coll[A])(f: Safepoint ?=> A => Maybe[B] < S)(
+        using
+        frame: Frame,
+        safePoint: Safepoint,
+        buildFrom: BuildFrom[Coll[A], B, Coll[B]]
+    ): Coll[B] < S =
         source.knownSize match
-            case 0 => Chunk.empty
+            case 0 => buildFrom.newBuilder(source).result()
             case _ =>
-                source match
+                val chunkEff = source match
                     case linearSeq: LinearSeq[A] =>
-                        Loop(linearSeq, Chunk.empty[B]): (seq, acc) =>
+                        Loop[LinearSeq[A], Chunk[B], Chunk[B], S](linearSeq, Chunk.empty[B]): (seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else
                                 f(seq.head).map:
@@ -329,6 +367,11 @@ object Kyo:
                                 f(indexedSeq(idx)).map:
                                     case Absent     => Loop.continue(acc)
                                     case Present(v) => Loop.continue(acc.append(v))
+                source match
+                    case _: Chunk[A] => chunkEff.asInstanceOf[Coll[B] < S]
+                    case _ => chunkEff.map: res =>
+                            buildFrom.newBuilder(source).addAll(res).result()
+                end match
     end collect
 
     /** Collects the results of an `IterableOnce` of effects into a single effect.
@@ -338,14 +381,20 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collectAll[A, S](source: IterableOnce[A < S])(using Frame, Safepoint): Chunk[A] < S =
+    def collectAll[Coll[+X] <: Iterable[X], A, S](source: Coll[A < S])(
+        using
+        frame: Frame,
+        safePoint: Safepoint,
+        buildFrom: BuildFrom[Coll[A < S], A, Coll[A]]
+    ): Coll[A] < S =
         source.knownSize match
-            case 0 => Chunk.empty
-            case 1 => source.iterator.next().map(Chunk(_))
+            case 0 => buildFrom.newBuilder(source).result()
+            case 1 => source.iterator.next().map: res =>
+                    buildFrom.newBuilder(source).addOne(res).result()
             case _ =>
-                source match
+                val chunkEff = source match
                     case linearSeq: LinearSeq[A < S] =>
-                        Loop(linearSeq, Chunk.empty[A]): (seq, acc) =>
+                        Loop[LinearSeq[A < S], Chunk[A], Chunk[A], S](linearSeq, Chunk.empty[A]): (seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else
                                 seq.head.map(u => Loop.continue(seq.tail, acc.append(u)))
@@ -356,6 +405,11 @@ object Kyo:
                             if idx == size then Loop.done(acc)
                             else
                                 indexedSeq(idx).map(u => Loop.continue(acc.append(u)))
+                source match
+                    case _: Chunk[A] => chunkEff.asInstanceOf[Coll[A] < S]
+                    case _ => chunkEff.map: res =>
+                            buildFrom.newBuilder(source).addAll(res).result()
+                end match
     end collectAll
 
     /** Collects the results of an `IterableOnce` of effects, discarding the results.
@@ -429,13 +483,18 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of taken elements
       */
-    def takeWhile[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+    def takeWhile[Coll[+X] <: Iterable[X], A, S](source: Coll[A])(f: Safepoint ?=> A => Boolean < S)(
+        using
+        frame: Frame,
+        safePoint: Safepoint,
+        buildFrom: BuildFrom[Coll[A], A, Coll[A]]
+    ): Coll[A] < S =
         source.knownSize match
-            case 0 => Chunk.empty
+            case 0 => buildFrom.newBuilder(source).result()
             case _ =>
-                source match
+                val chunkEff = source match
                     case linearSeq: LinearSeq[A] =>
-                        Loop(linearSeq, Chunk.empty[A]): (seq, acc) =>
+                        Loop[LinearSeq[A], Chunk[A], Chunk[A], S](linearSeq, Chunk.empty[A]): (seq, acc) =>
                             if seq.isEmpty then Loop.done(acc)
                             else
                                 val curr = seq.head
@@ -452,6 +511,11 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue(acc.append(curr))
                                     case false => Loop.done(acc)
+                source match
+                    case _: Chunk[A] => chunkEff.asInstanceOf[Coll[A] < S]
+                    case _ => chunkEff.map: res =>
+                            buildFrom.newBuilder(source).addAll(res).result()
+                end match
     end takeWhile
 
     /** Drops elements from an `IterableOnce` while a predicate holds true.
@@ -463,13 +527,18 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of remaining elements
       */
-    def dropWhile[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+    def dropWhile[Coll[+X] <: Iterable[X], A, S](source: Coll[A])(f: Safepoint ?=> A => Boolean < S)(
+        using
+        frame: Frame,
+        safePoint: Safepoint,
+        buildFrom: BuildFrom[Coll[A], A, Coll[A]]
+    ): Coll[A] < S =
         source.knownSize match
-            case 0 => Chunk.empty
+            case 0 => buildFrom.newBuilder(source).result()
             case _ =>
-                source match
+                val chunkEff = source match
                     case linearSeq: LinearSeq[A] =>
-                        Loop(linearSeq): seq =>
+                        Loop[LinearSeq[A], Chunk[A], S](linearSeq): seq =>
                             if seq.isEmpty then Loop.done(Chunk.empty)
                             else
                                 val curr = seq.head
@@ -486,6 +555,11 @@ object Kyo:
                                 f(curr).map:
                                     case true  => Loop.continue
                                     case false => Loop.done(Chunk.from(indexedSeq.drop(idx)))
+
+                source match
+                    case _: Chunk[A] => chunkEff.asInstanceOf[Coll[A] < S]
+                    case _ => chunkEff.map: res =>
+                            buildFrom.newBuilder(source).addAll(res).result()
                 end match
     end dropWhile
 
