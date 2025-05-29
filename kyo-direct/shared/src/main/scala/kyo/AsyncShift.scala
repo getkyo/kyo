@@ -112,7 +112,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         override def scanLeft[F[_], B](c: CA, monad: CpsMonad[F])(z: B)(op: (B, A) => F[B]): F[C[B]] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.scanLeft(c)(z)(op).resultInto(c)
 
         override def span[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[(C[A], C[A])] =
             monad match

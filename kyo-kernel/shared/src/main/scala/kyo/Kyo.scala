@@ -595,6 +595,42 @@ object Kyo:
                                 }
                         }
 
+    /** Computes a prefix scan of the collection.
+      *
+      * @param z
+      *   Initial accumulator value
+      * @param op
+      *   Effectful operation that combines accumulator with each element
+      * @return
+      *   Chunk containing all intermediate accumulator states
+      */
+    def scanLeft[S, A, B](source: IterableOnce[A])(z: B)(op: (B, A) => B < S)(using
+        Frame,
+        Safepoint
+    ): Chunk[B] < S =
+        source.knownSize match
+            case 0 => Chunk(z)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk(z), z) { (seq, acc, current) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else
+                                op(current, seq.head).map { next =>
+                                    Loop.continue(seq.tail, acc.append(next), next)
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Chunk(z), z) { (idx, acc, current) =>
+                            if idx == arr.length then Loop.done(acc)
+                            else
+                                op(current, arr(idx)).map { next =>
+                                    Loop.continue(acc.append(next), next)
+                                }
+                        }
+
     /** Creates a Chunk by repeating an effect-producing value.
       *
       * @param n
