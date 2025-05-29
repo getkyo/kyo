@@ -1,11 +1,13 @@
-package kyo
+package kyo.directInternal
 
 import kyo.Ansi.*
+import kyo.Async
+import kyo.Emit
+import kyo.IO
+import kyo.Result
+import kyo.directInternal.Trees
 import scala.annotation.tailrec
-import scala.collection.ArrayOps
 import scala.collection.IterableOps
-import scala.collection.MapOps
-import scala.collection.WithFilter
 import scala.quoted.*
 
 private val validMethodNamesForAsyncShift = Set(
