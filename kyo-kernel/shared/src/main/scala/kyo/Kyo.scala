@@ -565,7 +565,41 @@ object Kyo:
                 end match
     end dropWhile
 
-    def partitionMap[S, A, A1, A2](source: IterableOnce[A])(f: A => Either[A1, A2] < S)(using
+    def partition[S, A](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using
+        Frame,
+        Safepoint
+    ): (Chunk[A], Chunk[A]) < S =
+        source.knownSize match
+            case 0 => (Chunk.empty, Chunk.empty)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[A], Chunk.empty[A]) { (seq, trues, falses) =>
+                            if seq.isEmpty then Loop.done((trues, falses))
+                            else
+                                f(seq.head).map { matches =>
+                                    if matches then
+                                        Loop.continue(seq.tail, trues.append(seq.head), falses)
+                                    else
+                                        Loop.continue(seq.tail, trues, falses.append(seq.head))
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Chunk.empty[A], Chunk.empty[A]) { (idx, trues, falses) =>
+                            if idx == arr.length then
+                                Loop.done((trues, falses))
+                            else
+                                f(arr(idx)).map { matches =>
+                                    if matches then
+                                        Loop.continue(trues.append(arr(idx)), falses)
+                                    else
+                                        Loop.continue(trues, falses.append(arr(idx)))
+                                }
+                        }
+
+    def partitionMap[S, A, A1, A2](source: IterableOnce[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
         Frame,
         Safepoint
     ): (Chunk[A1], Chunk[A2]) < S =

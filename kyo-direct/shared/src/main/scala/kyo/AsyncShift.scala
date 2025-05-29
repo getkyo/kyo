@@ -104,7 +104,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         override def partition[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[(C[A], C[A])] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.partition(c)(p).resultInto(c)
 
         override def partitionMap[F[_], A1, A2](c: CA, monad: CpsMonad[F])(f: A => F[Either[A1, A2]]): F[(C[A1], C[A2])] =
             monad match
