@@ -5,7 +5,6 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableFactoryDefaults
 import scala.collection.StrictOptimizedSeqFactory
-import scala.collection.immutable.IndexedSeqOps
 import scala.collection.immutable.StrictOptimizedSeqOps
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace

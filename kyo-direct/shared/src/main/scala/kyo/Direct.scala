@@ -3,16 +3,10 @@ package kyo
 import cps.CpsMonad
 import cps.CpsMonadContext
 import cps.async
-import cps.runtime.SeqAsyncShift
 import directInternal.KyoCpsMonad
 import kyo.Ansi.*
-import kyo.Kyo.toIndexed
-import kyo.kernel.Loop
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
-import scala.collection.Factory
-import scala.collection.SeqOps
-import scala.collection.immutable.LinearSeq
 import scala.quoted.*
 
 /** Defers the execution of a block of code, allowing the use of `.now` and `.later` for effect handling.

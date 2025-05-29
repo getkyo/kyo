@@ -439,7 +439,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
             def checkContains(chunk: Chunk[String]) =
                 result.exists(_.toSeq == chunk)
-                
+
             assert(checkContains(Chunk("X", "Y")))
             assert(checkContains(Chunk("X", "y")))
             assert(checkContains(Chunk("x", "Y")))
