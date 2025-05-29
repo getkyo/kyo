@@ -173,6 +173,41 @@ object Kyo:
                             else f(indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
     end foreach
 
+    /** Applies an effect-producing function to each element of an `IterableOnce`, and concatenates the resulting collections.
+      *
+      * @param source
+      *   The input `IterableOnce`
+      * @param f
+      *   The effect-producing function that returns a collection of results per element
+      * @return
+      *   A new effect that produces a flattened Chunk of all results
+      */
+    def foreachConcat[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using Frame, Safepoint): Chunk[B] < S =
+        source.knownSize match
+            case 0 => Chunk.empty
+            case 1 =>
+                val head = source.iterator.next()
+                f(head).map(bs => Chunk.from(bs))
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[B]): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else
+                                f(seq.head).map(bs =>
+                                    Loop.continue(seq.tail, acc ++ bs)
+                                )
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
+                        Loop.indexed(Chunk.empty[B]): (idx, acc) =>
+                            if idx == size then Loop.done(acc)
+                            else
+                                f(indexedSeq(idx)).map(bs =>
+                                    Loop.continue(acc ++ bs)
+                                )
+    end foreachConcat
+
     /** Applies an effect-producing function to each element of a sequence along with its index.
       *
       * @param source

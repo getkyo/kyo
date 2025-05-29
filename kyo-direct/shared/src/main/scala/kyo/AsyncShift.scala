@@ -10,7 +10,6 @@ import scala.collection.IterableOps
 import scala.collection.immutable.LinearSeq
 
 trait asyncShiftInternalLowPriorityImplicit1:
-
     transparent inline given shiftedIterableOps[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]]]
         : asyncShiftInternal.KyoSeqAsyncShift[A, C, C[A]] =
         asyncShiftInternal.KyoSeqAsyncShift[A, C, C[A]]()
@@ -69,6 +68,10 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
             monad match
                 case _: KyoCpsMonad[?] => Kyo.foreach(c)(a => f(a)).resultInto(c)
         end map
+
+        override def flatMap[F[_], B](c: CA, monad: CpsMonad[F])(f: A => F[IterableOnce[B]]): F[C[B]] =
+            monad match
+                case _: KyoCpsMonad[?] => Kyo.foreachConcat(c)(a => f(a)).resultInto(c)
 
         override def foreach[F[_], U](c: CA, monad: CpsMonad[F])(f: A => F[U]): F[Unit] =
             monad match
