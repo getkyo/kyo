@@ -64,11 +64,11 @@ private[kyo] object Validate:
                     qualifier.tpe <:< TypeRepr.of[IterableOps[?, ?, ?]] |
                     qualifier.tpe <:< TypeRepr.of[Option[?]] |
                     qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
-                    qualifier.tpe <:< TypeRepr.of[MapOps[?, ?, ?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[ArrayOps[?]] |
+                    // qualifier.tpe <:< TypeRepr.of[MapOps[?, ?, ?, ?]] |
+                    // qualifier.tpe <:< TypeRepr.of[ArrayOps[?]] |
                     qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[WithFilter[?, ?]]
+                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]]
+                // qualifier.tpe <:< TypeRepr.of[WithFilter[?, ?]]
 
             inline def validName: Boolean = validMethodNamesForAsyncShift.contains(methodName)
 
