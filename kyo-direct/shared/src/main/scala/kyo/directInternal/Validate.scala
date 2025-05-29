@@ -39,6 +39,7 @@ private val validMethodNamesForAsyncShift = Set(
     "recover",
     "recoverWith",
     "scanLeft",
+    // "reduceOption", //doesn't compile yet
     "scanRight"
 )
 

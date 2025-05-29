@@ -150,12 +150,6 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
                 assert(d.eval == Option(4))
             }
-            /*"reduceOption" in {
-                val d: Option[Int] < Any = defer:
-                    xs.reduceOption(_.now + _.now).map(_.now)
-    
-                assert(d.eval == Option(10))
-            }*/
             "map" in {
                 val d: Seq[Int] < Any = defer:
                     xs.map(_.now).toSeq
