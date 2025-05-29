@@ -638,7 +638,7 @@ object Kyo:
       * @return
       *   Chunk containing all intermediate accumulator states
       */
-    def scanLeft[S, A, B](source: IterableOnce[A])(z: B)(op: (B, A) => B < S)(using
+    def scanLeft[S, A, B](source: IterableOnce[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
         Frame,
         Safepoint
     ): Chunk[B] < S =
@@ -752,7 +752,7 @@ object Kyo:
             else v.map(t => Loop.continue(acc.append(t)))
         }
 
-    private[kyo] def toIndexed[A](source: IterableOnce[A]): Seq[A] =
+    private def toIndexed[A](source: IterableOnce[A]): Seq[A] =
         source match
             case seq: IndexedSeq[A] => seq
             case other              => Chunk.from(other)
