@@ -489,6 +489,47 @@ object Kyo:
                                     case false => Loop.done(acc)
     end takeWhile
 
+    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
+      *
+      * @param f
+      *   A predicate that returns `true` while elements should be included in the prefix
+      * @return
+      *   A tuple `(prefix, suffix)` where:
+      *   - `prefix`: All elements before first failure of `f`
+      *   - `suffix`: First failing element and all remaining elements
+      * @note
+      *   Optimized for both linear and indexed sequences
+      */
+    def span[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Chunk[A], Chunk[A]) < S =
+        source.knownSize match
+            case 0 => (Chunk.empty, Chunk.empty)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(Chunk.empty[A], linearSeq): (acc, seq) =>
+                            if seq.isEmpty then
+                                Loop.done((acc, Chunk.empty))
+                            else
+                                val curr = seq.head
+                                f(curr).map:
+                                    case true  => Loop.continue(acc.append(curr), seq.tail)
+                                    case false => Loop.done((acc, Chunk.from(seq)))
+
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
+                        Loop.indexed: idx =>
+                            if idx == size then
+                                Loop.done((Chunk.from(indexedSeq), Chunk.empty))
+                            else
+                                val curr = indexedSeq(idx)
+                                f(curr).map({
+                                    case true => Loop.continue
+                                    case false =>
+                                        Loop.done(Chunk.from(indexedSeq).splitAt(idx))
+                                })
+    end span
+
     /** Drops elements from an `IterableOnce` while a predicate holds true.
       *
       * @param source
@@ -523,6 +564,36 @@ object Kyo:
                                     case false => Loop.done(Chunk.from(indexedSeq.drop(idx)))
                 end match
     end dropWhile
+
+    def partitionMap[S, A, A1, A2](source: IterableOnce[A])(f: A => Either[A1, A2] < S)(using
+        Frame,
+        Safepoint
+    ): (Chunk[A1], Chunk[A2]) < S =
+        source.knownSize match
+            case 0 => (Chunk.empty, Chunk.empty)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[A1], Chunk.empty[A2]) { (seq, lefts, rights) =>
+                            if seq.isEmpty then Loop.done((lefts, rights))
+                            else
+                                f(seq.head).map {
+                                    case Left(a1)  => Loop.continue(seq.tail, lefts.append(a1), rights)
+                                    case Right(a2) => Loop.continue(seq.tail, lefts, rights.append(a2))
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Chunk.empty[A1], Chunk.empty[A2]) { (idx, lefts, rights) =>
+                            if idx >= arr.length then
+                                Loop.done((lefts, rights))
+                            else
+                                f(arr(idx)).map {
+                                    case Left(a1)  => Loop.continue(lefts.append(a1), rights)
+                                    case Right(a2) => Loop.continue(lefts, rights.append(a2))
+                                }
+                        }
 
     /** Creates a Chunk by repeating an effect-producing value.
       *

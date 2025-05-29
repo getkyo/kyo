@@ -28,6 +28,9 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
             def resultInto(c: CA): C[X] < S = chunk.map(ch => c.iterableFactory.from(ch))
         end extension
 
+        extension [S, X, Y](chunks: (Chunk[X], Chunk[Y]) < S)
+            def resultInto(c: CA): (C[X], C[Y]) < S = chunks.map((x, y) => (c.iterableFactory.from(x), c.iterableFactory.from(y)))
+
         override def shiftedFold[F[_], Acc, B, R](
             c: CA,
             monad: CpsMonad[F]
@@ -83,7 +86,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         override def flatten[F[_], B](c: CA, monad: CpsMonad[F])(implicit asIterable: A => F[IterableOnce[B]]): F[C[B]] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => flatMap(c, monad)(asIterable)
 
         override def groupBy[F[_], K](c: CA, monad: CpsMonad[F])(f: A => F[K]): F[Map[K, C[A]]] =
             monad match
@@ -99,7 +102,7 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         override def partitionMap[F[_], A1, A2](c: CA, monad: CpsMonad[F])(f: A => F[Either[A1, A2]]): F[(C[A1], C[A2])] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.partitionMap(c)(f).resultInto(c)
 
         override def scanLeft[F[_], B](c: CA, monad: CpsMonad[F])(z: B)(op: (B, A) => F[B]): F[C[B]] =
             monad match
@@ -107,11 +110,11 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
 
         override def span[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[(C[A], C[A])] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.span(c)(p).resultInto(c)
 
         override def tapEach[F[_], U](c: CA, monad: CpsMonad[F])(f: A => F[U]): F[C[A]] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.foreach(c)(x => f(x).andThen(x)).resultInto(c)
 
     end KyoSeqAsyncShift
 
