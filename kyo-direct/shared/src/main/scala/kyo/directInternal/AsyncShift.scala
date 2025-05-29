@@ -3,14 +3,15 @@ package kyo.directInternal
 import cps.CpsMonad
 import cps.runtime.IterableOpsAsyncShift
 import kyo.*
-import kyo.directInternal.KyoCpsMonad
 import kyo.kernel.internal.Safepoint
 import scala.annotation.targetName
 import scala.collection.IterableOps
 
 trait asyncShiftLowPriorityImplicit1:
+
     transparent inline given shiftedIterableOps[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]]]
         : KyoSeqAsyncShift[A, C, C[A]] = KyoSeqAsyncShift[A, C, C[A]]()
+
 end asyncShiftLowPriorityImplicit1
 
 object asyncShift extends asyncShiftLowPriorityImplicit1:

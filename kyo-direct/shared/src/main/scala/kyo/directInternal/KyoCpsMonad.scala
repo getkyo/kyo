@@ -23,4 +23,5 @@ class KyoCpsMonad[S]
     override def map[A, B](fa: A < S)(f: A => B): B < S = flatMap(fa)(f)
 
     override def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
+
 end KyoCpsMonad

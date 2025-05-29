@@ -1,13 +1,8 @@
 package kyo
 
-import cps.CpsMonad
-import cps.CpsMonadContext
 import cps.async
-import directInternal.KyoCpsMonad
-import directInternal.Trees
-import directInternal.Validate
+import directInternal.*
 import kyo.Ansi.*
-import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
 import scala.quoted.*
 
