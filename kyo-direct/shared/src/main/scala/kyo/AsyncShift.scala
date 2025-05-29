@@ -76,13 +76,19 @@ object asyncShiftInternal extends asyncShiftInternalLowPriorityImplicit1:
             monad match
                 case _: KyoCpsMonad[?] => Kyo.foreachDiscard(c)(a => f(a))
 
+        private def liftPartial[B, S](pf: PartialFunction[A, B < S]): (A => Maybe[B] < S) =
+            a =>
+                pf.lift(a) match
+                    case Some(value) => value.map(v => Maybe(v))
+                    case None        => Maybe.empty
+
         override def collect[F[_], B](c: CA, monad: CpsMonad[F])(pf: PartialFunction[A, F[B]]): F[C[B]] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.collect(c)(liftPartial(pf)).resultInto(c)
 
         override def filterNot[F[_]](c: CA, monad: CpsMonad[F])(p: A => F[Boolean]): F[C[A]] =
             monad match
-                case _: KyoCpsMonad[?] => ???
+                case _: KyoCpsMonad[?] => Kyo.filter(c)(a => p(a).map(!_)).resultInto(c)
 
         override def flatten[F[_], B](c: CA, monad: CpsMonad[F])(implicit asIterable: A => F[IterableOnce[B]]): F[C[B]] =
             monad match
