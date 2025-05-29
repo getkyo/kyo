@@ -69,8 +69,8 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         def Coll[X](x: X*): Coll[X] = builder(x)
 
         name - {
-            val xs: Coll[Int < Any] = Coll(1, 2, 3, 4)
-            val xsValues: Coll[Int] = Coll(1, 2, 3, 4)
+            def xs: Coll[Int < Any] = Coll(1, 2, 3, 4)
+            def xsValues: Coll[Int] = Coll(1, 2, 3, 4)
 
             "collectFirst" in {
                 val d: Option[Int] < Any = defer:
@@ -363,7 +363,22 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
     iterableTests[Vector]("Vector", [X] => seq => Vector.from(seq))
     iterableTests[Chunk]("Chunk", [X] => seq => Chunk.from(seq))
     iterableTests[List]("List", [X] => seq => List.from(seq))
+    
 
+    // fake Iterable
+    def oneShot[A](a: A*): Iterable[A] =
+        val used = new java.util.concurrent.atomic.AtomicBoolean(false)
+        new Iterable[A]:
+            def iterator: Iterator[A] =
+                if !used.compareAndSet(false, true) then
+                    throw new IllegalStateException("Already consumed!")
+                else Iterator(a *)
+
+        end new
+    end oneShot
+
+    iterableTests[Iterable]("IterableOnce", [X] => seq => oneShot(seq*))
+    
     "Try" - {
         val x: Try[Int < Any] = Try(1)
         val y: Try[Int]       = Try(1)
@@ -415,38 +430,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         }
 
     }
-
-    // fake Iterable
-    def oneShot[A](a: A*): Iterable[A] =
-        val used = new java.util.concurrent.atomic.AtomicBoolean(false)
-        new Iterable[A]:
-            def iterator: Iterator[A] =
-                if !used.compareAndSet(false, true) then
-                    throw new IllegalStateException("Already consumed!")
-                else Iterator(a*)
-
-        end new
-    end oneShot
-
-    "IterableOnce" - {
-        "foldLeft" in {
-            val it: Iterable[Int] = oneShot(1, 2, 3)
-
-            val zeroOrOne: Int < Choice = Choice.eval(List(0, 1))
-
-            val effect: Int < kyo.Choice = defer:
-                it.foldLeft(0)((acc, n) => acc + zeroOrOne.now)
-
-            val result = Choice.run(effect).eval
-
-            assert(result.contains(0))
-            assert(result.contains(1))
-            assert(result.contains(2))
-            assert(result.contains(3))
-            assert(result.size == 8)
-        }
-    }
-
+    
     "foldLeft - array" in {
         val result = Choice.run(
             defer:
