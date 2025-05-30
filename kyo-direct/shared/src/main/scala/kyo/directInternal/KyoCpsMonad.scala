@@ -10,7 +10,7 @@ final class KyoCpsMonad[S]
     with CpsMonad[[A] =>> A < S]
     with Serializable:
 
-    given Frame = Frame.internal
+    private given Frame = Frame.internal
 
     type Context = KyoCpsMonad[S]
 
