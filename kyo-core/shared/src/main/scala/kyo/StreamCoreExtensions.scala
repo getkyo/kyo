@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Async.defaultConcurrency
 import kyo.Schedule.forever
+import kyo.debug.Debug
 import kyo.kernel.ArrowEffect
 
 object StreamCoreExtensions:
@@ -540,72 +541,69 @@ object StreamCoreExtensions:
           * @return
           *   A new stream that emits collected chunks of elements
           */
-        def groupedWithin(maxSize: Int, maxTime: Duration)(using
+        def groupedWithin(maxSize: Int, maxTime: Duration, bufferSize: Int = defaultAsyncStreamBufferSize)(using
             t1: Tag[Emit[Chunk[V]]],
-            t2: Tag[V],
+            t2: Tag[Emit[Chunk[Chunk[V]]]],
             i1: Isolate.Contextual[S, IO],
             i2: Isolate.Stateful[S, Abort[E] & Async],
             fr: Frame
         ): Stream[Chunk[V], S & Async] =
             Stream:
-                AtomicRef.initWith(Chunk.empty[V]): bufferRef =>
-                    Channel.initWith[Maybe[Chunk[V]]](defaultAsyncStreamBufferSize): channel =>
-                        IO.ensure(channel.close):
-                            AtomicRef.initWith(Fiber.unit[Closed]): fiberRef =>
-                                IO.ensure(fiberRef.get.map(_.interrupt)):
-                                    val flushLoop: Unit < (Async & Abort[Closed]) =
-                                        Loop.foreach:
-                                            Async.sleep(maxTime).andThen:
-                                                bufferRef.getAndSet(Chunk.empty).map: drainedChunk =>
-                                                    if drainedChunk.isEmpty then Loop.done
-                                                    else
-                                                        channel
-                                                            .put(Present(drainedChunk))
-                                                            .andThen(Loop.continue)
-                                    end flushLoop
+                Channel.initWith[Maybe[Chunk[Chunk[V]]]](bufferSize): outputChannel =>
+                    Channel.initWith[V](maxSize): inputChannel =>
+                        Channel.initWith[Chunk[V]](0): stagingChannel =>
+                            val flushLoop = Abort.run[Closed]:
+                                Loop.foreach:
+                                    Async.run(Async.sleep(maxTime).andThen {
+                                        inputChannel.take.map: head =>
+                                            inputChannel.drain.map: tail =>
+                                                val fullChunk = Chunk(head).concat(tail)
+                                                stagingChannel.put(fullChunk)
+                                    }).map: waitFiber =>
+                                        stagingChannel.take.map: chunk =>
+                                            waitFiber.interrupt.andThen(waitFiber.getResult).andThen:
+                                                stagingChannel.drain.map: chunks =>
+                                                    val fullChunk = Chunk(chunk).concat(chunks).filter(_.nonEmpty)
+                                                    outputChannel.put(Present(fullChunk))
+                                                        .andThen:
+                                                            val done = chunk.isEmpty || chunks.exists(_.isEmpty)
+                                                            if done then outputChannel.put(Absent).andThen(Loop.done)
+                                                            else Loop.continue
 
-                                    def publishChunk(chunk: Chunk[V]) =
-                                        for
-                                            _        <- if chunk.nonEmpty then channel.put(Present(chunk)) else Kyo.unit
-                                            newFiber <- Async.run(flushLoop)
-                                            _        <- fiberRef.set(newFiber)
-                                        yield ()
-                                        end for
-                                    end publishChunk
-
-                                    val handledEmit = ArrowEffect.handleLoop(t1, stream.emit)(
-                                        handle = [C] =>
-                                            (chunk, cont) =>
-                                                if chunk.isEmpty then Loop.continue(cont(()))
+                            val handleEmit = Abort.run[Closed]:
+                                ArrowEffect.handleLoop(t1, stream.emit)(
+                                    handle = [C] =>
+                                        (chunk, cont) =>
+                                            Loop(chunk) { remaining =>
+                                                if remaining.isEmpty then Loop.done
                                                 else
-                                                    bufferRef.getAndSet(Chunk.empty).map: buffer =>
-                                                        val nextChunk = chunk.take(maxSize - buffer.size)
-                                                        val newBuffer = buffer.concat(nextChunk)
-                                                        val handleChunk = fiberRef.get.map: fiber =>
-                                                            if newBuffer.size >= maxSize then
-                                                                fiber.interrupt
-                                                                    .andThen(publishChunk(newBuffer))
-                                                                    .andThen(bufferRef.set(chunk.drop(maxSize - buffer.size)))
-                                                            else
-                                                                fiber.done.map: isDone =>
-                                                                    if isDone then
-                                                                        publishChunk(chunk)
-                                                                            .andThen(bufferRef.set(Chunk.empty))
-                                                                    else bufferRef.set(newBuffer)
-                                                        handleChunk.andThen(Loop.continue(cont(())))
-                                    ).andThen:
-                                        bufferRef.get.map: buffer =>
-                                            (if buffer.nonEmpty then channel.put(Present(buffer)) else Kyo.unit).andThen:
-                                                channel.put(Absent)
+                                                    inputChannel.size.map: currentSize =>
+                                                        val publishChunk = remaining.take(maxSize - currentSize)
+                                                        inputChannel.putBatch(publishChunk).andThen:
+                                                            if publishChunk.size == maxSize - currentSize then
+                                                                inputChannel.drain.map: chunk =>
+                                                                    stagingChannel.put(chunk)
+                                                                        .andThen(Loop.continue(remaining.drop(publishChunk.size)))
+                                                            else Loop.done
+                                                end if
+                                            }.andThen(Loop.continue(cont(())))
+                                )
 
-                                    Async.run(Abort.run[Closed](publishChunk(Chunk.empty).andThen(handledEmit))).andThen:
-                                        val emit = Loop.foreach:
-                                            channel.take.map:
-                                                case Absent =>
-                                                    Loop.done
-                                                case Present(c) =>
-                                                    Emit.valueWith(Chunk(c))(Loop.continue)
-                                        Abort.run(emit).unit
+                            IO.ensure(outputChannel.close):
+                                IO.ensure(inputChannel.close):
+                                    Async.run(flushLoop).map: flushLoopFiber =>
+                                        IO.ensure(flushLoopFiber.interrupt):
+                                            Async.run(Abort.run[Closed] {
+                                                for
+                                                    _     <- handleEmit
+                                                    chunk <- inputChannel.drain
+                                                    _     <- stagingChannel.put(chunk)
+                                                    _     <- if chunk.nonEmpty then stagingChannel.put(Chunk.empty) else Kyo.unit
+                                                yield ()
+                                            }).map: handleEmitFiber =>
+                                                IO.ensure(handleEmitFiber.interrupt):
+                                                    emitMaybeChunksFromChannel[Chunk[V]](outputChannel)
+        end groupedWithin
 
     end extension
 end StreamCoreExtensions
