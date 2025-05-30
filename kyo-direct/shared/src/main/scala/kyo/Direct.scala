@@ -1,9 +1,7 @@
 package kyo
 
-import cps.CpsMonad
-import cps.CpsMonadContext
 import cps.async
-import directInternal.*
+import internal.*
 import kyo.Ansi.*
 import scala.annotation.tailrec
 import scala.quoted.*
@@ -187,31 +185,13 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                 }
 
             '{
+
                 given KyoCpsMonad[s] = KyoCpsMonad[s]
+                import kyo.internal.asyncShift.given
+
                 async {
                     ${ transformedBody.asExprOf[A] }
                 }.asInstanceOf[A < s]
             }
     end match
 end impl
-
-object directInternal:
-    given Frame = Frame.internal
-    class KyoCpsMonad[S]
-        extends CpsMonadContext[[A] =>> A < S]
-        with CpsMonad[[A] =>> A < S]
-        with Serializable:
-
-        type Context = KyoCpsMonad[S]
-
-        override def monad: CpsMonad[[A] =>> A < S] = this
-
-        override def apply[A](op: Context => A < S): A < S = op(this)
-
-        override def pure[A](t: A): A < S = t
-
-        override def map[A, B](fa: A < S)(f: A => B): B < S = flatMap(fa)(f)
-
-        override def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
-    end KyoCpsMonad
-end directInternal

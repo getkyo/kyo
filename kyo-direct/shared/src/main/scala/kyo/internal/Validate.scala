@@ -1,11 +1,9 @@
-package kyo
+package kyo.internal
 
 import kyo.Ansi.*
+import kyo.internal.Trees
 import scala.annotation.tailrec
-import scala.collection.ArrayOps
 import scala.collection.IterableOps
-import scala.collection.MapOps
-import scala.collection.WithFilter
 import scala.quoted.*
 
 private val validMethodNamesForAsyncShift = Set(
@@ -64,11 +62,8 @@ private[kyo] object Validate:
                     qualifier.tpe <:< TypeRepr.of[IterableOps[?, ?, ?]] |
                     qualifier.tpe <:< TypeRepr.of[Option[?]] |
                     qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
-                    qualifier.tpe <:< TypeRepr.of[MapOps[?, ?, ?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[ArrayOps[?]] |
                     qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[WithFilter[?, ?]]
+                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]]
 
             inline def validName: Boolean = validMethodNamesForAsyncShift.contains(methodName)
 

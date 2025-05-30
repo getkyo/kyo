@@ -23,6 +23,7 @@ class ShiftHygieneTest extends Test:
 end ShiftHygieneTest
 
 class ShiftTest extends AnyFreeSpec with Assertions:
+
     "basic" in {
         val x1: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
         val x2: Seq[Int] < Any = defer:
@@ -57,211 +58,350 @@ class ShiftTest extends AnyFreeSpec with Assertions:
 end ShiftTest
 
 class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
-    "Iterable" - {
-        val xs: Iterable[Int < Any] = Seq(1, 2, 3, 4)
-        val xsValues: Iterable[Int] = Seq(1, 2, 3, 4)
-        "collectFirst" in {
-            val d: Option[Int] < Any = defer:
-                xs.collectFirst:
-                    case i => i.now
-            d.map(res => assert(res == Option(1)))
-        }
-        "foreach" in {
-            val d: Int < Emit[Int] = defer:
-                xs.foreach(i =>
-                    val v = i.now
-                    Emit.value(v).unit.now
-                )
-                1 // to avoid https://github.com/getkyo/kyo/issues/903
-            Emit.run(d).map((vs, _) => assert(vs == Seq(1, 2, 3, 4)))
-        }
-        "corresponds" in {
-            val d: Boolean < Any = defer:
-                xs.corresponds(xs)((a, b) => a.now == b.now)
 
-            assert(d.eval)
+    def iterableTests[Coll[X] <: Iterable[X] & IterableOps[X, Coll, Coll[X]]](
+        name: String,
+        builder: [X] => Seq[X] => Coll[X]
+    ): Unit =
+        def Coll[X](x: X*): Coll[X] = builder(x)
+
+        name - {
+            def xs: Coll[Int < Any] = Coll(1, 2, 3, 4)
+            def xsValues: Coll[Int] = Coll(1, 2, 3, 4)
+
+            "collectFirst" in {
+                val d: Option[Int] < Any = defer:
+                    xs.collectFirst:
+                        case i => i.now
+                d.map(res => assert(res == Option(1)))
+            }
+            "foreach" in {
+                val d: Unit < Emit[Int] = defer:
+                    xs.foreach(i =>
+                        val v = i.now
+                        Emit.value(v).unit.now
+                    )
+
+                Emit.run(d).map((vs, _) => assert(vs == Seq(1, 2, 3, 4)))
+            }
+            "corresponds" in {
+                val d: Boolean < Any = defer:
+                    xs.corresponds(xs)((a, b) => a.now == b.now)
+
+                assert(d.eval)
+            }
+            "count" in {
+                val d: Int < Any = defer:
+                    xs.count(_.now > 0)
+
+                assert(d.eval == 4)
+            }
+            "exists" in {
+                val d: Boolean < Any = defer:
+                    xs.exists(_.now > 0)
+
+                assert(d.eval)
+            }
+            "forall" in {
+                val d: Boolean < Any = defer:
+                    xs.forall(_.now > 0)
+
+                assert(d.eval)
+            }
+            "find" in {
+                val d: Option[Int] < Any = defer:
+                    xs.find(_.now > 2).map(_.now)
+
+                assert(d.eval == Option(3))
+            }
+            "fold" in {
+                val d: Int < Any = defer:
+
+                    def inc(i: Int): Int < Any = (i + 1).later
+
+                    xsValues.fold[Int](0)((a, b) => inc(a + b).now)
+
+                assert(d.eval == 14)
+            }
+            "foldLeft" in {
+                val d = defer:
+                    xs.foldLeft(0)(_ + _.now)
+
+                assert(d.eval == 10)
+            }
+            "foldRight" in {
+                val d = defer:
+                    xs.foldRight(0)(_.now + _)
+
+                assert(d.eval == 10)
+            }
+            "groupMapReduce" in {
+                val d = defer:
+                    xs.groupMapReduce(_ => 1)(_.now)(_ + _)
+
+                assert(d.eval == Map(1 -> 10))
+            }
+            "maxByOpOption" in {
+                val d: Option[Int] < Any = defer:
+                    xs.maxByOption(_.now).map(_.now)
+
+                assert(d.eval == Option(4))
+            }
+            "map" in {
+                val d: Seq[Int] < Any = defer:
+                    xs.map(_.now).toSeq
+
+                assert(d.eval == Seq(1, 2, 3, 4))
+            }
+            "flatMap" in {
+                val d: Seq[Int] < Any = defer:
+
+                    def f(i: Int) = Seq(1)
+
+                    xs.flatMap(i => f(i.now)).toSeq.distinct
+
+                assert(d.eval == Seq(1))
+            }
+            "collect" in {
+                val d: Seq[Int] < Any = defer:
+                    xs.collect({
+                        case i => i.now
+                    }).toSeq
+
+                assert(d.eval == Seq(1, 2, 3, 4))
+            }
+            "dropWhile" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    Seq(1, 2, 3, 4).dropWhile(f(_).now).toSeq
+
+                assert(d.eval == xsValues.dropWhile(_ < 3).toSeq)
+            }
+            "filter" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    xsValues.filter(i => f(i).now).toSeq
+
+                assert(d.eval == Seq(1, 2))
+            }
+            "filterNot" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    xsValues.filterNot(i => f(i).now).toSeq
+
+                assert(d.eval == Seq(3, 4))
+            }
+            "groupBy" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    xsValues.groupBy(i => f(i).now).view.mapValues(_.toSeq).toMap
+
+                assert(d.eval == Map(true -> Seq(1, 2), false -> Seq(3, 4)))
+            }
+            "groupMap" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                // TODO : catch xsValues.groupMap(i => f(i))( ...
+                val d = defer:
+                    xsValues.groupMap(i => f(i).now)(i => f(i).now).view.mapValues(_.toSeq.distinct).toMap
+
+                assert(d.eval == Map(true -> Seq(true), false -> Seq(false)))
+            }
+            "scanLeft" in {
+                val d = defer:
+                    xs.scanLeft(0)((b, e) => b + e.now).toSeq
+
+                assert(d.eval == Seq(0, 1, 3, 6, 10))
+            }
+            "scanRight" in {
+                val d = defer:
+                    xs.scanRight(0)((e, b) => e.now + b).toSeq
+
+                assert(d.eval == Seq(10, 9, 7, 4, 0))
+            }
+            "span" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    val (take, drop) = xsValues.span(i => f(i).now)
+                    take.toSeq
+
+                assert(d.eval == Seq(1, 2))
+            }
+            "takeWhile" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    xsValues.takeWhile(i => f(i).now).toSeq
+
+                assert(d.eval == Seq(1, 2))
+            }
+            "partition" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    val (pTrue, _) = xsValues.partition(i => f(i).now)
+                    pTrue.toSeq
+
+                assert(d.eval == Seq(1, 2))
+            }
+            "partitionMap" in {
+                def f(i: Int): Either[String, Int] < Any = if i < 3 then
+                    Left(i.toString)
+                else Right(i)
+
+                val d = defer:
+                    val (pLeft, pRight) = xsValues.partitionMap(i => f(i).now)
+                    pLeft.toSeq
+
+                assert(d.eval == Seq("1", "2"))
+            }
+            "tapEach" in {
+                def f(i: Int): Unit < Emit[Int] = Emit.value(i)
+
+                val d: Seq[Int] < Emit[Int] = defer:
+                    xsValues.tapEach(i => f(i).now).toSeq
+
+                val (es, res) = Emit.run(d).eval
+                assert(es == res)
+            }
+            "withFilter" in {
+                def f(i: Int): Boolean < Any = i < 3
+
+                val d = defer:
+                    xsValues.withFilter(i => f(i).now).map(x => x).toSeq
+
+                assert(d.eval == Seq(1, 2))
+            }
+
+            "Choice" - {
+                "map" in {
+                    val result = Choice.run(
+                        defer:
+                            Coll("x", "y").map(str =>
+                                Choice.eval(List(true, false))
+                                    .map(b => if b then str.toUpperCase else str).now
+                            )
+                    ).eval
+
+                    assert(result.contains(Chunk("X", "Y")))
+                    assert(result.contains(Chunk("X", "y")))
+                    assert(result.contains(Chunk("x", "Y")))
+                    assert(result.contains(Chunk("x", "y")))
+                    assert(result.size == 4)
+                }
+
+                "collect" in {
+                    val effects =
+                        Coll("x", "y").map { str =>
+                            Choice.eval(List(true, false)).map(b =>
+                                if b then str.toUpperCase else str
+                            )
+                        }
+                    val result = Choice.run(defer(effects.map(_.now))).eval
+
+                    assert(result.contains(Chunk("X", "Y")))
+                    assert(result.contains(Chunk("X", "y")))
+                    assert(result.contains(Chunk("x", "Y")))
+                    assert(result.contains(Chunk("x", "y")))
+                    assert(result.size == 4)
+                }
+
+                "flatMap" in {
+                    val effects = defer:
+                        val tf = Choice.eval(List(true, false)).later
+                        Coll("x", "y").flatMap(str1 =>
+                            val pred1 = tf.now
+                            Coll("z").map(str2 =>
+                                val pred2 = tf.now
+                                if pred1 & pred2 then
+                                    (str1 + str2).toUpperCase
+                                else if pred1 != pred2 then
+                                    Choice.drop.now
+                                else (str1 + str2)
+                                end if
+                            )
+                        )
+
+                    val result = Choice.run(effects).eval
+                    assert(result.contains(Chunk("XZ", "YZ")))
+                    assert(result.contains(Chunk("XZ", "yz")))
+                    assert(result.contains(Chunk("xz", "YZ")))
+                    assert(result.contains(Chunk("xz", "yz")))
+                    assert(result.size == 4)
+                }
+
+                "foldLeft" in {
+                    val result = Choice.run(
+                        defer:
+                            Coll(1, 1).foldLeft(0)((acc, _) => Choice.eval(List(0, 1)).map(n => acc + n).now)
+                    ).eval
+
+                    assert(result.contains(0))
+                    assert(result.contains(1))
+                    assert(result.contains(2))
+                    assert(result.size == 4)
+                }
+            }
         }
-        "count" in {
-            val d: Int < Any = defer:
-                xs.count(_.now > 0)
+    end iterableTests
 
-            assert(d.eval == 4)
-        }
-        "exists" in {
-            val d: Boolean < Any = defer:
-                xs.exists(_.now > 0)
+    iterableTests[Iterable]("Iterable", [X] => seq => seq)
+    iterableTests[Vector]("Vector", [X] => seq => Vector.from(seq))
+    iterableTests[Chunk]("Chunk", [X] => seq => Chunk.from(seq))
+    iterableTests[List]("List", [X] => seq => List.from(seq))
 
-            assert(d.eval)
-        }
-        "forall" in {
-            val d: Boolean < Any = defer:
-                xs.forall(_.now > 0)
+    // fake Iterable
+    def oneShot[A](a: A*): Iterable[A] =
+        val used = new java.util.concurrent.atomic.AtomicBoolean(false)
+        new Iterable[A]:
+            def iterator: Iterator[A] =
+                if !used.compareAndSet(false, true) then
+                    throw new IllegalStateException("Already consumed!")
+                else Iterator(a*)
 
-            assert(d.eval)
-        }
-        "find" in {
-            val d: Option[Int] < Any = defer:
-                xs.find(_.now > 2).map(_.now)
+        end new
+    end oneShot
 
-            assert(d.eval == Option(3))
-        }
-        "fold" in {
-            val d: Int < Any = defer:
-                def inc(i: Int): Int < Any = (i + 1).later
+    iterableTests[Iterable]("IterableOnce", [X] => seq => oneShot(seq*))
 
-                xsValues.fold[Int](0)((a, b) => inc(a + b).now)
+    "Option" - {
+        val x: Option[Int < Any] = Option(1)
+        val y: Option[Int]       = Option(1)
+        val z: Option[Int] < Any = None
 
-            assert(d.eval == 14)
-        }
-        "foldLeft" in {
-            val d = defer:
-                xs.foldLeft(0)(_ + _.now)
-
-            assert(d.eval == 10)
-        }
-        "foldRight" in {
-            val d = defer:
-                xs.foldRight(0)(_.now + _)
-
-            assert(d.eval == 10)
-        }
-        "groupMapReduce" in {
-            val d = defer:
-                xs.groupMapReduce(_ => 1)(_.now)(_ + _)
-
-            assert(d.eval == Map(1 -> 10))
-        }
-        "maxByOpOption" in {
-            val d: Option[Int] < Any = defer:
-                xs.maxByOption(_.now).map(_.now)
-
-            assert(d.eval == Option(4))
-        }
-        /*"reduceOption" in {
-            val d: Option[Int] < Any = defer:
-                xs.reduceOption(_.now + _.now).map(_.now)
-
-            assert(d.eval == Option(10))
-        }*/
-        "map" in {
-            val d: Seq[Int] < Any = defer:
-                xs.map(_.now).toSeq
-
-            assert(d.eval == Seq(1, 2, 3, 4))
-        }
-        "flatMap" in {
-            val d: Seq[Int] < Any = defer:
-                def f(i: Int) = Seq(1)
-                xs.flatMap(i => f(i.now)).toSeq.distinct
-
-            assert(d.eval == Seq(1))
-        }
-        "collect" in {
-            val d: Seq[Int] < Any = defer:
-                xs.collect({
-                    case i => i.now
-                }).toSeq
-
-            assert(d.eval == Seq(1, 2, 3, 4))
-        }
-        "dropWhile" in {
-            def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
-                xsValues.dropWhile(f(_).now).toSeq
-
-            assert(d.eval == Seq(3, 4))
-        }
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3
             val d = defer:
-                xsValues.filter(i => f(i).now).toSeq
+                y.filter(i => f(i).now)
 
-            assert(d.eval == Seq(1, 2))
+            assert(d.eval == Option(1))
         }
-        "filterNot" in {
-            def f(i: Int): Boolean < Any = i < 3
+
+        "orElse" in {
             val d = defer:
-                xsValues.filterNot(i => f(i).now).toSeq
+                y.orElse(z.now)
 
-            assert(d.eval == Seq(3, 4))
+            assert(d.eval == Option(1))
         }
-        "groupBy" in {
-            def f(i: Int): Boolean < Any = i < 3
+
+        "getOrElse" in {
+            val w: Int < Any = 3
             val d = defer:
-                xsValues.groupBy(i => f(i).now).view.mapValues(_.toSeq).toMap
+                z.now.getOrElse(w.now)
 
-            assert(d.eval == Map(true -> Seq(1, 2), false -> Seq(3, 4)))
+            assert(d.eval == 3)
         }
-        "groupMap" in {
-            def f(i: Int): Boolean < Any = i < 3
 
-            // TODO : catch xsValues.groupMap(i => f(i))( ...
+        "map" in {
             val d = defer:
-                xsValues.groupMap(i => f(i).now)(i => f(i).now).view.mapValues(_.toSeq.distinct).toMap
+                x.map(_.now + 1)
 
-            assert(d.eval == Map(true -> Seq(true), false -> Seq(false)))
-        }
-        "scanLeft" in {
-            val d = defer:
-                xs.scanLeft(0)((b, e) => b + e.now).toSeq
-
-            assert(d.eval == Seq(0, 1, 3, 6, 10))
-        }
-        "scanRight" in {
-            val d = defer:
-                xs.scanRight(0)((e, b) => e.now + b).toSeq
-
-            assert(d.eval == Seq(10, 9, 7, 4, 0))
-        }
-        "span" in {
-            def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
-                val (take, drop) = xsValues.span(i => f(i).now)
-                take.toSeq
-
-            assert(d.eval == Seq(1, 2))
-        }
-        "takeWhile" in {
-            def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
-                xsValues.takeWhile(i => f(i).now).toSeq
-
-            assert(d.eval == Seq(1, 2))
-        }
-        "partition" in {
-            def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
-                val (pTrue, _) = xsValues.partition(i => f(i).now)
-                pTrue.toSeq
-
-            assert(d.eval == Seq(1, 2))
-        }
-        "partitionMap" in {
-            def f(i: Int): Either[String, Int] < Any = if i < 3 then
-                Left(i.toString)
-            else Right(i)
-
-            val d = defer:
-                val (pLeft, pRight) = xsValues.partitionMap(i => f(i).now)
-                pLeft.toSeq
-
-            assert(d.eval == Seq("1", "2"))
-        }
-        "tapEach" in {
-            def f(i: Int): Unit < Emit[Int] = Emit.value(i)
-
-            val d: Seq[Int] < Emit[Int] = defer:
-                xsValues.tapEach(i => f(i).now).toSeq
-
-            val (es, res) = Emit.run(d).eval
-            assert(es == res)
-        }
-        "withFilter" in {
-            def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
-                xsValues.withFilter(i => f(i).now).map(x => x).toSeq
-
-            assert(d.eval == Seq(1, 2))
+            assert(d.eval == Option(2))
         }
     }
 

@@ -1,4 +1,4 @@
-package kyo
+package kyo.internal
 
 import scala.quoted.*
 
@@ -17,9 +17,7 @@ object Trees:
         def goto(using s: Step, q: Quotes)(tree: q.reflect.Tree): Unit = s.addTree(tree)
     end Step
 
-    def traverseGoto(using
-        Quotes
-    )(tree: quotes.reflect.Tree)(pf: Step ?=> PartialFunction[quotes.reflect.Tree, Unit]): Unit =
+    def traverseGoto(using quotes: Quotes)(tree: quotes.reflect.Tree)(pf: Step ?=> PartialFunction[quotes.reflect.Tree, Unit]): Unit =
         import quotes.reflect.*
         (new TreeTraverser:
             override def traverseTree(tree: Tree)(owner: Symbol): Unit =
@@ -30,9 +28,7 @@ object Trees:
         ).traverseTree(tree)(Symbol.spliceOwner)
     end traverseGoto
 
-    def traverse(using
-        Quotes
-    )(tree: quotes.reflect.Tree)(pf: PartialFunction[quotes.reflect.Tree, Unit]): Unit =
+    def traverse(using quotes: Quotes)(tree: quotes.reflect.Tree)(pf: PartialFunction[quotes.reflect.Tree, Unit]): Unit =
         import quotes.reflect.*
         (new TreeTraverser:
             override def traverseTree(tree: Tree)(owner: Symbol): Unit =
@@ -41,7 +37,7 @@ object Trees:
     end traverse
 
     def transform(using
-        Quotes
+        quotes: Quotes
     )(tree: quotes.reflect.Tree)(pf: PartialFunction[quotes.reflect.Tree, quotes.reflect.Term]): quotes.reflect.Tree =
         import quotes.reflect.*
         (new TreeMap:
@@ -50,9 +46,7 @@ object Trees:
         ).transformTree(tree)(Symbol.spliceOwner)
     end transform
 
-    def exists(using
-        Quotes
-    )(tree: quotes.reflect.Tree)(pf: PartialFunction[quotes.reflect.Tree, Boolean]) =
+    def exists(using quotes: Quotes)(tree: quotes.reflect.Tree)(pf: PartialFunction[quotes.reflect.Tree, Boolean]) =
         var r = false
         traverse(tree) {
             case t if pf.isDefinedAt(t) && !r => r = pf(t)
