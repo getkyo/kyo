@@ -603,20 +603,22 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           *   a new Chunk.Indexed containing the elements from the IterableOnce
           */
         def from[A](source: IterableOnce[A]): Indexed[A] =
-            source.knownSize match
-                case 0 => empty[A]
-                case 1 => single(source.iterator.next())
-                case _ =>
-                    source match
-                        case chunk: Chunk.Indexed[A] @unchecked => chunk
-                        case seq: IndexedSeq[A]                 => FromSeq(seq)
+            source match
+                case chunk: Chunk.Indexed[A] @unchecked => chunk
+                case other =>
+                    other.knownSize match
+                        case 0 => empty[A]
+                        case 1 => single(source.iterator.next())
                         case _ =>
-                            val array = source.iterator.toArray(using erasedTag[A])
-                            array.length match
-                                case 0 => empty[A]
-                                case 1 => single(array(0))
-                                case _ => Compact(array)
-                            end match
+                            other match
+                                case seq: IndexedSeq[A] => FromSeq(seq)
+                                case _ =>
+                                    val array = source.iterator.toArray(using erasedTag[A])
+                                    array.length match
+                                        case 0 => empty[A]
+                                        case 1 => single(array(0))
+                                        case _ => Compact(array)
+                                    end match
             end match
         end from
 
@@ -687,9 +689,12 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       * @param source
       *   the IterableOnce to create the Chunk from
       * @return
-      *   a new Chunk.Indexed containing the elements from the IterableOnce
+      *   a new Chunk containing the elements from the IterableOnce
       */
-    def from[A](source: IterableOnce[A]): Chunk[A] = Indexed.from(source)
+    def from[A](source: IterableOnce[A]): Chunk[A] =
+        source match
+            case chunk: Chunk[A] @unchecked => chunk
+            case other                      => Indexed.from(source)
 
     /** Creates a new **mutable** builder for constructing Chunks.
       *

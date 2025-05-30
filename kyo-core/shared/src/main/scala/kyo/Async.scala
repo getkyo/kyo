@@ -367,7 +367,7 @@ object Async extends AsyncPlatformSpecific:
                         val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
                         Fiber.foreachIndexed(iterable.grouped(groupSize).toSeq)((idx, group) =>
                             Kyo.foreachIndexed(group.toSeq)((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
-                        ).map(_.use(r => Kyo.foreach(r.map(Chunk.from(_)).flattenChunk)(isolate.restore)))
+                        ).map(_.use(r => Kyo.foreach(r.map(Chunk.from).flattenChunk)(isolate.restore)))
                     }
 
     /** Executes a sequence of computations using bounded concurrency.

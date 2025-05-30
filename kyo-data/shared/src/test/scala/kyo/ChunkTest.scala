@@ -55,11 +55,10 @@ class ChunkTest extends Test:
                 }
             }
 
-            "returns the same instance for Chunk input" in pendingUntilFixed {
+            "returns the same instance for Chunk input" in {
                 val original = Chunk(1, 2, 3).append(4)
                 val result   = Chunk.from(original)
                 assert(result eq original)
-                ()
             }
 
             "creates a Chunk.FromSeq for non-Chunk IndexedSeq input" in {
