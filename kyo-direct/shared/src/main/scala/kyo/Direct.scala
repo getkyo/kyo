@@ -1,7 +1,7 @@
 package kyo
 
 import cps.async
-import directInternal.*
+import internal.*
 import kyo.Ansi.*
 import scala.annotation.tailrec
 import scala.quoted.*
@@ -187,7 +187,7 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
             '{
 
                 given KyoCpsMonad[s] = KyoCpsMonad[s]
-                import kyo.directInternal.asyncShift.given
+                import kyo.internal.asyncShift.given
 
                 async {
                     ${ transformedBody.asExprOf[A] }

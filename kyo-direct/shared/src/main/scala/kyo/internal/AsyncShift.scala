@@ -1,4 +1,4 @@
-package kyo.directInternal
+package kyo.internal
 
 import cps.CpsMonad
 import cps.runtime.IterableOpsAsyncShift

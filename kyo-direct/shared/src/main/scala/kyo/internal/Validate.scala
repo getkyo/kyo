@@ -1,7 +1,7 @@
-package kyo.directInternal
+package kyo.internal
 
 import kyo.Ansi.*
-import kyo.directInternal.Trees
+import kyo.internal.Trees
 import scala.annotation.tailrec
 import scala.collection.IterableOps
 import scala.quoted.*
