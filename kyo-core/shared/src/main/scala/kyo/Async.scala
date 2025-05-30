@@ -352,7 +352,7 @@ object Async extends AsyncPlatformSpecific:
         Frame
     ): Chunk[B] < (Abort[E] & Async & S) =
         if concurrency <= 1 then
-            Kyo.foreachIndexed(iterable.toSeq)(f)
+            Kyo.foreachIndexed(Chunk.from(iterable))(f)
         else
             iterable.size match
                 case 0 => Chunk.empty
@@ -367,7 +367,7 @@ object Async extends AsyncPlatformSpecific:
                         val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
                         Fiber.foreachIndexed(iterable.grouped(groupSize).toSeq)((idx, group) =>
                             Kyo.foreachIndexed(group.toSeq)((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
-                        ).map(_.use(r => Kyo.foreach(r.flattenChunk)(isolate.restore)))
+                        ).map(_.use(r => Kyo.foreach(r.map(Chunk.from).flattenChunk)(isolate.restore)))
                     }
 
     /** Executes a sequence of computations using bounded concurrency.

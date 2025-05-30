@@ -86,7 +86,10 @@ object Choice:
         ArrowEffect.handle(Tag[Choice], v.map(Chunk[A](_))) {
             [C] =>
                 (input, cont) =>
-                    Kyo.foreach(input)(v => Choice.run(cont(v))).map(_.flattenChunk.flattenChunk)
+                    Kyo.foreach(input)(v => Choice.run(cont(v)))
+                        .map: data =>
+                            Chunk.from(data).flattenChunk.flattenChunk
+
         }
 
     /** Handles the Choice effect by streaming all possible outcomes incrementally.
