@@ -589,7 +589,9 @@ object StreamCoreExtensions:
                                             }.andThen(Loop.continue(cont(())))
                                 )
 
-                            IO.ensure(outputChannel.close):
+                            IO.ensure(
+                                outputChannel.close.andThen(inputChannel.close)
+                            ):
                                 IO.ensure(inputChannel.close):
                                     Async.run(flushLoop).map: flushLoopFiber =>
                                         IO.ensure(flushLoopFiber.interrupt):
