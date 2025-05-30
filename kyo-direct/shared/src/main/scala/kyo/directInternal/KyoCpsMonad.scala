@@ -5,7 +5,7 @@ import cps.CpsMonadContext
 import kyo.*
 import kyo.kernel.internal.Safepoint
 
-class KyoCpsMonad[S]
+final class KyoCpsMonad[S]
     extends CpsMonadContext[[A] =>> A < S]
     with CpsMonad[[A] =>> A < S]
     with Serializable:
