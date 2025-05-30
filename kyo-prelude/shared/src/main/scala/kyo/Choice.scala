@@ -39,7 +39,7 @@ object Choice:
       * @return
       *   A computation that represents the selection of values from the sequence
       */
-    inline def eval[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
+    inline def eval[A](seq: A*)(using inline frame: Frame): A < Choice =
         ArrowEffect.suspend[A](Tag[Choice], seq)
 
     /** Evaluates a function for each value in a sequence, introducing multiple computation paths.

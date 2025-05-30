@@ -188,7 +188,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that attempts to run the given effect and handles the sequence to Choice.
       */
     def fromSeq[A](sequence: Seq[A])(using Frame): A < Choice =
-        Choice.eval(sequence)
+        Choice.eval(sequence*)
 
     /** Creates an effect from a Try[A] and handles the Try to Abort[Throwable].
       *
