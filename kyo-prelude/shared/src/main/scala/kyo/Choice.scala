@@ -32,15 +32,29 @@ sealed trait Choice extends ArrowEffect[Seq, Id]
 
 object Choice:
 
-    /** Introduces a choice point by selecting values from a sequence.
+    /** Introduces a non-deterministic choice over a variadic list of values.
+      *
+      * @param a*
+      *   Zero or more candidate values to choose from.
+      * @return
+      *   A computation that represent multiple paths, one for each input value.
+      * @example
+      *   {{{Choice.eval(1, 2, 3)}}}
+      */
+    inline def eval[A](a: A*)(using inline frame: Frame): A < Choice =
+        ArrowEffect.suspend[A](Tag[Choice], a)
+
+    /** Introduces a non-deterministic choice over a sequence of values.
       *
       * @param seq
-      *   The sequence of possible values
+      *   A sequence of candidate values to choose from.
       * @return
-      *   A computation that represents the selection of values from the sequence
+      *   A computation that represent multiple paths, one for each input value.
+      * @example
+      *   {{{Choice.evalFromSeq(Seq("a", "b", "c"))}}}
       */
-    inline def eval[A](seq: A*)(using inline frame: Frame): A < Choice =
-        ArrowEffect.suspend[A](Tag[Choice], seq)
+    inline def evalFromSeq[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
+        eval(seq*)
 
     /** Evaluates a function for each value in a sequence, introducing multiple computation paths.
       *
