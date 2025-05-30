@@ -61,6 +61,17 @@ object StreamCoreExtensions:
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
+        def fromIterator[V, S](v: => Iterator[V] < S)(using
+            tag: Tag[Emit[Chunk[V]]],
+            frame: Frame
+        ): Stream[V, (S & IO)] =
+            inline def nextElement(it: Iterator[V]): Maybe[Seq[V]] < IO =
+                IO(if it.hasNext then Maybe.Present(Seq(it.next())) else Maybe.Absent)
+
+            Stream.repeatPresent(v.map(nextElement))
+
+        end fromIterator
+
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
           * @note
