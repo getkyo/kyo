@@ -462,7 +462,9 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         reduce: Reducible[Abort[ER]],
         frame: Frame
     ): A < (S & reduce.SReduced & Choice) =
-        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.eval(e.foldError(List(_), _ => Nil)*))
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(result =>
+            result.foldError(value => Choice.eval(value), _ => Choice.drop)
+        )
 
     /** Translates the partial Abort[E1] effect to an Abort[Absent] effect in case of failure.
       *
