@@ -283,7 +283,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                     val result = Choice.run(
                         defer:
                             Coll("x", "y").map(str =>
-                                Choice.eval(List(true, false))
+                                Choice.eval(true, false)
                                     .map(b => if b then str.toUpperCase else str).now
                             )
                     ).eval
@@ -298,7 +298,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                 "collect" in {
                     val effects =
                         Coll("x", "y").map { str =>
-                            Choice.eval(List(true, false)).map(b =>
+                            Choice.eval(true, false).map(b =>
                                 if b then str.toUpperCase else str
                             )
                         }
@@ -313,7 +313,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
                 "flatMap" in {
                     val effects = defer:
-                        val tf = Choice.eval(List(true, false)).later
+                        val tf = Choice.eval(true, false).later
                         Coll("x", "y").flatMap(str1 =>
                             val pred1 = tf.now
                             Coll("z").map(str2 =>
@@ -338,7 +338,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                 "foldLeft" in {
                     val result = Choice.run(
                         defer:
-                            Coll(1, 1).foldLeft(0)((acc, _) => Choice.eval(List(0, 1)).map(n => acc + n).now)
+                            Coll(1, 1).foldLeft(0)((acc, _) => Choice.eval(0, 1).map(n => acc + n).now)
                     ).eval
 
                     assert(result.contains(0))
