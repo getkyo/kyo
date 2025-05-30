@@ -71,7 +71,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         ct: SafeClassTag[E],
         fr: Frame
     ): A < (S & Choice) =
-        effect.result.map(e => Choice.eval(e.foldError(List(_), _ => Nil)*))
+        effect.result.map(result => result.foldError(value => Choice.eval(value), _ => Choice.drop))
 
     /** Translates the Abort[E] effect to an Abort[Absent] effect in case of failure.
       *
