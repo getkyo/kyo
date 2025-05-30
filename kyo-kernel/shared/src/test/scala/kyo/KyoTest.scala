@@ -3,6 +3,8 @@ package kyo
 import Tagged.*
 import kyo.kernel.*
 import scala.annotation.tailrec
+import scala.collection.Iterable
+import scala.collection.IterableOps
 
 class KyoTest extends Test:
 
@@ -28,10 +30,10 @@ class KyoTest extends Test:
 
     "toString" in run {
         assert(TestEffect1(1).map(_ + 1).toString() ==
-            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:30:41, assert(TestEffect1(1).map(_ + 1))")
+            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:32:41, assert(TestEffect1(1).map(_ + 1))")
         assert(
             TestEffect1(1).map(_ + 1).map(_ + 2).toString() ==
-                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:33:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
+                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:35:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
         )
     }
 
@@ -376,50 +378,255 @@ class KyoTest extends Test:
             assert(Kyo.foreachIndexed(largeSeq)((idx, v) => idx == v).eval == Chunk.fill(100)(true))
         }
 
-        "collect" - {
-            "empty sequence" in {
-                assert(Kyo.collect(Seq.empty[Int])(v => Maybe(v)).eval == Chunk.empty)
-            }
+        def collectionTests[Coll[X] <: Iterable[X] & IterableOps[X, Coll, Coll[X]]](
+            name: String,
+            builder: [X] => Seq[X] => Coll[X]
+        ): Unit =
 
-            "single element - present" in {
-                assert(Kyo.collect(Seq(1))(v => Maybe(v)).eval == Chunk(1))
-            }
+            object Coll:
+                def empty[X]: Coll[X]                 = apply()
+                def apply[X](x: X*): Coll[X]          = builder(x)
+                def from[X](xs: Iterable[X]): Coll[X] = builder(xs.toSeq)
+            end Coll
 
-            "single element - absent" in {
-                assert(Kyo.collect(Seq(1))(v => Maybe.empty).eval == Chunk.empty)
-            }
-
-            "multiple elements - all present" in {
-                assert(Kyo.collect(Seq(1, 2, 3))(v => Maybe(v)).eval == Chunk(1, 2, 3))
-            }
-
-            "multiple elements - some absent" in {
-                assert(Kyo.collect(Seq(1, 2, 3))(v => if v % 2 == 0 then Maybe(v) else Maybe.empty).eval == Chunk(2))
-            }
-
-            "works with effects" in {
-                val result = TestEffect1.run(
-                    Kyo.collect(Seq(1, 2, 3)) { v =>
-                        TestEffect1(v).map(r => Maybe.when(r % 2 == 0)(r))
+            name - {
+                "span" - {
+                    "empty sequence" in {
+                        val result = Kyo.span(Coll.empty[Int])(x => x < 3).eval
+                        assert(result == (Chunk.empty, Chunk.empty))
                     }
-                ).eval
-                assert(result == Chunk(2, 4))
-            }
 
-            "works with different sequence types" in {
-                val f = (v: Int) => if v % 2 == 0 then Maybe(v) else Maybe.empty
-                assert(Kyo.collect(List(1, 2, 3))(f).eval == Chunk(2))
-                assert(Kyo.collect(Vector(1, 2, 3))(f).eval == Chunk(2))
-                assert(Kyo.collect(Chunk(1, 2, 3))(f).eval == Chunk(2))
-            }
+                    "all elements satisfy predicate" in {
+                        val result = Kyo.span(Coll(1, 2))(x => x < 3).eval
+                        assert(result == (Chunk(1, 2), Chunk.empty))
+                    }
 
-            "stack safety" in {
-                val n      = 1000
-                val result = Kyo.collect(Seq.range(0, n))(v => Maybe(v)).eval
-                assert(result.size == n)
-                assert(result == Chunk.from(0 until n))
+                    "no elements satisfy predicate" in {
+                        val result = Kyo.span(Coll(3, 4))(x => x < 3).eval
+                        assert(result == (Chunk.empty, Chunk(3, 4)))
+                    }
+
+                    "split in middle" in {
+                        val result = Kyo.span(Coll(1, 2, 3, 4))(x => x < 3).eval
+                        assert(result == (Chunk(1, 2), Chunk(3, 4)))
+                    }
+
+                    "works with effects" in {
+                        val result = TestEffect1.run(
+                            Kyo.span(Coll(1, 2, 3, 4))(x => TestEffect1(x).map(_ < 3))
+                        ).eval
+                        assert(result == (Chunk(1), Chunk(2, 3, 4)))
+                    }
+                }
+
+                "partition" - {
+                    "empty sequence" in {
+                        val result = Kyo.partition(Coll.empty[Int])(x => x % 2 == 0).eval
+                        assert(result == (Chunk.empty, Chunk.empty))
+                    }
+
+                    "all elements satisfy predicate" in {
+                        val result = Kyo.partition(Coll(2, 4, 6))(x => x % 2 == 0).eval
+                        assert(result == (Chunk(2, 4, 6), Chunk.empty))
+                    }
+
+                    "no elements satisfy predicate" in {
+                        val result = Kyo.partition(Coll(1, 3, 5))(x => x % 2 == 0).eval
+                        assert(result == (Chunk.empty, Chunk(1, 3, 5)))
+                    }
+
+                    "mixed elements" in {
+                        val result = Kyo.partition(Coll(1, 2, 3, 4))(x => x % 2 == 0).eval
+                        assert(result == (Chunk(2, 4), Chunk(1, 3)))
+                    }
+
+                    "works with effects" in {
+                        val result = TestEffect1.run(
+                            Kyo.partition(Coll(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2 == 0))
+                        ).eval
+                        assert(result == (Chunk(1, 3), Chunk(2, 4)))
+                    }
+                }
+
+                "partitionMap" - {
+                    "empty sequence" in {
+                        val result = Kyo.partitionMap(Coll.empty[Int])(x => Left(x.toString)).eval
+                        assert(result == (Chunk.empty, Chunk.empty))
+                    }
+
+                    "all Left" in {
+                        val result = Kyo.partitionMap(Coll(1, 2, 3))(x => Left(x.toString)).eval
+                        assert(result == (Chunk("1", "2", "3"), Chunk.empty))
+                    }
+
+                    "all Right" in {
+                        val result = Kyo.partitionMap(Coll(1, 2, 3))(x => Right(x * 2)).eval
+                        assert(result == (Chunk.empty, Chunk(2, 4, 6)))
+                    }
+
+                    "mixed Left and Right" in {
+                        val result = Kyo.partitionMap(Coll(1, 2, 3, 4))(x =>
+                            if x % 2 == 0 then Right(x * 2) else Left(x.toString)
+                        ).eval
+                        assert(result == (Chunk("1", "3"), Chunk(4, 8)))
+                    }
+
+                    "works with effects" in {
+                        val result = TestEffect1.run(
+                            Kyo.partitionMap(Coll(1, 2, 3, 4))(x =>
+                                TestEffect1(x).map(v => if v % 2 == 0 then Right(v * 2) else Left(v.toString))
+                            )
+                        ).eval
+                        assert(result == (Chunk("3", "5"), Chunk(4, 8)))
+                    }
+                }
+
+                "scanLeft" - {
+                    "empty sequence" in {
+                        val result = Kyo.scanLeft(Coll.empty[Int])(0)((acc, x) => acc + x).eval
+                        assert(result == Chunk(0))
+                    }
+
+                    "single element" in {
+                        val result = Kyo.scanLeft(Coll(1))(0)((acc, x) => acc + x).eval
+                        assert(result == Chunk(0, 1))
+                    }
+
+                    "multiple elements" in {
+                        val result = Kyo.scanLeft(Coll(1, 2, 3))(0)((acc, x) => acc + x).eval
+                        assert(result == Chunk(0, 1, 3, 6))
+                    }
+
+                    "works with effects" in {
+                        val result = TestEffect1.run(
+                            Kyo.scanLeft(Coll(1, 2, 3))(0)((acc, x) => TestEffect1(acc + x))
+                        ).eval
+                        assert(result == Chunk(0, 2, 5, 9))
+                    }
+                }
+
+                "groupBy" - {
+                    "empty sequence" in {
+                        val result = Kyo.groupBy(Coll.empty[Int])(x => x % 2).eval
+                        assert(result == Map.empty)
+                    }
+
+                    "single group" in {
+                        val result = Kyo.groupBy(Coll(2, 4, 6))(x => x % 2).eval
+                        assert(result == Map(0 -> Chunk(2, 4, 6)))
+                    }
+
+                    "multiple groups" in {
+                        val result = Kyo.groupBy(Coll(1, 2, 3, 4))(x => x % 2).eval
+                        assert(result == Map(
+                            1 -> Chunk(1, 3),
+                            0 -> Chunk(2, 4)
+                        ))
+                    }
+
+                    "works with effects" in {
+                        val result = TestEffect1.run(
+                            Kyo.groupBy(Coll(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2))
+                        ).eval
+                        assert(result == Map(
+                            0 -> Chunk(1, 3),
+                            1 -> Chunk(2, 4)
+                        ))
+                    }
+                }
+
+                "groupMap" - {
+                    "empty sequence" in {
+                        val result = Kyo.groupMap(Coll.empty[Int])(x => x % 2)(x => x * 2).eval
+                        assert(result == Map.empty)
+                    }
+
+                    "single group" in {
+                        val result = Kyo.groupMap(Coll(2, 4, 6))(x => x % 2)(x => x * 2).eval
+                        assert(result == Map(0 -> Chunk(4, 8, 12)))
+                    }
+
+                    "multiple groups" in {
+                        val result = Kyo.groupMap(Coll(1, 2, 3, 4))(x => x % 2)(x => x * 2).eval
+                        assert(result == Map(
+                            1 -> Chunk(2, 6),
+                            0 -> Chunk(4, 8)
+                        ))
+                    }
+
+                    "works with effects" in {
+                        val result = TestEffect1.run(
+                            Kyo.groupMap(Coll(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2))(x => TestEffect1(x * 2))
+                        ).eval
+                        assert(result == Map(
+                            0 -> Chunk(3, 7),
+                            1 -> Chunk(5, 9)
+                        ))
+                    }
+                }
+
+                "collect" - {
+                    "empty sequence" in {
+                        val result = Kyo.collect(Coll.empty[Int])(v => Maybe(v)).eval
+                        assert(result == Chunk.empty)
+                    }
+
+                    "single element - present" in {
+                        val result = Kyo.collect(Coll(1))(v => Maybe(v)).eval
+                        assert(result == Chunk(1))
+                    }
+
+                    "single element - absent" in {
+                        val result = Kyo.collect(Coll(1))(v => Maybe.empty).eval
+                        assert(result == Chunk.empty)
+                    }
+
+                    "multiple elements - all present" in {
+                        val result = Kyo.collect(Coll(1, 2, 3))(v => Maybe(v)).eval
+                        assert(result == Chunk(1, 2, 3))
+                    }
+
+                    "multiple elements - some absent" in {
+                        val result = Kyo.collect(Coll(1, 2, 3))(v => if v % 2 == 0 then Maybe(v) else Maybe.empty).eval
+                        assert(result == Chunk(2))
+                    }
+
+                    "works with effects" in {
+                        val result = TestEffect1.run(
+                            Kyo.collect(Coll(1, 2, 3)) { v =>
+                                TestEffect1(v).map(r => Maybe.when(r % 2 == 0)(r))
+                            }
+                        ).eval
+                        assert(result == Chunk(2, 4))
+                    }
+
+                    "stack safety" in {
+                        val n      = 1000
+                        val result = Kyo.collect(Coll.from(0 until n))(v => Maybe(v)).eval
+                        assert(result.size == n)
+                        assert(result == Chunk.from(0 until n))
+                    }
+                }
             }
-        }
+        end collectionTests
+
+        collectionTests[Iterable]("Iterable", [X] => seq => seq)
+        collectionTests[Vector]("Vector", [X] => seq => Vector.from(seq))
+        collectionTests[Chunk]("Chunk", [X] => seq => Chunk.from(seq))
+        collectionTests[List]("List", [X] => seq => List.from(seq))
+
+        // Test with fake Iterable that throws an exception if it's used more than once
+        def oneShot[A](a: A*): Iterable[A] =
+            val used = new java.util.concurrent.atomic.AtomicBoolean(false)
+            new Iterable[A]:
+                def iterator: Iterator[A] =
+                    if !used.compareAndSet(false, true) then
+                        throw new IllegalStateException("Already consumed!")
+                    else Iterator(a*)
+            end new
+        end oneShot
+
+        collectionTests[Iterable]("IterableOnce", [X] => seq => oneShot(seq*))
     }
 
     "lift" - {
