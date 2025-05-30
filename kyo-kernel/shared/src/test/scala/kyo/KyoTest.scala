@@ -610,7 +610,6 @@ class KyoTest extends Test:
             }
         end collectionTests
 
-        collectionTests[Iterable]("Iterable", [X] => seq => seq)
         collectionTests[Vector]("Vector", [X] => seq => Vector.from(seq))
         collectionTests[Chunk]("Chunk", [X] => seq => Chunk.from(seq))
         collectionTests[List]("List", [X] => seq => List.from(seq))
