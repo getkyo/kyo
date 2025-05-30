@@ -3,8 +3,6 @@ package kyo
 import kyo.internal.BaseKyoCoreTest
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
-import scala.collection
-import scala.collection.Factory
 import scala.collection.IterableOps
 import scala.util.Try
 
