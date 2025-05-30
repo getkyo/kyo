@@ -20,7 +20,7 @@ final class KyoCpsMonad[S]
 
     override def pure[A](t: A): A < S = t
 
-    override def map[A, B](fa: A < S)(f: A => B): B < S = flatMap(fa)(f)
+    override def map[A, B](fa: A < S)(f: A => B): B < S = fa.flatMap(a => f(a))
 
     override def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
 
