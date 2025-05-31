@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Async.defaultConcurrency
+import kyo.ChunkBuilder
 import kyo.kernel.ArrowEffect
 
 object StreamCoreExtensions:
@@ -61,19 +62,6 @@ object StreamCoreExtensions:
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
-        private inline def nextElement[V](it: Iterator[V], bufferSize: Int)(using Frame): Maybe[Chunk[V]] < IO =
-            val size = bufferSize max 1
-            IO:
-                val builder = Chunk.newBuilder[V]
-                var count   = 0
-                builder.clear()
-                while count < size && it.hasNext do
-                    builder.addOne(it.next())
-                    count += 1
-
-                Maybe.when(count > 0)(builder.result())
-        end nextElement
-
         /** Creates a stream from an iterator.
           *
           * @param v
@@ -81,10 +69,25 @@ object StreamCoreExtensions:
           * @param bufferSize
           *   Size of the buffer that the iterator will write to and the stream will read from
           */
-        def fromIterator[V, S](v: => Iterator[V], bufferSize: Int = defaultAsyncStreamBufferSize)(using
+        def fromIterator[V, S](v: => Iterator[V], bufferSize: Int = Stream.DefaultChunkSize)(using
             tag: Tag[Emit[Chunk[V]]],
             frame: Frame
-        ): Stream[V, IO] = Stream.repeatPresent(nextElement(v, bufferSize))
+        ): Stream[V, IO] =
+            val builder = ChunkBuilder.init[V]
+
+            def nextElement(it: Iterator[V])(using Frame): Maybe[Chunk[V]] < IO =
+                val size = bufferSize max 1
+                IO.ensure(builder.clear()):
+                    var count = 0
+                    while count < size && it.hasNext do
+                        builder.addOne(it.next())
+                        count += 1
+
+                    Maybe.when(count > 0)(builder.result())
+            end nextElement
+
+            Stream.repeatPresent(nextElement(v))
+        end fromIterator
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
