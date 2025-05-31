@@ -22,7 +22,6 @@ import zio.ZIO
 
 object GrpcClientBench:
 
-    // TODO: Is it fair if we use this for all tests?
     private val executionContext = kyo.scheduler.Scheduler.get.asExecutionContext
 
     class TestServiceImpl extends TestService:
