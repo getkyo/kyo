@@ -216,59 +216,61 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
+        def fromIteratorTests(bufferSize: Int): Unit =
+            s"bufferSize = $bufferSize" - {
+                "basic" in run {
+                    val it     = Iterator(1, 2, 3, 4, 5)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "empty iterator" in run {
+                    val it     = Iterator.empty
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res.isEmpty))
+                }
+
+                "reuse same stream" in run {
+                    val it     = Iterator(1, 2, 3)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    for
+                        first  <- stream.run
+                        second <- stream.run
+                    yield assert((first, second) == (Chunk(1, 2, 3), Chunk.empty))
+                    end for
+                }
+
+                "large iterator" in run {
+                    val size   = 10000
+                    val it     = Iterator.from(0).take(size)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res == Chunk.from(0 until size)))
+                }
+
+                "map with Choice" in run {
+                    val it = Iterator("a", "b", "c")
+
+                    val stream: Stream[String, IO & Choice] = Stream.fromIterator(it, bufferSize).map: str =>
+                        Choice.eval(Seq(true, false)).map:
+                            case true  => str.toUpperCase
+                            case false => str
+
+                    import AllowUnsafe.embrace.danger
+
+                    val allCombinations: Chunk[Chunk[String]] =
+                        Abort.run:
+                            IO.Unsafe.run:
+                                Choice.run:
+                                    stream.run
+                        .eval.getOrThrow
+
+                    assert(allCombinations.size == 8)
+                    assert(allCombinations.contains(Chunk("a", "B", "c")))
+                }
+            }
+
         "fromIterator" - {
-            "basic" in run {
-                val it     = Iterator(1, 2, 3, 4, 5)
-                val stream = Stream.fromIterator(it)
-                stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
-            }
-
-            "empty iterator" in run {
-                val it     = Iterator.empty
-                val stream = Stream.fromIterator(it)
-                stream.run.map(res => assert(res.isEmpty))
-            }
-
-            "reuse same stream" in run {
-                val it     = Iterator(1, 2, 3)
-                val stream = Stream.fromIterator(it)
-                for
-                    first  <- stream.run
-                    second <- stream.run
-                yield
-                    assert(first == Chunk(1, 2, 3))
-                    assert(second.isEmpty) // Iterator is exhausted after first use
-                end for
-            }
-
-            "large iterator" in run {
-                val size   = 10000
-                val it     = Iterator.from(0).take(size)
-                val stream = Stream.fromIterator(it)
-                stream.run.map(res => assert(res == Chunk.from(0 until size)))
-            }
-
-            "map with Choice" in run {
-                val it = Iterator("a", "b", "c")
-
-                val stream: Stream[String, IO & Choice] = Stream.fromIterator(it).map: str =>
-                    Choice.eval(Seq(true, false)).map:
-                        case true  => str.toUpperCase
-                        case false => str
-
-                import AllowUnsafe.embrace.danger
-
-                val allCombinations: Chunk[Chunk[String]] =
-                    Abort.run:
-                        IO.Unsafe.run:
-                            Choice.run:
-                                stream.run
-                    .eval.getOrThrow
-
-                assert(allCombinations.size == 8)
-                assert(allCombinations.contains(Chunk("a", "B", "c")))
-
-            }
+            Seq(0, 1, 4, 32, 1024).foreach(fromIteratorTests)
         }
 
         "mapChunkParUnordered" - {
