@@ -61,6 +61,33 @@ object StreamCoreExtensions:
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
+        /** Creates a stream from an iterator.
+          *
+          * @param v
+          *   Iterator to create a stream from
+          * @param bufferSize
+          *   Size of the buffer that the iterator will write to and the stream will read from
+          */
+        def fromIterator[V, S](v: => Iterator[V] < S, bufferSize: Int = defaultAsyncStreamBufferSize)(using
+            tag: Tag[Emit[Chunk[V]]],
+            frame: Frame
+        ): Stream[V, (S & IO)] =
+            inline def nextElement(it: Iterator[V]): Maybe[Chunk[V]] < IO =
+                val size    = bufferSize max 1
+                val builder = Chunk.newBuilder[V]
+                IO:
+                    var count = 0
+                    builder.clear()
+                    while count < size && it.hasNext do
+                        builder.addOne(it.next())
+                        count += 1
+                    if count > 0 then Maybe.Present(builder.result()) else Maybe.Absent
+            end nextElement
+
+            Stream.repeatPresent(v.map(nextElement))
+
+        end fromIterator
+
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
           * @note
