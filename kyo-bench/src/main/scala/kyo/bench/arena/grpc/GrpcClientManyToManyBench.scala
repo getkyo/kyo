@@ -17,27 +17,24 @@ import zio.ZIO
 import java.util.concurrent.{TimeUnit, TimeoutException}
 import scala.compiletime.uninitialized
 
-class GrpcClientUnaryBench extends ArenaBench2(response):
+class GrpcClientManyToManyBench extends ArenaBench2[Long](sizeSquared):
 
     @Benchmark
-    def catsBench(warmup: CatsForkWarmup, state: CatsState): Response =
+    def catsBench(warmup: CatsForkWarmup, state: CatsState): Long =
         import state.{*, given}
         forkCats:
-            client.oneToOne(request, Metadata())
-    end catsBench
+            client.manyToMany(fs2.Stream.emits(requests), Metadata()).compile.count
 
     @Benchmark
-    def kyoBench(warmup: KyoForkWarmup, state: KyoState): Response =
+    def kyoBench(warmup: KyoForkWarmup, state: KyoState): Long =
         import state.*
         forkKyo:
-            client.oneToOne(request)
-    end kyoBench
+            client.manyToMany(Stream.init(requests)).into(Sink.count.map(_.toLong))
 
     @Benchmark
-    def zioBench(warmup: ZIOForkWarmup, state: ZIOState): Response =
+    def zioBench(warmup: ZIOForkWarmup, state: ZIOState): Long =
         import state.{*, given}
         forkZIO:
-            client.oneToOne(request)
-    end zioBench
+            client.manyToMany(zio.stream.ZStream.fromIterable(requests)).runCount
 
-end GrpcClientUnaryBench
+end GrpcClientManyToManyBench

@@ -5,12 +5,12 @@ import kgrpc.bench.*
 import kyo.*
 import kyo.bench.arena.ArenaBench2
 import GrpcServerBench.*
-import GrpcServerManyToManyBench.*
+import GrpcService.*
 import kyo.bench.arena.WarmupJITProfile.{CatsForkWarmup, KyoForkWarmup, ZIOForkWarmup}
 import org.openjdk.jmh.annotations.*
 import zio.ZIO
 
-class GrpcServerManyToManyBench extends ArenaBench2(10):
+class GrpcServerManyToManyBench extends ArenaBench2(sizeSquared):
 
     private given Frame = Frame.internal
 
@@ -69,12 +69,5 @@ class GrpcServerManyToManyBench extends ArenaBench2(10):
                 requests.foreach(requestObserver.onNext)
                 requestObserver.onCompleted()
     end zioBench
-
-end GrpcServerManyToManyBench
-
-object GrpcServerManyToManyBench:
-
-    val message: String          = "Hello"
-    val requests: Chunk[Request] = Chunk.fill(10)(Request(message))
 
 end GrpcServerManyToManyBench

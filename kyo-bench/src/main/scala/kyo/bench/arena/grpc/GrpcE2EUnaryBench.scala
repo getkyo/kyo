@@ -5,7 +5,6 @@ import kgrpc.*
 import kgrpc.bench.*
 import kyo.*
 import kyo.bench.arena.ArenaBench
-import GrpcE2EUnaryBench.*
 import GrpcService.*
 import kyo.grpc.GrpcRequest
 import org.openjdk.jmh.annotations.*
@@ -14,7 +13,7 @@ import zio.{UIO, ZIO}
 
 import scala.compiletime.uninitialized
 
-class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
+class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(response):
 
     private var port: Int = uninitialized
 
@@ -46,13 +45,5 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(reply):
                     reply  <- client.oneToOne(request)
                 yield reply
             run.orDie
-
-end GrpcE2EUnaryBench
-
-object GrpcE2EUnaryBench:
-
-    val message: String  = "Hello"
-    val request: Request = Request(message)
-    val reply: Response  = Response(message)
 
 end GrpcE2EUnaryBench

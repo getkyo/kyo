@@ -6,7 +6,6 @@ import kgrpc.bench.TestServiceGrpc.TestServiceBlockingStub
 import kyo.*
 import kyo.bench.arena.ArenaBench2
 import GrpcServerBench.*
-import GrpcServerOneToManyBench.*
 import GrpcService.*
 import kyo.bench.arena.WarmupJITProfile.{CatsForkWarmup, KyoForkWarmup, ZIOForkWarmup}
 import kyo.kernel.ContextEffect
@@ -17,7 +16,7 @@ import zio.ZIO
 import java.util.concurrent.{TimeUnit, TimeoutException}
 import scala.compiletime.uninitialized
 
-class GrpcServerOneToManyBench extends ArenaBench2(10):
+class GrpcServerOneToManyBench extends ArenaBench2(size):
 
     @Benchmark
     def catsBench(warmup: CatsForkWarmup, state: CatsState): Int =
@@ -43,13 +42,5 @@ class GrpcServerOneToManyBench extends ArenaBench2(10):
     // Consume the iterator otherwise Netty has a hissy fit about resource leaks.
     private def consume(replies: Iterator[Response]): Int =
         scala.collection.immutable.LazyList.from(replies).foldLeft(0)((acc, _) => acc + 1)
-
-end GrpcServerOneToManyBench
-
-object GrpcServerOneToManyBench:
-
-    val message: String    = "Hello"
-    val request: Request   = Request(message)
-    val response: Response = Response(message)
 
 end GrpcServerOneToManyBench

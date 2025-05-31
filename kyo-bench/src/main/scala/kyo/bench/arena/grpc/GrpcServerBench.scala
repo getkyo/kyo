@@ -5,7 +5,6 @@ import kgrpc.bench.*
 import kgrpc.bench.TestServiceGrpc.*
 import kyo.*
 import kyo.bench.arena.ArenaBench2.*
-import GrpcServerUnaryBench.*
 import GrpcService.*
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*

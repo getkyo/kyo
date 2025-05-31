@@ -24,6 +24,11 @@ object GrpcService:
 
     val host = "localhost"
     val size = 10
+    val sizeSquared: Int = size ^ 2
+    val message          = "Hello"
+    val request: Request   = Request(message)
+    val response: Response = Response(message)
+    val requests: Chunk[Request] = Chunk.fill(GrpcService.size)(Request(message))
 
     def createCatsServer(port: Int, static: Boolean): cats.effect.Resource[CIO, Server] =
         val service = if static then StaticCatsTestService(size) else CatsTestService(size)

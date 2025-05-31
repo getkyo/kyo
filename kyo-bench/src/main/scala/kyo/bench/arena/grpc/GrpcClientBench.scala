@@ -53,7 +53,7 @@ object GrpcClientBench:
         def manyToMany(responseObserver: StreamObserver[Response]): StreamObserver[Request] =
             new StreamObserver[Request]:
                 def onNext(request: Request): Unit =
-                    oneToMany(request, responseObserver)
+                    responses.foreach(responseObserver.onNext)
 
                 def onError(t: Throwable): Unit =
                     responseObserver.onError(t)
