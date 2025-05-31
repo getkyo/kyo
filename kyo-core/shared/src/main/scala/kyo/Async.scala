@@ -189,7 +189,7 @@ object Async extends AsyncPlatformSpecific:
     def timeout[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        if after == Duration.Zero then Abort.fail(Timeout())
+        if after == Duration.Zero then Abort.fail(Timeout(Present(after)))
         else if !after.isFinite then v
         else
             isolate.capture { state =>
@@ -197,7 +197,7 @@ object Async extends AsyncPlatformSpecific:
                     Clock.use { clock =>
                         IO.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
-                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout()))))
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                             isolate.restore(task.get)
                         }
