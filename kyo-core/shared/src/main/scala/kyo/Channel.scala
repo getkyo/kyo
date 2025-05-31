@@ -151,8 +151,8 @@ object Channel:
             }
         end take
 
-        /** Takes [[n]] elements from the channel, asynchronously blocking until enough elements are present. Note that if enough elements
-          * are not added to the channel it can block indefinitely.
+        /** Takes [[n]] elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
+          * not added to the channel it can block indefinitely.
           *
           * @return
           *   Chunk of [[n]] elements
@@ -239,7 +239,6 @@ object Channel:
             else
                 val drainEffect =
                     if maxChunkSize == Int.MaxValue then Channel.drain(self)
-                    // FIXME: This has an off by one error.
                     else Channel.drainUpTo(self)(maxChunkSize - 1)
                 Loop[Unit, Unit, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
