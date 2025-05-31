@@ -79,7 +79,6 @@ object GrpcServerBench:
             val finalizer = Resource.Finalizer.Awaitable.Unsafe.init(1)
             val kyoServer = createKyoServer(port, static = true)
             val result = ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(kyoServer)
-            // TODO: Why doesn't orThrow work here?
             val _: Server = Abort.run(IO.Unsafe.run(result)).eval.getOrThrow
 
             addFinalizer:
