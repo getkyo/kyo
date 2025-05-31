@@ -61,6 +61,19 @@ object StreamCoreExtensions:
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
 
+        private inline def nextElement[V](it: Iterator[V], bufferSize: Int)(using Frame): Maybe[Chunk[V]] < IO =
+            val size = bufferSize max 1
+            IO:
+                val builder = Chunk.newBuilder[V]
+                var count   = 0
+                builder.clear()
+                while count < size && it.hasNext do
+                    builder.addOne(it.next())
+                    count += 1
+
+                Maybe.when(count > 0)(builder.result())
+        end nextElement
+
         /** Creates a stream from an iterator.
           *
           * @param v
@@ -68,25 +81,10 @@ object StreamCoreExtensions:
           * @param bufferSize
           *   Size of the buffer that the iterator will write to and the stream will read from
           */
-        def fromIterator[V, S](v: => Iterator[V] < S, bufferSize: Int = defaultAsyncStreamBufferSize)(using
+        def fromIterator[V, S](v: => Iterator[V], bufferSize: Int = defaultAsyncStreamBufferSize)(using
             tag: Tag[Emit[Chunk[V]]],
             frame: Frame
-        ): Stream[V, (S & IO)] =
-            inline def nextElement(it: Iterator[V]): Maybe[Chunk[V]] < IO =
-                val size    = bufferSize max 1
-                val builder = Chunk.newBuilder[V]
-                IO:
-                    var count = 0
-                    builder.clear()
-                    while count < size && it.hasNext do
-                        builder.addOne(it.next())
-                        count += 1
-                    if count > 0 then Maybe.Present(builder.result()) else Maybe.Absent
-            end nextElement
-
-            Stream.repeatPresent(v.map(nextElement))
-
-        end fromIterator
+        ): Stream[V, IO] = Stream.repeatPresent(nextElement(v, bufferSize))
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
