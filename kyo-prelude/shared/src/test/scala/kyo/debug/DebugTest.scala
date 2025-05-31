@@ -60,8 +60,8 @@ class DebugTest extends Test:
         Debug.trace {
             Choice.run {
                 for
-                    x <- Choice.eval(Seq(1, 2, 3))
-                    y <- Choice.eval(Seq(4, 5, 6))
+                    x <- Choice.eval(1, 2, 3)
+                    y <- Choice.eval(4, 5, 6)
                 yield x + y
             }
         }
@@ -183,7 +183,7 @@ class DebugTest extends Test:
         "with Choice" in
             testOutput(
                 "DebugTest.scala:65:28",
-                "List(4, 5, 6)",
+                "(4, 5, 6)",
                 "DebugTest.scala:65:28",
                 "6",
                 "DebugTest.scala:66:14",
