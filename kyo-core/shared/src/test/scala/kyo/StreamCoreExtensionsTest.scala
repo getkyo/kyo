@@ -180,7 +180,6 @@ class StreamCoreExtensionsTest extends Test:
 
         "mapChunkPar" - {
             "should map all chunks preserving order" in run {
-                pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -198,7 +197,6 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "should preserve order when first transformation is delayed" in run {
-                pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
@@ -252,6 +250,38 @@ class StreamCoreExtensionsTest extends Test:
                 end test
 
                 Choice.run(test).andThen(succeed)
+            }
+        }
+
+        "groupedWithin" - {
+            "should group by size" in run {
+                val stream = Stream:
+                    Loop(0): i =>
+                        if i > 10 then Loop.done
+                        else Emit.valueWith(Chunk(i))(Loop.continue(i + 1))
+                stream.groupedWithin(3, Duration.Infinity).run.map: result =>
+                    assert(result == Chunk(Chunk(0, 1, 2), Chunk(3, 4, 5), Chunk(6, 7, 8), Chunk(9, 10)))
+            }
+
+            "should group by time" in run {
+                val stream = Stream {
+                    Loop(0): i =>
+                        Emit.valueWith(Chunk(i)):
+                            Async.sleep(20.millis).andThen(Loop.continue(i + 1))
+                }.take(4)
+                stream.groupedWithin(Int.MaxValue, 10.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(0), Chunk(1), Chunk(2), Chunk(3)))
+            }
+
+            "should group by size and time" in run {
+                val stream = Stream {
+                    Loop(1): i =>
+                        Emit.valueWith(Chunk(i)):
+                            (if i % 5 == 0 then Async.sleep(40.millis) else Kyo.unit)
+                                .andThen(Loop.continue(i + 1))
+                }.take(10)
+                stream.groupedWithin(3, 30.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10)))
             }
         }
     }
