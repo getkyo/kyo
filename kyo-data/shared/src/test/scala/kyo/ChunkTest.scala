@@ -164,6 +164,28 @@ class ChunkTest extends Test:
         }
     }
 
+    "lastMaybe" - {
+        "returns Present with the last element for a non-empty chunk" in {
+            val chunk = Chunk(1, 2, 3)
+            assert(chunk.lastMaybe == Maybe(3))
+        }
+
+        "returns Absent for an empty chunk" in {
+            val chunk = Chunk.empty[Int]
+            assert(chunk.lastMaybe.isEmpty)
+        }
+
+        "returns Present with the last element after appending" in {
+            val chunk = Chunk.empty[Int].append(1).append(2)
+            assert(chunk.lastMaybe == Maybe(2))
+        }
+
+        "returns Present with the last element after dropping elements" in {
+            val chunk = Chunk(1, 2, 3, 4).dropLeft(2)
+            assert(chunk.lastMaybe == Maybe(4))
+        }
+    }
+
     "apply" - {
         "returns correct elements for Chunk.Compact" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
