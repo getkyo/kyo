@@ -42,7 +42,7 @@ object Choice:
       *   {{{Choice.eval(1, 2, 3)}}}
       */
     inline def eval[A](a: A*)(using inline frame: Frame): A < Choice =
-        ArrowEffect.suspend[A](Tag[Choice], a)
+        evalSeq(a)
 
     /** Introduces a non-deterministic choice over a sequence of values.
       *
@@ -53,8 +53,8 @@ object Choice:
       * @example
       *   {{{Choice.evalFromSeq(Seq("a", "b", "c"))}}}
       */
-    inline def evalFromSeq[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
-        eval(seq*)
+    inline def evalSeq[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
+        ArrowEffect.suspend[A](Tag[Choice], seq)
 
     /** Evaluates a function for each value in a sequence, introducing multiple computation paths.
       *
