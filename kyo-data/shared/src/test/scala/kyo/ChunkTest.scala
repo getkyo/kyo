@@ -177,12 +177,12 @@ class ChunkTest extends Test:
 
         "returns Present with the last element after appending" in {
             val chunk = Chunk.empty[Int].append(1).append(2)
-            assert(chunk.headMaybe == Maybe(2))
+            assert(chunk.lastMaybe == Maybe(2))
         }
 
         "returns Present with the last element after dropping elements" in {
             val chunk = Chunk(1, 2, 3, 4).dropLeft(2)
-            assert(chunk.headMaybe == Maybe(4))
+            assert(chunk.lastMaybe == Maybe(4))
         }
     }
 
