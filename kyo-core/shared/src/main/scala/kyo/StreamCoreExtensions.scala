@@ -73,20 +73,27 @@ object StreamCoreExtensions:
             tag: Tag[Emit[Chunk[V]]],
             frame: Frame
         ): Stream[V, IO] =
-            val builder = ChunkBuilder.init[V]
+            Stream:
+                IO:
+                    val it      = v
+                    val size    = bufferSize max 1
+                    val builder = ChunkBuilder.init[V]
+                    val nextElements: Chunk[V] < IO = IO:
+                        var count = 0
+                        while count < size && it.hasNext do
+                            builder.addOne(it.next())
+                            count += 1
 
-            def nextElement(it: Iterator[V])(using Frame): Maybe[Chunk[V]] < IO =
-                val size = bufferSize max 1
-                IO.ensure(builder.clear()):
-                    var count = 0
-                    while count < size && it.hasNext do
-                        builder.addOne(it.next())
-                        count += 1
+                        val res = builder.result()
+                        builder.clear()
+                        res
 
-                    Maybe.when(count > 0)(builder.result())
-            end nextElement
+                    Loop.foreach[Unit, IO & Emit[Chunk[V]]]:
+                        nextElements.map(chunk =>
+                            if chunk.isEmpty then Loop.done
+                            else Emit.valueWith(chunk)(Loop.continue)
+                        )
 
-            Stream.repeatPresent(nextElement(v))
         end fromIterator
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.

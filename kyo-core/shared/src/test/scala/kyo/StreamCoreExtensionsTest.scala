@@ -224,6 +224,12 @@ class StreamCoreExtensionsTest extends Test:
                     stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
                 }
 
+                "call by name" in run {
+
+                    val stream = Stream.fromIterator(Iterator(1, 2, 3, 4, 5), bufferSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
                 "empty iterator" in run {
                     val it     = Iterator.empty
                     val stream = Stream.fromIterator(it, bufferSize)
@@ -250,10 +256,11 @@ class StreamCoreExtensionsTest extends Test:
                 "map with Choice" in run {
                     val it = Iterator("a", "b", "c")
 
-                    val stream: Stream[String, IO & Choice] = Stream.fromIterator(it, bufferSize).map: str =>
-                        Choice.eval(Seq(true, false)).map:
-                            case true  => str.toUpperCase
-                            case false => str
+                    val stream: Stream[String, IO & Choice] =
+                        Stream.fromIterator(it, bufferSize).map: str =>
+                            Choice.eval(true, false).map:
+                                case true  => str.toUpperCase
+                                case false => str
 
                     import AllowUnsafe.embrace.danger
 
