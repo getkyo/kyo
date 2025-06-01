@@ -996,7 +996,7 @@ import kyo.*
 // Note how 'get' takes a 'Seq[T]'
 // and returns a 'T < Choice'
 val a: Int < Choice =
-    Choice.eval(Seq(1, 2, 3, 4))
+    Choice.eval(1, 2, 3, 4)
 
 // 'dropIf' discards the current element if
 // a condition is not met. Produces a 'Seq(1, 2)'
