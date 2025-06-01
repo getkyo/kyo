@@ -1,44 +1,34 @@
 package kyo.grpc.compiler
 
 import com.google.protobuf.Descriptors.*
-import com.google.protobuf.compiler.PluginProtos.CodeGeneratorResponse
+
 import scala.jdk.CollectionConverters.*
 import scalapb.compiler.DescriptorImplicits
 import scalapb.compiler.FunctionalPrinter
+import scalapb.compiler.FunctionalPrinter.PrinterEndo
 import scalapb.compiler.NameUtils
+import scalapb.compiler.ProtobufGenerator.asScalaDocBlock
 import scalapb.compiler.StreamType
 
-class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits) {
+case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits, fp: FunctionalPrinter = new FunctionalPrinter()) {
 
     import implicits.*
 
-    private val scalaPackage = service.getFile.scalaPackage
-
-    private val dir = scalaPackage.fullName.replace(".", "/")
-
     private val name = NameUtils.snakeCaseToCamelCase(service.getName, upperInitial = true)
 
-    private val scalapbServicePrinter = new scalapb.compiler.GrpcServicePrinter(service, implicits)
+    def addTrait: ServicePrinter =
+        copy(fp = fp.call(printScalaDoc).call(printServiceTrait).newline)
 
-    def result: CodeGeneratorResponse.File = {
-        CodeGeneratorResponse.File.newBuilder()
-            .setName(s"$dir/$name.scala")
-            .setContent(content)
-            .build()
+    def addObject: ServicePrinter =
+        copy(fp = fp.call(printServiceObject).newline)
+
+    private def printScalaDoc: PrinterEndo = {
+        val lines = asScalaDocBlock(service.comment.map(_.split('\n').toSeq).getOrElse(Seq.empty))
+        _.add(lines *)
     }
 
-    private def content: String =
-        new FunctionalPrinter()
-            .addPackage(scalaPackage.fullName)
-            .newline
-            .call(scalapbServicePrinter.generateScalaDoc(service))
-            .call(printServiceTrait)
-            .newline
-            .call(printServiceObject)
-            .result()
-
-    private def printServiceTrait(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addTrait(name)
+    private def printServiceTrait: PrinterEndo =
+        _.addTrait(name)
             .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
             .addParents(Types.service)
             .addBody {
@@ -46,20 +36,19 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
                     .call(printServiceDefinitionMethod)
                     .newline
                     .print(service.getMethods.asScala) { (fp, md) =>
-                        printServiceMethod(fp, md)
+                        printServiceMethod(md)(fp)
                     }
             }
 
-    private def printServiceDefinitionMethod(fp: FunctionalPrinter): FunctionalPrinter = {
-        fp.addMethod("definition")
+    private def printServiceDefinitionMethod: PrinterEndo =
+        _.addMethod("definition")
             .addMods(_.Override)
             .addReturnType(Types.serverServiceDefinition)
             .addBody {
                 _.add(s"$name.service(this)")
             }
-    }
 
-    private def printServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
+    private def printServiceMethod(method: MethodDescriptor): PrinterEndo = {
         // TODO: De-duplicate.
         def requestParameter  = "request" :- method.inputType.scalaType
         def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
@@ -75,16 +64,20 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.ServerStreaming => Types.pendingGrpcResponse(Types.streamGrpcResponse(method.outputType.scalaType))
             case StreamType.Bidirectional   => Types.pendingGrpcResponse(Types.streamGrpcResponse(method.outputType.scalaType))
         }
-        fp
-            .call(scalapbServicePrinter.generateScalaDoc(method))
+        _.call(printScalaDoc(method))
             .addMethod(method.name)
             .addAnnotations(Seq(method.deprecatedAnnotation).filter(_.nonEmpty)*)
             .addParameterList(parameters*)
             .addReturnType(returnType)
     }
 
-    private def printServiceObject(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addObject(name)
+    private def printScalaDoc(method: MethodDescriptor): PrinterEndo = {
+        val lines = asScalaDocBlock(method.comment.map(_.split('\n').toSeq).getOrElse(Seq.empty))
+        _.add(lines *)
+    }
+
+    private def printServiceObject: PrinterEndo =
+        _.addObject(name)
             .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
             .addBody {
                 _.newline
@@ -97,9 +90,9 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
                     .call(printClientImpl)
             }
 
-    private def printServerMethod(fp: FunctionalPrinter): FunctionalPrinter = {
+    private def printServerMethod: PrinterEndo = {
         val methods = service.methods.map(printAddMethod)
-        fp.addMethod("service")
+        _.addMethod("service")
             .addParameterList("serviceImpl" :- name)
             .addReturnType(Types.serverServiceDefinition)
             .addBody(
@@ -109,7 +102,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             )
     }
 
-    private def printAddMethod(method: MethodDescriptor)(fp: FunctionalPrinter): FunctionalPrinter = {
+    private def printAddMethod(method: MethodDescriptor): PrinterEndo = {
         // TODO: Simplify this.
         val handler = method.streamType match {
             case StreamType.Unary           => s"${Types.serverHandler}.unary(serviceImpl.${method.name})"
@@ -117,7 +110,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.ServerStreaming => s"${Types.serverHandler}.serverStreaming(serviceImpl.${method.name})"
             case StreamType.Bidirectional   => s"${Types.serverHandler}.bidiStreaming(serviceImpl.${method.name})"
         }
-        fp.add(".addMethod(")
+        _.add(".addMethod(")
             .indented(
                 _.add(s"${method.grpcDescriptor.fullNameWithMaybeRoot},")
                     .add(handler)
@@ -125,8 +118,8 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .add(")")
     }
 
-    private def printClientMethod(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addMethod("client")
+    private def printClientMethod: PrinterEndo =
+        _.addMethod("client")
             .addParameterList( //
                 "channel" :- Types.channel,
                 "options" :- Types.callOptions := (Types.callOptions + ".DEFAULT")
@@ -136,8 +129,8 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
                 _.add(s"ClientImpl(channel, options)")
             )
 
-    private def printClientTrait(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addTrait("Client")
+    private def printClientTrait: PrinterEndo =
+        _.addTrait("Client")
             .addBody {
                 _.print(service.getMethods.asScala) { (fp, md) =>
                     printClientServiceMethod(fp, md)
@@ -161,15 +154,15 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.Bidirectional   => Types.streamGrpcRequest(method.outputType.scalaType)
         }
         fp
-            .call(scalapbServicePrinter.generateScalaDoc(method))
+            .call(printScalaDoc(method))
             .addMethod(method.name)
             .addAnnotations(Seq(method.deprecatedAnnotation).filter(_.nonEmpty)*)
             .addParameterList(parameters*)
             .addReturnType(returnType)
     }
 
-    private def printClientImpl(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addClass("ClientImpl")
+    private def printClientImpl: PrinterEndo =
+        _.addClass("ClientImpl")
             .addParameterList( //
                 "channel" :- Types.channel,
                 "options" :- Types.callOptions
@@ -177,11 +170,11 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .addParents("Client")
             .addBody {
                 _.print(service.getMethods.asScala) { (fp, md) =>
-                    printClientImplMethod(fp, md)
+                    printClientImplMethod(md)(fp)
                 }
             }
 
-    private def printClientImplMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
+    private def printClientImplMethod(method: MethodDescriptor): PrinterEndo = {
         // TODO: De-duplicate.
         def requestParameter  = "request" :- method.inputType.scalaType
         def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
@@ -205,8 +198,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.ServerStreaming => s"serverStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
             case StreamType.Bidirectional   => s"bidiStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, requests)"
         }
-        fp
-            .call(scalapbServicePrinter.generateScalaDoc(method))
+        _.call(printScalaDoc(method))
             .addMethod(method.name)
             .addAnnotations(Seq(method.deprecatedAnnotation).filter(_.nonEmpty)*)
             .addMods(_.Override)

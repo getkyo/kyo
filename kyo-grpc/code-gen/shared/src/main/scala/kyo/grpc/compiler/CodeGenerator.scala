@@ -40,7 +40,7 @@ object CodeGenerator extends CodeGenApp {
                     import implicits.ExtendedFileDescriptor
                     val files = request.filesToGenerate.filterNot(_.disableOutput).flatMap { file =>
                         if (file.scalaOptions.getSingleFile)
-                            singleFile(file)
+                            Seq(singleFile(file, implicits))
                         else
                             multipleFiles(file, implicits)
                     }
@@ -54,14 +54,15 @@ object CodeGenerator extends CodeGenApp {
         }
 
     // TODO: There should be a separate code generator for client and server.
-    //  It is virtually never the case that you have both in the same project so they should be separate.
+    //  It is almost never the case that you have both in the same project so they should be separate.
 
-    // TODO
-    private def singleFile(file: FileDescriptor) =
-        ???
+    private def singleFile(file: FileDescriptor, implicits: DescriptorImplicits) =
+        file.getServices.asScala.foldLeft(FilePrinter(file, implicits).addPackage) { (fp, service) =>
+            fp.addService(service)
+        }.result
 
     private def multipleFiles(file: FileDescriptor, implicits: DescriptorImplicits) =
         file.getServices.asScala.map { service =>
-            new ServicePrinter(service, implicits).result
+            FilePrinter(file, implicits).addPackage.addService(service).setNameFromService(service).result
         }
 }
