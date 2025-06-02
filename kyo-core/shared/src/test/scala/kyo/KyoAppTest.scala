@@ -79,7 +79,7 @@ class KyoAppTest extends Test:
     "exit on error" taggedAs jvmOnly in {
         var exitCode = -1
         def app(fail: Boolean): KyoApp = new KyoApp:
-            override def exit(code: Int): Unit = exitCode = code
+            override def exit(code: Int)(using AllowUnsafe): Unit = exitCode = code
             run(Abort.when(fail)(new IllegalArgumentException("Aborts!")))
         val result = Result.catching[IllegalArgumentException](app(fail = true).main(Array.empty))
         assert(result.isFailure)

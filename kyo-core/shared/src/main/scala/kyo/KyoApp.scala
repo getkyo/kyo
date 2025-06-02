@@ -42,12 +42,12 @@ object KyoApp:
             for proc <- initCode do proc()
         end main
 
-        protected def run[A](v: => A < S)(using Frame): Unit
+        protected def run[A](v: => A < S)(using Frame, Render[A]): Unit
 
-        protected def exit(code: Int): Unit = kernel.Platform.exit(code)
+        protected def exit(code: Int)(using AllowUnsafe): Unit = kernel.Platform.exit(code)
 
-        protected def onResult(result: Result[Any, Any]): Unit =
-            if !result.exists(().equals(_)) then println(pprint.apply(result).plainText)
+        protected def onResult[E, A](result: Result[E, A])(using Render[Result[E, A]], AllowUnsafe): Unit =
+            if !result.exists(().equals(_)) then println(result.show)
             result match
                 case Error(e: Throwable) => throw e
                 case Error(_)            => exit(1)
