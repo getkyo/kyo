@@ -1,7 +1,8 @@
-package org.typelevel.internal
+package org.typelevel.paiges.internal
 
-import org.typelevel.paiges.internal.ExtendedSyntax.*
 import org.scalatest.freespec.AnyFreeSpec
+import org.typelevel.paiges.*
+import org.typelevel.paiges.internal.ExtendedSyntax.*
 
 class ExtendedSyntaxTest extends AnyFreeSpec {
 
@@ -44,10 +45,10 @@ class ExtendedSyntaxTest extends AnyFreeSpec {
                 assert(actual == expected)
             }
         }
-        "hanging" - {
+        "hangingUnsafe" - {
             "should not indent when short" in {
                 val prefix = Doc.text("foo")
-                val doc    = prefix + Doc.text("bar").hanging(2)
+                val doc    = prefix + Doc.text("bar").hangingUnsafe(2)
                 val actual = doc.grouped.render(10)
                 val expected =
                     """foo bar""".stripMargin
@@ -55,7 +56,7 @@ class ExtendedSyntaxTest extends AnyFreeSpec {
             }
             "should indent when long" in {
                 val prefix = Doc.text("foo")
-                val doc    = prefix + Doc.text("bar").hanging(2)
+                val doc    = prefix + Doc.text("bar").hangingUnsafe(2)
                 val actual = doc.grouped.render(5)
                 val expected =
                     """foo
@@ -64,7 +65,7 @@ class ExtendedSyntaxTest extends AnyFreeSpec {
             }
             "should indent when long from multiline" in {
                 val prefix = Doc.text("foo") + Doc.line + Doc.text("baz")
-                val doc    = prefix + Doc.text("bar").hanging(2)
+                val doc    = prefix + Doc.text("bar").hangingUnsafe(2)
                 val actual = doc.grouped.render(5)
                 val expected =
                     """foo

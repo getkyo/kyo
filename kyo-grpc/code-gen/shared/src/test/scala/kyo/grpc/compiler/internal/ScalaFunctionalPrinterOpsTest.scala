@@ -1,4 +1,4 @@
-package kyo.grpc.compiler
+package kyo.grpc.compiler.internal
 
 import org.scalatest.freespec.AnyFreeSpec
 import org.typelevel.paiges.Doc
