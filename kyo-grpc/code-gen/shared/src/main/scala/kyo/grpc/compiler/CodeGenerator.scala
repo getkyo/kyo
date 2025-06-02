@@ -53,9 +53,6 @@ object CodeGenerator extends CodeGenApp {
                 CodeGenResponse.fail(error)
         }
 
-    // TODO: There should be a separate code generator for client and server.
-    //  It is almost never the case that you have both in the same project so they should be separate.
-
     private def singleFile(file: FileDescriptor, implicits: DescriptorImplicits) =
         file.getServices.asScala.foldLeft(FilePrinter(file, implicits).addPackage) { (fp, service) =>
             fp.addService(service)
