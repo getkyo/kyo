@@ -553,16 +553,16 @@ object StreamCoreExtensions:
             ct: SafeClassTag[Closed | E],
             fr: Frame
         ): Stream[Chunk[V], S & Abort[E] & Async] =
-            enum Event[+V]:
+            enum Event:
                 case MaxTime, End
                 case Emission(chunk: Chunk[V])
             end Event
 
             object Event:
-                given [V]: CanEqual[Event[V], Event[V]] = CanEqual.derived
+                given CanEqual[Event, Event] = CanEqual.derived
 
             Stream[Chunk[V], S & Abort[E] & Async]:
-                Channel.initWith[Event[V]](Int.MaxValue): eventChannel =>
+                Channel.initWith[Event](Int.MaxValue): eventChannel =>
                     val scheduleNext: Unit < (Abort[Closed] & Resource & Async) =
                         Resource.acquireRelease(
                             Async.run[Closed, Unit, Any](Async.sleep(maxTime).andThen(eventChannel.put(Event.MaxTime).unit))
