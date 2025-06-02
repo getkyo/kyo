@@ -437,4 +437,171 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(d.eval == 2)
         }
     }
+
+    "Maybe" - {
+        val xMaybeEffect: Maybe[Int < Any] = Maybe(1)
+        val yMaybe: Maybe[Int]             = Maybe(1)
+        val zMaybe: Maybe[Int]             = Maybe.empty
+
+        "map" in {
+            val d = direct:
+                xMaybeEffect.map(_.now + 1)
+
+            assert(d.eval == Maybe(2))
+        }
+
+        "flatMap" in {
+            val d = direct:
+                xMaybeEffect.flatMap(i => Maybe(i.now + 1))
+
+            assert(d.eval == Maybe(2))
+        }
+
+        "orElse" in {
+            val d = direct:
+                zMaybe.orElse(yMaybe)
+
+            assert(d.eval == Maybe(1))
+        }
+
+        "filter" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = direct:
+                yMaybe.filter(i => f(i).now)
+
+            assert(d.eval == Maybe(1))
+        }
+
+        "filterNot" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = direct:
+                yMaybe.filterNot(i => f(i).now)
+
+            assert(d.eval == Maybe.empty)
+        }
+
+        "exists" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = direct:
+                yMaybe.exists(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "forall" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = direct:
+                yMaybe.forall(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "foreach" in {
+
+            def plus(i: Int) = Var.update[Int](_ + i)
+
+            val d = direct:
+                yMaybe.foreach(i => plus(i).unit.now)
+
+            assert(Var.run(0)(d.andThen(Var.get[Int])).eval == 1)
+        }
+
+        "collect" in {
+            def f(i: Int): Int < Any = i + 1
+
+            val d = direct:
+                yMaybe.collect:
+                    case i if i < 3 => f(i).now
+
+            assert(d.eval == Maybe(2))
+        }
+
+        "fold" in {
+            def identity(i: Int): Int < Any = i
+            val d = direct:
+                yMaybe.fold(0)(i => identity(i).now)
+
+            assert(d.eval == 1)
+        }
+
+        "getOrElse" in {
+            val default: Int < Any = 2
+            val d = direct:
+                zMaybe.getOrElse(default.now)
+
+            assert(d.eval == 2)
+        }
+
+    }
+
+    "Result" - {
+        val xResultEffect: Result[Throwable, Int < Any] = Result.succeed(1)
+        val yResult: Result[Nothing, Int]               = Result.succeed(1)
+        val zResult: Result[String, Nothing]            = Result.fail("fail")
+
+        "map" in {
+            val d = direct:
+                xResultEffect.map(_.now + 1)
+
+            assert(d.eval == Result(2))
+        }
+
+        "flatMap" in {
+            val d = direct:
+                xResultEffect.flatMap(i => Result.succeed(i.now + 1))
+
+            assert(d.eval == Result(2))
+        }
+
+        "orElse" in {
+            def e: Result[Nothing, Int] < Any = Result.succeed(1)
+
+            val d = direct:
+                zResult.orElse(e.now)
+
+            assert(d.eval == Result(1))
+        }
+
+        "filter" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = direct:
+                yResult.filter(i => f(i).now)
+
+            assert(d.eval == Result(1))
+        }
+
+        "exists" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = direct:
+                yResult.exists(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "forall" in {
+            def f(i: Int): Boolean < Any = i < 3
+            val d = direct:
+                yResult.forall(i => f(i).now)
+
+            assert(d.eval)
+        }
+
+        "fold" in {
+            def identity(i: Int): Int < Any = i
+            val d = direct:
+                yResult.fold(i => identity(i).now, x => 0, _ => -1)
+
+            assert(d.eval == 1)
+        }
+
+        "getOrElse" in {
+            val default: Int < Any = 2
+            val d = direct:
+                zResult.getOrElse(default.now)
+
+            assert(d.eval == 2)
+        }
+
+    }
+
 end ShiftMethodSupportTest

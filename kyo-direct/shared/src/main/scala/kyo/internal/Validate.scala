@@ -72,16 +72,34 @@ private[kyo] object Validate:
 
         def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
             qualifiers match
-                case List(Block(List(DefDef(_, _, _, Some(body))), _)) =>
+                case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
                     body match
                         case Match(_, cases) =>
                             cases.foreach:
                                 case CaseDef(_, _, body) => Trees.Step.goto(body)
                         case _ => Trees.Step.goto(body)
+                    end match
+                    asyncShiftDive(xs)
 
                 case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
 
         Trees.traverseGoto(expr.asTerm) {
+            case Apply(
+                    Apply(TypeApply(Apply(TypeApply(Select(Ident("Maybe" | "Result"), _), _), List(qualifier)), _), argGroup0),
+                    argGroup1
+                ) =>
+                Trees.Step.goto(qualifier)
+                asyncShiftDive(argGroup0)
+                asyncShiftDive(argGroup1)
+
+            case Apply(TypeApply(Apply(TypeApply(Select(Ident("Maybe" | "Result"), _), _), List(qualifier)), _), argGroup0) =>
+                Trees.Step.goto(qualifier)
+                asyncShiftDive(argGroup0)
+
+            case Apply(Apply(TypeApply(Select(Ident("Maybe" | "Result"), _), _), List(qualifier)), argGroup0) =>
+                Trees.Step.goto(qualifier)
+                asyncShiftDive(argGroup0)
+
             case Apply(Apply(TypeApply(select: Select, _), argGroup0), argGroup1) if validAsyncShift(select) =>
                 Trees.Step.goto(select.qualifier)
                 asyncShiftDive(argGroup0)
