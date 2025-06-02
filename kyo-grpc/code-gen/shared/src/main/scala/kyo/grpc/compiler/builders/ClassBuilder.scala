@@ -12,7 +12,6 @@ final case class ClassBuilder(
     typeParameters: Vector[String] = Vector.empty,
     parameterLists: Vector[Seq[Parameter]] = Vector.empty,
     implicitParameters: Vector[Parameter] = Vector.empty,
-    // TODO: The first parent could be a constructor.
     override val parents: Vector[Doc] = Vector.empty,
     override val body: Doc = Doc.empty
 ) extends TemplateBuilder {

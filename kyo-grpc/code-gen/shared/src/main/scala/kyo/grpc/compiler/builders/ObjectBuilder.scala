@@ -7,7 +7,6 @@ final case class ObjectBuilder(
     override val id: String,
     override val annotations: Vector[Doc] = Vector.empty,
     override val mods: Vector[Doc] = Vector.empty,
-    // TODO: The first parent could be a constructor.
     override val parents: Vector[Doc] = Vector.empty,
     override val body: Doc = Doc.empty
 ) extends TemplateBuilder {
