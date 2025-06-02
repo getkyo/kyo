@@ -254,34 +254,31 @@ class StreamCoreExtensionsTest extends Test:
         }
 
         "groupedWithin" - {
+            val stream = Stream {
+                Loop(1): i =>
+                    Emit.valueWith(Chunk(i)):
+                        (if i % 5 == 0 then Async.sleep(30.millis) else Kyo.unit)
+                            .andThen(Loop.continue(i + 1))
+            }.take(11)
+
             "should group by size" in run {
-                val stream = Stream:
-                    Loop(0): i =>
-                        if i > 10 then Loop.done
-                        else Emit.valueWith(Chunk(i))(Loop.continue(i + 1))
                 stream.groupedWithin(3, Duration.Infinity).run.map: result =>
-                    assert(result == Chunk(Chunk(0, 1, 2), Chunk(3, 4, 5), Chunk(6, 7, 8), Chunk(9, 10)))
+                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
             }
 
             "should group by time" in run {
-                val stream = Stream {
-                    Loop(0): i =>
-                        Emit.valueWith(Chunk(i)):
-                            Async.sleep(20.millis).andThen(Loop.continue(i + 1))
-                }.take(4)
-                stream.groupedWithin(Int.MaxValue, 10.millis).run.map: result =>
-                    assert(result == Chunk(Chunk(0), Chunk(1), Chunk(2), Chunk(3)))
+                stream.groupedWithin(Int.MaxValue, 20.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
             }
 
             "should group by size and time" in run {
-                val stream = Stream {
-                    Loop(1): i =>
-                        Emit.valueWith(Chunk(i)):
-                            (if i % 5 == 0 then Async.sleep(40.millis) else Kyo.unit)
-                                .andThen(Loop.continue(i + 1))
-                }.take(10)
-                stream.groupedWithin(3, 30.millis).run.map: result =>
-                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10)))
+                stream.groupedWithin(3, 20.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
+            }
+
+            "should emit single group if size and time are max" in run {
+                stream.groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
+                    assert(result == Chunk(1 to 11))
             }
         }
     }
