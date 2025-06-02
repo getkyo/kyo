@@ -1,5 +1,6 @@
-package org.typelevel.paiges
+package org.typelevel.paiges.internal
 
+import org.typelevel.paiges.*
 import org.typelevel.paiges.Doc.*
 
 // Workaround for https://github.com/typelevel/paiges/issues/628.
@@ -13,7 +14,6 @@ object ExtendedSyntax {
             // Long means not completely flat. orEmpty alone is not enough as a doc with hard lines is considered flat.
             // Flat needs to be broken down into minimal vs single-line.
             if (doc.containsHardLine) left + Doc.hardLine + doc.indent(indent) + Doc.hardLine + right
-            // TODO: This seems unnecessary.
             else ((Docx.orEmpty(left + Doc.hardLine) + doc).nested(indent) + Docx.orEmpty(Doc.hardLine + right)).grouped
         }
 
@@ -46,24 +46,11 @@ object ExtendedSyntax {
                 case FlatAlt(_, b)                  => b.containsHardLine
                 case Union(a, _)                    => a.containsHardLine
                 case Concat(a, b)                   => a.containsHardLine || b.containsHardLine
-                // TODO: We could try a bit harder to traverse the strict paths first.
-                case d @ LazyDoc(_) => d.evaluated.containsHardLine
+                case d @ LazyDoc(_)                 => d.evaluated.containsHardLine
             }
 
-//        def containsSoftLine: Boolean =
-//            doc match {
-//                case Line                           => true
-//                case LazyDoc(_)                     => true
-//                case Union(_, b)                    => b.containsSoftLine
-//                case FlatAlt(a, _)                  => a.containsSoftLine
-//                case Concat(a, b)                   => a.containsSoftLine || b.containsSoftLine
-//                case Nest(_, d)                     => d.containsSoftLine
-//                case Align(d)                       => d.containsSoftLine
-//                case ZeroWidth(_) | Text(_) | Empty => false
-//            }
-
-        // This is unsafe. It violates the invariants of FlatAlt
-        def hanging(i: Int, sep: Doc = Doc.space): Doc = {
+        // This is unsafe as it violates the invariants of FlatAlt, but it seems to be OK for it is used.
+        def hangingUnsafe(i: Int, sep: Doc = Doc.space): Doc = {
             FlatAlt(Doc.hardLine + Doc.spaces(i) + doc.aligned, sep + doc.flatten).grouped
         }
     }

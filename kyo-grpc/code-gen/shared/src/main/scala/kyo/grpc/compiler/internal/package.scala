@@ -1,20 +1,21 @@
-package kyo.grpc
+package kyo.grpc.compiler
 
-import kyo.grpc.compiler.builders.*
 import org.typelevel.paiges.Doc
+import org.typelevel.paiges.internal.Docx
+import org.typelevel.paiges.internal.ExtendedSyntax.*
 import scala.language.implicitConversions
 import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
-package object compiler {
+package object internal {
 
     private[compiler] val WIDTH  = 100
     private[compiler] val INDENT = 2
 
-    def mods(chooses: Mod.Choose*): Vector[String] =
+    private[compiler] def mods(chooses: Mod.Choose*): Vector[String] =
         chooses.map(_.choice).toVector
 
-    final case class AddClassDsl(builder: ClassBuilder, fp: FunctionalPrinter) {
+    private[compiler] final case class AddClassDsl(builder: ClassBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddClassDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -43,11 +44,11 @@ package object compiler {
         def endClass: FunctionalPrinter = fp.addDoc(builder.result)
     }
 
-    object AddClassDsl {
+    private[compiler] object AddClassDsl {
         implicit def endClass(dsl: AddClassDsl): FunctionalPrinter = dsl.endClass
     }
 
-    final case class AddObjectDsl(builder: ObjectBuilder, fp: FunctionalPrinter) {
+    private[compiler] final case class AddObjectDsl(builder: ObjectBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddObjectDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -67,11 +68,11 @@ package object compiler {
         def endObject: FunctionalPrinter = fp.addDoc(builder.result)
     }
 
-    object AddObjectDsl {
+    private[compiler] object AddObjectDsl {
         implicit def endObject(dsl: AddObjectDsl): FunctionalPrinter = dsl.endObject
     }
 
-    final case class AddTraitDsl(builder: TraitBuilder, fp: FunctionalPrinter) {
+    private[compiler] final case class AddTraitDsl(builder: TraitBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddTraitDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -94,11 +95,11 @@ package object compiler {
         def endTrait: FunctionalPrinter = fp.addDoc(builder.result)
     }
 
-    object AddTraitDsl {
+    private[compiler] object AddTraitDsl {
         implicit def endTrait(dsl: AddTraitDsl): FunctionalPrinter = dsl.endTrait
     }
 
-    final case class AddMethodDsl(builder: MethodBuilder, fp: FunctionalPrinter) {
+    private[compiler] final case class AddMethodDsl(builder: MethodBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddMethodDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -127,11 +128,11 @@ package object compiler {
         def endMethod: FunctionalPrinter = fp.addDoc(builder.result)
     }
 
-    object AddMethodDsl {
+    private[compiler] object AddMethodDsl {
         implicit def endMethod(dsl: AddMethodDsl): FunctionalPrinter = dsl.endMethod
     }
 
-    implicit class ScalaFunctionalPrinterOps(val fp: FunctionalPrinter) extends AnyVal {
+    private[compiler] implicit class ScalaFunctionalPrinterOps(val fp: FunctionalPrinter) extends AnyVal {
 
         def addPackage(id: String): FunctionalPrinter =
             fp.add(s"package $id")
@@ -158,8 +159,46 @@ package object compiler {
             fp.add(doc.render(WIDTH))
     }
 
-    implicit class StringParameterOps(val parameterName: String) extends AnyVal {
+    private[compiler] implicit class StringParameterOps(val parameterName: String) extends AnyVal {
 
         def :-(typeName: String): Parameter = Parameter(parameterName, typeName, None)
     }
+
+    private[compiler] def when(condition: Boolean)(doc: => Doc): Doc =
+        if (condition) doc else Doc.empty
+
+    private[compiler] def hardList(docs: Iterable[Doc]): Doc =
+        Doc.intercalate(Doc.hardLine, docs)
+
+    private[compiler] def stackList(docs: Iterable[Doc]): Doc =
+        Doc.intercalate(Doc.char(',') + Doc.line, docs)
+
+    private[compiler] def spreadList(docs: Iterable[Doc]): Doc =
+        Doc.intercalate(Doc.text(", "), docs)
+
+    private[compiler] def extendsList(docs: Iterable[Doc]): Doc =
+        when(docs.nonEmpty) {
+            (Doc.text("extends ") + Doc.intercalate(Doc.line + Doc.text("with "), docs)).hangingUnsafe(INDENT * 2)
+        }
+
+    private[compiler] def typedName(parameter: (String, String)): Doc = {
+        val (name, tpe) = parameter
+        name +: (Doc.text(": ") + Doc.text(tpe))
+    }
+
+    private[compiler] def parameter(parameter: Parameter): Doc =
+        typedName((parameter.name, parameter.typeName)) +
+            parameter.default.fold(Doc.empty)(default => Doc.text(" = ") + Doc.text(default))
+
+    private[compiler] def parameterLists(parameterss: Vector[Seq[Parameter]]): Doc =
+        when(parameterss.nonEmpty) {
+            val parametersDocs = parameterss
+                .map(_.map(parameter))
+                .map(stackList)
+                .map(_.tightBracketBy(Doc.char('('), Doc.char(')')))
+            Doc.cat(parametersDocs)
+        }
+
+    private[compiler] def printToDoc(f: PrinterEndo): Doc =
+        Docx.literal(f(new FunctionalPrinter()).result())
 }

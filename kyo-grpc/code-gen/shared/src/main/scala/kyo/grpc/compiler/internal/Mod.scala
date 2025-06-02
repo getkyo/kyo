@@ -1,6 +1,6 @@
-package kyo.grpc.compiler.builders
+package kyo.grpc.compiler.internal
 
-object Mod extends Choice {
+private[compiler] object Mod extends Choice {
     override type A = String
 
     val Case     = "case"

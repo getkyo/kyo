@@ -3,10 +3,12 @@ package kyo.grpc.compiler
 import com.google.protobuf.Descriptors.FileDescriptor
 import com.google.protobuf.ExtensionRegistry
 import com.google.protobuf.compiler.PluginProtos.CodeGeneratorResponse
+import kyo.grpc.compiler.internal.FilePrinter
 import protocbridge.Artifact
 import protocgen.CodeGenApp
 import protocgen.CodeGenRequest
 import protocgen.CodeGenResponse
+
 import scala.jdk.CollectionConverters.*
 import scalapb.compiler.DescriptorImplicits
 import scalapb.compiler.GeneratorException

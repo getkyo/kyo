@@ -1,4 +1,4 @@
-package kyo.grpc.compiler
+package kyo.grpc.compiler.internal
 
 import com.google.protobuf.Descriptors.*
 import com.google.protobuf.compiler.PluginProtos.CodeGeneratorResponse.File
@@ -6,7 +6,7 @@ import scalapb.compiler.{DescriptorImplicits, FunctionalPrinter, NameUtils}
 
 import scala.util.chaining.scalaUtilChainingOps
 
-case class FilePrinter(file: FileDescriptor, implicits: DescriptorImplicits, fp: FunctionalPrinter = new FunctionalPrinter(), builder: File.Builder = File.newBuilder()) {
+private[compiler] case class FilePrinter(file: FileDescriptor, implicits: DescriptorImplicits, fp: FunctionalPrinter = new FunctionalPrinter(), builder: File.Builder = File.newBuilder()) {
 
     import implicits.*
 

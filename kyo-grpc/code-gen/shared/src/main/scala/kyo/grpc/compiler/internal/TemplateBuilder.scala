@@ -1,9 +1,8 @@
-package kyo.grpc.compiler.builders
+package kyo.grpc.compiler.internal
 
-import kyo.grpc.compiler.INDENT
 import org.typelevel.paiges.Doc
 
-trait TemplateBuilder {
+private[compiler] trait TemplateBuilder {
 
     def annotations: Iterable[Doc]
     def mods: Iterable[Doc]

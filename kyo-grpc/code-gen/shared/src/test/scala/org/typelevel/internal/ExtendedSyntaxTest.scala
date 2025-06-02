@@ -1,6 +1,6 @@
-package org.typelevel.paiges
+package org.typelevel.internal
 
-import ExtendedSyntax.*
+import org.typelevel.paiges.internal.ExtendedSyntax.*
 import org.scalatest.freespec.AnyFreeSpec
 
 class ExtendedSyntaxTest extends AnyFreeSpec {

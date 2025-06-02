@@ -1,8 +1,8 @@
-package kyo.grpc.compiler.builders
+package kyo.grpc.compiler.internal
 
 import scala.language.implicitConversions
 
-trait Choice { self =>
+private[compiler] trait Choice { self =>
 
     type A
 

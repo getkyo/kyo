@@ -1,7 +1,6 @@
-package kyo.grpc.compiler
+package kyo.grpc.compiler.internal
 
 import com.google.protobuf.Descriptors.*
-import kyo.grpc.compiler.builders.Parameter
 import scala.jdk.CollectionConverters.*
 import scalapb.compiler.DescriptorImplicits
 import scalapb.compiler.FunctionalPrinter
@@ -10,7 +9,11 @@ import scalapb.compiler.NameUtils
 import scalapb.compiler.ProtobufGenerator.asScalaDocBlock
 import scalapb.compiler.StreamType
 
-case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits, fp: FunctionalPrinter = new FunctionalPrinter()) {
+private[compiler] case class ServicePrinter(
+    service: ServiceDescriptor,
+    implicits: DescriptorImplicits,
+    fp: FunctionalPrinter = new FunctionalPrinter()
+) {
 
     import implicits.*
 

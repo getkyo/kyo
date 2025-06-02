@@ -1,12 +1,11 @@
-package kyo.grpc.compiler.builders
+package kyo.grpc.compiler.internal
 
-import kyo.grpc.compiler.INDENT
-import kyo.grpc.compiler.builders
+import kyo.grpc.compiler.internal
 import org.typelevel.paiges.Doc
-import org.typelevel.paiges.ExtendedSyntax.*
+import org.typelevel.paiges.internal.ExtendedSyntax.*
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
-final case class MethodBuilder(
+private[compiler] final case class MethodBuilder(
     id: String,
     annotations: Vector[Doc] = Vector.empty,
     mods: Vector[Doc] = Vector.empty,
@@ -57,7 +56,7 @@ final case class MethodBuilder(
             "[" +: spreadList(typeParametersDocs) :+ "]"
         )
 
-        val parameterListsDoc = builders.parameterLists(parameterLists)
+        val parameterListsDoc = internal.parameterLists(parameterLists)
 
         val implicitParametersDoc = when(implicitParameters.nonEmpty) {
             stackList(implicitParameters.map(parameter))
@@ -81,7 +80,7 @@ final case class MethodBuilder(
         body.fold(signatureDoc) { bodyDoc =>
             val bracketedBodyDoc = {
                 if (bodyDoc.containsHardLine) Doc.text(" {") + Doc.hardLine + bodyDoc.indent(INDENT) + Doc.hardLine + Doc.char('}')
-                else bodyDoc.hanging(INDENT)
+                else bodyDoc.hangingUnsafe(INDENT)
             }
             (signatureDoc :+ " =") + bracketedBodyDoc
         }.grouped

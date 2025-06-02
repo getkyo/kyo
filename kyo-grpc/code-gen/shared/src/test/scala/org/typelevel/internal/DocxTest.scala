@@ -1,6 +1,7 @@
-package org.typelevel.paiges
+package org.typelevel.internal
 
 import org.scalatest.freespec.AnyFreeSpec
+import org.typelevel.paiges.internal.Docx
 
 class DocxTest extends AnyFreeSpec {
 

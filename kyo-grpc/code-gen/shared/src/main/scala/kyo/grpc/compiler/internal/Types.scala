@@ -1,6 +1,6 @@
-package kyo.grpc.compiler
+package kyo.grpc.compiler.internal
 
-object Types {
+private[compiler] object Types {
 
     def pendingGrpcResponse(t: String) = s"_root_.kyo.<[$t, $grpcResponse]"
 

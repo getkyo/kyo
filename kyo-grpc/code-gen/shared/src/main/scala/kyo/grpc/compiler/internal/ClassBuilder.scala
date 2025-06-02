@@ -1,11 +1,11 @@
-package kyo.grpc.compiler.builders
+package kyo.grpc.compiler.internal
 
-import kyo.grpc.compiler.builders
+import kyo.grpc.compiler.internal
 import org.typelevel.paiges.Doc
-import org.typelevel.paiges.ExtendedSyntax.*
+import org.typelevel.paiges.internal.ExtendedSyntax.*
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
-final case class ClassBuilder(
+private[compiler] final case class ClassBuilder(
     override val id: String,
     override val annotations: Vector[Doc] = Vector.empty,
     override val mods: Vector[Doc] = Vector.empty,
@@ -49,7 +49,7 @@ final case class ClassBuilder(
             "[" +: spreadList(typeParametersDocs) :+ "]"
         )
 
-        val parameterListsDoc = builders.parameterLists(parameterLists)
+        val parameterListsDoc = internal.parameterLists(parameterLists)
 
         val implicitParametersDoc = when(implicitParameters.nonEmpty) {
             stackList(implicitParameters.map(parameter))
