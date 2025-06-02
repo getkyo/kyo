@@ -26,9 +26,9 @@ class CodeGeneratorTest extends AnyFreeSpec {
             val expected1 = scala.io.Source.fromResource("output/multiple-files-1").mkString
             assert(file1.getContent === expected1)
 
-            val file2 = response.getFile(0)
+            val file2 = response.getFile(1)
             assert(file2.getUnknownFields.asMap().isEmpty)
-            assert(file2.getName === "kgrpc/test/TestService.scala")
+            assert(file2.getName === "kgrpc/test/UtilityService.scala")
             val expected2 = scala.io.Source.fromResource("output/multiple-files-2").mkString
             assert(file2.getContent === expected2)
         }
