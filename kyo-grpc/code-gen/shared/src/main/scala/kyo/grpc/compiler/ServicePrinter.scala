@@ -1,7 +1,7 @@
 package kyo.grpc.compiler
 
 import com.google.protobuf.Descriptors.*
-
+import kyo.grpc.compiler.builders.Parameter
 import scala.jdk.CollectionConverters.*
 import scalapb.compiler.DescriptorImplicits
 import scalapb.compiler.FunctionalPrinter
@@ -16,15 +16,17 @@ case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImpli
 
     private val name = NameUtils.snakeCaseToCamelCase(service.getName, upperInitial = true)
 
+    // noinspection MutatorLikeMethodIsParameterless
     def addTrait: ServicePrinter =
         copy(fp = fp.call(printScalaDoc).call(printServiceTrait).newline)
 
+    // noinspection MutatorLikeMethodIsParameterless
     def addObject: ServicePrinter =
         copy(fp = fp.call(printServiceObject).newline)
 
     private def printScalaDoc: PrinterEndo = {
         val lines = asScalaDocBlock(service.comment.map(_.split('\n').toSeq).getOrElse(Seq.empty))
-        _.add(lines *)
+        _.add(lines*)
     }
 
     private def printServiceTrait: PrinterEndo =
@@ -49,21 +51,8 @@ case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImpli
             }
 
     private def printServiceMethod(method: MethodDescriptor): PrinterEndo = {
-        // TODO: De-duplicate.
-        def requestParameter  = "request" :- method.inputType.scalaType
-        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
-        val parameters = method.streamType match {
-            case StreamType.Unary           => Seq(requestParameter)
-            case StreamType.ClientStreaming => Seq(requestsParameter)
-            case StreamType.ServerStreaming => Seq(requestParameter)
-            case StreamType.Bidirectional   => Seq(requestsParameter)
-        }
-        val returnType = method.streamType match {
-            case StreamType.Unary           => Types.pendingGrpcResponse(method.outputType.scalaType)
-            case StreamType.ClientStreaming => Types.pendingGrpcResponse(method.outputType.scalaType)
-            case StreamType.ServerStreaming => Types.pendingGrpcResponse(Types.streamGrpcResponse(method.outputType.scalaType))
-            case StreamType.Bidirectional   => Types.pendingGrpcResponse(Types.streamGrpcResponse(method.outputType.scalaType))
-        }
+        val parameters = methodParameters(method)
+        val returnType = serviceMethodReturnType(method)
         _.call(printScalaDoc(method))
             .addMethod(method.name)
             .addAnnotations(Seq(method.deprecatedAnnotation).filter(_.nonEmpty)*)
@@ -73,7 +62,7 @@ case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImpli
 
     private def printScalaDoc(method: MethodDescriptor): PrinterEndo = {
         val lines = asScalaDocBlock(method.comment.map(_.split('\n').toSeq).getOrElse(Seq.empty))
-        _.add(lines *)
+        _.add(lines*)
     }
 
     private def printServiceObject: PrinterEndo =
@@ -103,13 +92,13 @@ case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImpli
     }
 
     private def printAddMethod(method: MethodDescriptor): PrinterEndo = {
-        // TODO: Simplify this.
-        val handler = method.streamType match {
-            case StreamType.Unary           => s"${Types.serverHandler}.unary(serviceImpl.${method.name})"
-            case StreamType.ClientStreaming => s"${Types.serverHandler}.clientStreaming(serviceImpl.${method.name})"
-            case StreamType.ServerStreaming => s"${Types.serverHandler}.serverStreaming(serviceImpl.${method.name})"
-            case StreamType.Bidirectional   => s"${Types.serverHandler}.bidiStreaming(serviceImpl.${method.name})"
+        val methodName = method.streamType match {
+            case StreamType.Unary           => "unary"
+            case StreamType.ClientStreaming => "clientStreaming"
+            case StreamType.ServerStreaming => "serverStreaming"
+            case StreamType.Bidirectional   => "bidiStreaming"
         }
+        val handler = s"${Types.serverHandler}.$methodName(serviceImpl.${method.name})"
         _.add(".addMethod(")
             .indented(
                 _.add(s"${method.grpcDescriptor.fullNameWithMaybeRoot},")
@@ -133,28 +122,14 @@ case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImpli
         _.addTrait("Client")
             .addBody {
                 _.print(service.getMethods.asScala) { (fp, md) =>
-                    printClientServiceMethod(fp, md)
+                    printClientServiceMethod(md)(fp)
                 }
             }
 
-    private def printClientServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        // TODO: De-duplicate.
-        def requestParameter  = "request" :- method.inputType.scalaType
-        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
-        val parameters = method.streamType match {
-            case StreamType.Unary           => Seq(requestParameter)
-            case StreamType.ClientStreaming => Seq(requestsParameter)
-            case StreamType.ServerStreaming => Seq(requestParameter)
-            case StreamType.Bidirectional   => Seq(requestsParameter)
-        }
-        val returnType = method.streamType match {
-            case StreamType.Unary           => Types.pendingGrpcRequest(method.outputType.scalaType)
-            case StreamType.ClientStreaming => Types.pendingGrpcRequest(method.outputType.scalaType)
-            case StreamType.ServerStreaming => Types.streamGrpcRequest(method.outputType.scalaType)
-            case StreamType.Bidirectional   => Types.streamGrpcRequest(method.outputType.scalaType)
-        }
-        fp
-            .call(printScalaDoc(method))
+    private def printClientServiceMethod(method: MethodDescriptor): PrinterEndo = {
+        val parameters = methodParameters(method)
+        val returnType = clientMethodReturnType(method)
+        _.call(printScalaDoc(method))
             .addMethod(method.name)
             .addAnnotations(Seq(method.deprecatedAnnotation).filter(_.nonEmpty)*)
             .addParameterList(parameters*)
@@ -175,29 +150,19 @@ case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImpli
             }
 
     private def printClientImplMethod(method: MethodDescriptor): PrinterEndo = {
-        // TODO: De-duplicate.
-        def requestParameter  = "request" :- method.inputType.scalaType
-        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
-        val parameters = method.streamType match {
-            case StreamType.Unary           => Seq(requestParameter)
-            case StreamType.ClientStreaming => Seq(requestsParameter)
-            case StreamType.ServerStreaming => Seq(requestParameter)
-            case StreamType.Bidirectional   => Seq(requestsParameter)
+        val parameters = methodParameters(method)
+        val returnType = clientMethodReturnType(method)
+        val delegateName = method.streamType match {
+            case StreamType.Unary           => "unary"
+            case StreamType.ClientStreaming => "clientStreaming"
+            case StreamType.ServerStreaming => "serverStreaming"
+            case StreamType.Bidirectional   => "bidiStreaming"
         }
-        val returnType = method.streamType match {
-            case StreamType.Unary           => Types.pendingGrpcRequest(method.outputType.scalaType)
-            case StreamType.ClientStreaming => Types.pendingGrpcRequest(method.outputType.scalaType)
-            case StreamType.ServerStreaming => Types.streamGrpcRequest(method.outputType.scalaType)
-            case StreamType.Bidirectional   => Types.streamGrpcRequest(method.outputType.scalaType)
+        val requestParameter = method.streamType match {
+            case StreamType.Unary | StreamType.ServerStreaming         => "request"
+            case StreamType.ClientStreaming | StreamType.Bidirectional => "requests"
         }
-        // TODO: Simplify this.
-        val delegate = method.streamType match {
-            case StreamType.Unary => s"unary(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
-            case StreamType.ClientStreaming =>
-                s"clientStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, requests)"
-            case StreamType.ServerStreaming => s"serverStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
-            case StreamType.Bidirectional   => s"bidiStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, requests)"
-        }
+        val delegate = s"$delegateName(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, $requestParameter)"
         _.call(printScalaDoc(method))
             .addMethod(method.name)
             .addAnnotations(Seq(method.deprecatedAnnotation).filter(_.nonEmpty)*)
@@ -207,5 +172,32 @@ case class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImpli
             .addBody(
                 _.add(s"${Types.clientCall}.$delegate")
             )
+    }
+
+    private def methodParameters(method: MethodDescriptor): Seq[Parameter] = {
+        def requestParameter  = "request" :- method.inputType.scalaType
+        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
+        method.streamType match {
+            case StreamType.Unary | StreamType.ServerStreaming         => Seq(requestParameter)
+            case StreamType.ClientStreaming | StreamType.Bidirectional => Seq(requestsParameter)
+        }
+    }
+
+    private def clientMethodReturnType(method: MethodDescriptor): String = {
+        method.streamType match {
+            case StreamType.Unary | StreamType.ClientStreaming =>
+                Types.pendingGrpcRequest(method.outputType.scalaType)
+            case StreamType.ServerStreaming | StreamType.Bidirectional =>
+                Types.streamGrpcRequest(method.outputType.scalaType)
+        }
+    }
+
+    private def serviceMethodReturnType(method: MethodDescriptor): String = {
+        method.streamType match {
+            case StreamType.Unary | StreamType.ClientStreaming =>
+                Types.pendingGrpcResponse(method.outputType.scalaType)
+            case StreamType.ServerStreaming | StreamType.Bidirectional =>
+                Types.pendingGrpcResponse(Types.streamGrpcResponse(method.outputType.scalaType))
+        }
     }
 }
