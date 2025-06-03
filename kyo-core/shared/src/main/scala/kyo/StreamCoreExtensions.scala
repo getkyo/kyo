@@ -561,8 +561,10 @@ object StreamCoreExtensions:
             object Event:
                 given CanEqual[Event, Event] = CanEqual.derived
 
+            val safeMaxSize = if maxSize < 1 then 1 else maxSize
+
             Stream[Chunk[V], S & Abort[E] & Async]:
-                Channel.initWith[Event](Int.MaxValue): eventChannel =>
+                Channel.initWith[Event](bufferSize): eventChannel =>
                     val scheduleNext: Unit < (Abort[Closed] & Resource & Async) =
                         Resource.acquireRelease(
                             Async.run[Closed, Unit, Any](Async.sleep(maxTime).andThen(eventChannel.put(Event.MaxTime).unit))
@@ -573,10 +575,10 @@ object StreamCoreExtensions:
                         chunk: Chunk[V]
                     )(using Tag[Emit[Chunk[Chunk[V]]]]): Chunk[V] < (Resource & Abort[Closed] & Async & Emit[Chunk[Chunk[V]]]) =
                         Loop(chunk, false): (remaining, haveEmitted) =>
-                            if remaining.size < maxSize then
+                            if remaining.size < safeMaxSize then
                                 (if haveEmitted then scheduleNext else Kyo.unit).andThen(Loop.done[Chunk[V], Boolean, Chunk[V]](remaining))
                             else
-                                Emit.valueWith(Chunk(remaining.take(maxSize)))(Loop.continue(remaining.drop(maxSize), true))
+                                Emit.valueWith(Chunk(remaining.take(safeMaxSize)))(Loop.continue(remaining.drop(safeMaxSize), true))
                             end if
 
                     def eventLoop(initTs: Instant): Unit < (Abort[Closed] & Emit[Chunk[Chunk[V]]] & Async & Resource) =
