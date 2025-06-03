@@ -662,7 +662,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream of transformed element type `A`
       */
-    def into[A, S2](pipe: Pipe[V, A, S2])(using Tag[V], Frame): Stream[A, S & S2] =
+    def into[A, S2](pipe: Pipe[V, A, S2])(using Tag[Poll[Chunk[V]]], Tag[Emit[Chunk[V]]], Frame): Stream[A, S & S2] =
         pipe.transform(this)
 
     /** Process with a [[Sink]] of corresponding streaming element type.

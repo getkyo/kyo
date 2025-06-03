@@ -38,7 +38,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def contramap[A1](f: A1 => A)(
         using
         t1: Tag[Poll[Chunk[A]]],
-        t2: Tag[A1],
+        t2: Tag[Poll[Chunk[A1]]],
         fr: Frame
     ): Pipe[A1, B, S] =
         Pipe:
@@ -59,7 +59,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def contramap[A1, S1](f: A1 => A < S1)(
         using
         t1: Tag[Poll[Chunk[A]]],
-        t2: Tag[A1],
+        t2: Tag[Poll[Chunk[A1]]],
         disc: Discriminator,
         fr: Frame
     ): Pipe[A1, B, S & S1] =
@@ -84,7 +84,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def contramapChunk[A1](f: Chunk[A1] => Chunk[A])(
         using
         t1: Tag[Poll[Chunk[A]]],
-        t2: Tag[A1],
+        t2: Tag[Poll[Chunk[A1]]],
         fr: Frame
     ): Pipe[A1, B, S] =
         Pipe:
@@ -106,7 +106,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def contramapChunk[A1, S1](f: Chunk[A1] => Chunk[A] < S1)(
         using
         t1: Tag[Poll[Chunk[A]]],
-        t2: Tag[A1],
+        t2: Tag[Poll[Chunk[A1]]],
         disc: Discriminator,
         fr: Frame
     ): Pipe[A1, B, S & S1] =
@@ -132,7 +132,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def map[B1](f: B => B1)(
         using
         t1: Tag[Emit[Chunk[B]]],
-        t2: Tag[B1],
+        t2: Tag[Emit[Chunk[B1]]],
         fr: Frame
     ): Pipe[A, B1, S] =
         Pipe:
@@ -153,7 +153,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def map[B1, S1](f: B => B1 < S1)(
         using
         t1: Tag[Emit[Chunk[B]]],
-        t2: Tag[B1],
+        t2: Tag[Emit[Chunk[B1]]],
         disc: Discriminator,
         fr: Frame
     ): Pipe[A, B1, S & S1] =
@@ -176,7 +176,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def mapChunk[B1](f: Chunk[B] => Chunk[B1])(
         using
         t1: Tag[Emit[Chunk[B]]],
-        t2: Tag[B1],
+        t2: Tag[Emit[Chunk[B1]]],
         fr: Frame
     ): Pipe[A, B1, S] =
         Pipe:
@@ -197,7 +197,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
     def mapChunk[B1, S1](f: Chunk[B] => Chunk[B1] < S1)(
         using
         t1: Tag[Emit[Chunk[B]]],
-        t2: Tag[B1],
+        t2: Tag[Emit[Chunk[B1]]],
         disc: Discriminator,
         fr: Frame
     ): Pipe[A, B1, S & S1] =
@@ -216,7 +216,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
       * @return
       *   New pipe that performs both transformations in sequence
       */
-    def join[C, S1](pipe: Pipe[B, C, S1])(using Tag[B], Frame): Pipe[A, C, S & S1] =
+    def join[C, S1](pipe: Pipe[B, C, S1])(using Tag[Emit[Chunk[B]]], Tag[Poll[Chunk[B]]], Frame): Pipe[A, C, S & S1] =
         Pipe:
             Poll.run(pollEmit)(pipe.pollEmit).unit
 
@@ -227,7 +227,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
       * @return
       *   New sink that transforms stream prior to processing it
       */
-    def join[C, S1](sink: Sink[B, C, S1])(using Tag[B], Frame): Sink[A, C, S & S1] =
+    def join[C, S1](sink: Sink[B, C, S1])(using Tag[Emit[Chunk[B]]], Tag[Poll[Chunk[B]]], Frame): Sink[A, C, S & S1] =
         Sink:
             Poll.run(pollEmit)(sink.poll).map(_._2)
 
@@ -274,7 +274,7 @@ object Pipe:
     def empty[A]: Pipe[A, A, Any] = _empty.asInstanceOf[Pipe[A, A, Any]]
 
     /** A pipe that passes through the original stream without transforming it */
-    def identity[A](using Tag[A], Frame): Pipe[A, A, Any] =
+    def identity[A](using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -294,7 +294,8 @@ object Pipe:
         Tag[A]
     )[B](f: A => B)(
         using
-        Tag[B],
+        Tag[Poll[Chunk[A]]],
+        Tag[Emit[Chunk[B]]],
         NotGiven[B <:< (Any < Nothing)],
         Frame
     ): Pipe[A, B, Any] =
@@ -317,7 +318,8 @@ object Pipe:
         Tag[A]
     )[B, S](f: A => B < S)(
         using
-        Tag[B],
+        Tag[Poll[Chunk[A]]],
+        Tag[Emit[Chunk[B]]],
         NotGiven[B <:< (Any < Nothing)],
         Discriminator,
         Frame
@@ -338,7 +340,7 @@ object Pipe:
       * @param f
       *   Pure function transforming stream chunks
       */
-    def mapChunk[A](using Tag[A])[B](f: Chunk[A] => Chunk[B])(using Tag[B], Frame): Pipe[A, B, Any] =
+    def mapChunk[A](using Tag[Poll[Chunk[A]]])[B](f: Chunk[A] => Chunk[B])(using Tag[Emit[Chunk[B]]], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -354,7 +356,9 @@ object Pipe:
       * @param f
       *   Effectful function transforming stream chunks
       */
-    def mapChunk[A](using Tag[A])[B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[B], Discriminator, Frame): Pipe[A, B, S] =
+    def mapChunk[A](using
+        Tag[Poll[Chunk[A]]]
+    )[B, S](f: Chunk[A] => Chunk[B] < S)(using Tag[Emit[Chunk[B]]], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -371,7 +375,7 @@ object Pipe:
       * @param n
       *   Maximum number of elements to stream
       */
-    def take[A](n: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
+    def take[A](n: Int)(using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]], Frame): Pipe[A, A, Any] =
         if n <= 0 then Pipe.empty
         else
             Pipe:
@@ -391,7 +395,7 @@ object Pipe:
       * @param n
       *   Number of elements to skip
       */
-    def drop[A](n: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
+    def drop[A](n: Int)(using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop(n): i =>
                 Poll.andMap[Chunk[A]]:
@@ -412,7 +416,7 @@ object Pipe:
       * @param f
       *   Pure function determining whether to continue output stream based on input stream element
       */
-    def takeWhile[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
+    def takeWhile[A](f: A => Boolean)(using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -432,7 +436,7 @@ object Pipe:
       * @param f
       *   Effectful function determining whether to continue output stream based on input stream element
       */
-    def takeWhile[A](using Tag[A])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
+    def takeWhile[A](using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -452,7 +456,7 @@ object Pipe:
       * @param f
       *   Pure function determining whether to continue skipping elements
       */
-    def dropWhile[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
+    def dropWhile[A](f: A => Boolean)(using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop(false): done =>
                 Poll.andMap[Chunk[A]]:
@@ -473,7 +477,7 @@ object Pipe:
       * @param f
       *   Effectful function determining whether to continue skipping elements
       */
-    def dropWhile[A](using Tag[A])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
+    def dropWhile[A](using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop(false): done =>
                 Poll.andMap[Chunk[A]]:
@@ -494,7 +498,7 @@ object Pipe:
       * @param f
       *   Pure function determining whether to skip streaming element
       */
-    def filter[A](f: A => Boolean)(using Tag[A], Frame): Pipe[A, A, Any] =
+    def filter[A](f: A => Boolean)(using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]], Frame): Pipe[A, A, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -512,7 +516,7 @@ object Pipe:
       * @param f
       *   Effectful function determining whether to skip streaming element
       */
-    def filter[A](using Tag[A])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
+    def filter[A](using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]])[S](f: A => Boolean < S)(using Discriminator, Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -530,7 +534,7 @@ object Pipe:
       * @param f
       *   Pure function converting input elements to optional output elements
       */
-    def collect[A](using Tag[A])[B](f: A => Maybe[B])(using Tag[B], Frame): Pipe[A, B, Any] =
+    def collect[A](using Tag[Poll[Chunk[A]]])[B](f: A => Maybe[B])(using Tag[Emit[Chunk[B]]], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -548,7 +552,7 @@ object Pipe:
       * @param f
       *   Effectful function converting input elements to optional output elements
       */
-    def collect[A](using Tag[A])[B, S](f: A => Maybe[B] < S)(using Tag[B], Discriminator, Frame): Pipe[A, B, S] =
+    def collect[A](using Tag[Poll[Chunk[A]]])[B, S](f: A => Maybe[B] < S)(using Tag[Emit[Chunk[B]]], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -567,7 +571,7 @@ object Pipe:
       * @param f
       *   Pure function converting input elements to optional output elements
       */
-    def collectWhile[A](using Tag[A])[B](f: A => Maybe[B])(using Tag[B], Frame): Pipe[A, B, Any] =
+    def collectWhile[A](using Tag[Poll[Chunk[A]]])[B](f: A => Maybe[B])(using Tag[Emit[Chunk[B]]], Frame): Pipe[A, B, Any] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -592,7 +596,9 @@ object Pipe:
       * @param f
       *   Effectful function converting input elements to optional output elements
       */
-    def collectWhile[A](using Tag[A])[B, S](f: A => Maybe[B] < S)(using Tag[B], Discriminator, Frame): Pipe[A, B, S] =
+    def collectWhile[A](using
+        Tag[Poll[Chunk[A]]]
+    )[B, S](f: A => Maybe[B] < S)(using Tag[Emit[Chunk[B]]], Discriminator, Frame): Pipe[A, B, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -611,7 +617,7 @@ object Pipe:
 
     /** A pipe whose output only emits elements that are different from their predecessor.
       */
-    def changes[A](using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
+    def changes[A](using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
         changes(Maybe.empty)
 
     /** A pipe whose output only emits elements that are different from their predecessor, starting with the given first element.
@@ -622,7 +628,7 @@ object Pipe:
       * @param first
       *   The initial element to compare against
       */
-    def changes[A](first: A)(using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
+    def changes[A](first: A)(using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
         changes(Maybe(first))
 
     /** A pipe whose output only emits elements that are different from their predecessor, starting with the given optional first element.
@@ -634,7 +640,7 @@ object Pipe:
       *   The optional initial element to compare against
       */
     @targetName("changesMaybe")
-    def changes[A](first: Maybe[A])(using Tag[A], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
+    def changes[A](first: Maybe[A])(using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]], Frame, CanEqual[A, A]): Pipe[A, A, Any] =
         Pipe:
             Loop(first): state =>
                 Poll.andMap[Chunk[A]]:
@@ -658,7 +664,7 @@ object Pipe:
       * @param chunkSize
       *   The target size for each chunk. Must be positive - negative values will be treated as 1.
       */
-    def rechunk[A](chunkSize: Int)(using Tag[A], Frame): Pipe[A, A, Any] =
+    def rechunk[A](chunkSize: Int)(using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]], Frame): Pipe[A, A, Any] =
         Pipe:
             val _chunkSize = chunkSize max 1
             Loop(Chunk.empty[A]): buffer =>
@@ -692,7 +698,7 @@ object Pipe:
       * @param f
       *   Side-effecting function to perform on each input element
       */
-    def tap[A](using Tag[A])[S](f: A => Any < S)(using Frame): Pipe[A, A, S] =
+    def tap[A](using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]])[S](f: A => Any < S)(using Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
@@ -709,7 +715,7 @@ object Pipe:
       * @param f
       *   Side-effecting function to perform on each input chunk
       */
-    def tapChunk[A](using Tag[A])[S](f: Chunk[A] => Any < S)(using Frame): Pipe[A, A, S] =
+    def tapChunk[A](using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]])[S](f: Chunk[A] => Any < S)(using Frame): Pipe[A, A, S] =
         Pipe:
             Loop.foreach:
                 Poll.andMap[Chunk[A]]:
