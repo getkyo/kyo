@@ -247,7 +247,7 @@ class HubTest extends Test:
 
         "concurrent listeners and close" in run {
             (for
-                size  <- Choice.eval(Seq(1, 2, 10, 100))
+                size  <- Choice.eval(1, 2, 10, 100)
                 hub   <- Hub.init[Int](size)
                 latch <- Latch.init(1)
                 listenerFiber <- Async.run(

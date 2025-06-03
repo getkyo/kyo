@@ -234,7 +234,7 @@ class QueueTest extends Test:
 
         "offer and close" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -260,7 +260,7 @@ class QueueTest extends Test:
 
         "offer and poll" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -280,7 +280,7 @@ class QueueTest extends Test:
 
         "offer to full queue during close" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 _     <- Kyo.foreach(1 to size)(i => queue.offer(i))
                 latch <- Latch.init(1)
@@ -303,7 +303,7 @@ class QueueTest extends Test:
 
         "concurrent close attempts" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -327,7 +327,7 @@ class QueueTest extends Test:
 
         "offer, poll and close" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
@@ -500,7 +500,7 @@ class QueueTest extends Test:
 
         "race between closeAwaitEmpty and close" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 _     <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
                 latch <- Latch.init(1)
@@ -525,7 +525,7 @@ class QueueTest extends Test:
 
         "two producers calling closeAwaitEmpty" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 
@@ -564,7 +564,7 @@ class QueueTest extends Test:
 
         "producer calling closeAwaitEmpty and another calling close" in run {
             (for
-                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 

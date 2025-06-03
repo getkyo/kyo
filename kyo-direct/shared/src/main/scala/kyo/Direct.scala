@@ -1,9 +1,7 @@
 package kyo
 
-import cps.CpsMonad
-import cps.CpsMonadContext
 import cps.async
-import directInternal.*
+import internal.*
 import kyo.Ansi.*
 import scala.annotation.tailrec
 import scala.quoted.*
@@ -125,7 +123,7 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
         loop(l, Nil)
     end flatten
 
-    val pending =
+    val pending: TypeRepr =
         flatten(effects) match
             case Nil =>
                 TypeRepr.of[Any]
@@ -133,10 +131,46 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                 effects.reduce((a, b) => AndType(a, b))
     end pending
 
+    var genSym = 0
+    def freshName(name: String): String =
+        genSym = genSym + 1
+        s"${name}_N$genSym"
+
+    val preparedBody = Trees.transform(body.asTerm) {
+        case Apply(
+                Apply(
+                    TypeApply(
+                        Apply(
+                            ta: TypeApply,
+                            List(a @ Apply(TypeApply(Ident("now"), List(t, s)), List(_)))
+                        ),
+                        types0
+                    ),
+                    args0
+                ),
+                args1
+            ) if t.tpe.typeSymbol.flags.is(Flags.Opaque) =>
+
+            val newVal: Symbol = Symbol.newVal(
+                Symbol.spliceOwner,
+                freshName("opaqueAlias"),
+                t.tpe,
+                Flags.Private,
+                Symbol.noSymbol
+            )
+            Block(
+                List(ValDef(newVal, Some(a))),
+                Apply(
+                    Apply(TypeApply(Apply(ta, List(Ident(newVal.termRef))), types0), args0),
+                    args1
+                )
+            )
+    }
+
     pending.asType match
         case '[s] =>
             val transformedBody =
-                Trees.transform(body.asTerm) {
+                Trees.transform(preparedBody) {
                     case Apply(TypeApply(Ident("now"), List(t, s2)), List(qual)) =>
                         (t.tpe.asType, s2.tpe.asType) match
                             case ('[t], '[s2]) => '{
@@ -151,31 +185,13 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
                 }
 
             '{
+
                 given KyoCpsMonad[s] = KyoCpsMonad[s]
+                import kyo.internal.asyncShift.given
+
                 async {
                     ${ transformedBody.asExprOf[A] }
                 }.asInstanceOf[A < s]
             }
     end match
 end impl
-
-object directInternal:
-    given Frame = Frame.internal
-    class KyoCpsMonad[S]
-        extends CpsMonadContext[[A] =>> A < S]
-        with CpsMonad[[A] =>> A < S]
-        with Serializable:
-
-        type Context = KyoCpsMonad[S]
-
-        override def monad: CpsMonad[[A] =>> A < S] = this
-
-        override def apply[A](op: Context => A < S): A < S = op(this)
-
-        override def pure[A](t: A): A < S = t
-
-        override def map[A, B](fa: A < S)(f: A => B): B < S = flatMap(fa)(f)
-
-        override def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
-    end KyoCpsMonad
-end directInternal
