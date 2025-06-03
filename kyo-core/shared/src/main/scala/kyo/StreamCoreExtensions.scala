@@ -539,9 +539,9 @@ object StreamCoreExtensions:
           * stream will emit them as a group.
           *
           * @param maxSize
-          *   Maximum number of elements to be collected within a single duration
+          *   Maximum number of elements to be collected within a single duration. Values of less than one are ignored and treated as one.
           * @param maxTime
-          *   Maximum amount of time to collect elements to emit in chunk
+          *   Maximum amount of time to collect and emit elements
           * @return
           *   A new stream that emits collected chunks of elements
           */
