@@ -36,7 +36,7 @@ end BidiRequestStreamObserver
 
 object BidiRequestStreamObserver:
 
-    def init[Request: Tag, Response](
+    def init[Request, Response](
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): BidiRequestStreamObserver[Request, Response] < IO =

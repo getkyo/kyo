@@ -38,7 +38,7 @@ end RequestStreamObserver
 
 object RequestStreamObserver:
 
-    def init[Request: Tag, Response](
+    def init[Request, Response](
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request, Response] < IO =

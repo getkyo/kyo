@@ -10,7 +10,7 @@ import kyo.kernel.Loop.Outcome
   * @see
   *   https://github.com/getkyo/kyo/issues/721.
   */
-class StreamChannel[A: Tag, E](channel: Channel[A], error: AtomicRef[Maybe[E]])(using emitTag: Tag[Emit[Chunk[A]]]):
+class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]])(using emitTag: Tag[Emit[Chunk[A]]]):
 
     def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
         channel.put(value)
@@ -74,7 +74,7 @@ object StreamChannel:
     /**
      * This is only thread - safe if the channel is used in a single producer, single consumer pattern.
      */
-    def init[A: Tag, E](using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < IO =
+    def init[A, E](using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < IO =
         for
             // TODO: Double check the access pattern here.
             channel        <- Channel.init[A](capacity = Capacity, access = Access.SingleProducerSingleConsumer)
