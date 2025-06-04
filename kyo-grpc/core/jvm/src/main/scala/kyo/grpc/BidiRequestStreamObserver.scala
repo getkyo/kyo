@@ -7,6 +7,17 @@ import kyo.*
 import kyo.Result.*
 import scala.language.future
 
+/**
+ * An 'inbound', server-side observer that receives a stream of requests and sends a stream of responses.
+ *
+ * This implementation is not thread-safe but is thread-compatible as per the [[StreamObserver]] requirements.
+ *
+ * @param f a function that takes a stream of requests and returns a stream of responses
+ * @param requestChannel a channel for receiving requests
+ * @param responseObserver the observer that will receive the responses
+ * @tparam Request the type of the request messages
+ * @tparam Response the type of the response messages
+ */
 class BidiRequestStreamObserver[Request, Response] private (
     f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
     requestChannel: StreamChannel[Request, GrpcRequest.Errors],
@@ -36,6 +47,20 @@ end BidiRequestStreamObserver
 
 object BidiRequestStreamObserver:
 
+    /**
+     * Initializes a [[BidiRequestStreamObserver]].
+     *
+     * When the pending [[IO]] is run, it will start the background processing of requests and sending of responses.
+     * It will complete when all responses have been sent to the `responseObserver`, and it has been completed. It will
+     * abort if an error occurs while processing the requests or sending the responses and the `responseObserver` will
+     * receive the error.
+     *
+     * @param f the function that processes the stream of requests and produces a stream of responses
+     * @param responseObserver the observer that will receive the responses
+     * @tparam Request the type of the request messages
+     * @tparam Response the type of the response messages
+     * @return an instance of `BidiRequestStreamObserver` pending [[IO]]
+     */
     def init[Request, Response](
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]

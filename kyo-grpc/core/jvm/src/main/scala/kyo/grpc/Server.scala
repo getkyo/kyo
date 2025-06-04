@@ -27,6 +27,15 @@ object Server:
                     .awaitTermination(timeout.toJava.toNanos, TimeUnit.NANOSECONDS)
             if terminated then () else server.shutdownNow().awaitTermination()
 
+    /**
+     * Starts an [[io.grpc.Server]] on the specified port with the provided configuration and shutdown logic.
+     *
+     * @param port the port on which the server will listen
+     * @param timeout the maximum duration to wait for graceful termination (default: 30 seconds)
+     * @param configure a function to configure the [[ServerBuilder]] such as adding services
+     * @param shutdown A function to handle the shutdown of the server, which takes the server instance and a timeout duration. Defaults to [[Server.shutdown]]
+     * @return the running server pending [[Resource]] and [[IO]]
+     */
     def start(port: Int, timeout: Duration = 30.seconds)(
         configure: ServerBuilder[?] => ServerBuilder[?],
         shutdown: (io.grpc.Server, Duration) => Frame ?=> Any < IO = shutdown
@@ -37,6 +46,28 @@ object Server:
 
     // This is required until https://github.com/getkyo/kyo/issues/491 is done.
     // Put it here so that it can be converted to a no-op without breaking compatibility or behaviour.
+    /**
+     * Waits indefinitely for an interrupt signal (SIGINT or SIGTERM).
+     *
+     * Use this to keep the server running until an interrupt signal is received. For example:
+     * {{{
+     *   run {
+     *     for
+     *       _ <- Console.println(s"Server is running on port $port. Press Ctrl-C to stop.")
+     *       server <- Server.start(port)(_.addService(GreeterService), { server =>
+     *         for
+     *           _ <- Console.print("Shutting down...")
+     *           _ <- Server.shutdown(server)
+     *           _ <- Console.println("Done.")
+     *         yield ()
+     *       })
+     *       _ <- Server.waitForInterrupt
+     *     yield ()
+     *   }
+     * }}}
+     *
+     * @return [[Unit]] pending [[Async]] that completes when an interrupt signal is received
+     */
     def waitForInterrupt(using Frame, AllowUnsafe): Unit < Async =
         for
             promise <- Promise.init[Nothing, Unit]
