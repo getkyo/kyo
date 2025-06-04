@@ -9,5 +9,5 @@ object Platform:
     val isJS: Boolean                      = false
     val isNative: Boolean                  = true
     val isDebugEnabled: Boolean            = false
-    def exit(code: Int)(using AllowUnsafe): Unit = java.lang.System.exit(code)
+    def exit(code: Int): Unit              = java.lang.System.exit(code)
 end Platform
