@@ -30,31 +30,31 @@ class ForeachBench extends BaseBench:
 
     @Benchmark def deferChunk(bh: Blackhole) =
         val asVal = intChunk
-        val prg   = defer(asVal.map(i => f(i).now).size)
+        val prg   = direct(asVal.map(i => f(i).now).size)
         bh.consume(prg.eval)
     end deferChunk
 
     @Benchmark def deferSeq(bh: Blackhole) =
         val asVal: Seq[Int] = intChunk
-        val prg             = defer(asVal.map(i => f(i).now).size)
+        val prg             = direct(asVal.map(i => f(i).now).size)
         bh.consume(prg.eval)
     end deferSeq
 
     @Benchmark def deferVector(bh: Blackhole) =
         val asVal = intVec
-        val prg   = defer(asVal.map(i => f(i).now).size)
+        val prg   = direct(asVal.map(i => f(i).now).size)
         bh.consume(prg.eval)
     end deferVector
 
     @Benchmark def deferVectorAsSeq(bh: Blackhole) =
         val asVal: Seq[Int] = intVec
-        val prg             = defer(asVal.map(i => f(i).now).size)
+        val prg             = direct(asVal.map(i => f(i).now).size)
         bh.consume(prg.eval)
     end deferVectorAsSeq
 
     @Benchmark def deferIterable(bh: Blackhole) =
         val asVal: Iterable[Int] = intChunk
-        val prg                  = defer(asVal.map(i => f(i).now).size)
+        val prg                  = direct(asVal.map(i => f(i).now).size)
         bh.consume(prg.eval)
     end deferIterable
 
