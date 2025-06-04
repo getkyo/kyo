@@ -11,6 +11,7 @@ import kyo.Result.Panic
 import kyo.isNull
 import kyo.kernel.*
 import scala.annotation.nowarn
+import scala.annotation.publicInBinary
 import scala.util.control.NonFatal
 
 /** Provides runtime safety guarantees and debugging capabilities for effect execution.
@@ -133,7 +134,7 @@ object Safepoint:
         immediate(p)(loop(v))
     end propagating
 
-    sealed abstract private[kyo] class Ensure
+    sealed abstract class Ensure @publicInBinary private[kyo] ()
         extends AtomicBoolean
         with Function1[Maybe[Error[Any]], Unit]:
 
