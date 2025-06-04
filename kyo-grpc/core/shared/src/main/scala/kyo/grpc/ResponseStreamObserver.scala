@@ -4,7 +4,6 @@ import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*
 
-// TODO: This should implement ServerCallStreamObserver.
 class ResponseStreamObserver[Response](
     responseChannel: StreamChannel[Response, GrpcResponse.Errors]
 )(using Frame, AllowUnsafe) extends StreamObserver[Response]:

@@ -23,7 +23,7 @@ private[grpc] object StreamNotifier:
             case result: Result.Error[E] => notifyError(result, observer)
         }
 
-    def notifyObserver[A: Tag, E <: Throwable: SafeClassTag, S](
+    def notifyObserver[A, E <: Throwable: SafeClassTag, S](
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
     )(using Frame, Tag[Emit[Chunk[A]]]): Unit < (IO & S) =
