@@ -262,17 +262,11 @@ class StreamCoreExtensionsTest extends Test:
                                 case true  => str.toUpperCase
                                 case false => str
 
-                    import AllowUnsafe.embrace.danger
+                    end stream
+                    Choice.run(stream.run).map: allCombinations =>
+                        assert(allCombinations.size == 8)
+                        assert(allCombinations.contains(Chunk("a", "B", "c")))
 
-                    val allCombinations: Chunk[Chunk[String]] =
-                        Abort.run:
-                            IO.Unsafe.run:
-                                Choice.run:
-                                    stream.run
-                        .eval.getOrThrow
-
-                    assert(allCombinations.size == 8)
-                    assert(allCombinations.contains(Chunk("a", "B", "c")))
                 }
             }
 
