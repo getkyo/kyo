@@ -19,7 +19,7 @@ private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async 
         )
     end run
 
-    def untilTrue[S](f: => Boolean < S): Unit < (Async & S) =
+    def untilTrue[S](f: => Boolean < S)(using Frame): Unit < (Async & S) =
         Abort.recover(Abort.panic) {
             Retry[AssertionError](Schedule.fixed(10.millis)) {
                 f.map {

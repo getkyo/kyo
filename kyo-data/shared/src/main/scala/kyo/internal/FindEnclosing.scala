@@ -6,12 +6,14 @@ import scala.quoted.*
 
 private[kyo] object FindEnclosing:
 
-    private val allowKyoFileSuffixes = Set("Test.scala", "Spec.scala", "Bench.scala")
+    private val testFileSuffixes = Set("Test.scala", "Spec.scala")
 
     def isInternal(using Quotes): Boolean =
         val pos      = quotes.reflect.Position.ofMacroExpansion
         val fileName = pos.sourceFile.name
-        apply(sym => sym.fullName.startsWith("kyo") && !allowKyoFileSuffixes.exists(fileName.endsWith)).nonEmpty
+        val path     = pos.sourceFile.path
+        val excluded = (path.contains("src/test/") && testFileSuffixes.exists(fileName.endsWith)) || fileName.endsWith("Bench.scala")
+        apply(sym => sym.fullName.startsWith("kyo") && !excluded).nonEmpty
     end isInternal
 
     def apply(using Quotes)(predicate: quotes.reflect.Symbol => Boolean): Maybe[quotes.reflect.Symbol] =
