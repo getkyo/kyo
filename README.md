@@ -341,7 +341,7 @@ abortExceptionFirst(Abort.fail(ex))     // Result.Success(Result.Fail(ex))
 
 ### Direct Syntax
 
-Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages three constructs: `defer`, `.now`, and `.later`.
+Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages three constructs: `direct`, `.now`, and `.later`.
 
 The `.now` operator sequences an effect immediately, making its result available for use, while `.later` (advanced API) preserves an effect without immediate sequencing for more controlled composition.
 
@@ -350,7 +350,7 @@ import kyo.*
 
 // Use the direct syntax
 val a: String < (Abort[Exception] & IO) =
-    defer {
+    direct {
         val b: String =
             IO("hello").now
         val c: String =
@@ -367,16 +367,16 @@ val b: String < (Abort[Exception] & IO) =
     }
 ```
 
-The `defer` macro translates the `defer` and `.now`/`.later` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express computations in terms of `map`. 
+The `direct` macro translates the `direct` and `.now`/`.later` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express computations in terms of `map`. 
 
-For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `<` type must be explicitly handled using either `.now` or `.later`. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
+For added safety, the direct syntax enforces effectful hygiene. Within a `direct` block, values of the `<` type must be explicitly handled using either `.now` or `.later`. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
 
 ```scala 
 import kyo.*
 
 // This code fails to compile
 val a: Int < IO =
-    defer {
+    direct {
         // Incorrect usage of a '<' value
         // without '.now' or '.later'
         IO(println(42))
@@ -392,21 +392,21 @@ The `.now` operator is used when you need the effect's result immediately, while
 import kyo.*
 
 // Using .now for immediate sequencing
-val immediate = defer {
+val immediate = direct {
     val x: Int = IO(1).now      // Get result here
     val y: Int = IO(2).now      // Then get this result
     x + y                       // Use both results
 }
 
 // Using .later for preserved effects
-val preserved = defer {
+val preserved = direct {
     val effect1: Int < IO = IO(1).later   // Effect preserved
     val effect2: Int < IO = IO(2).later   // Effect preserved
     effect1.now + effect2.now             // Sequence effects
 }
 
 // Combining both approaches
-val combined = defer {
+val combined = direct {
     val effect1: Int < IO = IO(1).later   // Effect preserved
     val effect2: Int = IO(2).now          // Effect sequenced
     effect1.now + effect2                 // Combine results
@@ -418,7 +418,7 @@ The direct syntax supports a variety of constructs to handle effectful computati
 ```scala
 import kyo.*
 
-defer {
+direct {
     // Pure expression
     val a: Int = 5
 
@@ -459,19 +459,19 @@ def greet(name: String): Unit < IO =
 
 val maybeName: Option[String] = Some("Alice")
 
-defer {
+direct {
   maybeName.foreach(name => greet(name).now)
 }
 
 val computations: Seq[Int < Abort[String]] = 
   Seq(1, 2, Abort.fail("Oops"))
 
-val sequenced: Seq[Int] < Abort[String] = defer {
+val sequenced: Seq[Int] < Abort[String] = direct {
   computations.map(_.now)
 }
 ```
 
-The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `.now`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
+The `direct` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `direct`, features like nested `direct` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `.now`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 

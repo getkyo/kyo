@@ -9,14 +9,14 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
         "without guards" - {
             "pure cases" in {
                 runLiftTest(3) {
-                    defer("b").now match
+                    direct("b").now match
                         case "a" => 2
                         case "b" => 3
                 }
             }
             "pure cases with val" in {
                 runLiftTest(3) {
-                    val v = defer("b").now
+                    val v = direct("b").now
                     v match
                         case "a" => 2
                         case "b" => 3
@@ -24,39 +24,39 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    defer("a").now match
-                        case "a" => defer(2).now
+                    direct("a").now match
+                        case "a" => direct(2).now
                         case "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(3) {
-                    defer("b").now match
-                        case "a" => defer(2).now
-                        case "b" => defer(3).now
+                    direct("b").now match
+                        case "a" => direct(2).now
+                        case "b" => direct(3).now
                 }
             }
         }
         "with guards" - {
             "pure cases" in {
                 runLiftTest(3) {
-                    defer("b").now match
+                    direct("b").now match
                         case s if s == "a" => 2
                         case "b"           => 3
                 }
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    defer("a").now match
-                        case "a"           => defer(2).now
+                    direct("a").now match
+                        case "a"           => direct(2).now
                         case s if s == "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(2) {
-                    defer("b").now match
-                        case s if "1".toInt == 1 => defer(2).now
-                        case "b"                 => defer(3).now
+                    direct("b").now match
+                        case s if "1".toInt == 1 => direct(2).now
+                        case "b"                 => direct(3).now
                 }
             }
         }
@@ -72,16 +72,16 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    defer("a").now match
-                        case "a" => defer(2).now
+                    direct("a").now match
+                        case "a" => direct(2).now
                         case "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(3) {
                     ("b": String) match
-                        case "a" => defer(2).now
-                        case "b" => defer(3).now
+                        case "a" => direct(2).now
+                        case "b" => direct(3).now
                 }
             }
         }
@@ -95,16 +95,16 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
             }
             "pure/impure cases" in {
                 runLiftTest(2) {
-                    defer("a").now match
-                        case "a"           => defer(2).now
+                    direct("a").now match
+                        case "a"           => direct(2).now
                         case s if s == "b" => 3
                 }
             }
             "impure cases" in {
                 runLiftTest(2) {
                     "b" match
-                        case s if "1".toInt == 1 => defer(2).now
-                        case "b"                 => defer(3).now
+                        case s if "1".toInt == 1 => direct(2).now
+                        case "b"                 => direct(3).now
                 }
             }
         }
