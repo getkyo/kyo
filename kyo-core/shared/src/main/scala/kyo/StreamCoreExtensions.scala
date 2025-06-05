@@ -569,7 +569,7 @@ object StreamCoreExtensions:
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
 
-        /** Broadcast streaming elements to two streams that can be evaluated in parallel.
+        /** Broadcast to two streams that can be evaluated in parallel.
           *
           * @param bufferSize
           *   Size of underlying channel communicating streamed elements to broadcasted streams
@@ -593,7 +593,7 @@ object StreamCoreExtensions:
                 yield (s1, s2)
             }(using i1, i2, t1, t2, t3, t4, fr)
 
-        /** Broadcast streaming elements to three streams that can be evaluated in parallel.
+        /** Broadcast to three streams that can be evaluated in parallel.
           */
         def broadcast3(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
@@ -617,7 +617,7 @@ object StreamCoreExtensions:
                 yield (s1, s2, s3)
             }(using i1, i2, t1, t2, t3, t4, fr)
 
-        /** Broadcast streaming elements to four streams that can be evaluated in parallel.
+        /** Broadcast to four streams that can be evaluated in parallel.
           */
         def broadcast4(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
@@ -643,7 +643,7 @@ object StreamCoreExtensions:
                 yield (s1, s2, s3, s4)
             }(using i1, i2, t1, t2, t3, t4, fr)
 
-        /** Broadcast streaming elements to five streams that can be evaluated in parallel.
+        /** Broadcast to five streams that can be evaluated in parallel.
           */
         def broadcast5(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
@@ -671,7 +671,7 @@ object StreamCoreExtensions:
                 yield (s1, s2, s3, s4, s5)
             }(using i1, i2, t1, t2, t3, t4, fr)
 
-        /** Broadcast streaming elements to a specified number of streams that can be evaluated in parallel.
+        /** Broadcast to a specified number of streams that can be evaluated in parallel.
           *
           * @param numStreams
           *   Number of streams to broadcast the original stream to
