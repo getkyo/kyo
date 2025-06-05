@@ -68,15 +68,18 @@ object MediaDriver:
                 end if
 
                 driver_context_s_ptr = !context_ptr_s_ptr
-                val context_fields_ptr = driver_context_s_ptr
+                // val context_fields_ptr = driver_context_s_ptr // No longer needed, use driver_context_s_ptr directly with extension methods
 
-                if context_fields_ptr.aeron_dir != null then
-                    aeronDirName = fromCString(context_fields_ptr.aeron_dir)
+                // Read aeron_dir using the extension method
+                val dir_cstr = driver_context_s_ptr.aeron_dir // Uses extension method
+                if dir_cstr != null then
+                    aeronDirName = fromCString(dir_cstr)
                 else
                     System.err.println("Kyo-Aeron: Warning - aeron_dir from native context is null.")
                 end if
 
-                context_fields_ptr.dirs_delete_on_start = true
+                // Set dirs_delete_on_start using the extension method
+                driver_context_s_ptr.dirs_delete_on_start = true // Uses extension method
 
                 val current_driver_ptr_ptr = alloc[Ptr[CApi.aeron_driver_t]]()
                 result = CApi.aeron_driver_init(current_driver_ptr_ptr, driver_context_s_ptr)
