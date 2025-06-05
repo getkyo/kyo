@@ -700,13 +700,13 @@ object StreamCoreExtensions:
                             IO(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
             }(using i1, i2, t1, t2, t3, t4, fr)
 
-        /** Convert to a reusable stream that can be run multiple times in parallel to consume the same elements.
+        /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements.
           *
           * @note
-          *   This method should only be used when it is not necessary for each evaluation of the stream to consume all the elements of the
-          *   original stream. Elements handled by all currently running instances of the stream prior to a subsequent runs will be lost. As
-          *   soon a single run commences, elements will start being pulled from the original stream and may be lost prior to subsequent
-          *   runs. To guarantee all runs handle the same elements, use [[broadcastDynamicWith]] or [[broadcastN]].
+          *   This method should only be used when it is not necessary for each evaluation of the resulting stream to consume all the
+          *   elements of the original stream. Elements handled by all currently running instances of the stream prior to a subsequent runs
+          *   will be lost. As soon a single run commences, elements will start being pulled from the original stream and may be lost prior
+          *   to subsequent runs. To guarantee all runs handle the same elements, use [[broadcastDynamicWith]] or [[broadcast[N]]].
           * @param bufferSize
           *   Size of underlying channel communicating streamed elements to broadcasted stream
           * @return
