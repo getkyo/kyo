@@ -66,21 +66,21 @@ object StreamCoreExtensions:
           *
           * @param v
           *   Iterator to create a stream from
-          * @param bufferSize
-          *   Size of the buffer that the iterator will write to and the stream will read from
+          * @param chunkSize
+          *   Size of the chunks that the iterator will produce and the stream will read from
           */
-        def fromIterator[V, S](v: => Iterator[V], bufferSize: Int = Stream.DefaultChunkSize)(using
-            tag: Tag[Emit[Chunk[V]]],
-            frame: Frame
+        def fromIterator[V, S](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
+            Tag[Emit[Chunk[V]]],
+            Frame
         ): Stream[V, IO] =
             Stream:
                 IO:
                     val it      = v
-                    val size    = bufferSize max 1
+                    val size    = chunkSize max 1
                     val builder = ChunkBuilder.init[V]
 
                     Stream.repeatPresent(
-                        IO.ensure(builder.clear()):
+                        IO:
                             var count = 0
                             while count < size && it.hasNext do
                                 builder.addOne(it.next())
