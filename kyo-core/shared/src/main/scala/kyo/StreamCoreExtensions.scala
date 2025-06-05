@@ -33,36 +33,60 @@ object StreamCoreExtensions:
     sealed trait StreamHub[A, E]:
         def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async)
 
-    private case class StreamHubImpl[A, E](hub: Hub[Result.Partial[E, Chunk[A]]])(
+    private case class StreamHubImpl[A, E](
+        hub: Hub[Result.Partial[E, Maybe[Chunk[A]]]],
+        streamStatus: AtomicRef.Unsafe[Maybe[Result.Partial[E, Unit]]]
+    )(
         using
         Tag[Emit[Chunk[A]]],
         Tag[Emit[Chunk[Chunk[A]]]]
     ) extends StreamHub[A, E]:
         def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async) =
-            Abort.runPartial[Closed](hub.listen).map:
-                case Result.Success(listener) =>
-                    Stream(listener.stream(1).map(Abort.get(_)).mapChunk(v => v.flattenChunk).emit)
-                case Result.Failure(e) => Abort.panic(e)
+            IO.Unsafe:
+                streamStatus.get() match
+                    case Present(Result.Success(_)) => Stream.empty
+                    case Present(Result.Failure(e)) => Stream(Abort.fail(e))
+                    case Absent =>
+                        Abort.runPartial[Closed](hub.listen).map:
+                            case Result.Success(listener) =>
+                                Stream(listener.stream(1).collectWhile[Chunk[A], Abort[E]] {
+                                    case Result.Success(maybeChunk) => Kyo.lift[Maybe[Chunk[A]], Abort[E]](maybeChunk)
+                                    case Result.Failure(e)          => Abort.fail(e)
+                                }.mapChunk(v => v.flattenChunk).emit)
+                            case Result.Failure(e) => Abort.panic(e)
 
         def consume[S](stream: Stream[A, Abort[E] & S & Async])(
             using
-            Isolate.Contextual[S, IO],
-            Isolate.Stateful[S, Abort[E] & Async],
-            SafeClassTag[E],
-            Tag[Emit[Chunk[A]]],
-            Frame
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Abort[E] & Async],
+            t1: SafeClassTag[E],
+            t2: Tag[Emit[Chunk[A]]],
+            fr: Frame
         ): Unit < (Async & S & Resource) =
             Resource.acquireRelease(Async.run {
                 Abort.run[E](
                     Abort.run[Closed](
-                        stream.foreachChunk(chunk => hub.put(Result.Success(chunk)))
+                        stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk))))
                     )
                 ).map:
-                    case Result.Success(_)       => ()
-                    case Result.Failure(e)       => hub.put(Result.Failure(e))
+                    case Result.Success(_) =>
+                        IO.Unsafe(streamStatus.set(Present(Result.Success(())))).andThen(hub.put(Result.Success(Absent)))
+                    case Result.Failure(e) => IO.Unsafe(streamStatus.set(Present(Result.Failure(e)))).andThen(hub.put(Result.Failure(e)))
                     case panic @ Result.Panic(e) => Abort.get(panic)
             })(_.interrupt).unit
+    end StreamHubImpl
 
+    private object StreamHubImpl:
+        def init[A, E](bufferSize: Int)(
+            using
+            Tag[A],
+            Tag[Emit[Chunk[A]]],
+            Tag[Emit[Chunk[Chunk[A]]]],
+            Frame
+        ): StreamHubImpl[A, E] < (Async & Resource) =
+            IO.Unsafe:
+                Hub.initWith[Result.Partial[E, Maybe[Chunk[A]]]](bufferSize): hub =>
+                    StreamHubImpl(hub, AtomicRef.Unsafe.init(Absent))
     end StreamHubImpl
 
     extension (streamObj: Stream.type)
@@ -748,8 +772,7 @@ object StreamCoreExtensions:
             t4: SafeClassTag[E],
             fr: Frame
         ): StreamHub[V, E] < (Resource & Async & S) =
-            Hub.initWith[Result.Partial[E, Chunk[V]]](bufferSize): hub =>
-                val streamHub = StreamHubImpl(hub)
+            StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
                 streamHub.consume(stream).andThen:
                     streamHub
         end broadcastDynamic
@@ -774,8 +797,31 @@ object StreamCoreExtensions:
             t4: SafeClassTag[E],
             fr: Frame
         ): A < (Resource & Async & S & S1) =
-            Hub.initWith[Result.Partial[E, Chunk[V]]](bufferSize): hub =>
-                val streamHub = StreamHubImpl(hub)
+            StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
+                fn(streamHub).map: a =>
+                    streamHub.consume(stream).andThen(a)
+
+        /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
+          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]].
+          *
+          * Uses a default buffer size.
+          *
+          * @note
+          *   Do not await evaluation of subscribed streams within [[fn]].
+          * @return
+          *   A resourceful, asynchronous effect producing a stream that can be run multiple times in parallel
+          */
+        def broadcastDynamicWith[A, S1](fn: StreamHub[V, E] => A < S1)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): A < (Resource & Async & S & S1) =
+            StreamHubImpl.init[V, E](defaultAsyncStreamBufferSize).map: streamHub =>
                 fn(streamHub).map: a =>
                     streamHub.consume(stream).andThen(a)
 
