@@ -1,6 +1,8 @@
 package kyo
 
 import kyo.Async.defaultConcurrency
+import kyo.Schedule.forever
+import kyo.debug.Debug
 import kyo.kernel.ArrowEffect
 
 object StreamCoreExtensions:
@@ -413,12 +415,9 @@ object StreamCoreExtensions:
                                                 Loop(initialPar): currentPar =>
                                                     if currentPar > 0 then
                                                         parRef.updateAndGet(_ - 1).andThen:
-                                                            // java.lang.System.err.println(s"RUNNING ASYNCHRONOUSLY $input")
                                                             Async.run {
                                                                 f(input).map: chunk =>
-                                                                    // java.lang.System.err.println(s"TRANSFORMED $input to $chunk")
                                                                     prevFiber.get.andThen:
-                                                                        // java.lang.System.err.println(s"PUTTING $chunk")
                                                                         channel.put(Present(chunk)).andThen:
                                                                             parRef.updateAndGet(_ + 1).unit
                                                             }.map: newFiber =>
@@ -532,6 +531,106 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
+
+        /** Collects values that are emitted by the original stream within the duration [[maxTime]] up to the amount [[maxSize]] and emits
+          * them as a chunk.
+          *
+          * If no elements are emitted by the original stream within [[maxTime]], as soon as any other elements are emitted the result
+          * stream will emit them as a group.
+          *
+          * @param maxSize
+          *   Maximum number of elements to be collected within a single duration. Values of less than one are ignored and treated as one.
+          * @param maxTime
+          *   Maximum amount of time to collect and emit elements
+          * @return
+          *   A new stream that emits collected chunks of elements
+          */
+        def groupedWithin(maxSize: Int, maxTime: Duration, bufferSize: Int = defaultAsyncStreamBufferSize)(using
+            t1: Tag[Emit[Chunk[V]]],
+            t2: Tag[Emit[Chunk[Chunk[V]]]],
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Abort[E] & Async],
+            ct: SafeClassTag[Closed | E],
+            fr: Frame
+        ): Stream[Chunk[V], S & Abort[E] & Async] =
+            enum Event:
+                case MaxTime, End
+                case Emission(chunk: Chunk[V])
+            end Event
+
+            object Event:
+                given CanEqual[Event, Event] = CanEqual.derived
+
+            val safeMaxSize = if maxSize < 1 then 1 else maxSize
+
+            Stream[Chunk[V], S & Abort[E] & Async]:
+                Channel.initWith[Event](bufferSize): eventChannel =>
+                    val scheduleNext: Unit < (Abort[Closed] & Resource & Async) =
+                        Resource.acquireRelease(
+                            Async.run[Closed, Unit, Any](Async.sleep(maxTime).andThen(eventChannel.put(Event.MaxTime).unit))
+                        )(_.interrupt).unit
+                    end scheduleNext
+
+                    def emitChunks[V](
+                        chunk: Chunk[V]
+                    )(using Tag[Emit[Chunk[Chunk[V]]]]): Chunk[V] < (Resource & Abort[Closed] & Async & Emit[Chunk[Chunk[V]]]) =
+                        Loop(chunk, false): (remaining, haveEmitted) =>
+                            if remaining.size < safeMaxSize then
+                                (if haveEmitted then scheduleNext else Kyo.unit).andThen(Loop.done[Chunk[V], Boolean, Chunk[V]](remaining))
+                            else
+                                Emit.valueWith(Chunk(remaining.take(safeMaxSize)))(Loop.continue(remaining.drop(safeMaxSize), true))
+                            end if
+
+                    def eventLoop(initTs: Instant): Unit < (Abort[Closed] & Emit[Chunk[Chunk[V]]] & Async & Resource) =
+                        Loop(Chunk.empty[V], false, initTs) { (currentChunk, emitNow, lastEmitTimestamp) =>
+                            eventChannel.take.map:
+                                case Event.Emission(chunk) =>
+                                    val fullChunk = currentChunk.concat(chunk)
+                                    emitChunks(fullChunk).map: remaining =>
+                                        if emitNow && remaining.size > 0 then
+                                            Emit.valueWith(Chunk(remaining)):
+                                                Clock.now.map(ts => Loop.continue(Chunk.empty, false, ts))
+                                        else if remaining.size < fullChunk.size then
+                                            Clock.now.map(ts => Loop.continue(remaining, false, ts))
+                                        else Loop.continue(remaining, false, lastEmitTimestamp)
+                                case Event.MaxTime =>
+                                    Clock.now.map: (ts) =>
+                                        // Make sure we don't emit based on an out-of-date signal
+                                        if ts - lastEmitTimestamp >= maxTime then
+                                            if currentChunk.nonEmpty then
+                                                scheduleNext.andThen:
+                                                    Emit.valueWith(Chunk(currentChunk))(Loop.continue(
+                                                        Chunk.empty,
+                                                        false,
+                                                        ts
+                                                    ))
+                                            else
+                                                Loop.continue(currentChunk, true, lastEmitTimestamp)
+                                        else Loop.continue(currentChunk, emitNow, lastEmitTimestamp)
+                                        end if
+                                case Event.End =>
+                                    if currentChunk.nonEmpty then
+                                        Emit.valueWith(Chunk(currentChunk))(Loop.done(()))
+                                    else Loop.done(())
+                        }
+                    end eventLoop
+
+                    Resource.run:
+                        Abort.run[Closed] {
+                            Clock.now.map: initTs =>
+                                scheduleNext.andThen:
+                                    Async.run[Closed | E, Unit, S] {
+                                        ArrowEffect.handleLoop(t1, stream.emit)(
+                                            handle = [C] =>
+                                                (chunk, cont) =>
+                                                    {
+                                                        if chunk.isEmpty then Kyo.unit
+                                                        else eventChannel.put(Event.Emission(chunk))
+                                                    }.andThen(Loop.continue(cont(())))
+                                        ).andThen(eventChannel.put(Event.End))
+                                    }.andThen(eventLoop(initTs))
+                        }.unit
+        end groupedWithin
 
     end extension
 end StreamCoreExtensions

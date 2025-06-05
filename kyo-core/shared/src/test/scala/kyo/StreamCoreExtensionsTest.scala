@@ -180,7 +180,6 @@ class StreamCoreExtensionsTest extends Test:
 
         "mapChunkPar" - {
             "should map all chunks preserving order" in run {
-                pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
@@ -198,7 +197,6 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "should preserve order when first transformation is delayed" in run {
-                pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
@@ -252,6 +250,35 @@ class StreamCoreExtensionsTest extends Test:
                 end test
 
                 Choice.run(test).andThen(succeed)
+            }
+        }
+
+        "groupedWithin" - {
+            val stream = Stream {
+                Loop(1): i =>
+                    Emit.valueWith(Chunk(i)):
+                        (if i % 5 == 0 then Async.sleep(30.millis) else Kyo.unit)
+                            .andThen(Loop.continue(i + 1))
+            }.take(11)
+
+            "should group by size" in run {
+                stream.groupedWithin(3, Duration.Infinity).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
+            }
+
+            "should group by time" in run {
+                stream.groupedWithin(Int.MaxValue, 20.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
+            }
+
+            "should group by size and time" in run {
+                stream.groupedWithin(3, 20.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
+            }
+
+            "should emit single group if size and time are max" in run {
+                stream.groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
+                    assert(result == Chunk(1 to 11))
             }
         }
     }
