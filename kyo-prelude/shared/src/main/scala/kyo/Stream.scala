@@ -697,11 +697,13 @@ sealed abstract class Stream[V, -S] extends Serializable:
     )(using Frame): Stream[V1, S1] = Stream(f(emit).unit)
     end handle
 
+    /** Applies two transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, V1, S1](
         f1: A => B,
         f2: B => (Any < (Emit[Chunk[V1]] & S1))
     )(using Frame): Stream[V1, S1] = Stream(f2(f1(emit)).unit)
 
+    /** Applies three transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, V1, S1](
         f1: A => B,
         f2: B => C,
@@ -709,6 +711,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
     )(using Frame): Stream[V1, S1] =
         Stream(f3(f2(f1(emit))).unit)
 
+    /** Applies four transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, D, V1, S1](
         f1: A => B,
         f2: B => C,
@@ -716,6 +719,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         f4: D => (Any < (Emit[Chunk[V1]] & S1))
     )(using Frame): Stream[V1, S1] = Stream(f4(f3(f2(f1(emit)))).unit)
 
+    /** Applies five transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, D, E, V1, S1](
         f1: A => B,
         f2: B => C,
@@ -724,6 +728,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         f5: E => (Any < (Emit[Chunk[V1]] & S1))
     )(using Frame): Stream[V1, S1] = Stream(f5(f4(f3(f2(f1(emit))))).unit)
 
+    /** Applies six transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, D, E, F, V1, S1](
         f1: A => B,
         f2: B => C,
@@ -733,6 +738,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         f6: F => (Any < (Emit[Chunk[V1]] & S1))
     )(using Frame): Stream[V1, S1] = Stream(f6(f5(f4(f3(f2(f1(emit)))))).unit)
 
+    /** Applies seven transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, D, E, F, G, V1, S1](
         f1: A => B,
         f2: B => C,
@@ -743,6 +749,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         f7: G => (Any < (Emit[Chunk[V1]] & S1))
     )(using Frame): Stream[V1, S1] = Stream(f7(f6(f5(f4(f3(f2(f1(emit))))))).unit)
 
+    /** Applies eight transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, D, E, F, G, H, V1, S1](
         f1: A => B,
         f2: B => C,
@@ -754,6 +761,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         f8: H => (Any < (Emit[Chunk[V1]] & S1))
     )(using Frame): Stream[V1, S1] = Stream(f8(f7(f6(f5(f4(f3(f2(f1(emit)))))))).unit)
 
+    /** Applies nine transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, D, E, F, G, H, I, V1, S1](
         f1: A => B,
         f2: B => C,
@@ -766,6 +774,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
         f9: I => (Any < (Emit[Chunk[V1]] & S1))
     )(using Frame): Stream[V1, S1] = Stream(f9(f8(f7(f6(f5(f4(f3(f2(f1(emit))))))))).unit)
 
+    /** Applies ten transformations to this stream's underlying computation. */
     def handle[A >: (Unit < (Emit[Chunk[V]] & S)), B, C, D, E, F, G, H, I, J, V1, S1](
         f1: A => B,
         f2: B => C,
