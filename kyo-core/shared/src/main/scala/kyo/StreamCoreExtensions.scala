@@ -78,21 +78,17 @@ object StreamCoreExtensions:
                     val it      = v
                     val size    = bufferSize max 1
                     val builder = ChunkBuilder.init[V]
-                    val nextElements: Chunk[V] < IO = IO:
-                        var count = 0
-                        while count < size && it.hasNext do
-                            builder.addOne(it.next())
-                            count += 1
 
-                        val res = builder.result()
-                        builder.clear()
-                        res
+                    Stream.repeatPresent(
+                        IO.ensure(builder.clear()):
+                            var count = 0
+                            while count < size && it.hasNext do
+                                builder.addOne(it.next())
+                                count += 1
 
-                    Loop.foreach[Unit, IO & Emit[Chunk[V]]]:
-                        nextElements.map(chunk =>
-                            if chunk.isEmpty then Loop.done
-                            else Emit.valueWith(chunk)(Loop.continue)
-                        )
+                            val chunk = builder.result()
+                            Maybe.when(chunk.nonEmpty)(chunk)
+                    ).emit
 
         end fromIterator
 
