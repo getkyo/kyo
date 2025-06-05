@@ -301,18 +301,66 @@ class StreamCoreExtensionsTest extends Test:
                         assert(resultChunks.size == 50 && resultChunks.toSet.size == 1 && resultChunks.headMaybe.contains(0 to 10))
             }
 
-            "broadcasted" in run {
-                Channel.initWith[Maybe[Int]](1024): channel =>
-                    val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
-                    lazyStream.broadcasted().map: reusableStream =>
-                        Latch.initWith(10): latch =>
-                            Async.run(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
-                                latch.await.andThen:
-                                    Async.run(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
-                                        runFiber.get.map: resultChunks =>
-                                            assert(
-                                                resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
-                                            )
+            "dynamic" - {
+                "broadcasted in unison" in run {
+                    Channel.initWith[Maybe[Int]](1024): channel =>
+                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                        lazyStream.broadcasted().map: reusableStream =>
+                            Latch.initWith(10): latch =>
+                                Async.run(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
+                                    latch.await.andThen:
+                                        Async.run(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                            runFiber.get.map: resultChunks =>
+                                                assert(
+                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                )
+                }
+
+                "broadcasted should produce empty results when running after original stream completes" in run {
+                    stream.broadcasted().map: reusableStream =>
+                        reusableStream.run.map: res1 =>
+                            reusableStream.run.map: res2 =>
+                                assert(res1 == (0 to 10) && res2.isEmpty)
+                }
+
+                "broadcasted should produce failure when running after original stream fails" in run {
+                    val failingStream = Stream(Stream.init(0 to 10).emit.andThen(Abort.fail("message")))
+                    failingStream.broadcasted().map: reusableStream =>
+                        Abort.run[String](reusableStream.run).map: res1 =>
+                            Abort.run[String](reusableStream.run).map: res2 =>
+                                assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
+                }
+
+                "broadcastDynamic in unison" in run {
+                    Channel.initWith[Maybe[Int]](1024): channel =>
+                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                        lazyStream.broadcastDynamic().map: streamHub =>
+                            Latch.initWith(10): latch =>
+                                Async.run(
+                                    Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
+                                ).map: runFiber =>
+                                    latch.await.andThen:
+                                        Async.run(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                            runFiber.get.map: resultChunks =>
+                                                assert(
+                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                )
+                }
+
+                "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in run {
+                    stream.broadcastDynamic().map: streamHub =>
+                        streamHub.subscribe.map(_.run).map: res1 =>
+                            streamHub.subscribe.map(_.run).map: res2 =>
+                                assert(res1 == (0 to 10) && res2.isEmpty)
+                }
+
+                "broadcasted subscriptions should fail when subscribing after original stream fails" in run {
+                    val failingStream = Stream(Stream.init(0 to 10).emit.andThen(Abort.fail("message")))
+                    failingStream.broadcastDynamic().map: streamHub =>
+                        Abort.run[String](streamHub.subscribe.map(_.run)).map: res1 =>
+                            Abort.run[String](streamHub.subscribe.map(_.run)).map: res2 =>
+                                assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
+                }
             }
         }
     }
