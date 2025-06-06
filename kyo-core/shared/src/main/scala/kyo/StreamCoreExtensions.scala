@@ -91,7 +91,7 @@ object StreamCoreExtensions:
             Resource.acquireRelease(Async.run {
                 Abort.run[E](
                     Abort.run[Closed](
-                        stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk))))
+                        latch.await.andThen(stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk)))))
                     )
                 ).map:
                     case Result.Success(_) =>
