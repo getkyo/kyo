@@ -122,8 +122,8 @@ class FiberTest extends Test:
 
     "race" - {
         "zero" in run {
-            typeCheckFailure("Async.race()")(
-                "None of the overloaded alternatives of method race in object Async"
+            typeCheckFailure("Fiber.race()")(
+                "missing argument for parameter iterable of method race"
             )
         }
         "one" in run {
@@ -132,21 +132,73 @@ class FiberTest extends Test:
             }
         }
         "n" in run {
-            val ac = new JAtomicInteger(0)
-            val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < IO =
+            def loop(i: Int, s: String): String < (Abort[String] & IO) =
                 IO {
-                    if i > 0 then
-                        if s.equals("a") then ac.incrementAndGet()
-                        else bc.incrementAndGet()
-                        loop(i - 1, s)
+                    if i == 80 && s == "a" then
+                        Abort.fail("Loser")
+                    else if i <= 0 then s
                     else
-                        s
+                        loop(i - 1, s)
                 }
-            Fiber.race(Seq(loop(10, "a"), loop(Int.MaxValue, "b"))).map(_.get).map { r =>
-                assert(r == "a")
-                assert(ac.get() == 10)
-                assert(bc.get() <= Int.MaxValue)
+
+            Fiber.race(Seq(loop(100, "a"), loop(Int.MaxValue, "b"), loop(100, "c"))).map(_.getResult).map { r =>
+                assert(r == Result.succeed("c"))
+            }
+        }
+        "raceFirst" - {
+            "zero" in run {
+                typeCheckFailure("Fiber.raceFirst()")(
+                    "missing argument for parameter iterable of method raceFirst"
+                )
+            }
+            "one" in run {
+                Fiber.raceFirst(Seq(1)).map(_.get).map { r =>
+                    assert(r == 1)
+                }
+            }
+            "n" in run {
+                def loop(i: Int, s: String): String < (Abort[String] & IO) =
+                    IO {
+                        if i == 80 && s == "a" then
+                            Abort.fail("Winner")
+                        else if i <= 0 then s
+                        else
+                            loop(i - 1, s)
+                    }
+                Fiber.raceFirst(Seq(loop(100, "a"), loop(Int.MaxValue, "b"), loop(100, "c"))).map(_.getResult).map { r =>
+                    assert(r == Result.fail("Winner"))
+                }
+            }
+            "returns first result regardless of success/failure" in run {
+                val error = new Exception("test error")
+                Fiber.raceFirst(Seq(
+                    Async.delay(10.millis)(1),
+                    Async.delay(1.millis)(Abort.fail[Exception](error))
+                )).map(_.getResult).map { r =>
+                    assert(r == Result.fail(error))
+                }
+            }
+            "interrupts losers" in run {
+                for
+                    interruptCount <- AtomicInt.init
+                    startLatch     <- Latch.init(3)
+                    promise1       <- Promise.init[Nothing, Int]
+                    promise2       <- Promise.init[Nothing, Int]
+                    promise3       <- Promise.init[Nothing, Int]
+                    _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    fiber <- Fiber.raceFirst(Seq(
+                        startLatch.release.andThen(promise1.get),
+                        startLatch.release.andThen(promise2.get),
+                        startLatch.release.andThen(promise3.get)
+                    ))
+                    _      <- startLatch.await
+                    _      <- promise1.complete(Result.succeed(1))
+                    _      <- Async.sleep(1.milli)
+                    result <- fiber.get
+                    _      <- untilTrue(interruptCount.get.map(_ == 2))
+                yield assert(result == 1)
             }
         }
         "interrupts losers" - {
