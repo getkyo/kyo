@@ -33,7 +33,7 @@ object StreamCoreExtensions:
     sealed trait StreamHub[A, E]:
         def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async)
 
-    private case class StreamHubImpl[A, E](
+    private class StreamHubImpl[A, E](
         hub: Hub[Result.Partial[E, Maybe[Chunk[A]]]],
         streamStatus: AtomicRef.Unsafe[Maybe[Result.Partial[E, Unit]]],
         latch: Latch
@@ -69,6 +69,7 @@ object StreamCoreExtensions:
                     Stream:
                         latch.release.andThen:
                             Abort.run[Closed](hub.empty).map: hubIsEmptyResult =>
+                                // If the hub is not empty post subscription, we don't need to check status
                                 if hubIsEmptyResult.getOrElse(true) then
                                     emitWithStatus(listener)
                                 else emit(listener)
