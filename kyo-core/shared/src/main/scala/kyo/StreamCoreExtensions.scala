@@ -222,58 +222,58 @@ object StreamCoreExtensions:
                         def throttled[A](task: A < (Async & Abort[Closed | E] & S2)) =
                             parChannel.put(()).andThen(task.map(a => parChannel.take.andThen(a)))
 
-                        val background = Async.run:
-                            val handledStream = ArrowEffect.handleLoop(t1, initialState, stream.emit)(
-                                handle = [C] =>
-                                    (input, state, cont) =>
-                                        val (prevEmitFiber, initialRemainingPar) = state
-                                        Loop(Fiber.success[E | Closed, Chunk[V2]](Chunk.empty[V2]), input, initialRemainingPar):
-                                            (prevChunkFiber, remainingChunk, remainingPar) =>
-                                                val nextParSection = remainingChunk.take(remainingPar)
+                        val handledStream = ArrowEffect.handleLoop(t1, initialState, stream.emit)(
+                            handle = [C] =>
+                                (input, state, cont) =>
+                                    val (prevEmitFiber, initialRemainingPar) = state
+                                    Loop(Fiber.success[E | Closed, Chunk[V2]](Chunk.empty[V2]), input, initialRemainingPar):
+                                        (prevChunkFiber, remainingChunk, remainingPar) =>
+                                            val nextParSection = remainingChunk.take(remainingPar)
 
-                                                val nextChunkEffect = Async.foreach(nextParSection)(v => throttled(f(v)))
+                                            val nextChunkEffect = Async.foreach(nextParSection)(v => throttled(f(v)))
 
-                                                val newRemainingPar   = remainingPar - nextParSection.size
-                                                val newRemainingChunk = remainingChunk.drop(remainingPar)
+                                            val newRemainingPar   = remainingPar - nextParSection.size
+                                            val newRemainingChunk = remainingChunk.drop(remainingPar)
 
-                                                if newRemainingPar <= 0 && newRemainingChunk.size <= 0 then
-                                                    nextChunkEffect.map: nextChunk =>
-                                                        prevChunkFiber.use: prevChunk =>
-                                                            prevEmitFiber.get.andThen:
-                                                                outputChannel.put(Present(prevChunk ++ nextChunk)).andThen:
-                                                                    Loop.done(Loop.continue((Fiber.unit, parallel), cont(())))
-                                                else if newRemainingPar <= 0 then
+                                            if newRemainingPar <= 0 && newRemainingChunk.size <= 0 then
+                                                nextChunkEffect.map: nextChunk =>
+                                                    prevChunkFiber.use: prevChunk =>
+                                                        prevEmitFiber.get.andThen:
+                                                            outputChannel.put(Present(prevChunk ++ nextChunk)).andThen:
+                                                                Loop.done(Loop.continue((Fiber.unit, parallel), cont(())))
+                                            else if newRemainingPar <= 0 then
+                                                nextChunkEffect.map: nextChunk =>
+                                                    prevChunkFiber.get.map: prevChunk =>
+                                                        prevEmitFiber.get.andThen:
+                                                            Loop.continue(
+                                                                Fiber.success(prevChunk ++ nextChunk),
+                                                                newRemainingChunk,
+                                                                parallel
+                                                            )
+                                            else if newRemainingChunk.size <= 0 then
+                                                Async.run {
                                                     nextChunkEffect.map: nextChunk =>
                                                         prevChunkFiber.get.map: prevChunk =>
                                                             prevEmitFiber.get.andThen:
-                                                                Loop.continue(
-                                                                    Fiber.success(prevChunk ++ nextChunk),
-                                                                    newRemainingChunk,
-                                                                    parallel
-                                                                )
-                                                else if newRemainingChunk.size <= 0 then
-                                                    Async.run {
-                                                        nextChunkEffect.map: nextChunk =>
-                                                            prevChunkFiber.get.map: prevChunk =>
-                                                                prevEmitFiber.get.andThen:
-                                                                    val chunk = prevChunk ++ nextChunk
-                                                                    outputChannel.put(Present(chunk))
-                                                    }.map: nextFiber =>
-                                                        Loop.done(Loop.continue(
-                                                            (nextFiber, newRemainingPar),
-                                                            cont(())
-                                                        ))
-                                                else
-                                                    bug("Illegal state: there is remaining parallel and remaining chunk in mapPar")
-                                                end if
-                                ,
-                                done = {
-                                    case ((lastFiber, _), _) =>
-                                        lastFiber.get.andThen:
-                                            outputChannel.put(Absent)
-                                }
-                            )
+                                                                val chunk = prevChunk ++ nextChunk
+                                                                outputChannel.put(Present(chunk))
+                                                }.map: nextFiber =>
+                                                    Loop.done(Loop.continue(
+                                                        (nextFiber, newRemainingPar),
+                                                        cont(())
+                                                    ))
+                                            else
+                                                bug("Illegal state: there is remaining parallel and remaining chunk in mapPar")
+                                            end if
+                            ,
+                            done = {
+                                case ((lastFiber, _), _) =>
+                                    lastFiber.get.andThen:
+                                        outputChannel.put(Absent)
+                            }
+                        )
 
+                        val background = Async.run:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(outputChannel.put(Absent)).unit,
                                 onFail = {
@@ -351,12 +351,12 @@ object StreamCoreExtensions:
 
                         val background = Async.run:
                             Abort.fold[E | Closed](
-                                _ => Abort.run(channelOut.put(Absent)).unit,
-                                {
+                                onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
+                                onFail = {
                                     case _: Closed       => bug("buffer closed unexpectedly")
                                     case e: E @unchecked => Abort.run(channelOut.put(Absent)).andThen(Abort.fail(e))
                                 },
-                                e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
+                                onPanic = e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
                             )(handleEmit)
 
                         IO.ensure(channelOut.close):
@@ -408,34 +408,37 @@ object StreamCoreExtensions:
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
                 Channel.initWith[Maybe[Chunk[V2]]](bufferSize): outputChannel =>
+                    // Staging channel size is one less than parallel because the `handleStaging` loop
+                    // will always pull one value out and wait for it to complete
                     Channel.initWith[Fiber[E | Closed, Maybe[Chunk[V2]]]](parallel - 1): stagingChannel =>
                         val initialFiber: Fiber[E | Closed, Unit] = Fiber.unit
+
+                        val handledStream = ArrowEffect.handleLoop(t1, initialFiber, stream.emit)(
+                            handle = [C] =>
+                                (input, prevFiber, cont) =>
+                                    Async.run(f(input).map(Present(_))).map: fiber =>
+                                        stagingChannel.put(fiber).andThen:
+                                            Async.run(prevFiber.get.andThen(fiber.get).unit).map: nextFiber =>
+                                                Loop.continue(nextFiber, cont(()))
+                            ,
+                            done = (finalFiber, _) => finalFiber.get.andThen(stagingChannel.put(Fiber.success(Absent)).unit)
+                        )
+
+                        val handleStaging = Loop.foreach:
+                            stagingChannel.take.map: fiber =>
+                                fiber.use: maybeChunk =>
+                                    outputChannel.put(maybeChunk).andThen:
+                                        if maybeChunk.isEmpty then Loop.done
+                                        else Loop.continue
+
                         val background = Async.run:
-                            val handledStream = ArrowEffect.handleLoop(t1, initialFiber, stream.emit)(
-                                handle = [C] =>
-                                    (input, prevFiber, cont) =>
-                                        Async.run(f(input).map(Present(_))).map: fiber =>
-                                            stagingChannel.put(fiber).andThen:
-                                                Async.run(prevFiber.get.andThen(fiber.get).unit).map: nextFiber =>
-                                                    Loop.continue(nextFiber, cont(()))
-                                ,
-                                done = (finalFiber, _) => finalFiber.get.andThen(stagingChannel.put(Fiber.success(Absent)).unit)
-                            )
-
-                            val handleStaging = Loop.foreach:
-                                stagingChannel.take.map: fiber =>
-                                    fiber.use: maybeChunk =>
-                                        outputChannel.put(maybeChunk).andThen:
-                                            if maybeChunk.isEmpty then Loop.done
-                                            else Loop.continue
-
                             Abort.fold[E | Closed](
-                                _ => Abort.run(outputChannel.put(Absent)).unit,
-                                {
+                                onSuccess = _ => Abort.run(outputChannel.put(Absent)).unit,
+                                onFail = {
                                     case _: Closed       => bug("buffer closed unexpectedly")
                                     case e: E @unchecked => Abort.run(outputChannel.put(Absent)).andThen(Abort.fail(e))
                                 },
-                                e => Abort.run(outputChannel.put(Absent)).andThen(Abort.panic(e))
+                                onPanic = e => Abort.run(outputChannel.put(Absent)).andThen(Abort.panic(e))
                             )(Async.gather(handledStream, handleStaging))
 
                         IO.ensure(outputChannel.close):
@@ -504,12 +507,12 @@ object StreamCoreExtensions:
 
                         val background = Async.run:
                             Abort.fold[E | Closed](
-                                _ => Abort.run(channelOut.put(Absent)).unit,
-                                {
+                                onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
+                                onFail = {
                                     case _: Closed       => bug("buffer closed unexpectedly")
                                     case e: E @unchecked => Abort.run(channelOut.put(Absent)).andThen(Abort.fail(e))
                                 },
-                                e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
+                                onPanic = e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
                             )(handleEmit)
 
                         IO.ensure(channelOut.close):
