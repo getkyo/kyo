@@ -35,7 +35,8 @@ object StreamCoreExtensions:
 
     private case class StreamHubImpl[A, E](
         hub: Hub[Result.Partial[E, Maybe[Chunk[A]]]],
-        streamStatus: AtomicRef.Unsafe[Maybe[Result.Partial[E, Unit]]]
+        streamStatus: AtomicRef.Unsafe[Maybe[Result.Partial[E, Unit]]],
+        latch: Latch
     )(
         using
         Tag[Emit[Chunk[A]]],
@@ -49,10 +50,16 @@ object StreamCoreExtensions:
                     case Absent =>
                         Abort.runPartial[Closed](hub.listen).map:
                             case Result.Success(listener) =>
-                                Stream(listener.stream(1).collectWhile[Chunk[A], Abort[E]] {
-                                    case Result.Success(maybeChunk) => Kyo.lift[Maybe[Chunk[A]], Abort[E]](maybeChunk)
-                                    case Result.Failure(e)          => Abort.fail(e)
-                                }.mapChunk(v => v.flattenChunk).emit)
+                                Stream:
+                                    latch.release.andThen:
+                                        listener
+                                            .stream(1)
+                                            .collectWhile[Chunk[A], Abort[E]] {
+                                                case Result.Success(maybeChunk) => maybeChunk
+                                                case Result.Failure(e)          => Abort.fail(e)
+                                            }
+                                            .mapChunk(v => v.flattenChunk)
+                                            .emit
                             case Result.Failure(e) => Abort.panic(e)
 
         def consume[S](stream: Stream[A, Abort[E] & S & Async])(
@@ -85,8 +92,9 @@ object StreamCoreExtensions:
             Frame
         ): StreamHubImpl[A, E] < (Async & Resource) =
             IO.Unsafe:
-                Hub.initWith[Result.Partial[E, Maybe[Chunk[A]]]](bufferSize): hub =>
-                    StreamHubImpl(hub, AtomicRef.Unsafe.init(Absent))
+                Latch.initWith(1): latch =>
+                    Hub.initWith[Result.Partial[E, Maybe[Chunk[A]]]](bufferSize): hub =>
+                        StreamHubImpl(hub, AtomicRef.Unsafe.init(Absent), latch)
     end StreamHubImpl
 
     extension (streamObj: Stream.type)
@@ -772,9 +780,10 @@ object StreamCoreExtensions:
             t4: SafeClassTag[E],
             fr: Frame
         ): StreamHub[V, E] < (Resource & Async & S) =
-            StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
-                streamHub.consume(stream).andThen:
-                    streamHub
+            Latch.initWith(1): latch =>
+                StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
+                    streamHub.consume(stream).andThen:
+                        streamHub
         end broadcastDynamic
 
         /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
