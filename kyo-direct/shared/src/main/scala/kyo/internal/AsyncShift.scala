@@ -179,16 +179,16 @@ class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A
 class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]](using Frame)
     extends IterableOpsAsyncShift[A, C, CA]:
 
-    extension [S, X](chunk: Chunk[X] < S)
-        def resultInto(c: CA): C[X] < S = chunk.map(ch => c.iterableFactory.from(ch))
+    extension [S, X](iterable: Iterable[X] < S)
+        def resultInto(c: CA): C[X] < S = iterable.map(c.iterableFactory.from(_))
     end extension
 
-    extension [S, X, Y](chunks: (Chunk[X], Chunk[Y]) < S)
-        def resultInto(c: CA): (C[X], C[Y]) < S = chunks.map((x, y) => (c.iterableFactory.from(x), c.iterableFactory.from(y)))
+    extension [S, X, Y](iterables: (Iterable[X], Iterable[Y]) < S)
+        def resultInto(c: CA): (C[X], C[Y]) < S = iterables.map((x, y) => (c.iterableFactory.from(x), c.iterableFactory.from(y)))
 
-    extension [S, K, V](chunks: Map[K, Chunk[V]] < S)
+    extension [S, K, V](iterables: Map[K, Iterable[V]] < S)
         @targetName("resultIntoMap")
-        def resultInto(c: CA): Map[K, C[V]] < S = chunks.map(m => m.view.mapValues(ch => c.iterableFactory.from(ch)).toMap)
+        def resultInto(c: CA): Map[K, C[V]] < S = iterables.map(m => m.view.mapValues(ch => c.iterableFactory.from(ch)).toMap)
 
     override def shiftedFold[F[_], Acc, B, R](
         c: CA,
