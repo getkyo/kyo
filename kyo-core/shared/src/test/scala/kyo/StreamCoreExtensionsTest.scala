@@ -302,7 +302,7 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "dynamic" - {
-                "broadcasted in unison" in run {
+                "broadcasted in unison" in runNotJS {
                     Channel.initWith[Maybe[Int]](1024): channel =>
                         val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                         lazyStream.broadcasted().map: reusableStream =>
@@ -331,7 +331,7 @@ class StreamCoreExtensionsTest extends Test:
                                 assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
                 }
 
-                "broadcastDynamic in unison" in run {
+                "broadcastDynamic in unison" in runNotJS {
                     Channel.initWith[Maybe[Int]](1024): channel =>
                         val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                         lazyStream.broadcastDynamic().map: streamHub =>

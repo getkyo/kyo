@@ -42,25 +42,43 @@ object StreamCoreExtensions:
         Tag[Emit[Chunk[A]]],
         Tag[Emit[Chunk[Chunk[A]]]]
     ) extends StreamHub[A, E]:
+        private def emit(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
+            // println("Streaming from listener")
+            listener
+                .stream(1)
+                .collectWhile[Chunk[A], Abort[E]] {
+                    case Result.Success(maybeChunk) => maybeChunk
+                    case Result.Failure(e)          => Abort.fail(e)
+                }
+                .mapChunk(v => v.flattenChunk)
+                .emit
+        end emit
+
+        private def emitWithStatus(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
+            IO.Unsafe(streamStatus.get()).map:
+                case Present(Result.Success(_)) =>
+                    // println("Stream ended")
+                    Kyo.unit
+                case Present(Result.Failure(e)) =>
+                    // println("Stream failed")
+                    Abort.fail(e)
+                case Absent =>
+                    emit(listener)
+
         def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async) =
-            IO.Unsafe:
-                streamStatus.get() match
-                    case Present(Result.Success(_)) => Stream.empty
-                    case Present(Result.Failure(e)) => Stream(Abort.fail(e))
-                    case Absent =>
-                        Abort.runPartial[Closed](hub.listen).map:
-                            case Result.Success(listener) =>
-                                Stream:
-                                    latch.release.andThen:
-                                        listener
-                                            .stream(1)
-                                            .collectWhile[Chunk[A], Abort[E]] {
-                                                case Result.Success(maybeChunk) => maybeChunk
-                                                case Result.Failure(e)          => Abort.fail(e)
-                                            }
-                                            .mapChunk(v => v.flattenChunk)
-                                            .emit
-                            case Result.Failure(e) => Abort.panic(e)
+            Abort.runPartial[Closed](hub.listen).map:
+                case Result.Success(listener) =>
+                    Stream:
+                        latch.release.andThen:
+                            Abort.run[Closed](hub.empty).map: hubIsEmptyResult =>
+                                if hubIsEmptyResult.getOrElse(true) then
+                                    Abort.run[Closed](listener.empty).map: listenerIsEmptyResult =>
+                                        if listenerIsEmptyResult.getOrElse(true) then
+                                            emitWithStatus(listener)
+                                        else emit(listener)
+                                else emit(listener)
+
+                case Result.Failure(e) => Abort.panic(e)
 
         def consume[S](stream: Stream[A, Abort[E] & S & Async])(
             using
@@ -481,12 +499,9 @@ object StreamCoreExtensions:
                                                 Loop(initialPar): currentPar =>
                                                     if currentPar > 0 then
                                                         parRef.updateAndGet(_ - 1).andThen:
-                                                            // java.lang.System.err.println(s"RUNNING ASYNCHRONOUSLY $input")
                                                             Async.run {
                                                                 f(input).map: chunk =>
-                                                                    // java.lang.System.err.println(s"TRANSFORMED $input to $chunk")
                                                                     prevFiber.get.andThen:
-                                                                        // java.lang.System.err.println(s"PUTTING $chunk")
                                                                         channel.put(Present(chunk)).andThen:
                                                                             parRef.updateAndGet(_ + 1).unit
                                                             }.map: newFiber =>
