@@ -43,7 +43,6 @@ object StreamCoreExtensions:
         Tag[Emit[Chunk[Chunk[A]]]]
     ) extends StreamHub[A, E]:
         private def emit(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
-            // println("Streaming from listener")
             listener
                 .stream(1)
                 .collectWhile[Chunk[A], Abort[E]] {
@@ -55,13 +54,12 @@ object StreamCoreExtensions:
         end emit
 
         private def emitWithStatus(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
+            // Ensure the end-of-stream signal is propagated to new listeners
             IO.Unsafe(streamStatus.get()).map:
                 case Present(Result.Success(_)) =>
-                    // println("Stream ended")
-                    Kyo.unit
+                    Abort.run[Closed](hub.put(Result.Success(Absent))).andThen(emit(listener))
                 case Present(Result.Failure(e)) =>
-                    // println("Stream failed")
-                    Abort.fail(e)
+                    Abort.run[Closed](hub.put(Result.Failure(e))).andThen(emit(listener))
                 case Absent =>
                     emit(listener)
 
@@ -72,10 +70,7 @@ object StreamCoreExtensions:
                         latch.release.andThen:
                             Abort.run[Closed](hub.empty).map: hubIsEmptyResult =>
                                 if hubIsEmptyResult.getOrElse(true) then
-                                    Abort.run[Closed](listener.empty).map: listenerIsEmptyResult =>
-                                        if listenerIsEmptyResult.getOrElse(true) then
-                                            emitWithStatus(listener)
-                                        else emit(listener)
+                                    emitWithStatus(listener)
                                 else emit(listener)
 
                 case Result.Failure(e) => Abort.panic(e)

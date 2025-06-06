@@ -263,8 +263,10 @@ class StreamCoreExtensionsTest extends Test:
                     Kyo.zip(streamHub.subscribe, streamHub.subscribe)
                 }.map:
                     case (s1, s2) =>
-                        Kyo.zip(s1.run, s2.run).map:
-                            case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
+                        // Ensure boundary works
+                        Async.sleep(30.millis).andThen:
+                            Kyo.zip(s1.run, s2.run).map:
+                                case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
             }
 
             "broadcast2" in run {
