@@ -601,7 +601,7 @@ object StreamCoreExtensions:
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
 
-        /** Broadcast to two streams that can be evaluated in parallel.
+        /** Broadcast to two streams that can be evaluated in parallel. Original stream begins to run as soon as either of the original streams does.
           *
           * @param bufferSize
           *   Size of underlying channel communicating streamed elements to broadcasted streams
@@ -732,7 +732,7 @@ object StreamCoreExtensions:
                             IO(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
             }(using i1, i2, t1, t2, t3, t4, fr)
 
-        /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements.
+        /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream begins to run as soon as the broadcasted stream is run for the first time.
           *
           * @note
           *   This method should only be used when it is not necessary for each evaluation of the resulting stream to consume all the
@@ -758,7 +758,7 @@ object StreamCoreExtensions:
                 Stream:
                     streamHub.subscribe.map(_.emit)
 
-        /** Construct a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel.
+        /** Construct a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. Original stream begins to run the first time any subscribed stream is run.
           *
           * @note
           *   This method should only be used when it is not necessary for each subscription to consume all the elements of the original
@@ -787,7 +787,7 @@ object StreamCoreExtensions:
         end broadcastDynamic
 
         /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
-          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]].
+          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]]. Original stream begins to run the first time any subscribed stream is run.
           *
           * @note
           *   Do not await evaluation of subscribed streams within [[fn]].
@@ -811,7 +811,7 @@ object StreamCoreExtensions:
                     streamHub.consume(stream).andThen(a)
 
         /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
-          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]].
+          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]]. Original stream begins to run the first time any subscribed stream is run.
           *
           * Uses a default buffer size.
           *
