@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Async.defaultConcurrency
+import kyo.ChunkBuilder
 import kyo.kernel.ArrowEffect
 
 object StreamCoreExtensions:
@@ -60,6 +61,36 @@ object StreamCoreExtensions:
                             }.andThen(Abort.run(channel.put(Absent)).unit))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
+
+        /** Creates a stream from an iterator.
+          *
+          * @param v
+          *   Iterator to create a stream from
+          * @param chunkSize
+          *   Size of the chunks that the iterator will produce and the stream will read from
+          */
+        def fromIterator[V, S](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
+            Tag[Emit[Chunk[V]]],
+            Frame
+        ): Stream[V, IO] =
+            Stream:
+                IO:
+                    val it      = v
+                    val size    = chunkSize max 1
+                    val builder = ChunkBuilder.init[V]
+
+                    Stream.repeatPresent(
+                        IO:
+                            var count = 0
+                            while count < size && it.hasNext do
+                                builder.addOne(it.next())
+                                count += 1
+
+                            val chunk = builder.result()
+                            Maybe.when(chunk.nonEmpty)(chunk)
+                    ).emit
+
+        end fromIterator
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
