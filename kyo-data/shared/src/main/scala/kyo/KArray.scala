@@ -119,6 +119,8 @@ object KArray:
           */
         def size: Int = self.length
 
+        inline def length: Int = size
+
         /** Checks if this KArray is empty.
           *
           * @return
