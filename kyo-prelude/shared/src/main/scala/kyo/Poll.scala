@@ -36,7 +36,7 @@ import kyo.kernel.ArrowEffect
   * @see
   *   [[kyo.Stream]] for higher-level streaming operations
   */
-sealed trait Poll[V] extends ArrowEffect[Const[Unit], Const[Maybe[V]]]
+sealed trait Poll[+V] extends ArrowEffect[Const[Unit], Const[Maybe[V]]]
 
 object Poll:
 

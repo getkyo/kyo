@@ -42,7 +42,7 @@ import scala.util.NotGiven
   * @see
   *   [[kyo.Poll]] for pull-based consumption with backpressure
   */
-sealed abstract class Stream[V, -S] extends Serializable:
+sealed abstract class Stream[+V, -S] extends Serializable:
 
     /** Returns the effect that produces acknowledgments and emits chunks of values. */
     def emit: Unit < (Emit[Chunk[V]] & S)
@@ -54,8 +54,10 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream that emits all values from this stream, followed by all values from the other stream
       */
-    def concat[S2](other: Stream[V, S2])(using Frame): Stream[V, S & S2] =
+    def concat[VV >: V, S2](other: Stream[VV, S2])(using Frame): Stream[VV, S & S2] =
         Stream(emit.map(_ => other.emit))
+
+    val derp: List[Int] = ???
 
     /** Transforms each value in the stream using the given pure function.
       *
@@ -64,8 +66,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def map[V2](f: V => V2)(using
-        t1: Tag[Emit[Chunk[V]]],
+    def map[VV >: V, V2](f: VV => V2)(using
+        t1: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
         fr: Frame
@@ -87,8 +89,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def map[V2, S2](f: V => V2 < S2)(using Tag[Emit[Chunk[V]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
-        mapChunk(c => Kyo.foreach(c)(f))
+    def map[VV >: V, V2, S2](f: VV => V2 < S2)(using Tag[Emit[Chunk[VV]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
+        mapChunk[VV, V2, S2](c => Kyo.foreach(c)(f))
 
     /** Transforms each chunk in the stream using the given pure function.
       *
@@ -97,9 +99,9 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with transformed chunks
       */
-    def mapChunk[V2](f: Chunk[V] => Seq[V2])(
+    def mapChunk[VV >: V, V2](f: Chunk[VV] => Seq[V2])(
         using
-        tagV: Tag[Emit[Chunk[V]]],
+        tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
         discr: Discriminator,
         frame: Frame
@@ -127,9 +129,9 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with transformed chunks
       */
-    def mapChunk[V2, S2](f: Chunk[V] => Seq[V2] < S2)(
+    def mapChunk[VV >: V, V2, S2](f: Chunk[VV] => Seq[V2] < S2)(
         using
-        tagV: Tag[Emit[Chunk[V]]],
+        tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2] =
@@ -151,9 +153,9 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream that is the result of flattening all the streams produced by f
       */
-    def flatMap[S2, V2, S3](f: V => Stream[V2, S2] < S3)(
+    def flatMap[VV >: V, S2, V2, S3](f: VV => Stream[V2, S2] < S3)(
         using
-        tagV: Tag[Emit[Chunk[V]]],
+        tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
@@ -173,9 +175,9 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream that is the result of flattening all the streams produced by f
       */
-    def flatMapChunk[S2, V2, S3](f: Chunk[V] => Stream[V2, S2] < S3)(
+    def flatMapChunk[VV >: V, S2, V2, S3](f: Chunk[VV] => Stream[V2, S2] < S3)(
         using
-        tagV: Tag[Emit[Chunk[V]]],
+        tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
@@ -197,13 +199,13 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream runs f while emitting values
       */
-    def tap[S1](f: V => Any < S1)(
+    def tap[VV >: V, S1](f: VV => Any < S1)(
         using
-        tag: Tag[Emit[Chunk[V]]],
+        tag: Tag[Emit[Chunk[VV]]],
         frame: Frame
-    ): Stream[V, S & S1] =
+    ): Stream[VV, S & S1] =
         Stream:
-            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[V]] & S & S1))(
+            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[VV]] & S & S1))(
                 [C] =>
                     (input, cont) =>
                         Kyo.foreachDiscard(input)(f).andThen:
@@ -217,13 +219,13 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream runs f while emitting chunks
       */
-    def tapChunk[S1](f: Chunk[V] => Any < S1)(
+    def tapChunk[VV >: V, S1](f: Chunk[VV] => Any < S1)(
         using
-        tag: Tag[Emit[Chunk[V]]],
+        tag: Tag[Emit[Chunk[VV]]],
         frame: Frame
-    ): Stream[V, S & S1] =
+    ): Stream[VV, S & S1] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[V]] & S & S1))(
+            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[VV]] & S & S1))(
                 [C] =>
                     (input, cont) =>
                         f(input).andThen:
@@ -238,7 +240,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream containing at most n elements from the original stream
       */
-    def take(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+    def take[VV >: V](n: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         if n <= 0 then Stream.empty
         else
             Stream(
@@ -262,7 +264,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with the first n elements removed
       */
-    def drop(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+    def drop[VV >: V](n: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         if n <= 0 then this
         else
             Stream(
@@ -285,11 +287,11 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
-    def takeWhile(f: V => Boolean)(using
-        tag: Tag[Emit[Chunk[V]]],
+    def takeWhile[VV >: V](f: VV => Boolean)(using
+        tag: Tag[Emit[Chunk[VV]]],
         discr: Discriminator,
         frame: Frame
-    ): Stream[V, S] =
+    ): Stream[VV, S] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
@@ -310,7 +312,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
-    def takeWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+    def takeWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
@@ -331,7 +333,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with initial elements that satisfy the predicate removed
       */
-    def dropWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+    def dropWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
@@ -353,7 +355,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream containing only elements that satisfy the predicate
       */
-    def filter[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+    def filter[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -365,7 +367,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
             )
         )
 
-    def filter(f: V => Boolean)(using tag: Tag[Emit[Chunk[V]]], discr: Discriminator, frame: Frame): Stream[V, S] =
+    def filter[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], discr: Discriminator, frame: Frame): Stream[VV, S] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -384,8 +386,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream containing transformed elements
       */
-    def collect[V2, S2](f: V => Maybe[V2] < S2)(using
-        tag: Tag[Emit[Chunk[V]]],
+    def collect[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
+        tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2] =
@@ -399,8 +401,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
             )
         )
 
-    def collect[V2](f: V => Maybe[V2])(using
-        tag: Tag[Emit[Chunk[V]]],
+    def collect[VV >: V, V2](f: VV => Maybe[V2])(using
+        tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         discr: Discriminator,
         frame: Frame
@@ -423,8 +425,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream containing transformed elements
       */
-    def collectWhile[V2, S2](f: V => Maybe[V2] < S2)(using
-        tag: Tag[Emit[Chunk[V]]],
+    def collectWhile[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
+        tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2] =
@@ -445,8 +447,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
             )
         )
 
-    def collectWhile[V2](f: V => Maybe[V2])(using
-        tag: Tag[Emit[Chunk[V]]],
+    def collectWhile[VV >: V, V2](f: VV => Maybe[V2])(using
+        tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         discr: Discriminator,
         frame: Frame
@@ -470,8 +472,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with consecutive duplicate elements removed
       */
-    def changes(using Tag[Emit[Chunk[V]]], Frame, CanEqual[V, V]): Stream[V, S] =
-        changes(Maybe.empty)
+    def changes[VV >: V](using Tag[Emit[Chunk[VV]]], Frame, CanEqual[VV, VV]): Stream[VV, S] =
+        changes(Maybe.empty[VV])
 
     /** Emits only elements that are different from their predecessor, starting with the given first element.
       *
@@ -480,7 +482,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with consecutive duplicate elements removed
       */
-    def changes(first: V)(using Tag[Emit[Chunk[V]]], Frame, CanEqual[V, V]): Stream[V, S] =
+    def changes[VV >: V](first: VV)(using Tag[Emit[Chunk[VV]]], Frame, CanEqual[VV, VV]): Stream[VV, S] =
         changes(Maybe(first))
 
     /** Emits only elements that are different from their predecessor, starting with the given optional first element.
@@ -491,7 +493,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       *   A new stream with consecutive duplicate elements removed
       */
     @targetName("changesMaybe")
-    def changes(first: Maybe[V])(using tag: Tag[Emit[Chunk[V]]], frame: Frame, ce: CanEqual[V, V]): Stream[V, S] =
+    def changes[VV >: V](first: Maybe[VV])(using tag: Tag[Emit[Chunk[VV]]], frame: Frame, ce: CanEqual[VV, VV]): Stream[VV, S] =
         Stream(
             ArrowEffect.handleLoop(tag, first, emit)(
                 [C] =>
@@ -517,10 +519,10 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with elements regrouped into chunks of the specified size
       */
-    def rechunk(chunkSize: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
-        Stream[V, S]:
+    def rechunk[VV >: V](chunkSize: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
+        Stream[VV, S]:
             val _chunkSize = chunkSize max 1
-            ArrowEffect.handleLoop(tag, Chunk.empty[V], emit.andThen(Emit.value(Chunk.empty[V])))(
+            ArrowEffect.handleLoop(tag, Chunk.empty[VV], emit.andThen(Emit.value(Chunk.empty[VV])))(
                 [C] =>
                     (input, buffer, cont) =>
                         if input.isEmpty && buffer.nonEmpty then
@@ -530,7 +532,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
                             if combined.size < _chunkSize then
                                 Loop.continue(combined, cont(()))
                             else
-                                Loop(combined: Chunk[V]) { current =>
+                                Loop(combined: Chunk[VV]) { current =>
                                     if current.size < _chunkSize then
                                         Loop.done(Loop.continue(current, cont(())))
                                     else
@@ -547,7 +549,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A unit effect that runs the stream without collecting results
       */
-    def discard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < S =
+    def discard[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < S =
         ArrowEffect.handle(tag, emit)(
             [C] => (input, cont) => cont(())
         )
@@ -559,8 +561,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A unit effect that runs the stream and applies f to each value
       */
-    def foreach[S2](f: V => Any < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
-        foreachChunk(c => Kyo.foreachDiscard(c)(f))
+    def foreach[VV >: V, S2](f: VV => Any < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < (S & S2) =
+        foreachChunk((c: Chunk[VV]) => Kyo.foreachDiscard(c)(f))
 
     /** Runs the stream and applies the given function to each emitted chunk.
       *
@@ -569,7 +571,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A unit effect that runs the stream and applies f to each chunk
       */
-    def foreachChunk[S2](f: Chunk[V] => Any < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+    def foreachChunk[VV >: V, S2](f: Chunk[VV] => Any < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < (S & S2) =
         ArrowEffect.handle(tag, emit)(
             [C] =>
                 (input, cont) =>
@@ -588,8 +590,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   The final accumulated value
       */
-    def fold[A](acc: A)(f: (A, V) => A)(using
-        tag: Tag[Emit[Chunk[V]]],
+    def fold[VV >: V, A](acc: A)(f: (A, VV) => A)(using
+        tag: Tag[Emit[Chunk[VV]]],
         frame: Frame
     ): A < S =
         ArrowEffect.handleLoop(tag, acc, emit)(
@@ -608,7 +610,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   The final accumulated value
       */
-    def foldKyo[A, S2](acc: A)(f: (A, V) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
+    def foldKyo[VV >: V, A, S2](acc: A)(f: (A, VV) => A < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
         ArrowEffect.handleLoop(tag, acc, emit)(
             handle = [C] =>
                 (input, state, cont) =>
@@ -621,8 +623,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A chunk containing all values emitted by the stream
       */
-    def run(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Chunk[V] < S =
-        ArrowEffect.handleLoop(tag, Chunk.empty[Chunk[V]], emit)(
+    def run[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Chunk[VV] < S =
+        ArrowEffect.handleLoop(tag, Chunk.empty[Chunk[VV]], emit)(
             handle = [C] =>
                 (input, state, cont) =>
                     Loop.continue(state.append(input), cont(())),
@@ -636,8 +638,8 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A tuple containing chunk of the first n elements and the rest of the stream
       */
-    def splitAt(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): (Chunk[V], Stream[V, S]) < S =
-        Loop(emit, Chunk.empty[V]): (curEmit, curChunk) =>
+    def splitAt[VV >: V](n: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): (Chunk[VV], Stream[VV, S]) < S =
+        Loop(emit: Unit < (Emit[Chunk[VV]] & S), Chunk.empty[VV]): (curEmit, curChunk) =>
             Emit.runFirst(curEmit).map:
                 case (Present(items), nextEmitFn) =>
                     val nextChunk = curChunk.concat(items)
@@ -648,7 +650,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
                         val restEmit      = if rest.isEmpty then nextEmitFn() else Emit.valueWith(rest)(nextEmitFn())
                         Loop.done(taken -> Stream(restEmit))
                     end if
-                case (_, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[V])))
+                case (_, _) => Loop.done(curChunk -> Stream(Emit.value(Chunk.empty[VV])))
     end splitAt
 
     /** Process with a [[Sink]] of corresponding streaming element type.
@@ -661,7 +663,7 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   An effect producing a value of sink's output type `A`
       */
-    def into[A, S2](sink: Sink[V, A, S2])(using Tag[Poll[Chunk[V]]], Tag[Emit[Chunk[V]]], Frame): A < (S & S2) =
+    def into[VV >: V, A, S2](sink: Sink[VV, A, S2])(using Tag[Poll[Chunk[VV]]], Tag[Emit[Chunk[VV]]], Frame): A < (S & S2) =
         sink.drain(this)
     end into
 

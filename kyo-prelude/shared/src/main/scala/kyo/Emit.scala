@@ -31,7 +31,7 @@ import kyo.kernel.*
   * @see
   *   [[kyo.Stream]] for higher-level streaming operations (preferred for most use cases)
   */
-sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Unit]]
+sealed trait Emit[-V] extends ArrowEffect[Const[V], Const[Unit]]
 
 object Emit:
 
