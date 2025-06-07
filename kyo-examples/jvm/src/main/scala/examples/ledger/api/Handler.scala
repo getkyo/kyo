@@ -20,7 +20,7 @@ end Handler
 
 object Handler:
 
-    val init: Handler < Env[DB] = defer {
+    val init: Handler < Env[DB] = direct {
         Live(Env.get[DB].now)
     }
 
@@ -29,7 +29,7 @@ object Handler:
         private val notFound            = Abort.fail[StatusCode](StatusCode.NotFound)
         private val unprocessableEntity = Abort.fail[StatusCode](StatusCode.UnprocessableEntity)
 
-        def transaction(account: Int, request: Transaction) = defer {
+        def transaction(account: Int, request: Transaction) = direct {
             import request.*
             // validations
             if account < 0 || account > 5 then notFound.now
@@ -54,7 +54,7 @@ object Handler:
             end match
         }
 
-        def statement(account: Int) = defer {
+        def statement(account: Int) = direct {
             // validations
             if account < 0 || account > 5 then notFound.now
             else ()

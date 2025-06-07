@@ -5,7 +5,7 @@ class PreludeTest extends Test:
     "abort" - {
         "basic usage" in run {
             val effect: Int < Abort[String] =
-                defer {
+                direct {
                     if true then Abort.fail("error").now
                     else 42
                 }
@@ -17,7 +17,7 @@ class PreludeTest extends Test:
 
         "abort with recovery" in run {
             val effect: Int < Abort[String] =
-                defer {
+                direct {
                     val result: Int = Abort.get[String](Left("first error")).now
                     result + 1
                 }
@@ -31,7 +31,7 @@ class PreludeTest extends Test:
     "env" - {
         "basic usage" in run {
             val effect =
-                defer {
+                direct {
                     val env = Env.get[Int].now
                     env * 2
                 }
@@ -43,10 +43,10 @@ class PreludeTest extends Test:
 
         "nested environments" in run {
             val effect =
-                defer {
+                direct {
                     val outer = Env.get[String].now
                     val combined = Env.run(42) {
-                        defer {
+                        direct {
                             val inner = Env.get[Int].now
                             s"$outer: $inner"
                         }
@@ -61,7 +61,7 @@ class PreludeTest extends Test:
 
         "multiple environments" in run {
             val effect =
-                defer {
+                direct {
                     val str = Env.get[String].now
                     val num = Env.get[Int].now
                     s"$str: $num"
@@ -78,7 +78,7 @@ class PreludeTest extends Test:
     "var" - {
         "basic operations" in run {
             val effect =
-                defer {
+                direct {
                     val initial = Var.get[Int].now
                     Var.update[Int](_ + 1).now
                     val afterInc = Var.get[Int].now
@@ -96,10 +96,10 @@ class PreludeTest extends Test:
 
         "nested vars" in run {
             val effect =
-                defer {
+                direct {
                     val outer = Var.get[Int].now
                     val nested = Var.run(outer * 2) {
-                        defer {
+                        direct {
                             val inner = Var.get[Int].now
                             Var.update[Int](_ + 1).now
                             Var.get[Int].now
@@ -116,12 +116,12 @@ class PreludeTest extends Test:
 
         "var with other effects" in run {
             val effect =
-                defer {
+                direct {
                     val env     = Env.get[Int].now
                     val initial = Var.get[Int].now
                     Var.update[Int](_ + env).now
                     val result = Abort.run[String] {
-                        defer {
+                        direct {
                             val current = Var.get[Int].now
                             if current > 50 then Abort.fail("Too large").now
                             else current
@@ -148,7 +148,7 @@ class PreludeTest extends Test:
             }
 
             val effect =
-                defer {
+                direct {
                     val a = f(5).now
                     val b = f(5).now
                     val c = f(6).now
@@ -171,7 +171,7 @@ class PreludeTest extends Test:
             }
 
             val effect =
-                defer {
+                direct {
                     val a = f(5).now
                     val b = f(5).now
                     val c = f(6).now
@@ -192,7 +192,7 @@ class PreludeTest extends Test:
     "choice" - {
         "basic choices" in run {
             val effect =
-                defer {
+                direct {
                     val x = Choice.eval(1, 2, 3).now
                     val y = Choice.eval("a", "b").now
                     s"$x$y"
@@ -205,7 +205,7 @@ class PreludeTest extends Test:
 
         "choice with conditions" in run {
             val effect =
-                defer {
+                direct {
                     val x = Choice.eval(1, -2, -3).now
                     val y = Choice.eval("ab", "cde").now
                     if x > 0 then y.length * x
@@ -219,7 +219,7 @@ class PreludeTest extends Test:
 
         "choice with filtering" in run {
             val effect =
-                defer {
+                direct {
                     val x = Choice.eval(1, 2, 3, 4).now
                     Choice.dropIf(x % 2 == 0).now
                     x
@@ -234,7 +234,7 @@ class PreludeTest extends Test:
     "emit" - {
         "basic emissions" in run {
             val effect =
-                defer {
+                direct {
                     Emit.value(1).now
                     Emit.value(2).now
                     Emit.value(3).now
@@ -249,7 +249,7 @@ class PreludeTest extends Test:
 
         "emit with conditions" in run {
             val effect =
-                defer {
+                direct {
                     val a = Env.get[Int].now
                     if a > 5 then
                         Emit.value(a).now
@@ -271,10 +271,10 @@ class PreludeTest extends Test:
 
         "nested emit effects" in run {
             val effect =
-                defer {
+                direct {
                     Emit.value(1).now
                     val nested = Emit.run {
-                        defer {
+                        direct {
                             Emit.value(2).now
                             Emit.value(3).now
                             "nested"
@@ -295,7 +295,7 @@ class PreludeTest extends Test:
     "poll" - {
         "basic polling" in run {
             val effect =
-                defer {
+                direct {
                     Poll.one[Int].now
                 }
 
@@ -306,7 +306,7 @@ class PreludeTest extends Test:
 
         "poll with fold" in run {
             val effect = Poll.fold[Int](0) { (acc, v) =>
-                defer {
+                direct {
                     IO(acc).now + v
                 }
             }
@@ -319,7 +319,7 @@ class PreludeTest extends Test:
 
     "stream" - {
         "basic operations" in run {
-            defer {
+            direct {
                 val stream =
                     Stream.init(Seq(1, 2, 3, 4, 5))
                         .map { x =>
@@ -336,11 +336,11 @@ class PreludeTest extends Test:
 
         "stream with other effects" in run {
             val effect =
-                defer {
+                direct {
                     val env = Env.get[Int].now
                     val stream = Stream.init(1 to 3)
                         .map { x =>
-                            defer {
+                            direct {
                                 val value = Var.get[Int].now
                                 Var.update[Int](_ + x).now
                                 x * env + value
@@ -362,7 +362,7 @@ class PreludeTest extends Test:
         val y = Choice.eval("ab", "cde")
 
         val v: Int < Choice =
-            defer {
+            direct {
                 val xx = x.now
                 xx + (
                     if xx > 0 then y.now.length * x.now
@@ -380,7 +380,7 @@ class PreludeTest extends Test:
         val y = Choice.eval("ab", "cde")
 
         val v: Int < Choice =
-            defer {
+            direct {
                 val xx = x.now
                 val r =
                     xx + (
