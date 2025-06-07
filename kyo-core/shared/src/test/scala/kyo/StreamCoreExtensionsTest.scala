@@ -314,4 +314,16 @@ class StreamCoreExtensionsTest extends Test:
         }
     }
 
+    "unwrap" - {
+        "should fuse effect contexts" in run {
+            val stream: Stream[Int, Choice] =
+                Choice.eval(3, 4).map: size =>
+                    Stream.init(1 to size)
+                .unwrap
+
+            val res: Chunk[Int] = stream.handle(Choice.run).run.eval
+            assert(res == Chunk(1, 2, 3, 1, 2, 3, 4))
+        }
+    }
+
 end StreamCoreExtensionsTest
