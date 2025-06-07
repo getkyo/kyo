@@ -162,7 +162,7 @@ class DebugTest extends Test:
 
         "with Stream JVM" taggedAs jvmOnly in
             testOutput(
-                "DebugTest.scala:55:36",
+                "DebugTest.scala:55:41",
                 "()",
                 "DebugTest.scala:57:10",
                 "Seq(6)"

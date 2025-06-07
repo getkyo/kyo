@@ -780,7 +780,7 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
-                stream = c.stream(1).mapChunk(Chunk(_)).take(4)
+                stream = c.stream(1).mapChunk[Int, Chunk[Int]](Chunk(_)).take(4)
                 r <- stream.run
                 s <- c.size
             yield assert(r == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4)) && s == 0)
@@ -790,7 +790,7 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
-                stream = c.stream().mapChunk(ch => Chunk(ch)).take(1)
+                stream = c.stream().mapChunk[Int, Chunk[Int]](ch => Chunk(ch)).take(1)
                 v <- stream.run
                 s <- c.size
             yield assert(v == Chunk(Chunk(1, 2, 3, 4)) && s == 0)
@@ -800,7 +800,7 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
-                stream = c.stream(2).mapChunk(ch => Chunk(ch)).take(2)
+                stream = c.stream(2).mapChunk[Int, Chunk[Int]](ch => Chunk(ch)).take(2)
                 v <- stream.run
                 s <- c.size
             yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)) && s == 0)
@@ -810,7 +810,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](4)
                 bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
-                stream = c.stream().take(20).mapChunk(ch => Chunk(ch))
+                stream = c.stream().take(20).mapChunk[Int, Chunk[Int]](ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
             yield assert(v.flattenChunk == Chunk.from(0 until 20))
@@ -820,7 +820,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](4)
                 bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
-                stream = c.stream(2).take(20).mapChunk(ch => Chunk(ch))
+                stream = c.stream(2).take(20).mapChunk[Int, Chunk[Int]](ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
             yield assert(v.flattenChunk == Chunk.from(0 until 20) && v.forall(_.size <= 2))
@@ -830,7 +830,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](3)
                 bg <- Async.run(Kyo.foreach(0 to 8)(c.put).andThen(c.close))
-                stream = c.stream().mapChunk(ch => Chunk(ch))
+                stream = c.stream().mapChunk[Int, Chunk[Int]](ch => Chunk(ch))
                 v <- Abort.run(stream.run)
             yield v match
                 case Result.Success(v)         => fail(s"Stream succeeded unexpectedly: ${v}")
@@ -842,7 +842,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](9)
                 bg <- Async.run(Loop(0)(i => c.putBatch(Chunk(i, i + 1, i + 2)).andThen(Loop.continue(i + 3))))
-                stream = c.stream(3).take(15).mapChunk(ch => Chunk(ch))
+                stream = c.stream(3).take(15).mapChunk[Int, Chunk[Int]](ch => Chunk(ch))
                 res <- stream.run
                 _   <- bg.interrupt
             yield
@@ -877,7 +877,7 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
-                stream = c.streamUntilClosed(1).mapChunk(Chunk(_)).take(4)
+                stream = c.streamUntilClosed(1).mapChunk[Int, Chunk[Int]](Chunk(_)).take(4)
                 r <- stream.run
                 s <- c.size
             yield assert(r == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4)) && s == 0)
@@ -887,7 +887,7 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
-                stream = c.streamUntilClosed().mapChunk(ch => Chunk(ch)).take(1)
+                stream = c.streamUntilClosed().mapChunk[Int, Chunk[Int]](ch => Chunk(ch)).take(1)
                 v <- stream.run
                 s <- c.size
             yield assert(v == Chunk(Chunk(1, 2, 3, 4)) && s == 0)
@@ -897,7 +897,7 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
-                stream = c.streamUntilClosed(2).mapChunk(ch => Chunk(ch)).take(2)
+                stream = c.streamUntilClosed(2).mapChunk[Int, Chunk[Int]](ch => Chunk(ch)).take(2)
                 v <- stream.run
                 s <- c.size
             yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)) && s == 0)
@@ -907,7 +907,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](4)
                 bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
-                stream = c.streamUntilClosed().take(20).mapChunk(ch => Chunk(ch))
+                stream = c.streamUntilClosed().take(20).mapChunk[Int, Chunk[Int]](ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
             yield assert(v.flattenChunk == Chunk.from(0 until 20))
@@ -917,7 +917,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](4)
                 bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
-                stream = c.streamUntilClosed(2).take(20).mapChunk(ch => Chunk(ch))
+                stream = c.streamUntilClosed(2).take(20).mapChunk[Int, Chunk[Int]](ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
             yield assert(v.flattenChunk == Chunk.from(0 until 20) && v.forall(_.size <= 2))

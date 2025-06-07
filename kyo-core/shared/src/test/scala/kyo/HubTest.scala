@@ -184,7 +184,7 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](4)
                 l <- h.listen
-                f <- Async.run(l.stream(2).mapChunk(Chunk(_)).take(2).run)
+                f <- Async.run(l.stream(2).mapChunk[Int, Chunk[Int]](Chunk(_)).take(2).run)
                 _ <- h.putBatch(1 to 4)
                 r <- f.get
             yield assert(r.forall(_.size <= 2))
