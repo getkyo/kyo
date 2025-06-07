@@ -1,18 +1,26 @@
 package io.aeron
 
-import io.aeron.logbuffer.BufferClaim // Will be stubbed later
-
-class Publication private[aeron] ():
-    def isConnected(): Boolean                                = ???
-    def tryClaim(length: Int, bufferClaim: BufferClaim): Long = ???
-    def close(): Unit                                         = ???
-end Publication
+import io.aeron.logbuffer.BufferClaim
 
 object Publication:
-    // Constants used in Topic.scala
-    val BACK_PRESSURED: Long = -1L // Standard Aeron backpressure code
-    val NOT_CONNECTED: Long  = -2L // Standard Aeron not connected code
-    val ADMIN_ACTION: Long   = -3L // Standard Aeron admin action code
-    val CLOSED: Long         = -4L // Standard Aeron closed code
-    // Other codes exist but these are the ones used in the snippet
+    val BACK_PRESSURED = -1L
+    val NOT_CONNECTED  = -2L
+    val ADMIN_ACTION   = -3L
+    val CLOSED         = -4L
+end Publication
+
+class Publication(uri: String, streamId: Int):
+    private[aeron] def publish(bytes: Array[Byte]): Unit =
+        Aeron.subscriptions
+            .getOrElse((uri, streamId), Nil)
+            .foreach(_.receive(bytes))
+
+    def isConnected(): Boolean =
+        Aeron.subscriptions.get((uri, streamId)).exists(_.nonEmpty)
+
+    def tryClaim(length: Int, bufferClaim: BufferClaim): Long =
+        bufferClaim.setPublication(this, length)
+        length.toLong
+
+    def close(): Unit = {}
 end Publication

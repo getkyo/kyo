@@ -7,7 +7,7 @@ import org.agrona.DirectBuffer   // To be stubbed
 // Scala's SAM (Single Abstract Method) conversion should handle this for a Java interface.
 // For the stub, we define the constructor parameter explicitly as a function type.
 class FragmentAssembler(
-    handler: (DirectBuffer, Int, Int, Header) => Unit
+    val handler: (DirectBuffer, Int, Int, Header) => Unit
 ) {
     // FragmentAssembler itself doesn't have methods called directly on it in Topic.scala
     // after instantiation. It's passed to Subscription.poll.

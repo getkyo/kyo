@@ -1,17 +1,27 @@
 package io.aeron
 
-class Aeron private[aeron] (): // Changed private[kyo] to private[aeron]
-    // Minimal stubs based on Topic.scala usage
-    def addPublication(channel: String, streamId: Int): Publication   = ???
-    def addSubscription(channel: String, streamId: Int): Subscription = ???
-    def close(): Unit                                                 = ???
-end Aeron
+import scala.collection.mutable
 
 object Aeron:
-    // Inner Context class stub, matching usage `new Aeron.Context().aeronDirectoryName(...)`
-    class Context():
-        def aeronDirectoryName(name: String): Context = this // common pattern for fluent builders
-    end Context
+    private[aeron] val subscriptions = mutable.Map[(String, Int), mutable.ListBuffer[Subscription]]()
 
-    def connect(ctx: Aeron.Context): Aeron = ???
+    def connect(ctx: Aeron.Context): Aeron =
+        new Aeron
+
+    class Context:
+        def aeronDirectoryName(s: String): Aeron.Context = this
+end Aeron
+
+class Aeron:
+    def addPublication(uri: String, streamId: Int): Publication =
+        new Publication(uri, streamId)
+
+    def addSubscription(uri: String, streamId: Int): Subscription =
+        val sub = new Subscription()
+        Aeron.subscriptions.getOrElseUpdate((uri, streamId), mutable.ListBuffer()) += sub
+        sub
+    end addSubscription
+
+    def close(): Unit =
+        Aeron.subscriptions.clear()
 end Aeron
