@@ -443,20 +443,30 @@ lazy val `kyo-reactive-streams` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-aeron` =
-    crossProject(JVMPlatform)
+    crossProject(JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-aeron"))
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
+            libraryDependencies += "com.lihaoyi" %%% "upickle" % "4.1.0"
+        )
+        .jvmSettings(
+            mimaCheck(false),
             libraryDependencies ++= Seq(
                 "io.aeron"     % "aeron-driver" % "1.46.7",
-                "io.aeron"     % "aeron-client" % "1.46.7",
-                "com.lihaoyi" %% "upickle"      % "4.1.0"
+                "io.aeron"     % "aeron-client" % "1.46.7"
             )
         )
-        .jvmSettings(mimaCheck(false))
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { config =>
+                config
+                    .withGC(scala.scalanative.build.GC.immix)
+                    .withMode(scala.scalanative.build.Mode.debug)
+            }
+        )
 
 lazy val `kyo-sttp` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -613,7 +623,6 @@ lazy val `kyo-bench` =
         .settings(
             `kyo-settings`,
             Test / testForkedParallel := true,
-            // Forks each test suite individually
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector
                 val envsVarsValue    = envVars.value
