@@ -1,7 +1,7 @@
 package io.aeron
 
-import io.aeron.logbuffer.Header // To be stubbed
-import org.agrona.DirectBuffer   // To be stubbed
+import io.aeron.logbuffer.Header 
+import org.agrona.DirectBuffer  
 
 // The constructor signature matches the usage in Topic.scala where a lambda is passed.
 // Scala's SAM (Single Abstract Method) conversion should handle this for a Java interface.
