@@ -1,10 +1,20 @@
 package io.aeron.logbuffer
 
-// No methods are called on Header in Topic.scala,
-// so an empty class stub is sufficient.
-class Header private[logbuffer] ():
-    // If methods were needed, they would be stubbed here.
-    // For example: streamId(), sessionId(), etc.
+import org.agrona.DirectBuffer
 
-    def offset(): Int = 0
+class Header private[logbuffer] ():
+
+    def offset(): Int          = 0
+    def streamId(): Int        = 0
+    def sessionId(): Int       = 0
+    def termId(): Int          = 0
+    def termOffset(): Int      = 0
+    def frameLength(): Int     = 0
+    def reservedValue(): Long  = 0L
+    def version(): Int         = 0
+    def flags(): Int           = 0
+    def `type`(): Int          = 0
+    def initialTermId(): Int   = 0
+    def position(): Long       = 0L
+    def buffer(): DirectBuffer = null
 end Header
