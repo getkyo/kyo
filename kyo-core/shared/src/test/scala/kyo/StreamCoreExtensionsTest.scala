@@ -216,6 +216,64 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
+        def fromIteratorTests(bufferSize: Int): Unit =
+            s"bufferSize = $bufferSize" - {
+                "basic" in run {
+                    val it     = Iterator(1, 2, 3, 4, 5)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "call by name" in run {
+
+                    val stream = Stream.fromIterator(Iterator(1, 2, 3, 4, 5), bufferSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "empty iterator" in run {
+                    val it     = Iterator.empty
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res.isEmpty))
+                }
+
+                "reuse same stream" in run {
+                    val it     = Iterator(1, 2, 3)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    for
+                        first  <- stream.run
+                        second <- stream.run
+                    yield assert((first, second) == (Chunk(1, 2, 3), Chunk.empty))
+                    end for
+                }
+
+                "large iterator" in run {
+                    val size   = 10000
+                    val it     = Iterator.from(0).take(size)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res == Chunk.from(0 until size)))
+                }
+
+                "map with Choice" in run {
+                    val it = Iterator("a", "b", "c")
+
+                    val stream: Stream[String, IO & Choice] =
+                        Stream.fromIterator(it, bufferSize).map: str =>
+                            Choice.eval(true, false).map:
+                                case true  => str.toUpperCase
+                                case false => str
+
+                    end stream
+                    Choice.run(stream.run).map: allCombinations =>
+                        assert(allCombinations.size == 8)
+                        assert(allCombinations.contains(Chunk("a", "B", "c")))
+
+                }
+            }
+
+        "fromIterator" - {
+            Seq(0, 1, 4, 32, 1024).foreach(fromIteratorTests)
+        }
+
         "mapChunkParUnordered" - {
             "should map all chunks" in run {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))

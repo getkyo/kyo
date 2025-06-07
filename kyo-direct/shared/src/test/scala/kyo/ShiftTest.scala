@@ -11,13 +11,13 @@ class ShiftHygieneTest extends Test:
         typeCheckFailure(
             """
                val x1: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
-               val x2 = defer {
+               val x2 = direct {
                  x1.map(x =>
                    def innerF = x.now
                    innerF)
                  }"""
         )(
-            "Method definitions containing .now are not supported inside `defer` blocks"
+            "Method definitions containing .now are not supported inside `direct` blocks"
         )
     }
 end ShiftHygieneTest
@@ -26,7 +26,7 @@ class ShiftTest extends AnyFreeSpec with Assertions:
 
     "basic" in {
         val x1: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
-        val x2: Seq[Int] < Any = defer:
+        val x2: Seq[Int] < Any = direct:
             x1.map(_.now)
 
         assert(x2.eval == Seq(1, 2, 3))
@@ -34,7 +34,7 @@ class ShiftTest extends AnyFreeSpec with Assertions:
 
     "error" in {
         val x1: Seq[Int < Abort[String]] = Seq(1, Abort.fail("error"), 3)
-        val x2: Seq[Int] < Abort[String] = defer:
+        val x2: Seq[Int] < Abort[String] = direct:
             x1.map(_.now)
 
         Abort.run(x2).map: result =>
@@ -43,13 +43,13 @@ class ShiftTest extends AnyFreeSpec with Assertions:
 
     "valid nested" in {
         val x1: Seq[Int < Any] = Seq[Int < Any](1, 2, 3)
-        val x2 = defer:
+        val x2 = direct:
             x1.map(x =>
                 def innerF(i: Int) = i + 1
                 innerF(x.now)
             )
 
-        val forReference = defer:
+        val forReference = direct:
             def innerF(i: Int) = i + 1
             IO(innerF(1)).now
 
@@ -70,13 +70,13 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             def xsValues: Coll[Int] = Coll(1, 2, 3, 4)
 
             "collectFirst" in {
-                val d: Option[Int] < Any = defer:
+                val d: Option[Int] < Any = direct:
                     xs.collectFirst:
                         case i => i.now
                 d.map(res => assert(res == Option(1)))
             }
             "foreach" in {
-                val d: Unit < Emit[Int] = defer:
+                val d: Unit < Emit[Int] = direct:
                     xs.foreach(i =>
                         val v = i.now
                         Emit.value(v).unit.now
@@ -85,37 +85,37 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                 Emit.run(d).map((vs, _) => assert(vs == Seq(1, 2, 3, 4)))
             }
             "corresponds" in {
-                val d: Boolean < Any = defer:
+                val d: Boolean < Any = direct:
                     xs.corresponds(xs)((a, b) => a.now == b.now)
 
                 assert(d.eval)
             }
             "count" in {
-                val d: Int < Any = defer:
+                val d: Int < Any = direct:
                     xs.count(_.now > 0)
 
                 assert(d.eval == 4)
             }
             "exists" in {
-                val d: Boolean < Any = defer:
+                val d: Boolean < Any = direct:
                     xs.exists(_.now > 0)
 
                 assert(d.eval)
             }
             "forall" in {
-                val d: Boolean < Any = defer:
+                val d: Boolean < Any = direct:
                     xs.forall(_.now > 0)
 
                 assert(d.eval)
             }
             "find" in {
-                val d: Option[Int] < Any = defer:
+                val d: Option[Int] < Any = direct:
                     xs.find(_.now > 2).map(_.now)
 
                 assert(d.eval == Option(3))
             }
             "fold" in {
-                val d: Int < Any = defer:
+                val d: Int < Any = direct:
 
                     def inc(i: Int): Int < Any = (i + 1).later
 
@@ -124,37 +124,37 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                 assert(d.eval == 14)
             }
             "foldLeft" in {
-                val d = defer:
+                val d = direct:
                     xs.foldLeft(0)(_ + _.now)
 
                 assert(d.eval == 10)
             }
             "foldRight" in {
-                val d = defer:
+                val d = direct:
                     xs.foldRight(0)(_.now + _)
 
                 assert(d.eval == 10)
             }
             "groupMapReduce" in {
-                val d = defer:
+                val d = direct:
                     xs.groupMapReduce(_ => 1)(_.now)(_ + _)
 
                 assert(d.eval == Map(1 -> 10))
             }
             "maxByOpOption" in {
-                val d: Option[Int] < Any = defer:
+                val d: Option[Int] < Any = direct:
                     xs.maxByOption(_.now).map(_.now)
 
                 assert(d.eval == Option(4))
             }
             "map" in {
-                val d: Seq[Int] < Any = defer:
+                val d: Seq[Int] < Any = direct:
                     xs.map(_.now).toSeq
 
                 assert(d.eval == Seq(1, 2, 3, 4))
             }
             "flatMap" in {
-                val d: Seq[Int] < Any = defer:
+                val d: Seq[Int] < Any = direct:
 
                     def f(i: Int) = Seq(1)
 
@@ -163,7 +163,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                 assert(d.eval == Seq(1))
             }
             "collect" in {
-                val d: Seq[Int] < Any = defer:
+                val d: Seq[Int] < Any = direct:
                     xs.collect({
                         case i => i.now
                     }).toSeq
@@ -173,7 +173,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "dropWhile" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     Seq(1, 2, 3, 4).dropWhile(f(_).now).toSeq
 
                 assert(d.eval == xsValues.dropWhile(_ < 3).toSeq)
@@ -181,7 +181,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "filter" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     xsValues.filter(i => f(i).now).toSeq
 
                 assert(d.eval == Seq(1, 2))
@@ -189,7 +189,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "filterNot" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     xsValues.filterNot(i => f(i).now).toSeq
 
                 assert(d.eval == Seq(3, 4))
@@ -197,7 +197,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "groupBy" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     xsValues.groupBy(i => f(i).now).view.mapValues(_.toSeq).toMap
 
                 assert(d.eval == Map(true -> Seq(1, 2), false -> Seq(3, 4)))
@@ -206,19 +206,19 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                 def f(i: Int): Boolean < Any = i < 3
 
                 // TODO : catch xsValues.groupMap(i => f(i))( ...
-                val d = defer:
+                val d = direct:
                     xsValues.groupMap(i => f(i).now)(i => f(i).now).view.mapValues(_.toSeq.distinct).toMap
 
                 assert(d.eval == Map(true -> Seq(true), false -> Seq(false)))
             }
             "scanLeft" in {
-                val d = defer:
+                val d = direct:
                     xs.scanLeft(0)((b, e) => b + e.now).toSeq
 
                 assert(d.eval == Seq(0, 1, 3, 6, 10))
             }
             "scanRight" in {
-                val d = defer:
+                val d = direct:
                     xs.scanRight(0)((e, b) => e.now + b).toSeq
 
                 assert(d.eval == Seq(10, 9, 7, 4, 0))
@@ -226,7 +226,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "span" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     val (take, drop) = xsValues.span(i => f(i).now)
                     take.toSeq
 
@@ -235,7 +235,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "takeWhile" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     xsValues.takeWhile(i => f(i).now).toSeq
 
                 assert(d.eval == Seq(1, 2))
@@ -243,7 +243,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "partition" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     val (pTrue, _) = xsValues.partition(i => f(i).now)
                     pTrue.toSeq
 
@@ -254,7 +254,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                     Left(i.toString)
                 else Right(i)
 
-                val d = defer:
+                val d = direct:
                     val (pLeft, pRight) = xsValues.partitionMap(i => f(i).now)
                     pLeft.toSeq
 
@@ -263,7 +263,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "tapEach" in {
                 def f(i: Int): Unit < Emit[Int] = Emit.value(i)
 
-                val d: Seq[Int] < Emit[Int] = defer:
+                val d: Seq[Int] < Emit[Int] = direct:
                     xsValues.tapEach(i => f(i).now).toSeq
 
                 val (es, res) = Emit.run(d).eval
@@ -272,7 +272,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "withFilter" in {
                 def f(i: Int): Boolean < Any = i < 3
 
-                val d = defer:
+                val d = direct:
                     xsValues.withFilter(i => f(i).now).map(x => x).toSeq
 
                 assert(d.eval == Seq(1, 2))
@@ -281,7 +281,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             "Choice" - {
                 "map" in {
                     val result = Choice.run(
-                        defer:
+                        direct:
                             Coll("x", "y").map(str =>
                                 Choice.eval(true, false)
                                     .map(b => if b then str.toUpperCase else str).now
@@ -302,7 +302,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                                 if b then str.toUpperCase else str
                             )
                         }
-                    val result = Choice.run(defer(effects.map(_.now))).eval
+                    val result = Choice.run(direct(effects.map(_.now))).eval
 
                     assert(result.contains(Chunk("X", "Y")))
                     assert(result.contains(Chunk("X", "y")))
@@ -312,7 +312,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                 }
 
                 "flatMap" in {
-                    val effects = defer:
+                    val effects = direct:
                         val tf = Choice.eval(true, false).later
                         Coll("x", "y").flatMap(str1 =>
                             val pred1 = tf.now
@@ -337,7 +337,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
                 "foldLeft" in {
                     val result = Choice.run(
-                        defer:
+                        direct:
                             Coll(1, 1).foldLeft(0)((acc, _) => Choice.eval(0, 1).map(n => acc + n).now)
                     ).eval
 
@@ -376,14 +376,14 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
+            val d = direct:
                 y.filter(i => f(i).now)
 
             assert(d.eval == Option(1))
         }
 
         "orElse" in {
-            val d = defer:
+            val d = direct:
                 y.orElse(z.now)
 
             assert(d.eval == Option(1))
@@ -391,14 +391,14 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
         "getOrElse" in {
             val w: Int < Any = 3
-            val d = defer:
+            val d = direct:
                 z.now.getOrElse(w.now)
 
             assert(d.eval == 3)
         }
 
         "map" in {
-            val d = defer:
+            val d = direct:
                 x.map(_.now + 1)
 
             assert(d.eval == Option(2))
@@ -414,7 +414,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
         "filter" in {
             def f(i: Int): Boolean < Any = i < 3
-            val d = defer:
+            val d = direct:
                 y.filter(i => f(i).now)
 
             assert(d.eval == Try(1))
@@ -423,7 +423,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         "orElse" in {
             val default: Try[Int] < Any = Try(2)
 
-            val d = defer:
+            val d = direct:
                 z.orElse(default.now)
 
             assert(d.eval == Try(2))
@@ -431,7 +431,7 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
         "getOrElse" in {
             val default: Int < Any = 2
-            val d = defer:
+            val d = direct:
                 z.getOrElse(default.now)
 
             assert(d.eval == 2)

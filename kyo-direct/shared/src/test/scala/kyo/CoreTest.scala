@@ -4,7 +4,7 @@ class CoreTest extends Test:
 
     "atomic operations" - {
         "AtomicInt" in run {
-            defer {
+            direct {
                 val counter = AtomicInt.init(0).now
                 counter.incrementAndGet.now
                 counter.incrementAndGet.now
@@ -14,7 +14,7 @@ class CoreTest extends Test:
         }
 
         "AtomicRef" in run {
-            defer {
+            direct {
                 val ref = AtomicRef.init("initial").now
                 ref.set("updated").now
                 assert(ref.get.now == "updated")
@@ -24,7 +24,7 @@ class CoreTest extends Test:
 
     "clock operations" - {
         "sleep and timeout" in run {
-            defer {
+            direct {
                 val start = Clock.now.now
                 Async.sleep(5.millis).now
                 val elapsed = Clock.now.now - start
@@ -33,7 +33,7 @@ class CoreTest extends Test:
         }
 
         "deadline" in run {
-            defer {
+            direct {
                 val deadline = Clock.deadline(1.second).now
                 assert(!deadline.isOverdue.now)
                 assert(deadline.timeLeft.now <= 1.second)
@@ -43,7 +43,7 @@ class CoreTest extends Test:
 
     "queue operations" - {
         "basic queue" in run {
-            defer {
+            direct {
                 val queue = Queue.init[Int](3).now
                 assert(queue.offer(1).now)
                 assert(queue.offer(2).now)
@@ -53,7 +53,7 @@ class CoreTest extends Test:
         }
 
         "unbounded queue" in run {
-            defer {
+            direct {
                 val queue = Queue.Unbounded.init[Int]().now
                 queue.add(1).now
                 queue.add(2).now
@@ -65,7 +65,7 @@ class CoreTest extends Test:
 
     "random operations" - {
         "basic random" in run {
-            defer {
+            direct {
                 val r1 = Random.nextInt(10).now
                 val r2 = Random.nextInt(10).now
                 assert(r1 >= 0 && r1 < 10)
@@ -74,9 +74,9 @@ class CoreTest extends Test:
         }
 
         "with seed" in run {
-            defer {
+            direct {
                 val results1 = Random.withSeed(42) {
-                    defer {
+                    direct {
                         val a = Random.nextInt(100).now
                         val b = Random.nextInt(100).now
                         (a, b)
@@ -84,7 +84,7 @@ class CoreTest extends Test:
                 }.now
 
                 val results2 = Random.withSeed(42) {
-                    defer {
+                    direct {
                         val a = Random.nextInt(100).now
                         val b = Random.nextInt(100).now
                         (a, b)
@@ -98,7 +98,7 @@ class CoreTest extends Test:
 
     "console operations" in run {
         Console.withOut {
-            defer {
+            direct {
                 Console.printLine("test output").now
             }
         }.map { case (output, _) =>
@@ -109,11 +109,11 @@ class CoreTest extends Test:
 
     "meter operations" - {
         "semaphore" in run {
-            defer {
+            direct {
                 val sem = Meter.initSemaphore(2).now
                 assert(sem.availablePermits.now == 2)
                 sem.run {
-                    defer {
+                    direct {
                         assert(sem.availablePermits.now == 1)
                     }
                 }.now
@@ -122,11 +122,11 @@ class CoreTest extends Test:
         }
 
         "mutex" in run {
-            defer {
+            direct {
                 val mutex = Meter.initMutex.now
                 assert(mutex.availablePermits.now == 1)
                 mutex.run {
-                    defer {
+                    direct {
                         assert(mutex.availablePermits.now == 0)
                     }
                 }.now
@@ -136,7 +136,7 @@ class CoreTest extends Test:
     }
 
     "channel operations" in run {
-        defer {
+        direct {
             val channel = Channel.init[Int](2).now
             assert(channel.offer(1).now)
             assert(channel.offer(2).now)
@@ -148,20 +148,20 @@ class CoreTest extends Test:
     }
 
     "barrier operations" in run {
-        defer {
+        direct {
             val barrier = Barrier.init(2).now
             assert(barrier.pending.now == 2)
 
             // Start two fibers that will wait at the barrier
             val fiber1 = Async.run {
-                defer {
+                direct {
                     barrier.await.now
                     true
                 }
             }.now
 
             val fiber2 = Async.run {
-                defer {
+                direct {
                     barrier.await.now
                     true
                 }
@@ -175,14 +175,14 @@ class CoreTest extends Test:
     }
 
     "latch operations" in run {
-        defer {
+        direct {
             val latch = Latch.init(2).now
             assert(latch.pending.now == 2)
             latch.release.now
             assert(latch.pending.now == 1)
             latch.release.now
             val awaited = Async.run {
-                defer {
+                direct {
                     latch.await.now
                     true
                 }

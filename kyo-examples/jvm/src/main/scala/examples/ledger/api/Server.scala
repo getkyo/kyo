@@ -13,7 +13,7 @@ object Server extends KyoApp:
 
     run {
 
-        defer {
+        direct {
             val port = System.property[Int]("PORT", 9999).now
 
             val dbConfig =

@@ -24,7 +24,7 @@ object DB:
         flushInterval: Duration
     )
 
-    val init: DB < (Env[Config] & IO) = defer {
+    val init: DB < (Env[Config] & IO) = direct {
         val index = Index.init.now
         val log   = db.Log.init.now
         Live(index, log)
