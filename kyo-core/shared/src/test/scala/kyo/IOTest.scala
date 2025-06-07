@@ -129,6 +129,17 @@ class IOTest extends Test:
                 assert(called)
             }
         }
+        "call-by-name" in run {
+            var count       = 0
+            var countEnsure = 0
+
+            val io: Unit < IO =
+                IO.ensure({ countEnsure = countEnsure + 1 })({ count = count + 1 })
+
+            io.andThen(io).map: _ =>
+                assert(count == 2)
+                assert(countEnsure == 2)
+        }
     }
 
     "evalOrThrow" - {

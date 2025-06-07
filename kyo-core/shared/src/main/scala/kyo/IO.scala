@@ -58,7 +58,7 @@ object IO:
       * @tparam A
       *   The result type of the main computation.
       */
-    inline def ensure[A, S](inline f: => Any < IO)(v: A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def ensure[A, S](inline f: => Any < IO)(v: => A < S)(using inline frame: Frame): A < (IO & S) =
         ensure(_ => f)(v)
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
@@ -80,7 +80,7 @@ object IO:
       * @return
       *   The result of the computation, with the finalizer guaranteed to run.
       */
-    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < IO)(v: A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < IO)(v: => A < S)(using inline frame: Frame): A < (IO & S) =
         Unsafe(Safepoint.ensure(ex => IO.Unsafe.evalOrThrow(f(ex)))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.
