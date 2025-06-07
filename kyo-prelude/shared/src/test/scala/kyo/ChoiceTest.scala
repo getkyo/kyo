@@ -232,7 +232,7 @@ class ChoiceTest extends Test:
             val stream      = Choice.runStream(computation)
 
             val result = stream
-                .filter(_ % 2 == 1)
+                .filter[Int](_ % 2 == 1)
                 .map(_ * 10)
                 .run.eval
 

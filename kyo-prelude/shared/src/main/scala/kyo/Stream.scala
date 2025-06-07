@@ -57,8 +57,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
     def concat[VV >: V, S2](other: Stream[VV, S2])(using Frame): Stream[VV, S & S2] =
         Stream(emit.map(_ => other.emit))
 
-    val derp: List[Int] = ???
-
     /** Transforms each value in the stream using the given pure function.
       *
       * @param f
@@ -312,7 +310,10 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
-    def takeWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
+    def takeWhile[VV >: V, S2](f: VV => Boolean < S2)(using
+        tag: Tag[Emit[Chunk[VV]]],
+        frame: Frame
+    ): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>

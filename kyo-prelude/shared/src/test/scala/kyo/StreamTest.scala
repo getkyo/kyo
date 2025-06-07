@@ -5,7 +5,7 @@ class StreamTest extends Test:
     val n = 100000
 
     def chunkSizes[V: Tag, S](stream: Stream[V, S]): Chunk[Int] < S =
-        stream.mapChunk(chunk => Chunk(chunk.size)).run
+        stream.mapChunk[V, Int](chunk => Chunk(chunk.size)).run
 
     "empty" in {
         assert(
@@ -285,7 +285,7 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val taken = stream.takeWhile { v =>
+            val taken = stream.takeWhile[Int, Var[Int]] { v =>
                 Var.update[Int](_ + 1).map(_ < 4)
             }.run
             assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
@@ -399,7 +399,7 @@ class StreamTest extends Test:
 
         "all out" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).collect[Int](_ => Absent).run.eval ==
+                Stream.init(Seq(1, 2, 3)).collect[Int, Int](_ => Absent).run.eval ==
                     Seq.empty
             )
         }
@@ -458,7 +458,7 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val collected = stream.collectWhile { v =>
+            val collected = stream.collectWhile[Int, Int, Var[Boolean]] { v =>
                 Var.update[Boolean](!_).map(if _ then Present(v * 2) else Absent)
             }.run
             assert(Var.run(false)(collected).eval == Seq(2))
@@ -571,13 +571,14 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream      = Stream.init(Seq(1, 2, 3))
-            val transformed = stream.mapChunk(v => Env.use[Int](i => v.map(_ * i))).run
+            val transformed = stream.mapChunk[Int, Int, Env[Int]](v => Env.use[Int](i => v.map(_ * i))).run
             assert(Env.run(2)(transformed).eval == Seq(2, 4, 6))
         }
 
         "with failures" in {
-            val stream      = Stream.init(Seq("1", "2", "abc", "3"))
-            val transformed = stream.mapChunk(c => Abort.catching[NumberFormatException](c.map(_.toInt))).run
+            val stream = Stream.init(Seq("1", "2", "abc", "3"))
+            val transformed =
+                stream.mapChunk[String, Int, Abort[NumberFormatException]](c => Abort.catching[NumberFormatException](c.map(_.toInt))).run
             assert(Abort.run(transformed).eval.isFailure)
         }
 
@@ -592,7 +593,7 @@ class StreamTest extends Test:
             val result =
                 Stream
                     .init(0 until 100)
-                    .mapChunk(_.map(_ => counter += 1))
+                    .mapChunk[Int, Unit](_.map(_ => counter += 1))
                     .take(0)
                     .run
                     .eval
@@ -807,7 +808,7 @@ class StreamTest extends Test:
                     case _ => Emit.valueWith(Chunk.fill(3)(n))(emit(n - 1))
             end emit
 
-            val stream = Stream(emit(10)).rechunk(10).mapChunk(Chunk(_))
+            val stream = Stream(emit(10)).rechunk(10).mapChunk[Int, Chunk[Int]](Chunk(_))
             assert(stream.run.eval == Chunk(
                 Chunk(10, 10, 10, 9, 9, 9, 8, 8, 8, 7),
                 Chunk(7, 7, 6, 6, 6), // empty chunk causes buffer flush
@@ -1045,7 +1046,7 @@ class StreamTest extends Test:
             val stream = Stream.init(Chunk(1, 2, 3, 4, 5))
             val result = Abort.run[String] {
                 Var.run(0) {
-                    stream.mapChunk { chunk =>
+                    stream.mapChunk[Int, Int, Var[Int] & Abort[String]] { chunk =>
                         Var.update[Int](_ + chunk.size).map { newState =>
                             if newState > 3 then Abort.fail(s"State too high: $newState")
                             else chunk.map(_ * newState)
@@ -1129,19 +1130,19 @@ class StreamTest extends Test:
         end maintains
 
         maintains(
-            (_.map(identity), "map"),
-            (_.map(Kyo.lift), "map (kyo)"),
-            (_.mapChunk(identity), "mapChunk"),
-            (_.mapChunk(Kyo.lift), "mapChunk (kyo)"),
+            (_.map(identity[Int]), "map"),
+            (_.map(Kyo.lift[Int, Any]), "map (kyo)"),
+            (_.mapChunk(identity[Chunk[Int]]), "mapChunk"),
+            (_.mapChunk(Kyo.lift[Chunk[Int], Any]), "mapChunk (kyo)"),
             (_.tap(identity), "tap"),
             (_.tapChunk(identity), "tapChunk"),
             (_.take(Int.MaxValue), "take"),
-            (_.takeWhile(_ => true), "takeWhile"),
-            (_.takeWhile(_ => Kyo.lift(true)), "takeWhile (kyo)"),
+            (_.takeWhile[Int](_ => true), "takeWhile"),
+            (_.takeWhile[Int, Any](_ => Kyo.lift(true)), "takeWhile (kyo)"),
             (_.dropWhile(_ => false), "dropWhile"),
             (_.dropWhile(_ => Kyo.lift(false)), "dropWhile (kyo)"),
-            (_.filter(_ => true), "filter"),
-            (_.filter(_ => Kyo.lift(true)), "filter (kyo)"),
+            (_.filter[Int](_ => true), "filter"),
+            (_.filter[Int, Any](_ => Kyo.lift(true)), "filter (kyo)"),
             (_.changes, "changes"),
             (_.rechunk(chunkSize), "rechunk"),
             (_.flatMapChunk(c => Stream.init(c)), "flatMapChunk")

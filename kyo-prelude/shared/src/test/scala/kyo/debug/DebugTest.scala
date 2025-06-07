@@ -51,8 +51,8 @@ class DebugTest extends Test:
     def streamComputation =
         Debug.trace {
             Stream.init(1 to 5)
-                .map(_ * 2)
-                .filter(_ % 3 == 0)
+                .map[Int, Int](_ * 2)
+                .filter[Int](_ % 3 == 0)
                 .run
         }
 
