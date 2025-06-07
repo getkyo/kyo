@@ -4,7 +4,6 @@ import io.aeron.logbuffer.Header
 import org.agrona.DirectBuffer
 import scala.collection.mutable
 
-// Forward declaration for FragmentAssembler, will be properly stubbed later
 
 // It's common for such types to be interfaces or abstract classes in Java,
 // but a simple class stub is fine for Scala Native if we don't implement it.
@@ -21,7 +20,6 @@ class Subscription:
         while fragmentsRead < fragmentLimit && messageQueue.nonEmpty do
             val msgBytes = messageQueue.dequeue()
             val buffer   = DirectBuffer(msgBytes)
-            // The Header is currently null, which might be an issue.
             fragmentHandler.handler(buffer, 0, msgBytes.length, null)
             fragmentsRead += 1
         end while
