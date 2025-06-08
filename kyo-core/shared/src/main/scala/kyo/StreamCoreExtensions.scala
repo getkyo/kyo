@@ -75,19 +75,16 @@ object StreamCoreExtensions:
           * @param chunkSize
           *   Size of the chunks that the iterator will produce and the stream will read from
           */
-        def fromIterator[V, S](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
+        def fromIterator[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, IO] =
-            fromIteratorCatching[Throwable](v, chunkSize).handle(
-                Abort.recoverError(error =>
-                    Abort.error(
-                        (error: @nowarn) match
-                            case Result.Failure(e: Throwable) => Result.Panic(e)
-                            case Result.Panic(e)              => Result.Panic(e)
-                    )
-                )
-            )
+
+            def toPanic[S, E <: Throwable, A](x: => A < (S & Abort[E])) =
+                Abort.recoverOrThrow(Abort.panic)(x)
+
+            fromIteratorCatching[Throwable](v, chunkSize).handle(toPanic)
+        end fromIterator
 
         /** Creates a stream from an iterator.
           *
