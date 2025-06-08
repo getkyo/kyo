@@ -67,7 +67,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
     def map[VV >: V, V2](f: VV => V2)(using
         t1: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
-        ev: NotGiven[V2 <:< (Any < Nothing)],
         fr: Frame
     ): Stream[V2, S] =
         Stream(
@@ -87,8 +86,8 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def map[VV >: V, V2, S2](f: VV => V2 < S2)(using Tag[Emit[Chunk[VV]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
-        mapChunk[VV, V2, S2](c => Kyo.foreach(c)(f))
+    def mapKyo[VV >: V, V2, S2](f: VV => V2 < S2)(using Tag[Emit[Chunk[VV]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
+        mapChunkKyo[VV, V2, S2](c => Kyo.foreach(c)(f))
 
     /** Transforms each chunk in the stream using the given pure function.
       *
@@ -101,7 +100,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
         using
         tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
@@ -127,7 +125,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed chunks
       */
-    def mapChunk[VV >: V, V2, S2](f: Chunk[VV] => Seq[V2] < S2)(
+    def mapChunkKyo[VV >: V, V2, S2](f: Chunk[VV] => Seq[V2] < S2)(
         using
         tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
@@ -287,7 +285,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       */
     def takeWhile[VV >: V](f: VV => Boolean)(using
         tag: Tag[Emit[Chunk[VV]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[VV, S] =
         Stream(
@@ -310,7 +307,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
-    def takeWhile[VV >: V, S2](f: VV => Boolean < S2)(using
+    def takeWhileKyo[VV >: V, S2](f: VV => Boolean < S2)(using
         tag: Tag[Emit[Chunk[VV]]],
         frame: Frame
     ): Stream[VV, S & S2] =
@@ -325,7 +322,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
                         }
             )
         )
-    end takeWhile
+    end takeWhileKyo
 
     /** Drops elements from the stream while the predicate is true.
       *
@@ -334,7 +331,30 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with initial elements that satisfy the predicate removed
       */
-    def dropWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
+    def dropWhile[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
+        Stream(
+            ArrowEffect.handleLoop(tag, true, emit)(
+                [C] =>
+                    (input, state, cont) =>
+                        if state then
+                            if input.isEmpty then Loop.continue(true, cont(()))
+                            else
+                                val c = input.dropWhile(f)
+                                if c.isEmpty then Loop.continue(true, cont(()))
+                                else Emit.valueWith(c)(Loop.continue(false, cont(())))
+                        else
+                            Emit.valueWith(input)(Loop.continue(false, cont(())))
+            )
+        )
+
+    /** Drops elements from the stream while the effectful predicate is true.
+      *
+      * @param f
+      *   The predicate function
+      * @return
+      *   A new stream with initial elements that satisfy the predicate removed
+      */
+    def dropWhileKyo[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
@@ -356,7 +376,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing only elements that satisfy the predicate
       */
-    def filter[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
+    def filterKyo[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -368,7 +388,14 @@ sealed abstract class Stream[+V, -S] extends Serializable:
             )
         )
 
-    def filter[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], discr: Discriminator, frame: Frame): Stream[VV, S] =
+    /** Filters the stream to include only elements that satisfy the effectful predicate.
+      *
+      * @param f
+      *   The predicate function
+      * @return
+      *   A new stream containing only elements that satisfy the predicate
+      */
+    def filter[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -379,7 +406,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
             )
         )
 
-    /** Transform the stream with a partial function, filtering out values for which the partial function is undefined. Combines the
+    /** Transform the stream with an effectful function, filtering out values for which the function returns Absent. Combines the
       * functionality of map and filter.
       *
       * @param f
@@ -387,7 +414,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing transformed elements
       */
-    def collect[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
+    def collectKyo[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -402,10 +429,17 @@ sealed abstract class Stream[+V, -S] extends Serializable:
             )
         )
 
+    /** Transform the stream with a function, filtering out values for which the function returns Absent. Combines the functionality of map
+      * and filter.
+      *
+      * @param f
+      *   Partial function transforming V to V2
+      * @return
+      *   A new stream containing transformed elements
+      */
     def collect[VV >: V, V2](f: VV => Maybe[V2])(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
@@ -426,7 +460,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing transformed elements
       */
-    def collectWhile[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
+    def collectWhileKyo[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -451,7 +485,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
     def collectWhile[VV >: V, V2](f: VV => Maybe[V2])(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(

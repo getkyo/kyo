@@ -257,7 +257,7 @@ class StreamCoreExtensionsTest extends Test:
                     val it = Iterator("a", "b", "c")
 
                     val stream: Stream[String, IO & Choice] =
-                        Stream.fromIterator(it, bufferSize).map: str =>
+                        Stream.fromIterator(it, bufferSize).mapKyo: str =>
                             Choice.eval(true, false).map:
                                 case true  => str.toUpperCase
                                 case false => str
