@@ -337,6 +337,15 @@ class StreamCoreExtensionsTest extends Test:
                         assert(chunk == Chunk(0, 1, 2, 42))
                 }
 
+                "compile error" in run {
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new RuntimeException("fail")
+                        case i => i
+                    })
+
+                    typeCheckFailure("Stream.fromIteratorCatching(it, chunkSize)")("Cannot catch Exceptions using `E = Nothing`")
+                }
+
                 "catching specific exception after values" in run {
                     class Oups(val value: Int) extends RuntimeException("fail")
 
