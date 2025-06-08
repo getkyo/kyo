@@ -217,7 +217,7 @@ class StreamCoreExtensionsTest extends Test:
         }
 
         def fromIteratorTests(chunkSize: Int): Unit =
-            s"bufferSize = $chunkSize" - {
+            s"chunkSize = $chunkSize" - {
                 "basic" in run {
                     val it     = Iterator(1, 2, 3, 4, 5)
                     val stream = Stream.fromIterator(it, chunkSize)
