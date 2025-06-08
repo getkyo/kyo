@@ -153,6 +153,7 @@ lazy val kyoNative = project
     .in(file("native"))
     .settings(
         name := "kyoNative",
+        `kyo-settings`,
         `native-settings`
     )
     .disablePlugins(MimaPlugin)
