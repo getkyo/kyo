@@ -335,7 +335,6 @@ class StreamCoreExtensionsTest extends Test:
 
                     errorTo42.run.map: chunk =>
                         assert(chunk == Chunk(0, 1, 2, 42))
-
                 }
 
                 "catching specific exception after values" in run {
