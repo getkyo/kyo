@@ -1,9 +1,9 @@
 package kyo
 
-import kyo.Async.defaultConcurrency
 import kyo.ChunkBuilder
 import kyo.kernel.ArrowEffect
-import scala.compiletime.*
+import scala.annotation.implicitNotFound
+import scala.util.NotGiven
 
 object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
@@ -30,10 +30,6 @@ object StreamCoreExtensions:
                         else Loop.done
         Abort.run(emit).unit
     end emitMaybeElementsFromChannel
-
-    type DefaultIfNothing[E, Default] = E match
-        case Nothing => Default
-        case _       => E
 
     extension (streamObj: Stream.type)
         /** Merges multiple streams asynchronously. Stream stops when all sources streams have completed.
@@ -77,7 +73,29 @@ object StreamCoreExtensions:
         def fromIterator[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
             Tag[Emit[Chunk[V]]],
             Frame
-        ): Stream[V, IO] = _fromIteratorCatching[Nothing](v, chunkSize)
+        ): Stream[V, IO] =
+            val stream: Stream[V, IO] < IO = IO:
+                val it      = v
+                val size    = chunkSize max 1
+                val builder = ChunkBuilder.init[V]
+
+                val pull: Chunk[V] < IO =
+                    IO:
+                        var count = 0
+                        while count < size && it.hasNext do
+                            builder.addOne(it.next())
+                            count += 1
+
+                        builder.result()
+
+                Stream:
+                    Loop.indexed: _ =>
+                        pull.map:
+                            case chunk if chunk.isEmpty => Loop.done
+                            case chunk                  => Emit.valueWith(chunk)(Loop.continue)
+
+            Stream(stream.map(_.emit)) // unwrap
+        end fromIterator
 
         /** Creates a stream from an iterator.
           *
@@ -92,25 +110,13 @@ object StreamCoreExtensions:
             frame: Frame
         )[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
             tag: Tag[Emit[Chunk[V]]],
-            ct: SafeClassTag[E]
+            ct: SafeClassTag[E],
+            @implicitNotFound(
+                "Missing type param on `fromIteratorCatching[E = SomeException](iterator, chunkSize)`." +
+                    "\n - Cannot catch Exceptions using `E = Nothing`." +
+                    "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions."
+            ) notNothing: NotGiven[E =:= Nothing]
         ): Stream[V, IO & Abort[E]] =
-            inline erasedValue[E] match
-                case _: Nothing =>
-                    error(
-                        "Missing type param on `fromIteratorCatching[E = SomeException](iterator, chunkSize)`." +
-                            "\n - Cannot catch Exceptions using `E = Nothing`." +
-                            "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions."
-                    )
-                case _ => _fromIteratorCatching[E](v, chunkSize)
-        end fromIteratorCatching
-
-        private def _fromIteratorCatching[E](using
-            Frame
-        )[V](v: => Iterator[V], chunkSize: Int)(using
-            tag: Tag[Emit[Chunk[V]]],
-            ct: SafeClassTag[E]
-        ): Stream[V, IO & Abort[E]] =
-
             val stream: Stream[V, (IO & Abort[E])] < IO = IO:
                 val it      = v
                 val size    = chunkSize max 1
@@ -137,7 +143,7 @@ object StreamCoreExtensions:
                                     Emit.valueWith(lastElements)(Abort.error(error))
 
             Stream(stream.map(_.emit)) // unwrap
-        end _fromIteratorCatching
+        end fromIteratorCatching
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
