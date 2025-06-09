@@ -28,7 +28,7 @@ end Index
 
 object Index:
 
-    val init: Index < (Env[DB.Config] & IO) = defer {
+    val init: Index < (Env[DB.Config] & IO) = direct {
         val cfg  = Env.get[DB.Config].now
         val file = open(cfg.workingDir + "/index.dat").now
         IO(Live(file)).now

@@ -1,3 +1,4 @@
 package kyo
 
-class Timeout()(using Frame) extends KyoException(t"Computation has timed out.")
+final class Timeout(duration: Maybe[Duration] = Absent)(using Frame)
+    extends KyoException("Computation has timed out" + duration.fold("")(" after " + _.show))

@@ -173,6 +173,41 @@ object Kyo:
                             else f(indexedSeq(idx)).map(u => Loop.continue(acc.append(u)))
     end foreach
 
+    /** Applies an effect-producing function to each element of an `IterableOnce`, and concatenates the resulting collections.
+      *
+      * @param source
+      *   The input `IterableOnce`
+      * @param f
+      *   The effect-producing function that returns a collection of results per element
+      * @return
+      *   A new effect that produces a flattened Chunk of all results
+      */
+    def foreachConcat[A, B, S](source: IterableOnce[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using Frame, Safepoint): Chunk[B] < S =
+        source.knownSize match
+            case 0 => Chunk.empty
+            case 1 =>
+                val head = source.iterator.next()
+                f(head).map(bs => Chunk.from(bs))
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[B]): (seq, acc) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else
+                                f(seq.head).map(bs =>
+                                    Loop.continue(seq.tail, acc ++ bs)
+                                )
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
+                        Loop.indexed(Chunk.empty[B]): (idx, acc) =>
+                            if idx == size then Loop.done(acc)
+                            else
+                                f(indexedSeq(idx)).map(bs =>
+                                    Loop.continue(acc ++ bs)
+                                )
+    end foreachConcat
+
     /** Applies an effect-producing function to each element of a sequence along with its index.
       *
       * @param source
@@ -454,6 +489,47 @@ object Kyo:
                                     case false => Loop.done(acc)
     end takeWhile
 
+    /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
+      *
+      * @param f
+      *   A predicate that returns `true` while elements should be included in the prefix
+      * @return
+      *   A tuple `(prefix, suffix)` where:
+      *   - `prefix`: All elements before first failure of `f`
+      *   - `suffix`: First failing element and all remaining elements
+      * @note
+      *   Optimized for both linear and indexed sequences
+      */
+    def span[A, S](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Chunk[A], Chunk[A]) < S =
+        source.knownSize match
+            case 0 => (Chunk.empty, Chunk.empty)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(Chunk.empty[A], linearSeq): (acc, seq) =>
+                            if seq.isEmpty then
+                                Loop.done((acc, Chunk.empty))
+                            else
+                                val curr = seq.head
+                                f(curr).map:
+                                    case true  => Loop.continue(acc.append(curr), seq.tail)
+                                    case false => Loop.done((acc, Chunk.from(seq)))
+
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
+                        Loop.indexed: idx =>
+                            if idx == size then
+                                Loop.done((Chunk.from(indexedSeq), Chunk.empty))
+                            else
+                                val curr = indexedSeq(idx)
+                                f(curr).map({
+                                    case true => Loop.continue
+                                    case false =>
+                                        Loop.done(Chunk.from(indexedSeq).splitAt(idx))
+                                })
+    end span
+
     /** Drops elements from an `IterableOnce` while a predicate holds true.
       *
       * @param source
@@ -475,7 +551,7 @@ object Kyo:
                                 val curr = seq.head
                                 f(curr).map:
                                     case true  => Loop.continue(seq.tail)
-                                    case false => Loop.done(Chunk.from(seq.tail))
+                                    case false => Loop.done(Chunk.from(seq))
                     case other =>
                         val indexedSeq = toIndexed(other)
                         val size       = indexedSeq.length
@@ -488,6 +564,178 @@ object Kyo:
                                     case false => Loop.done(Chunk.from(indexedSeq.drop(idx)))
                 end match
     end dropWhile
+
+    def partition[S, A](source: IterableOnce[A])(f: Safepoint ?=> A => Boolean < S)(using
+        Frame,
+        Safepoint
+    ): (Chunk[A], Chunk[A]) < S =
+        source.knownSize match
+            case 0 => (Chunk.empty, Chunk.empty)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[A], Chunk.empty[A]) { (seq, trues, falses) =>
+                            if seq.isEmpty then Loop.done((trues, falses))
+                            else
+                                f(seq.head).map { matches =>
+                                    if matches then
+                                        Loop.continue(seq.tail, trues.append(seq.head), falses)
+                                    else
+                                        Loop.continue(seq.tail, trues, falses.append(seq.head))
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Chunk.empty[A], Chunk.empty[A]) { (idx, trues, falses) =>
+                            if idx == arr.length then
+                                Loop.done((trues, falses))
+                            else
+                                f(arr(idx)).map { matches =>
+                                    if matches then
+                                        Loop.continue(trues.append(arr(idx)), falses)
+                                    else
+                                        Loop.continue(trues, falses.append(arr(idx)))
+                                }
+                        }
+
+    def partitionMap[S, A, A1, A2](source: IterableOnce[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
+        Frame,
+        Safepoint
+    ): (Chunk[A1], Chunk[A2]) < S =
+        source.knownSize match
+            case 0 => (Chunk.empty, Chunk.empty)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk.empty[A1], Chunk.empty[A2]) { (seq, lefts, rights) =>
+                            if seq.isEmpty then Loop.done((lefts, rights))
+                            else
+                                f(seq.head).map {
+                                    case Left(a1)  => Loop.continue(seq.tail, lefts.append(a1), rights)
+                                    case Right(a2) => Loop.continue(seq.tail, lefts, rights.append(a2))
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Chunk.empty[A1], Chunk.empty[A2]) { (idx, lefts, rights) =>
+                            if idx >= arr.length then
+                                Loop.done((lefts, rights))
+                            else
+                                f(arr(idx)).map {
+                                    case Left(a1)  => Loop.continue(lefts.append(a1), rights)
+                                    case Right(a2) => Loop.continue(lefts, rights.append(a2))
+                                }
+                        }
+
+    /** Computes a prefix scan of the collection.
+      *
+      * @param z
+      *   Initial accumulator value
+      * @param op
+      *   Effectful operation that combines accumulator with each element
+      * @return
+      *   Chunk containing all intermediate accumulator states
+      */
+    def scanLeft[S, A, B](source: IterableOnce[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
+        Frame,
+        Safepoint
+    ): Chunk[B] < S =
+        source.knownSize match
+            case 0 => Chunk(z)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Chunk(z), z) { (seq, acc, current) =>
+                            if seq.isEmpty then Loop.done(acc)
+                            else
+                                op(current, seq.head).map { next =>
+                                    Loop.continue(seq.tail, acc.append(next), next)
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Chunk(z), z) { (idx, acc, current) =>
+                            if idx == arr.length then Loop.done(acc)
+                            else
+                                op(current, arr(idx)).map { next =>
+                                    Loop.continue(acc.append(next), next)
+                                }
+                        }
+
+    def groupBy[S, A, K](source: IterableOnce[A])(f: Safepoint ?=> A => K < S)(using
+        Frame,
+        Safepoint
+    ): Map[K, Chunk[A]] < S =
+        source.knownSize match
+            case 0 => Map.empty[K, Chunk[A]]
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Map.empty[K, Chunk[A]]) { (seq, acc) =>
+                            if seq.isEmpty then
+                                Loop.done(acc)
+                            else
+                                val a = seq.head
+                                f(a).map { k =>
+                                    val current = acc.getOrElse(k, Chunk.empty)
+                                    Loop.continue(seq.tail, acc.updated(k, current :+ a))
+                                }
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Map.empty[K, Chunk[A]]) { (idx, acc) =>
+                            if idx == arr.length then
+                                Loop.done(acc)
+                            else
+                                val a = arr(idx)
+                                f(a).map { k =>
+                                    val current = acc.getOrElse(k, Chunk.empty)
+                                    Loop.continue(acc.updated(k, current :+ a))
+                                }
+                        }
+
+    def groupMap[S, A, K, B](source: IterableOnce[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
+        Frame,
+        Safepoint
+    ): Map[K, Chunk[B]] < S =
+        source.knownSize match
+            case 0 => Map.empty[K, Chunk[B]]
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] =>
+                        Loop(linearSeq, Map.empty[K, Chunk[B]]) { (seq, acc) =>
+                            if seq.isEmpty then
+                                Loop.done(acc)
+                            else
+                                val a = seq.head
+                                for
+                                    k <- key(a)
+                                    b <- f(a)
+                                    current = acc.getOrElse(k, Chunk.empty)
+                                    updated = acc.updated(k, current :+ b)
+                                yield Loop.continue(seq.tail, updated)
+                                end for
+                        }
+
+                    case other =>
+                        val arr = toIndexed(other)
+                        Loop.indexed(Map.empty[K, Chunk[B]]) { (idx, acc) =>
+                            if idx >= arr.length then
+                                Loop.done(acc)
+                            else
+                                val a = arr(idx)
+                                for
+                                    k <- key(a)
+                                    b <- f(a)
+                                    current = acc.getOrElse(k, Chunk.empty)
+                                    updated = acc.updated(k, current :+ b)
+                                yield Loop.continue(updated)
+                                end for
+                        }
 
     /** Creates a Chunk by repeating an effect-producing value.
       *
@@ -508,4 +756,37 @@ object Kyo:
         source match
             case seq: IndexedSeq[A] => seq
             case other              => Chunk.from(other)
+
+    // for kyo-direct
+    private[kyo] def shiftedWhile[A, S, B, C](source: IterableOnce[A])(
+        prolog: B,
+        f: Safepoint ?=> A => Boolean < S,
+        acc: (B, Boolean, A) => B,
+        epilog: B => C
+    )(using Frame, Safepoint): C < S =
+        source.knownSize match
+            case 0 => epilog(prolog)
+            case _ =>
+                source match
+                    case linearSeq: LinearSeq[A] => Loop(linearSeq, prolog): (seq, b) =>
+                            if seq.isEmpty then Loop.done(epilog(b))
+                            else
+                                val curr = seq.head
+                                f(curr).map:
+                                    case true  => Loop.continue(seq.tail, acc(b, true, curr))
+                                    case false => Loop.done(epilog(acc(b, false, curr)))
+
+                    case other =>
+                        val indexedSeq = toIndexed(other)
+                        val size       = indexedSeq.length
+                        Loop.indexed(prolog): (idx, b) =>
+                            if idx == size then Loop.done(epilog(b))
+                            else
+                                val curr = indexedSeq(idx)
+                                f(curr).map:
+                                    case true  => Loop.continue(acc(b, true, curr))
+                                    case false => Loop.done(epilog(acc(b, false, curr)))
+
+        end match
+    end shiftedWhile
 end Kyo

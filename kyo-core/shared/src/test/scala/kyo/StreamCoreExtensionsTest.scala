@@ -6,7 +6,7 @@ class StreamCoreExtensionsTest extends Test:
         "collectAll" in run {
             Choice.run {
                 for
-                    size <- Choice.eval(Seq(0, 1, 32, 100))
+                    size <- Choice.eval(0, 1, 32, 100)
                     s1     = Stream.init(0 to 99 by 3)
                     s2     = Stream.init(1 to 99 by 3)
                     s3     = Stream.init(2 to 99 by 3)
@@ -19,7 +19,7 @@ class StreamCoreExtensionsTest extends Test:
         "collectAllHalting" in runNotJS {
             Choice.run {
                 for
-                    size <- Choice.eval(Seq(0, 1, 32, 1024))
+                    size <- Choice.eval(0, 1, 32, 1024)
                     s1     = Stream(Loop.forever(Emit.value(Chunk(100))))
                     s2     = Stream.init(0 to 50)
                     merged = Stream.collectAllHalting(Seq(s1, s2), size)
@@ -51,8 +51,8 @@ class StreamCoreExtensionsTest extends Test:
             "should halt if non-halting side completes" in run {
                 Choice.run {
                     for
-                        size <- Choice.eval(Seq(0, 1, 32, 1024))
-                        left <- Choice.eval(Seq(true, false))
+                        size <- Choice.eval(0, 1, 32, 1024)
+                        left <- Choice.eval(true, false)
                         s1     = Stream.init(0 to 50)
                         s2     = Stream(Loop.forever(Emit.value(Chunk(100))))
                         merged = if left then s1.mergeHaltingLeft(s2, size) else s2.mergeHaltingRight(s1, size)
@@ -69,8 +69,8 @@ class StreamCoreExtensionsTest extends Test:
                 val s2 = Stream.init(s2Set.toSeq)
                 Choice.run {
                     for
-                        size <- Choice.eval(Seq(0, 1, 32, 1024))
-                        left <- Choice.eval(Seq(true, false))
+                        size <- Choice.eval(0, 1, 32, 1024)
+                        left <- Choice.eval(true, false)
                         // Make sure we get case where all three values of s2 have been consumed (not guaranteed)
                         assertion <- Loop(Set.empty[Int]) { lastRes =>
                             if s2Set.subsetOf(lastRes) then
@@ -112,8 +112,8 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(Seq(1, 2, 4, Async.defaultConcurrency, Int.MaxValue))
-                        buf <- Choice.eval(Seq(1, 4, 5, 8, 12, par, Int.MaxValue))
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, Int.MaxValue)
+                        buf <- Choice.eval(1, 4, 5, 8, 12, par, Int.MaxValue)
                         s2 = stream.mapPar(par, buf)(i => IO(i + 1))
                         res <- s2.run
                     yield assert(
@@ -129,7 +129,7 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
-                        par <- Choice.eval(Seq(2, 4, Async.defaultConcurrency))
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
                         s2 = stream.mapPar(par)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
                         res <- s2.run
                     yield assert(
@@ -147,8 +147,8 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(Seq(1, 2, 4, Async.defaultConcurrency))
-                        buf <- Choice.eval(Seq(1, 4, 5, 8, 12))
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency)
+                        buf <- Choice.eval(1, 4, 5, 8, 12)
                         s2 = stream.mapParUnordered(par, buf)(i => IO(i + 1))
                         res <- s2.run
                     yield assert(
@@ -164,7 +164,7 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
-                        par <- Choice.eval(Seq(2, 4, Async.defaultConcurrency))
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
                         s2 = stream.mapParUnordered(par)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
                         res <- s2.run
                     yield assert(
@@ -183,8 +183,8 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(Seq(1, 2, 4, Async.defaultConcurrency))
-                        buf <- Choice.eval(Seq(1, 4, 5, 8, 12))
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency)
+                        buf <- Choice.eval(1, 4, 5, 8, 12)
                         s2 = stream.mapChunkPar(par, buf)(c => IO(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
@@ -200,7 +200,7 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
-                        par <- Choice.eval(Seq(2, 4, Async.defaultConcurrency))
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
                         s2 =
                             stream.mapChunkPar(par)(c => if c.head == 1 then Async.sleep(10.millis).andThen(c.map(_ + 1)) else c.map(_ + 1))
                         res <- s2.run
@@ -214,13 +214,71 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
+        def fromIteratorTests(bufferSize: Int): Unit =
+            s"bufferSize = $bufferSize" - {
+                "basic" in run {
+                    val it     = Iterator(1, 2, 3, 4, 5)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "call by name" in run {
+
+                    val stream = Stream.fromIterator(Iterator(1, 2, 3, 4, 5), bufferSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "empty iterator" in run {
+                    val it     = Iterator.empty
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res.isEmpty))
+                }
+
+                "reuse same stream" in run {
+                    val it     = Iterator(1, 2, 3)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    for
+                        first  <- stream.run
+                        second <- stream.run
+                    yield assert((first, second) == (Chunk(1, 2, 3), Chunk.empty))
+                    end for
+                }
+
+                "large iterator" in run {
+                    val size   = 10000
+                    val it     = Iterator.from(0).take(size)
+                    val stream = Stream.fromIterator(it, bufferSize)
+                    stream.run.map(res => assert(res == Chunk.from(0 until size)))
+                }
+
+                "map with Choice" in run {
+                    val it = Iterator("a", "b", "c")
+
+                    val stream: Stream[String, IO & Choice] =
+                        Stream.fromIterator(it, bufferSize).map: str =>
+                            Choice.eval(true, false).map:
+                                case true  => str.toUpperCase
+                                case false => str
+
+                    end stream
+                    Choice.run(stream.run).map: allCombinations =>
+                        assert(allCombinations.size == 8)
+                        assert(allCombinations.contains(Chunk("a", "B", "c")))
+
+                }
+            }
+
+        "fromIterator" - {
+            Seq(0, 1, 4, 32, 1024).foreach(fromIteratorTests)
+        }
+
         "mapChunkParUnordered" - {
             "should map all chunks" in run {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(Seq(1, 2, 4, Async.defaultConcurrency))
-                        buf <- Choice.eval(Seq(1, 4, 5, 8, 12))
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency)
+                        buf <- Choice.eval(1, 4, 5, 8, 12)
                         s2 = stream.mapChunkParUnordered(par, buf)(c => IO(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
@@ -236,7 +294,7 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
-                        par <- Choice.eval(Seq(2, 4, Async.defaultConcurrency))
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
                         s2 =
                             stream.mapChunkParUnordered(par)(c =>
                                 if c.head == 1 then Async.sleep(10.millis).andThen(c.map(_ + 1)) else c.map(_ + 1)

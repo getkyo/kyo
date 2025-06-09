@@ -7,7 +7,7 @@ abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abo
 
     private var maybePreviousAsync: Maybe[Unit < (Async & Abort[Throwable])] = Absent
 
-    final override protected def run[A](v: => A < (Async & Resource & Abort[Throwable]))(using Frame): Unit =
+    final override protected def run[A](v: => A < (Async & Resource & Abort[Throwable]))(using Frame, Render[A]): Unit =
         import AllowUnsafe.embrace.danger
         val currentAsync: Unit < (Async & Abort[Throwable]) =
             Abort.run(handle(v)).map(result => IO(onResult(result)).andThen(Abort.get(result)).unit)
