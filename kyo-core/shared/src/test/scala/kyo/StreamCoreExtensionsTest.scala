@@ -47,6 +47,18 @@ class StreamCoreExtensionsTest extends Test:
     }
 
     "combinator" - {
+        "variance" in run {
+            val intStream = Stream.init(Chunk(1, 2, 3))
+            val strStream = Stream.init(Chunk("one", "two", "three"))
+
+            val merged = intStream.merge(strStream)
+
+            given CanEqual[Int | String, Int | String] = CanEqual.derived
+
+            merged.run.map: resultChunk =>
+                assert(resultChunk.toSet == Set(1, 2, 3, "one", "two", "three"))
+        }
+
         "mergeHaltingLeft/Right" - {
             "should halt if non-halting side completes" in run {
                 Choice.run {
