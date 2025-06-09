@@ -268,6 +268,24 @@ class StreamCoreExtensionsTest extends Test:
                         assert(allCombinations.contains(Chunk("a", "B", "c")))
 
                 }
+
+                "recover from Panic" in run {
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new RuntimeException("fail")
+                        case i => i
+                    })
+
+                    val stream = Stream.fromIterator(it, chunkSize)
+
+                    val panicTo42 = stream.handle(Abort.recoverError({
+                        case _: Result.Panic      => Emit.value(Chunk(42))
+                        case _: Result.Failure[?] => fail("should not happen")
+                    }))
+
+                    panicTo42.run.map: chunk =>
+                        assert(chunk == Chunk(0, 1, 2, 42))
+
+                }
             }
 
         "fromIterator" - {

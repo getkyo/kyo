@@ -90,9 +90,13 @@ object StreamCoreExtensions:
 
                 Stream:
                     Loop.foreach:
-                        pull.map:
-                            case chunk if chunk.isEmpty => Loop.done
-                            case chunk                  => Emit.valueWith(chunk)(Loop.continue)
+                        Abort.run(pull).map:
+                            case Result.Success(chunk) if chunk.isEmpty => Loop.done
+                            case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
+                            case Result.Panic(throwable) =>
+                                IO:
+                                    val lastElements: Chunk[V] = builder.result()
+                                    Emit.valueWith(lastElements)(Abort.panic(throwable))
 
             Stream(stream.map(_.emit)) // unwrap
         end fromIterator
