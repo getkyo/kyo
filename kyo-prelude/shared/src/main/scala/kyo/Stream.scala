@@ -925,13 +925,4 @@ object Stream:
       *   A new stream that fuses together both effect contexts S and S2 into a single Stream[V, S & S2]
       */
     inline def unwrap[V, S, S2](stream: Stream[V, S] < S2): Stream[V, S & S2] = Stream(stream.map(_.emit))
-
 end Stream
-
-extension [V, S, S2](stream: Stream[V, S] < S2)
-    /** Takes a Stream[V, S] in the context of S2 (i.e. Stream[V, S] < S2) and returns a Stream that fuses together both effect contexts S
-      * and S2 into a single Stream[V, S & S2].
-      */
-    @targetName("streamUnwrap")
-    inline def unwrap: Stream[V, S & S2] = Stream.unwrap(stream)
-end extension

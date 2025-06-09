@@ -1391,7 +1391,7 @@ case class Config(size:Int)
 
 val original: Stream[Int, Any] < Env[Config] = Env.get[Config].map(config => Stream.range(-9, 999).take(config.size))
 
-val unwrapped: Stream[Int, Env[Config]] = original.unwrap
+val unwrapped: Stream[Int, Env[Config]] = Stream.unwrap(original) // or original.unwrapStream if you are using kyo-combinators
 
 val handled: Stream[Int, Any] = unwrapped.handle(Env.run(Config(3)))
 
