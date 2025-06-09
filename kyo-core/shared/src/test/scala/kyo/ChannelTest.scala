@@ -1176,7 +1176,7 @@ class ChannelTest extends Test:
             // Create a fiber that repeatedly puts and item and then checks to see if the channel
             // has been drained. If it has then it closes the channel and creates a new one.
             producer <- Async.run {
-                Loop(()) { _ =>
+                Loop.foreach:
                     for
                         c     <- ref.get
                         _     <- c.put(1)
@@ -1193,8 +1193,7 @@ class ChannelTest extends Test:
                                 yield ()
                             else Kyo.unit
                             end if
-                    yield Loop.continue(())
-                }
+                    yield Loop.continue
             }
             // Create a fiber that repeatedly drains the channel if it is not closed or empty.
             // If it is closed or empty (and is about to be closed) then repeat until the consumer
