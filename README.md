@@ -1389,7 +1389,7 @@ import kyo.*
 
 case class Config(size:Int)
 
-val original: Stream[Int, Any] < Env[Config] = Env.get[Config].map(config => Stream.from(-9).take(config.size))
+val original: Stream[Int, Any] < Env[Config] = Env.get[Config].map(config => Stream.range(-9, 999).take(config.size))
 
 val unwrapped: Stream[Int, Env[Config]] = original.unwrap
 
