@@ -116,9 +116,10 @@ object StreamCoreExtensions:
             tag: Tag[Emit[Chunk[V]]],
             ct: SafeClassTag[E],
             @implicitNotFound(
-                "Missing type param on `fromIteratorCatching[E = SomeException](iterator, chunkSize)`." +
-                    "\n - Cannot catch Exceptions using `E = Nothing`." +
-                    "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions."
+                "Missing *explicit* type param on `fromIteratorCatching[E = SomeException](iterator, chunkSize)`." +
+                    "\n - Cannot catch Exceptions as `Failure[E]` using `E = Nothing`, they are turned into `Panic`." +
+                    "\n       If you need this behaviour, use `fromIterator(iterator, chunkSize)` directly." +
+                    "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions as `Failure`."
             ) notNothing: NotGiven[E =:= Nothing]
         ): Stream[V, IO & Abort[E]] =
             val stream: Stream[V, (IO & Abort[E])] < IO = IO:

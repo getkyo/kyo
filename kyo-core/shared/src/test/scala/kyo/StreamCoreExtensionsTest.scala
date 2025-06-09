@@ -361,7 +361,9 @@ class StreamCoreExtensionsTest extends Test:
                         case i => i
                     })
 
-                    typeCheckFailure("Stream.fromIteratorCatching(it, chunkSize)")("Cannot catch Exceptions using `E = Nothing`")
+                    typeCheckFailure("Stream.fromIteratorCatching(it, chunkSize)")(
+                        "Cannot catch Exceptions as `Failure[E]` using `E = Nothing`, they are turned into `Panic`"
+                    )
                 }
 
                 "catching specific exception after values" in run {
