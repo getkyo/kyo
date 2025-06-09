@@ -18,7 +18,7 @@ object StreamCoreExtensions:
     end emitMaybeChunksFromChannel
 
     private def emitMaybeElementsFromChannel[V](channel: Channel[Maybe[V]])(using Tag[Emit[Chunk[V]]], Frame) =
-        val emit = Loop(()): _ =>
+        val emit = Loop.foreach:
             channel.take.map: v =>
                 channel.drain.map: chunk =>
                     val fullChunk      = Chunk(v).concat(chunk)
@@ -368,7 +368,7 @@ object StreamCoreExtensions:
                                     stream.foreach(v => channelIn.put(Present(v)))
                                 ).andThen(channelIn.putBatch(Chunk.fill(parallel)(Absent)))
                                 val transform = Async.fill(parallel, parallel) {
-                                    Loop(()): _ =>
+                                    Loop.foreach:
                                         channelIn.take.map:
                                             case Absent => Loop.done
                                             case Present(v) =>
@@ -525,7 +525,7 @@ object StreamCoreExtensions:
                                     stream.foreachChunk(c => channelIn.put(Present(c)))
                                 ).andThen(channelIn.putBatch(Chunk.fill(parallel)(Absent)))
                                 val transform = Async.fill(parallel, parallel) {
-                                    Loop(()): _ =>
+                                    Loop.foreach:
                                         channelIn.take.map:
                                             case Absent => Loop.done
                                             case Present(c) =>
