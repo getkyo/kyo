@@ -89,7 +89,7 @@ object StreamCoreExtensions:
                         builder.result()
 
                 Stream:
-                    Loop.indexed: _ =>
+                    Loop.foreach:
                         pull.map:
                             case chunk if chunk.isEmpty => Loop.done
                             case chunk                  => Emit.valueWith(chunk)(Loop.continue)
@@ -133,7 +133,7 @@ object StreamCoreExtensions:
                             builder.result()
 
                 Stream:
-                    Loop.indexed: _ =>
+                    Loop.foreach:
                         Abort.run(pull).map:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
