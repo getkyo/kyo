@@ -1,7 +1,9 @@
 package kyo
 
-import kyo.Async.defaultConcurrency
+import kyo.ChunkBuilder
 import kyo.kernel.ArrowEffect
+import scala.annotation.implicitNotFound
+import scala.util.NotGiven
 
 object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
@@ -17,7 +19,7 @@ object StreamCoreExtensions:
     end emitMaybeChunksFromChannel
 
     private def emitMaybeElementsFromChannel[V](channel: Channel[Maybe[V]])(using Tag[Emit[Chunk[V]]], Frame) =
-        val emit = Loop(()): _ =>
+        val emit = Loop.foreach:
             channel.take.map: v =>
                 channel.drain.map: chunk =>
                     val fullChunk      = Chunk(v).concat(chunk)
@@ -60,6 +62,93 @@ object StreamCoreExtensions:
                             }.andThen(Abort.run(channel.put(Absent)).unit))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
+
+        /** Creates a stream from an iterator.
+          *
+          * @param v
+          *   Iterator to create a stream from
+          * @param chunkSize
+          *   Size of the chunks that the iterator will produce and the stream will read from
+          */
+        def fromIterator[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
+            Tag[Emit[Chunk[V]]],
+            Frame
+        ): Stream[V, IO] =
+            val stream: Stream[V, IO] < IO = IO:
+                val it      = v
+                val size    = chunkSize max 1
+                val builder = ChunkBuilder.init[V]
+
+                val pull: Chunk[V] < IO =
+                    IO:
+                        var count = 0
+                        while count < size && it.hasNext do
+                            builder.addOne(it.next())
+                            count += 1
+
+                        builder.result()
+
+                Stream:
+                    Loop.foreach:
+                        Abort.run(pull).map:
+                            case Result.Success(chunk) if chunk.isEmpty => Loop.done
+                            case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
+                            case Result.Panic(throwable) =>
+                                IO:
+                                    val lastElements: Chunk[V] = builder.result()
+                                    Emit.valueWith(lastElements)(Abort.panic(throwable))
+
+            Stream(stream.map(_.emit)) // unwrap
+        end fromIterator
+
+        /** Creates a stream from an iterator.
+          *
+          * @typeParam
+          *   E type of Exception to catch
+          * @param v
+          *   Iterator to create a stream from
+          * @param chunkSize
+          *   Size of the chunks that the iterator will produce and the stream will read from
+          */
+        inline def fromIteratorCatching[E <: Throwable](using
+            frame: Frame
+        )[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
+            tag: Tag[Emit[Chunk[V]]],
+            ct: SafeClassTag[E],
+            @implicitNotFound(
+                "Missing *explicit* type param on `fromIteratorCatching[E = SomeException](iterator, chunkSize)`." +
+                    "\n - Cannot catch Exceptions as `Failure[E]` using `E = Nothing`, they are turned into `Panic`." +
+                    "\n       If you need this behaviour, use `fromIterator(iterator, chunkSize)` directly." +
+                    "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions as `Failure`."
+            ) notNothing: NotGiven[E =:= Nothing]
+        ): Stream[V, IO & Abort[E]] =
+            val stream: Stream[V, (IO & Abort[E])] < IO = IO:
+                val it      = v
+                val size    = chunkSize max 1
+                val builder = ChunkBuilder.init[V]
+
+                val pull: Chunk[V] < (IO & Abort[E]) =
+                    IO:
+                        Abort.catching[E]:
+                            var count = 0
+                            while count < size && it.hasNext do
+                                builder.addOne(it.next())
+                                count += 1
+
+                            builder.result()
+
+                Stream:
+                    Loop.foreach:
+                        Abort.run(pull).map:
+                            case Result.Success(chunk) if chunk.isEmpty => Loop.done
+                            case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
+                            case error: Result.Error[E] @unchecked =>
+                                IO:
+                                    val lastElements: Chunk[V] = builder.result()
+                                    Emit.valueWith(lastElements)(Abort.error(error))
+
+            Stream(stream.map(_.emit)) // unwrap
+        end fromIteratorCatching
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
@@ -539,6 +628,7 @@ object StreamCoreExtensions:
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
 
     end extension
+
 end StreamCoreExtensions
 
 export StreamCoreExtensions.*

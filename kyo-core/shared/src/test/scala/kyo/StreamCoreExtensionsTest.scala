@@ -216,6 +216,211 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
+        def fromIteratorTests(chunkSize: Int): Unit =
+            s"chunkSize = $chunkSize" - {
+                "basic" in run {
+                    val it     = Iterator(1, 2, 3, 4, 5)
+                    val stream = Stream.fromIterator(it, chunkSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "call by name" in run {
+
+                    val stream = Stream.fromIterator(Iterator(1, 2, 3, 4, 5), chunkSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "empty iterator" in run {
+                    val it     = Iterator.empty
+                    val stream = Stream.fromIterator(it, chunkSize)
+                    stream.run.map(res => assert(res.isEmpty))
+                }
+
+                "reuse same stream" in run {
+                    val it     = Iterator(1, 2, 3)
+                    val stream = Stream.fromIterator(it, chunkSize)
+                    for
+                        first  <- stream.run
+                        second <- stream.run
+                    yield assert((first, second) == (Chunk(1, 2, 3), Chunk.empty))
+                    end for
+                }
+
+                "large iterator" in run {
+                    val size   = 10000
+                    val it     = Iterator.from(0).take(size)
+                    val stream = Stream.fromIterator(it, chunkSize)
+                    stream.run.map(res => assert(res == Chunk.from(0 until size)))
+                }
+
+                "map with Choice" in run {
+                    val it = Iterator("a", "b", "c")
+
+                    val stream: Stream[String, IO & Choice] =
+                        Stream.fromIterator(it, chunkSize).rechunk(10).map: str =>
+                            Choice.eval(true, false).map:
+                                case true  => str.toUpperCase
+                                case false => str
+
+                    end stream
+                    Choice.run(stream.run).map: allCombinations =>
+                        assert(allCombinations.size == 8)
+                        assert(allCombinations.contains(Chunk("a", "B", "c")))
+
+                }
+
+                "recover from Panic" in run {
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new RuntimeException("fail")
+                        case i => i
+                    })
+
+                    val stream = Stream.fromIterator(it, chunkSize)
+
+                    val panicTo42 = stream.handle(Abort.recoverError({
+                        case _: Result.Panic      => Emit.value(Chunk(42))
+                        case _: Result.Failure[?] => fail("should not happen")
+                    }))
+
+                    panicTo42.run.map: chunk =>
+                        assert(chunk == Chunk(0, 1, 2, 42))
+
+                }
+            }
+
+        "fromIterator" - {
+            Seq(0, 1, 4, 32, 1024).foreach(fromIteratorTests)
+        }
+
+        def fromIteratorCatchingTests(chunkSize: Int): Unit =
+            s"bufferSize = $chunkSize" - {
+
+                "basic" in run {
+                    val it     = Iterator(1, 2, 3, 4, 5)
+                    val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "call by name" in run {
+                    val stream = Stream.fromIteratorCatching[Throwable](Iterator(1, 2, 3, 4, 5), chunkSize)
+                    stream.run.map(res => assert(res == Chunk(1, 2, 3, 4, 5)))
+                }
+
+                "empty iterator" in run {
+                    val it     = Iterator.empty
+                    val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
+                    stream.run.map(res => assert(res.isEmpty))
+                }
+
+                "reuse same stream" in run {
+                    val it     = Iterator(1, 2, 3)
+                    val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
+                    for
+                        first  <- stream.run
+                        second <- stream.run
+                    yield assert((first, second) == (Chunk(1, 2, 3), Chunk.empty))
+                    end for
+                }
+
+                "large iterator" in run {
+                    val size   = 9999
+                    val it     = Iterator.from(0).take(size)
+                    val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
+                    stream.run.map(res => assert(res == Chunk.from(0 until size)))
+                }
+
+                "lazy" in run {
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new RuntimeException("fail")
+                        case i => i
+                    })
+
+                    val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize min 3)
+
+                    stream.take(3).run.map: chunk =>
+                        assert(chunk == Chunk(0, 1, 2))
+                }
+
+                "catching exception after values" in run {
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new RuntimeException("fail")
+                        case i => i
+                    })
+
+                    val stream = Stream.fromIteratorCatching[Throwable](it, chunkSize)
+
+                    val errorTo42 = stream.handle(Abort.recoverOrThrow(e => Emit.value(Chunk(42))))
+
+                    errorTo42.run.map: chunk =>
+                        assert(chunk == Chunk(0, 1, 2, 42))
+                }
+
+                "compile error" in run {
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new RuntimeException("fail")
+                        case i => i
+                    })
+
+                    typeCheckFailure("Stream.fromIteratorCatching(it, chunkSize)")(
+                        "Cannot catch Exceptions as `Failure[E]` using `E = Nothing`, they are turned into `Panic`"
+                    )
+                }
+
+                "catching specific exception after values" in run {
+                    class Oups(val value: Int) extends RuntimeException("fail")
+
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new Oups(42)
+                        case i => i
+                    })
+
+                    val stream = Stream.fromIteratorCatching[Oups](it, chunkSize).handle(Abort.recoverOrThrow((e: Oups) =>
+                        Emit.value(Chunk(e.value))
+                    ))
+
+                    stream.run.map: chunk =>
+                        assert(chunk == Chunk(0, 1, 2, 42))
+                }
+
+                "catching specific exception, panic" in run {
+                    class Oups(val value: Int) extends RuntimeException("fail")
+
+                    val it = Iterator.tabulate(5)({
+                        case 3 => throw new RuntimeException("fail")
+                        case i => i
+                    })
+
+                    val stream = Stream.fromIteratorCatching[Oups](it, chunkSize).handle(Abort.recoverOrThrow((e: Oups) =>
+                        Emit.value(Chunk(e.value))
+                    ))
+
+                    Abort.run(stream.run).map({
+                        case Result.Panic(_) => succeed
+                        case _               => fail("should not be caught")
+
+                    })
+                }
+
+                "map with Choice" in run {
+                    val it = Iterator("a", "b", "c")
+                    val stream: Stream[String, IO & Choice & Abort[Throwable]] =
+                        Stream.fromIteratorCatching[Throwable](it, chunkSize).rechunk(10).map: str =>
+                            Choice.eval(true, false).map:
+                                case true  => str.toUpperCase
+                                case false => str
+
+                    Choice.run(stream.run).map: allCombinations =>
+                        assert(allCombinations.size == 8)
+                        assert(allCombinations.contains(Chunk("a", "B", "c")))
+
+                }
+
+            }
+
+        "fromIteratorCatching" - {
+            Seq(0, 1, 4, 32, 1024).foreach(fromIteratorCatchingTests)
+        }
+
         "mapChunkParUnordered" - {
             "should map all chunks" in run {
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))

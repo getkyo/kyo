@@ -1366,6 +1366,38 @@ val result: Chunk[String] < (Env[Config] & Async) =
     c.run
 ```
 
+To handle one or more effects used by a stream, you can pass effect transformations to the `handle` method. These will be applied to the underlying streaming effect.
+
+```scala
+import kyo.*
+
+case class Config(someConfig: String)
+
+val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream(1)
+
+val handled: Stream[Int, Async] = original.handle(
+    Resource.run(_),
+    Env.run(Config("some config"))(_),
+    Abort.run[String](_)
+)
+```
+
+To fuse one or more effects used to create and run a stream, you can use `unwrap` method.
+
+```scala
+import kyo.*
+
+case class Config(size:Int)
+
+val original: Stream[Int, Any] < Env[Config] = Env.get[Config].map(config => Stream.range(-9, 999).take(config.size))
+
+val unwrapped: Stream[Int, Env[Config]] = Stream.unwrap(original) // or original.unwrapStream if you are using kyo-combinators
+
+val handled: Stream[Int, Any] = unwrapped.handle(Env.run(Config(3)))
+
+assert(handled.run.eval == Chunk(-9, -8, -7))
+```
+
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
 
 Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are overloaded to provide different implementations for pure vs effectful transformations. This can make a big difference for performance, so take care that the functions you pass to these methods are typed to return pure values if they do not include effects. Unnecessarily lifting them to return `A < Any` will result in performance loss.
