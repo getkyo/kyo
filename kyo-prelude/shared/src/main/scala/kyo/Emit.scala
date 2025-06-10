@@ -1,248 +1,238 @@
 package kyo
 
-import kyo.Tag
-import kyo.kernel.*
+import kyo.kernel.ArrowEffect
 
-/** The Emit effect allows producing multiple values alongside the main result of a computation.
+/** Represents polling values from a data source with backpressure control.
   *
-  * Emit implements a push-based model where values of type V are actively emitted from a producer without waiting for consumer readiness.
-  * This makes it useful for event emission, logging, or any scenario where values need to be produced during computation regardless of
-  * downstream consumption patterns.
+  * Poll implements a pull-based streaming model where consumers actively request data when they're ready to process it. This approach
+  * provides natural backpressure, as values are only produced in response to explicit requests, preventing overwhelmed consumers.
   *
-  * As a low-level primitive in Kyo's streaming architecture, Emit provides fundamental capabilities but lacks many conveniences. For most
-  * streaming use cases, prefer the higher-level Stream abstraction which offers richer transformation capabilities, automatic chunking, and
-  * better composition. Direct use of Emit should generally be reserved for specialized scenarios.
+  * Key behaviors:
+  *   - Poll returns Maybe[V], where:
+  *     - Present(v) indicates a successful poll with value v
+  *     - Absent indicates the end of the stream (no more values will be available)
+  *   - Once Absent is received, the consumer should stop polling as the stream has terminated
   *
-  * Values are emitted using methods like `value` and collected with various run handlers such as `run`, `runFold`, or `runForeach`. The
-  * effect follows a clean separation between emission and consumption, allowing for functional composition of streaming operations.
+  * Poll is used to consume values. Each poll operation signals readiness to receive data, and returns Maybe[V] indicating whether a value
+  * was available. This enables building streaming data pipelines with controlled consumption rates. Handlers can process values at their
+  * own pace by polling only as needed.
   *
-  * Unlike Poll, which implements a pull-based model with backpressure, Emit is a simpler model where the producer drives the flow. When
-  * sophisticated flow control is needed, Emit and Poll can be connected using `Poll.run` to establish backpressure.
+  * The Poll effect can be connected to an Emit effect through `Poll.run` to synchronize producer and consumer, establishing proper flow
+  * control. For higher-level streaming operations with rich transformation capabilities, consider using the Stream abstraction.
   *
   * @tparam V
-  *   The type of values that can be emitted
+  *   The type of values being polled from the data source.
   *
   * @see
-  *   [[kyo.Emit.value]], [[kyo.Emit.valueWith]] for emitting values
+  *   [[kyo.Poll.one]] for polling a single value
   * @see
-  *   [[kyo.Emit.run]], [[kyo.Emit.runFold]], [[kyo.Emit.runForeach]] for handling emitted values
+  *   [[kyo.Poll.values]] for processing multiple polled values
   * @see
-  *   [[kyo.Poll]] for pull-based streaming with backpressure
+  *   [[kyo.Poll.fold]] for folding over polled values
   * @see
-  *   [[kyo.Stream]] for higher-level streaming operations (preferred for most use cases)
+  *   [[kyo.Poll.run]] for connecting Poll with Emit effects
+  * @see
+  *   [[kyo.Emit]] for push-based value emission
+  * @see
+  *   [[kyo.Stream]] for higher-level streaming operations
   */
-sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Unit]]
+sealed trait Poll[+V] extends ArrowEffect[Const[Unit], Const[Maybe[V]]]
 
-object Emit:
+object Poll:
+    given eliminatePoll: Reducible.Eliminable[Poll[Any]] with {}
 
-    /** Emits a single value.
+    /** Attempts to poll a single value.
       *
-      * @param value
-      *   The value to emit
       * @return
-      *   An effect that emits the given value
+      *   A computation that produces Maybe containing the polled value if available
       */
-    inline def value[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Unit < Emit[V] =
-        ArrowEffect.suspend[Any](tag, value)
-
-    /** Emits a single value when a condition is true.
-      *
-      * @param cond
-      *   The condition that determines whether to emit the value
-      * @param value
-      *   The value to emit if the condition is true
-      * @return
-      *   An effect that emits the given value if the condition is true, otherwise does nothing
-      */
-    inline def valueWhen[V, S](cond: Boolean < S)(inline value: V)(using
-        inline tag: Tag[Emit[V]],
+    inline def one[V](
+        using
+        inline tag: Tag[Poll[V]],
         inline frame: Frame
-    ): Unit < (Emit[V] & S) =
-        cond.map {
-            case false => ()
-            case true  => Emit.value(value)
+    ): Maybe[V] < Poll[V] =
+        ArrowEffect.suspend[Unit](tag, ())
+
+    /** Processes polled values with a function. Values are processed until n is reached or the stream completes.
+      *
+      * @param n
+      *   Maximum number of values to process
+      * @param f
+      *   Function to apply to each value
+      * @return
+      *   A computation that processes values until completion or limit reached
+      */
+    def values[V](using Frame)[S](n: Int)(f: V => Any < S)(using tag: Tag[Poll[V]]): Unit < (Poll[V] & S) =
+        Loop.indexed { idx =>
+            if idx == n then Loop.done
+            else
+                Poll.andMap[V] {
+                    case Present(v) => f(v).map(_ => Loop.continue)
+                    case Absent     => Loop.done
+                }
         }
 
-    /** Emits a single value and maps the resulting Ack.
+    /** Processes polled values with a function until the stream completes.
       *
-      * @param value
-      *   The value to emit
       * @param f
-      *   A function to apply to the resulting Ack
+      *   Function to apply to each value
       * @return
-      *   The result of applying f to the Ack
+      *   A computation that processes values until completion
       */
-    inline def valueWith[V, A, S](inline value: V)(inline f: => A < S)(
-        using
-        inline tag: Tag[Emit[V]],
-        inline frame: Frame
-    ): A < (S & Emit[V]) =
-        ArrowEffect.suspendWith[Any](tag, value)(_ => f)
+    def values[V](using Frame)[S](f: V => Any < S)(using tag: Tag[Poll[V]]): Unit < (Poll[V] & S) =
+        Loop.foreach:
+            Poll.andMap[V] {
+                case Present(v) => f(v).map(_ => Loop.continue)
+                case Absent     => Loop.done
+            }
 
-    /** Runs an Emit effect, collecting all emitted values into a Chunk.
+    /** Applies a function to the result of polling.
       *
-      * @param v
-      *   The computation with Emit effect
+      * @param f
+      *   Function to apply to the polled result
       * @return
-      *   A tuple of the collected values and the result of the computation
+      *   A computation that applies the function to the polled result
       */
-    def run[V](using Frame)[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): (Chunk[V], A) < S =
-        ArrowEffect.handleLoop(tag, Chunk.empty[V], v)(
-            handle = [C] => (input, state, cont) => Loop.continue(state.append(input), cont(())),
-            done = (state, res) => (state, res)
-        )
+    inline def andMap[V](
+        using inline frame: Frame
+    )[A, S](f: Maybe[V] => A < S)(
+        using inline tag: Tag[Poll[V]]
+    ): A < (Poll[V] & S) =
+        ArrowEffect.suspendWith[Unit](tag, ())(f)
 
-    /** Runs an Emit effect, folding over the emitted values.
+    /** Folds over polled values with an accumulator.
+      *
+      * Processes values from the stream by combining them with an accumulator value. Continues until the stream ends, allowing stateful
+      * processing of the sequence.
       *
       * @param acc
-      *   The initial accumulator value
+      *   Initial accumulator value
       * @param f
-      *   The folding function that takes the current accumulator and emitted value, and returns an updated accumulator
-      * @param v
-      *   The computation with Emit effect
+      *   Function to combine accumulator with each value
       * @return
-      *   A tuple of the final accumulator value and the result of the computation
+      *   Final accumulator value after processing all values
       */
-    def runFold[V](
+    def fold[V](
         using Frame
-    )[A, S, B, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(using tag: Tag[Emit[V]]): (A, B) < (S & S2) =
-        ArrowEffect.handleLoop(tag, acc, v)(
-            handle = [C] =>
-                (input, state, cont) =>
-                    f(state, input).map(a => Loop.continue(a, cont(()))),
-            done = (state, res) => (state, res)
-        )
+    )[A, S](acc: A)(f: (A, V) => A < S)(
+        using tag: Tag[Poll[V]]
+    ): A < (Poll[V] & S) =
+        Loop(acc) { state =>
+            Poll.andMap[V] {
+                case Absent     => Loop.done(state)
+                case Present(v) => f(state, v).map(Loop.continue(_))
+            }
+        }
 
-    /** Runs an Emit effect, discarding all emitted values.
+    /** Runs a Poll effect using the provided sequence of values.
+      *
+      * The Poll effect will consume values from the input chunk sequentially. Once all elements in the chunk have been consumed, subsequent
+      * polls will receive Maybe.Absent, signaling the end of the stream.
+      *
+      * @param inputs
+      *   The sequence of values to provide to the Poll effect
+      * @param v
+      *   The computation requiring Poll values
+      * @return
+      *   The result of running the Poll computation with the provided values
+      */
+    def run[V](inputs: Chunk[V])[A, VR, S](v: A < (Poll[V] & Poll[VR] & S))(
+        using
+        tag: Tag[Poll[V]],
+        reduce: Reducible[Poll[VR]],
+        frame: Frame
+    ): A < (reduce.SReduced & S) =
+        reduce:
+            ArrowEffect.handleLoop(tag, inputs, v)(
+                [C] =>
+                    (unit, state, cont) => Loop.continue(state.drop(1), cont(state.headMaybe))
+            )
+
+    /** Runs a Poll effect with a single input value, stopping after the first poll operation.
+      *
+      * This method provides a single input value to the Poll effect and stops after the first poll. It returns a continuation function that
+      * can process the Maybe[V] result of the poll
       *
       * @param v
-      *   The computation with Emit effect
+      *   The computation requiring Poll values
       * @return
-      *   The result of the computation, discarding emitted values
+      *   A tuple containing the acknowledgement and a continuation function that processes the poll result
       */
-    def runDiscard[V](
+    def runFirst[V](
         using Frame
-    )[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): A < S =
-        ArrowEffect.handle(tag, v)(
-            handle = [C] => (input, cont) => cont(())
-        )
+    )[A, VR, S](v: A < (Poll[V] & Poll[VR] & S))(using
+        tag: Tag[Poll[V]],
+        reduce: Reducible[Poll[VR]]
+    ): Either[A, Maybe[V] => A < (Poll[V & VR] & S)] < (reduce.SReduced & S) =
+        reduce:
+            ArrowEffect.handleFirst(tag, v)(
+                handle = [C] =>
+                    (input, cont) =>
+                        // Effect found, return the input an continuation
+                        Right(cont),
+                done = r =>
+                    // Effect not found, return empty input and a placeholder continuation
+                    // that returns the result of the computation
+                    Left(r)
+            )
 
-    /** Runs an Emit effect, allowing custom handling of each emitted value.
+    /** Connects an emitting source to a polling consumer with flow control.
       *
-      * @param v
-      *   The computation with Emit effect
-      * @param f
-      *   A function to process each emitted value
-      * @return
-      *   The result of the computation
-      */
-    def runForeach[V](
-        using Frame
-    )[A, S, S2](v: A < (Emit[V] & S))(f: V => Any < S2)(using tag: Tag[Emit[V]]): A < (S & S2) =
-        ArrowEffect.handle(tag, v)(
-            [C] => (input, cont) => f(input).map(_ => cont(()))
-        )
-
-    /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
+      * The emitting source produces values that are consumed by the polling computation in a demand-driven way. The polling consumer
+      * controls the flow rate by sending requests to indicate readiness for more data. The emitter responds to these signals to implement
+      * backpressure.
       *
-      * @param v
-      *   The computation with Emit effect
-      * @param f
-      *   A function to process each emitted value
-      * @return
-      *   The result of the computation
-      */
-    def runWhile[V](using Frame)[A, S, S2](v: A < (Emit[V] & S))(f: V => Boolean < S2)(using tag: Tag[Emit[V]]): A < (S & S2) =
-        ArrowEffect.handleLoop(tag, true, v)(
-            [C] =>
-                (input, cond, cont) =>
-                    if cond then
-                        f(input).map(c => Loop.continue(c, cont(())))
-                    else
-                        Loop.continue(cond, cont(()))
-        )
-
-    /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
+      * The flow continues until either:
+      *   - The emitter completes, signaling end-of-stream to the consumer via Maybe.Absent
+      *   - The consumer completes, terminating consumption
+      *   - Both sides complete naturally
       *
-      * @param v
-      *   The computation with Emit effect
+      * @param emit
+      *   The emitting computation that produces values
+      * @param poll
+      *   The polling computation that consumes values
       * @return
-      *   A tuple containing:
-      *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
-      *   - A continuation function that returns the remaining computation
+      *   A tuple containing results from both the emitter and poller
       */
-    def runFirst[V](using Frame)[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]]): (Maybe[V], () => A < (Emit[V] & S)) < S =
-        ArrowEffect.handleFirst(tag, v)(
-            handle = [C] =>
-                (input, cont) =>
-                    // Effect found, return the input an continuation
-                    (Maybe(input), () => cont(())),
-            done = r =>
-                // Effect not found, return empty input and a placeholder continuation
-                // that returns the result of the computation
-                (Maybe.empty[V], () => r: A < (Emit[V] & S))
-        )
+    def run[V](
+        using
+        emitTag: Tag[Emit[V]],
+        pollTag: Tag[Poll[V]]
+    )[A, B, VRE, VRP, S, S2](emit: A < (Emit[V] & Emit[VRE] & S))(poll: B < (Poll[V] & Poll[VRP] & S2))(
+        using
+        reduceEmit: Reducible[Emit[VRE]],
+        reducePoll: Reducible[Poll[VRP]],
+        frame: Frame
+    ): (A, B) < (reduceEmit.SReduced & reducePoll.SReduced & S & S2) =
+        reduceEmit:
+            reducePoll:
+                // Start by handling the first emission
+                Loop(emit, poll) { (emit, poll) =>
+                    ArrowEffect.handleFirst(emitTag, emit)(
+                        handle = [C] =>
+                            (emitted, emitCont) =>
+                                // Once we have an emitted value, handle the first poll operation
+                                // This creates the demand-driven cycle between emit and poll
+                                ArrowEffect.handleFirst(pollTag, poll)(
+                                    handle = [C2] =>
+                                        (_, pollCont) =>
+                                            // Continue the emit-poll cycle:
+                                            // 1. Pass the ack back to emitter to control flow
+                                            // 2. Pass the emitted value to poller for consumption
+                                            // 3. Recursively continue the cycle
+                                            Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
+                                    // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
+                                    done = b =>
+                                        // Poller completed early (e.g., received all needed values)
+                                        // Discard remaining emit operations
+                                        Emit.runDiscard[V](emitCont(())).map(a => Loop.done((a, b)))
+                            ),
+                        done = a =>
+                            // Emitter completed (no more values to emit)
+                            // Run remaining poll operations with empty chunk to signal completion
+                            Poll.run[V](Chunk.empty)(poll).map(b => Loop.done((a, b)))
+                    )
+                }
+    end run
 
-    object isolate:
-
-        /** Creates an isolate that includes emitted values from isolated computations.
-          *
-          * When the isolation ends, appends all values emitted during the isolated computation to the outer context. The values are emitted
-          * in their original order.
-          *
-          * @tparam V
-          *   The type of values being emitted
-          * @return
-          *   An isolate that preserves emitted values
-          */
-        def merge[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
-            new Isolate.Stateful[Emit[V], Any]:
-
-                type State = Chunk[V]
-
-                type Transform[A] = (Chunk[V], A)
-
-                def capture[A, S](f: State => A < S)(using Frame) =
-                    f(Chunk.empty)
-
-                def isolate[A, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
-                    Emit.run(v)
-
-                def restore[A, S](v: (Chunk[V], A) < S)(using Frame) =
-                    v.map { (state, result) =>
-                        Loop(state: Seq[V]) {
-                            case Seq() => Loop.done(result)
-                            case head +: tail =>
-                                Emit.valueWith(head)(Loop.continue(tail))
-                        }
-                    }
-                end restore
-
-        /** Creates an isolate that ignores emitted values.
-          *
-          * Allows the isolated computation to emit values freely, but discards all emissions when the isolation ends. Useful when you want
-          * to prevent emissions from propagating to the outer context.
-          *
-          * @tparam V
-          *   The type of values being emitted
-          * @return
-          *   An isolate that discards emitted values
-          */
-        def discard[V](using Tag[Emit[V]]): Isolate.Stateful[Emit[V], Any] =
-            new Isolate.Stateful[Emit[V], Any]:
-
-                type State = Chunk[V]
-
-                type Transform[A] = A
-
-                def capture[A, S](f: State => A < S)(using Frame) =
-                    f(Chunk.empty)
-
-                def isolate[A, S](state: Chunk[V], v: A < (S & Emit[V]))(using Frame) =
-                    Emit.runDiscard(v)
-
-                def restore[A, S](v: A < S)(using Frame) =
-                    v
-    end isolate
-
-end Emit
+end Poll
