@@ -623,6 +623,7 @@ object StreamCoreExtensions:
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
 
     end extension
+
 end StreamCoreExtensions
 
 export StreamCoreExtensions.*
