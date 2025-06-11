@@ -63,7 +63,8 @@ private[kyo] object Validate:
                     qualifier.tpe <:< TypeRepr.of[Option[?]] |
                     qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
                     qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]]
+                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]] |
+                    qualifier.tpe <:< TypeRepr.of[kyo.Stream[?, ?]]
 
             inline def validName: Boolean = validMethodNamesForAsyncShift.contains(methodName)
 
