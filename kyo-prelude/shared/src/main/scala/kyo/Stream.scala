@@ -924,5 +924,5 @@ object Stream:
       * @return
       *   A new stream that fuses together both effect contexts S and S2 into a single Stream[V, S & S2]
       */
-    inline def unwrap[V, S, S2](stream: Stream[V, S] < S2): Stream[V, S & S2] = Stream(stream.map(_.emit))
+    inline def unwrap[V, S, S2](stream: Stream[V, S] < S2)(using Frame): Stream[V, S & S2] = Stream(stream.map(_.emit))
 end Stream
