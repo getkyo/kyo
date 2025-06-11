@@ -98,7 +98,7 @@ object StreamCoreExtensions:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.panic(throwable))
 
-            Stream(stream.map(_.emit)) // unwrap
+            Stream.unwrap(stream)
         end fromIterator
 
         /** Creates a stream from an iterator.
@@ -147,7 +147,7 @@ object StreamCoreExtensions:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.error(error))
 
-            Stream(stream.map(_.emit)) // unwrap
+            Stream.unwrap(stream)
         end fromIteratorCatching
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
