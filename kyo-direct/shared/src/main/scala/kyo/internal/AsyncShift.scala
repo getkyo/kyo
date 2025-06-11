@@ -186,6 +186,15 @@ class StreamAsyncShift[V, S] extends AsyncShift[Stream[V, S]]:
         monad match
             case _: KyoCpsMonad[?] => monad.pure(stream.map(a => f(a)).asInstanceOf[Stream[V2, S]])
     end map
+
+    def filter[F[_]](stream: Stream[V, S], monad: CpsMonad[F])(f: V => F[Boolean])(using
+        tag: Tag[Emit[Chunk[V]]],
+        discr: Discriminator,
+        frame: Frame
+    ): F[Stream[V, S]] =
+        monad match
+            case _: KyoCpsMonad[?] => monad.pure(stream.filter(f).asInstanceOf[Stream[V, S]])
+
 end StreamAsyncShift
 
 class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
