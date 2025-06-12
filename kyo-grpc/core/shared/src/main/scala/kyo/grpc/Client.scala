@@ -22,8 +22,8 @@ object Client:
             val terminated =
                 channel
                     .shutdown()
-                    .awaitTermination(timeout.toJava.toNanos, TimeUnit.NANOSECONDS)
-            if terminated then () else discard(channel.shutdownNow().awaitTermination(1, TimeUnit.HOURS))
+                    .awaitTermination(timeout.toNanos, TimeUnit.NANOSECONDS)
+            if terminated then () else discard(channel.shutdownNow().awaitTermination(1, TimeUnit.MINUTES))
 
     /** Creates a managed gRPC channel with automatic resource cleanup.
       *

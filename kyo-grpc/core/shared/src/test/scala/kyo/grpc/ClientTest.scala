@@ -7,21 +7,55 @@ import io.grpc.ManagedChannelProvider.ProviderNotFoundException
 import io.grpc.ManagedChannelRegistry
 import io.grpc.Status
 import io.grpc.stub.StreamObserver
+
 import java.net.SocketAddress
 import kyo.*
 import org.scalamock.scalatest.AsyncMockFactory2
+
+import java.util.concurrent.TimeUnit
 
 class ClientTest extends Test with AsyncMockFactory2:
 
     private val host = "localhost"
     private val port = 50051
 
-    "shutdown shuts down the channel" in run {
+    "shutdown shuts down the channel gracefully" in run {
         val channel = mock[ManagedChannel]
 
         (() => channel.shutdown())
             .expects()
             .returns(channel)
+            .once()
+
+        channel.awaitTermination
+            .expects(30000000000L, TimeUnit.NANOSECONDS)
+            .returns(true)
+            .once()
+
+        Client.shutdown(channel).map(_ => succeed)
+    }
+
+    "shutdown shuts down the channel forcefully" in run {
+        val channel = mock[ManagedChannel]
+
+        (() => channel.shutdown())
+            .expects()
+            .returns(channel)
+            .once()
+
+        channel.awaitTermination
+            .expects(30000000000L, TimeUnit.NANOSECONDS)
+            .returns(false)
+            .once()
+
+        (() => channel.shutdownNow())
+            .expects()
+            .returns(channel)
+            .once()
+
+        channel.awaitTermination
+            .expects(1, TimeUnit.MINUTES)
+            .returns(true)
             .once()
 
         Client.shutdown(channel).map(_ => succeed)
