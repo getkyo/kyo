@@ -1,6 +1,7 @@
 package kyo.grpc
 
 import io.grpc.*
+import kyo.Maybe
 import org.scalactic.*
 import org.scalactic.TripleEquals.*
 
@@ -13,9 +14,11 @@ end statusEquality
 
 given metadataEquality: Equality[Metadata] with
     def areEqual(a: Metadata, b: Any): Boolean =
-        b match
+        if Maybe(a).isEmpty then Maybe(b).isEmpty
+        else b match
             case b: Metadata => a.toString === b.toString
             case _ => false
+    end areEqual
 end metadataEquality
 
 given statusExceptionEquality: Equality[StatusException] with
@@ -23,4 +26,5 @@ given statusExceptionEquality: Equality[StatusException] with
         b match
             case b: StatusException => a.getStatus === b.getStatus && a.getTrailers === b.getTrailers
             case _                  => false
+    end areEqual
 end statusExceptionEquality

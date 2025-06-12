@@ -31,7 +31,9 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         (channel.error(_: GrpcResponse.Errors)(using _: Frame))
-            .expects(argThat[StatusException](_ === statusException), *)
+            .expects(argThat[StatusException](x => {
+                statusExceptionEquality.areEqual(x, statusException)
+            }), *)
             .returns(())
             .once()
 
