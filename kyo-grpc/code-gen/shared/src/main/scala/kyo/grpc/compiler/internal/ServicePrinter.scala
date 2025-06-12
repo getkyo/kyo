@@ -77,6 +77,8 @@ private[compiler] case class ServicePrinter(
                     .newline
                     .call(printClientMethod)
                     .newline
+                    .call(printManagedClientMethod)
+                    .newline
                     .call(printClientTrait)
                     .newline
                     .call(printClientImpl)
@@ -118,7 +120,25 @@ private[compiler] case class ServicePrinter(
             )
             .addReturnType("Client")
             .addBody(
-                _.add(s"ClientImpl(channel, options)")
+                _.add("ClientImpl(channel, options)")
+            )
+
+    private def printManagedClientMethod: PrinterEndo =
+        _.addMethod("managedClient")
+            .addParameterList( //
+                "host" :- Types.string,
+                "port" :- Types.int,
+                "timeout" :- Types.duration := s"${Types.duration}.fromUnits(30, ${Types.duration}.Units.Millis)",
+                "options" :- Types.callOptions := (Types.callOptions + ".DEFAULT")
+            )
+            .addParameterList( //
+                "configure" :- s"${Types.managedChannelBuilder("?")} => ${Types.managedChannelBuilder("?")}",
+                "shutdown" :- s"(${Types.managedChannel}, ${Types.duration}) => ${Types.frame} ?=> ${Types.pending(Types.any, Types.io)}" := s"${Types.client}.shutdown"
+            )
+            .addUsingParameters(Types.frame)
+            .addReturnType(Types.pending("Client", s"${Types.resource} & ${Types.io}"))
+            .addBody(
+                _.add(s"${Types.client}.channel(host, port, timeout)(configure, shutdown).map($name.client(_, options))")
             )
 
     private def printClientTrait: PrinterEndo =

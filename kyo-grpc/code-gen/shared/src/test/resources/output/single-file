@@ -46,6 +46,19 @@ object TestService {
     options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
   ): Client = ClientImpl(channel, options)
   
+  def managedClient(
+    host: String,
+    port: Int,
+    timeout: _root_.kyo.Duration = _root_.kyo.Duration.fromUnits(30, _root_.kyo.Duration.Units.Millis),
+    options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
+  )(
+    configure: _root_.io.grpc.ManagedChannelBuilder[?] => _root_.io.grpc.ManagedChannelBuilder[?],
+    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.IO] = _root_.kyo.grpc.Client.shutdown
+  )(using
+    _root_.kyo.Frame
+  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.IO] =
+    _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(TestService.client(_, options))
+  
   trait Client {
     def oneToOne(
       request: kgrpc.test.Request
@@ -120,6 +133,19 @@ object UtilityService {
     channel: _root_.io.grpc.Channel,
     options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
   ): Client = ClientImpl(channel, options)
+  
+  def managedClient(
+    host: String,
+    port: Int,
+    timeout: _root_.kyo.Duration = _root_.kyo.Duration.fromUnits(30, _root_.kyo.Duration.Units.Millis),
+    options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
+  )(
+    configure: _root_.io.grpc.ManagedChannelBuilder[?] => _root_.io.grpc.ManagedChannelBuilder[?],
+    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.IO] = _root_.kyo.grpc.Client.shutdown
+  )(using
+    _root_.kyo.Frame
+  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.IO] =
+    _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(UtilityService.client(_, options))
   
   trait Client {
     def health(

@@ -116,6 +116,9 @@ package object internal {
         def addImplicitParameters(params: Parameter*): AddMethodDsl =
             copy(builder = builder.appendImplicitParameters(params))
 
+        def addUsingParameters(params: Parameter*): AddMethodDsl =
+            copy(builder = builder.appendUsingParameters(params))
+
         def addReturnType(returnType: String): AddMethodDsl =
             copy(builder = builder.setReturnType(returnType))
 
@@ -181,13 +184,14 @@ package object internal {
             (Doc.text("extends ") + Doc.intercalate(Doc.line + Doc.text("with "), docs)).hangingUnsafe(INDENT * 2)
         }
 
-    private[compiler] def typedName(parameter: (String, String)): Doc = {
-        val (name, tpe) = parameter
-        name +: (Doc.text(": ") + Doc.text(tpe))
-    }
+    private[compiler] def typedName(name: Option[String], tpe: String): Doc =
+        name match {
+            case None    => Doc.text(tpe)
+            case Some(n) => n +: (Doc.text(": ") + Doc.text(tpe))
+        }
 
     private[compiler] def parameter(parameter: Parameter): Doc =
-        typedName((parameter.name, parameter.typeName)) +
+        typedName(parameter.name, parameter.typeName) +
             parameter.default.fold(Doc.empty)(default => Doc.text(" = ") + Doc.text(default))
 
     private[compiler] def parameterLists(parameterss: Vector[Seq[Parameter]]): Doc =

@@ -65,7 +65,7 @@ object GrpcService:
     end createKyoServer
 
     def createKyoClient(port: Int): TestService.Client < (Resource & IO) =
-        kyo.grpc.Client.channel(host, port)(_.usePlaintext()).map(TestService.client(_))
+        TestService.managedClient(host, port)(_.usePlaintext())
 
     def createZioServer(port: Int, static: Boolean): ZIO[Scope, Throwable, zio_grpc.Server] =
         val service = if static then StaticZIOTestService(size) else ZIOTestService(size)

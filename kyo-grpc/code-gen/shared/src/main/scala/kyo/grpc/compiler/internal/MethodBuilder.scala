@@ -12,6 +12,7 @@ final private[compiler] case class MethodBuilder(
     typeParameters: Vector[String] = Vector.empty,
     parameterLists: Vector[Seq[Parameter]] = Vector.empty,
     implicitParameters: Vector[Parameter] = Vector.empty,
+    usingParameters: Vector[Parameter] = Vector.empty,
     returnType: Option[String] = None,
     body: Option[Doc] = None
 ) {
@@ -30,6 +31,9 @@ final private[compiler] case class MethodBuilder(
 
     def appendImplicitParameters(params: Seq[Parameter]): MethodBuilder =
         copy(implicitParameters = implicitParameters ++ params)
+
+    def appendUsingParameters(params: Seq[Parameter]): MethodBuilder =
+        copy(usingParameters = usingParameters ++ params)
 
     def setReturnType(returnType: String): MethodBuilder =
         copy(returnType = Some(returnType))
@@ -63,7 +67,12 @@ final private[compiler] case class MethodBuilder(
                 .tightBracketRightBy(Doc.text("(implicit"), Doc.char(')'))
         }
 
-        val allParameterListsDoc = (parameterListsDoc + implicitParametersDoc).regrouped
+        val usingParametersDoc = when(usingParameters.nonEmpty) {
+            stackList(usingParameters.map(parameter))
+                .tightBracketRightBy(Doc.text("(using"), Doc.char(')'))
+        }
+
+        val allParameterListsDoc = (parameterListsDoc + implicitParametersDoc + usingParametersDoc).regrouped
 
         val returnTypeDoc = returnType.fold(Doc.empty) { s =>
             Doc.text(": ") :+ s

@@ -2,13 +2,31 @@ package kyo.grpc.compiler.internal
 
 private[compiler] object Types {
 
-    def pendingGrpcResponse(t: String) = s"_root_.kyo.<[$t, $grpcResponse]"
+    val any = "Any"
 
-    def pendingGrpcRequest(t: String) = s"_root_.kyo.<[$t, $grpcRequest]"
+    val int = "Int"
+
+    val string = "String"
+
+    def pending(t: String, s: String) = s"_root_.kyo.<[$t, $s]"
+
+    def pendingGrpcRequest(t: String) = pending(t, grpcRequest)
+
+    def pendingGrpcResponse(t: String) = pending(t, grpcResponse)
+
+    val duration = "_root_.kyo.Duration"
+
+    val frame = "_root_.kyo.Frame"
+
+    val io = "_root_.kyo.IO"
+
+    val resource = "_root_.kyo.Resource"
 
     def streamGrpcResponse(t: String) = s"_root_.kyo.Stream[$t, $grpcResponse]"
 
     def streamGrpcRequest(t: String) = s"_root_.kyo.Stream[$t, $grpcRequest]"
+
+    val client = "_root_.kyo.grpc.Client"
 
     val clientCall = "_root_.kyo.grpc.ClientCall"
 
@@ -23,6 +41,10 @@ private[compiler] object Types {
     val callOptions = "_root_.io.grpc.CallOptions"
 
     val channel = "_root_.io.grpc.Channel"
+
+    val managedChannel = "_root_.io.grpc.ManagedChannel"
+
+    def managedChannelBuilder(t: String) = s"_root_.io.grpc.ManagedChannelBuilder[$t]"
 
     val serverServiceDefinition = "_root_.io.grpc.ServerServiceDefinition"
 
