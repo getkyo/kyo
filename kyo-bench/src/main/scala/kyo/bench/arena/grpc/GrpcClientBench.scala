@@ -26,7 +26,7 @@ object GrpcClientBench:
 
     class TestServiceImpl extends TestService:
 
-        private val response = Response("response")
+        private val response  = Response("response")
         private val responses = Chunk.fill(size)(response)
 
         def oneToOne(request: Request): Future[Response] =
@@ -38,7 +38,7 @@ object GrpcClientBench:
         end oneToMany
 
         def manyToOne(responseObserver: StreamObserver[Response]): StreamObserver[Request] =
-             new StreamObserver[Request]:
+            new StreamObserver[Request]:
                 def onNext(request: Request): Unit = ()
 
                 def onError(t: Throwable): Unit =

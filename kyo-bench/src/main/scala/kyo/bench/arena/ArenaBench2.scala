@@ -29,7 +29,7 @@ object ArenaBench2:
     class CatsRuntime:
 
         var ioRuntime: cats.effect.unsafe.IORuntime = uninitialized
-        given cats.effect.unsafe.IORuntime = ioRuntime
+        given cats.effect.unsafe.IORuntime          = ioRuntime
 
         @Setup
         def setup() =

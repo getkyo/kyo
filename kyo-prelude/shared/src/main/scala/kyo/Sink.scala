@@ -318,7 +318,7 @@ object Sink:
         Sink:
             Loop(Absent: Maybe[V]): state =>
                 Poll.andMap[Chunk[V]]:
-                    case Absent => Loop.done(state)
+                    case Absent     => Loop.done(state)
                     case Present(c) => Loop.continue(c.lastMaybe.orElse(state))
     end last
 

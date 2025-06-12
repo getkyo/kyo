@@ -1,18 +1,20 @@
 package kyo.bench.arena.grpc
 
-import io.grpc.{Grpc, Metadata}
+import GrpcService.*
+import io.grpc.Grpc
+import io.grpc.Metadata
 import kgrpc.*
 import kgrpc.bench.*
 import kyo.*
 import kyo.bench.arena.ArenaBench
-import GrpcService.*
 import kyo.grpc.GrpcRequest
 import org.openjdk.jmh.annotations.*
-import scalapb.zio_grpc.Server
-import zio.{Chunk, UIO, ZIO}
-import zio.stream.ZStream
-
 import scala.compiletime.uninitialized
+import scalapb.zio_grpc.Server
+import zio.Chunk
+import zio.UIO
+import zio.ZIO
+import zio.stream.ZStream
 
 class GrpcE2EManyToManyBench extends ArenaBench.ForkOnly[Long](sizeSquared):
 

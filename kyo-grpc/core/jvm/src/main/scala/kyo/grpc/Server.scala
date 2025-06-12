@@ -1,18 +1,17 @@
 package kyo.grpc
 
 import io.grpc.ServerBuilder
+import java.util.concurrent.TimeUnit
 import kyo.*
 import sun.misc.Signal
-
-import java.util.concurrent.TimeUnit
 
 object Server:
 
     /** Attempts an orderly shut down of the [[io.grpc.Server]] within a timeout.
       *
-      * First attempts graceful shutdown by calling [[io.grpc.Server.shutdown]] and waits up to `timeout` for
-      * termination. If the server doesn't terminate within the timeout, forces shutdown with
-      * [[io.grpc.Server.shutdownNow]] and then waits indefinitely for it to terminate.
+      * First attempts graceful shutdown by calling [[io.grpc.Server.shutdown]] and waits up to `timeout` for termination. If the server
+      * doesn't terminate within the timeout, forces shutdown with [[io.grpc.Server.shutdownNow]] and then waits indefinitely for it to
+      * terminate.
       *
       * @param server
       *   The server to shut down
@@ -27,15 +26,20 @@ object Server:
                     .awaitTermination(timeout.toJava.toNanos, TimeUnit.NANOSECONDS)
             if terminated then () else server.shutdownNow().awaitTermination()
 
-    /**
-     * Starts an [[io.grpc.Server]] on the specified port with the provided configuration and shutdown logic.
-     *
-     * @param port the port on which the server will listen
-     * @param timeout the maximum duration to wait for graceful termination (default: 30 seconds)
-     * @param configure a function to configure the [[ServerBuilder]] such as adding services
-     * @param shutdown A function to handle the shutdown of the server, which takes the server instance and a timeout duration. Defaults to [[Server.shutdown]]
-     * @return the running server pending [[Resource]] and [[IO]]
-     */
+    /** Starts an [[io.grpc.Server]] on the specified port with the provided configuration and shutdown logic.
+      *
+      * @param port
+      *   the port on which the server will listen
+      * @param timeout
+      *   the maximum duration to wait for graceful termination (default: 30 seconds)
+      * @param configure
+      *   a function to configure the [[ServerBuilder]] such as adding services
+      * @param shutdown
+      *   A function to handle the shutdown of the server, which takes the server instance and a timeout duration. Defaults to
+      *   [[Server.shutdown]]
+      * @return
+      *   the running server pending [[Resource]] and [[IO]]
+      */
     def start(port: Int, timeout: Duration = 30.seconds)(
         configure: ServerBuilder[?] => ServerBuilder[?],
         shutdown: (io.grpc.Server, Duration) => Frame ?=> Any < IO = shutdown
@@ -45,29 +49,28 @@ object Server:
         )(shutdown(_, timeout))
 
     // This is required until https://github.com/getkyo/kyo/issues/491 is done.
-    // Put it here so that it can be converted to a no-op without breaking compatibility or behaviour.
-    /**
-     * Waits indefinitely for an interrupt signal (SIGINT or SIGTERM).
-     *
-     * Use this to keep the server running until an interrupt signal is received. For example:
-     * {{{
-     *   run {
-     *     for
-     *       _ <- Console.println(s"Server is running on port $port. Press Ctrl-C to stop.")
-     *       server <- Server.start(port)(_.addService(GreeterService), { server =>
-     *         for
-     *           _ <- Console.print("Shutting down...")
-     *           _ <- Server.shutdown(server)
-     *           _ <- Console.println("Done.")
-     *         yield ()
-     *       })
-     *       _ <- Server.waitForInterrupt
-     *     yield ()
-     *   }
-     * }}}
-     *
-     * @return [[Unit]] pending [[Async]] that completes when an interrupt signal is received
-     */
+    /** Waits indefinitely for an interrupt signal (SIGINT or SIGTERM).
+      *
+      * Use this to keep the server running until an interrupt signal is received. For example:
+      * {{{
+      *   run {
+      *     for
+      *       _ <- Console.println(s"Server is running on port $port. Press Ctrl-C to stop.")
+      *       server <- Server.start(port)(_.addService(GreeterService), { server =>
+      *         for
+      *           _ <- Console.print("Shutting down...")
+      *           _ <- Server.shutdown(server)
+      *           _ <- Console.println("Done.")
+      *         yield ()
+      *       })
+      *       _ <- Server.waitForInterrupt
+      *     yield ()
+      *   }
+      * }}}
+      *
+      * @return
+      *   [[Unit]] pending [[Async]] that completes when an interrupt signal is received
+      */
     def waitForInterrupt(using Frame, AllowUnsafe): Unit < Async =
         for
             promise <- Promise.init[Nothing, Unit]

@@ -5,7 +5,7 @@ import org.typelevel.paiges.Doc
 import org.typelevel.paiges.internal.ExtendedSyntax.*
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
-private[compiler] final case class ClassBuilder(
+final private[compiler] case class ClassBuilder(
     override val id: String,
     override val annotations: Vector[Doc] = Vector.empty,
     override val mods: Vector[Doc] = Vector.empty,

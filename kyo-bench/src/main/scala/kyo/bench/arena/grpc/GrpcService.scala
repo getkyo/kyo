@@ -1,33 +1,36 @@
 package kyo.bench.arena.grpc
 
 import cats.effect
-import cats.effect.IO as CIO
 import cats.effect.IO.given
+import cats.effect.IO as CIO
 import fs2.grpc.syntax.all.*
 import io.grpc
 import io.grpc.*
 import io.grpc.netty.shaded.io.grpc.netty.*
+import java.net.ServerSocket
+import java.util.concurrent.TimeUnit
 import kgrpc.bench.*
 import kyo.*
 import kyo.grpc.*
-import scalapb.zio_grpc
-import scalapb.zio_grpc.{ScopedServer, ZChannel}
-import zio.{Scope, ZIO, stream, given}
-
-import java.net.ServerSocket
-import java.util.concurrent.TimeUnit
 import scala.language.implicitConversions
+import scalapb.zio_grpc
+import scalapb.zio_grpc.ScopedServer
+import scalapb.zio_grpc.ZChannel
+import zio.Scope
+import zio.ZIO
+import zio.given
+import zio.stream
 
 object GrpcService:
 
     given Frame = Frame.internal
 
-    val host = "localhost"
-    val size = 10
-    val sizeSquared: Int = size ^ 2
-    val message          = "Hello"
-    val request: Request   = Request(message)
-    val response: Response = Response(message)
+    val host                     = "localhost"
+    val size                     = 10
+    val sizeSquared: Int         = size ^ 2
+    val message                  = "Hello"
+    val request: Request         = Request(message)
+    val response: Response       = Response(message)
     val requests: Chunk[Request] = Chunk.fill(GrpcService.size)(Request(message))
 
     def createCatsServer(port: Int, static: Boolean): cats.effect.Resource[CIO, Server] =
@@ -35,15 +38,15 @@ object GrpcService:
         TestServiceFs2Grpc
             .bindServiceResource[CIO](service)
             .flatMap: service =>
-                 NettyServerBuilder
+                NettyServerBuilder
                     .forPort(port)
                     .addService(service)
                     .resourceWithShutdown { server =>
-                        for {
-                            _ <- CIO(server.shutdown())
+                        for
+                            _          <- CIO(server.shutdown())
                             terminated <- CIO.interruptible(server.awaitTermination(30, TimeUnit.SECONDS))
-                            _ <- CIO.unlessA(terminated)(CIO.interruptible(server.shutdownNow().awaitTermination()))
-                        } yield ()
+                            _          <- CIO.unlessA(terminated)(CIO.interruptible(server.shutdownNow().awaitTermination()))
+                        yield ()
                     }
                     .evalMap(server => CIO(server.start()))
     end createCatsServer
@@ -74,7 +77,7 @@ object GrpcService:
         val channel = ZIO.acquireRelease {
             ZIO.attempt(ZChannel(builder.build(), None, Nil))
         } { c =>
-           c.shutdown().flatMap(_ => c.awaitTermination(30.seconds)).ignore
+            c.shutdown().flatMap(_ => c.awaitTermination(30.seconds)).ignore
         }
         ZioBench.TestServiceClient.scoped(channel)
     end createZioClient
@@ -85,6 +88,7 @@ object GrpcService:
             socket.getLocalPort
         finally
             socket.close()
+        end try
     end findFreePort
 
 end GrpcService
@@ -146,7 +150,7 @@ class StaticCatsTestService(size: Int) extends TestServiceFs2Grpc[CIO, Metadata]
 
     import cats.effect.*
 
-    private val response = Response("response")
+    private val response  = Response("response")
     private val responses = fs2.Chunk.constant(response, size)
 
     override def oneToOne(request: kgrpc.bench.Request, ctx: Metadata): IO[Response] =
@@ -165,7 +169,7 @@ end StaticCatsTestService
 
 class StaticKyoTestService(size: Int)(using Frame) extends TestService:
 
-    private val response = Response("response")
+    private val response  = Response("response")
     private val responses = Chunk.fill(size)(response)
 
     override def oneToOne(request: Request): Response < Any =
@@ -184,7 +188,7 @@ end StaticKyoTestService
 
 class StaticZIOTestService(size: Int) extends ZioBench.TestService:
 
-    private val response = Response("response")
+    private val response  = Response("response")
     private val responses = zio.Chunk.fill(size)(response)
 
     override def oneToOne(request: Request): ZIO[Any, StatusException, Response] =

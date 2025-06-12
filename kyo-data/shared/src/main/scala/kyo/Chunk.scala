@@ -190,10 +190,10 @@ sealed abstract class Chunk[+A]
     end last
 
     /** Returns the last element of the Chunk wrapped in a Maybe.
-     *
-     * @return
-     *   Maybe containing the last element if the Chunk is non-empty, or Maybe.empty if the Chunk is empty
-     */
+      *
+      * @return
+      *   Maybe containing the last element if the Chunk is non-empty, or Maybe.empty if the Chunk is empty
+      */
     def lastMaybe: Maybe[A] =
         Maybe.when(nonEmpty)(last)
 

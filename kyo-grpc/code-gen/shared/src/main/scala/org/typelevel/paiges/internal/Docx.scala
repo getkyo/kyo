@@ -2,7 +2,6 @@ package org.typelevel.paiges.internal
 
 import org.typelevel.paiges.*
 import org.typelevel.paiges.Doc.*
-
 import scala.annotation.tailrec
 
 // Workaround for https://github.com/typelevel/paiges/issues/628.

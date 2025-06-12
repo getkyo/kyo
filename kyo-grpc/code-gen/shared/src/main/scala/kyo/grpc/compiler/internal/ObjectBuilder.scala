@@ -3,7 +3,7 @@ package kyo.grpc.compiler.internal
 import org.typelevel.paiges.Doc
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
-private[compiler] final case class ObjectBuilder(
+final private[compiler] case class ObjectBuilder(
     override val id: String,
     override val annotations: Vector[Doc] = Vector.empty,
     override val mods: Vector[Doc] = Vector.empty,

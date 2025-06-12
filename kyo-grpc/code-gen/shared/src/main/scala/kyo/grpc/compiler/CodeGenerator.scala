@@ -8,7 +8,6 @@ import protocbridge.Artifact
 import protocgen.CodeGenApp
 import protocgen.CodeGenRequest
 import protocgen.CodeGenResponse
-
 import scala.jdk.CollectionConverters.*
 import scalapb.compiler.DescriptorImplicits
 import scalapb.compiler.GeneratorException

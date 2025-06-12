@@ -5,7 +5,7 @@ import org.typelevel.paiges.Doc
 import org.typelevel.paiges.internal.ExtendedSyntax.*
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
-private[compiler] final case class MethodBuilder(
+final private[compiler] case class MethodBuilder(
     id: String,
     annotations: Vector[Doc] = Vector.empty,
     mods: Vector[Doc] = Vector.empty,

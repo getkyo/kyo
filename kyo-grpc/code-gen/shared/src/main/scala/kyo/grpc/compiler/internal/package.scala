@@ -15,7 +15,7 @@ package object internal {
     private[compiler] def mods(chooses: Mod.Choose*): Vector[String] =
         chooses.map(_.choice).toVector
 
-    private[compiler] final case class AddClassDsl(builder: ClassBuilder, fp: FunctionalPrinter) {
+    final private[compiler] case class AddClassDsl(builder: ClassBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddClassDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -48,7 +48,7 @@ package object internal {
         implicit def endClass(dsl: AddClassDsl): FunctionalPrinter = dsl.endClass
     }
 
-    private[compiler] final case class AddObjectDsl(builder: ObjectBuilder, fp: FunctionalPrinter) {
+    final private[compiler] case class AddObjectDsl(builder: ObjectBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddObjectDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -72,7 +72,7 @@ package object internal {
         implicit def endObject(dsl: AddObjectDsl): FunctionalPrinter = dsl.endObject
     }
 
-    private[compiler] final case class AddTraitDsl(builder: TraitBuilder, fp: FunctionalPrinter) {
+    final private[compiler] case class AddTraitDsl(builder: TraitBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddTraitDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -99,7 +99,7 @@ package object internal {
         implicit def endTrait(dsl: AddTraitDsl): FunctionalPrinter = dsl.endTrait
     }
 
-    private[compiler] final case class AddMethodDsl(builder: MethodBuilder, fp: FunctionalPrinter) {
+    final private[compiler] case class AddMethodDsl(builder: MethodBuilder, fp: FunctionalPrinter) {
 
         def addAnnotations(annotations: String*): AddMethodDsl =
             copy(builder = builder.appendAnnotations(annotations))
@@ -132,7 +132,7 @@ package object internal {
         implicit def endMethod(dsl: AddMethodDsl): FunctionalPrinter = dsl.endMethod
     }
 
-    private[compiler] implicit class ScalaFunctionalPrinterOps(val fp: FunctionalPrinter) extends AnyVal {
+    implicit private[compiler] class ScalaFunctionalPrinterOps(val fp: FunctionalPrinter) extends AnyVal {
 
         def addPackage(id: String): FunctionalPrinter =
             fp.add(s"package $id")
@@ -159,7 +159,7 @@ package object internal {
             fp.add(doc.render(WIDTH))
     }
 
-    private[compiler] implicit class StringParameterOps(val parameterName: String) extends AnyVal {
+    implicit private[compiler] class StringParameterOps(val parameterName: String) extends AnyVal {
 
         def :-(typeName: String): Parameter = Parameter(parameterName, typeName, None)
     }

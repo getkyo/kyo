@@ -1,10 +1,10 @@
 package kyo.grpc
 
-import io.grpc.{StatusException, StatusRuntimeException}
+import io.grpc.StatusException
+import io.grpc.StatusRuntimeException
 import kyo.*
 import kyo.Result.Panic
 import kyo.scheduler.IOPromise
-
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.*

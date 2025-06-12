@@ -17,7 +17,7 @@ class UnaryResponseStreamObserver[Response](promise: Promise[GrpcResponse.Errors
 
     // onError will be the last method called. There will be no call to onCompleted.
     override def onError(throwable: Throwable): Unit =
-        val result = Failure(StreamNotifier.throwableToStatusException(throwable))
+        val result   = Failure(StreamNotifier.throwableToStatusException(throwable))
         val complete = promise.completeDiscard(result)
         Abort.run(IO.Unsafe.run(complete)).eval.getOrThrow
     end onError
