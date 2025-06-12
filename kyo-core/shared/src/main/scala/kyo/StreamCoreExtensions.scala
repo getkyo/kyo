@@ -182,6 +182,7 @@ object StreamCoreExtensions:
                             ))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
+
     end extension
 
     extension [V, S, E](stream: Stream[V, S & Abort[E] & Async])
@@ -636,87 +637,72 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[Chunk[V]]]],
             i1: Isolate.Contextual[S, IO],
-            i2: Isolate.Stateful[S, Abort[E] & Async],
+            i2: Isolate.Contextual[S, Abort[E] & Async],
             ct: SafeClassTag[Closed | E],
             fr: Frame
         ): Stream[Chunk[V], S & Abort[E] & Async] =
-            enum Event:
-                case MaxTime, End
-                case Emission(chunk: Chunk[V])
+            import Event.*
+            enum Event derives CanEqual:
+                case Data(chunk: Chunk[V])
+                case Tick, Flush
             end Event
 
-            object Event:
-                given CanEqual[Event, Event] = CanEqual.derived
-
-            val safeMaxSize = if maxSize < 1 then 1 else maxSize
-
             Stream[Chunk[V], S & Abort[E] & Async]:
-                Channel.initWith[Event](bufferSize): eventChannel =>
-                    val scheduleNext: Unit < (Abort[Closed] & Resource & Async) =
-                        Resource.acquireRelease(
-                            Async.run[Closed, Unit, Any](Async.sleep(maxTime).andThen(eventChannel.put(Event.MaxTime).unit))
-                        )(_.interrupt).unit
-                    end scheduleNext
+                IO.Unsafe {
+                    val safeMax = 1 max maxSize
+                    val channel = Channel.Unsafe.init[Event](1 max bufferSize).safe
 
-                    def emitChunks[V](
-                        chunk: Chunk[V]
-                    )(using Tag[Emit[Chunk[Chunk[V]]]]): Chunk[V] < (Resource & Abort[Closed] & Async & Emit[Chunk[Chunk[V]]]) =
-                        Loop(chunk, false): (remaining, haveEmitted) =>
-                            if remaining.size < safeMaxSize then
-                                (if haveEmitted then scheduleNext else Kyo.unit).andThen(Loop.done[Chunk[V], Boolean, Chunk[V]](remaining))
-                            else
-                                Emit.valueWith(Chunk(remaining.take(safeMaxSize)))(Loop.continue(remaining.drop(safeMaxSize), true))
-                            end if
+                    // Handle loop collecting emitted values and flushing them until completion
+                    val push: Fiber[E | Closed, Unit] < (IO & Resource & S) =
+                        Async.run[E | Closed, Unit, S & Resource]:
+                            Resource.ensure(channel.close).andThen:
+                                ArrowEffect.handleLoop(t1, (), stream.emit)(
+                                    handle = [C] =>
+                                        (chunk, _, cont) =>
+                                            channel.put(Data(chunk)).andThen:
+                                                Loop.continue((), cont(()))
+                                    ,
+                                    done = (_, _) => channel.put(Flush)
+                                )
 
-                    def eventLoop(initTs: Instant): Unit < (Abort[Closed] & Emit[Chunk[Chunk[V]]] & Async & Resource) =
-                        Loop(Chunk.empty[V], false, initTs) { (currentChunk, emitNow, lastEmitTimestamp) =>
-                            eventChannel.take.map:
-                                case Event.Emission(chunk) =>
-                                    val fullChunk = currentChunk.concat(chunk)
-                                    emitChunks(fullChunk).map: remaining =>
-                                        if emitNow && remaining.size > 0 then
-                                            Emit.valueWith(Chunk(remaining)):
-                                                Clock.now.map(ts => Loop.continue(Chunk.empty, false, ts))
-                                        else if remaining.size < fullChunk.size then
-                                            Clock.now.map(ts => Loop.continue(remaining, false, ts))
-                                        else Loop.continue(remaining, false, lastEmitTimestamp)
-                                case Event.MaxTime =>
-                                    Clock.now.map: (ts) =>
-                                        // Make sure we don't emit based on an out-of-date signal
-                                        if ts - lastEmitTimestamp >= maxTime then
-                                            if currentChunk.nonEmpty then
-                                                scheduleNext.andThen:
-                                                    Emit.valueWith(Chunk(currentChunk))(Loop.continue(
-                                                        Chunk.empty,
-                                                        false,
-                                                        ts
-                                                    ))
-                                            else
-                                                Loop.continue(currentChunk, true, lastEmitTimestamp)
-                                        else Loop.continue(currentChunk, emitNow, lastEmitTimestamp)
-                                        end if
-                                case Event.End =>
-                                    if currentChunk.nonEmpty then
-                                        Emit.valueWith(Chunk(currentChunk))(Loop.done(()))
-                                    else Loop.done(())
-                        }
-                    end eventLoop
+                    // Single fiber emitting a tick at constant interval
+                    val tick: Fiber[Closed, Unit] < (IO & Resource) =
+                        if maxTime == Duration.Infinity then Fiber.unit
+                        else
+                            Resource.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)
 
-                    Resource.run:
-                        Abort.run[Closed] {
-                            Clock.now.map: initTs =>
-                                scheduleNext.andThen:
-                                    Async.run[Closed | E, Unit, S] {
-                                        ArrowEffect.handleLoop(t1, stream.emit)(
-                                            handle = [C] =>
-                                                (chunk, cont) =>
-                                                    {
-                                                        if chunk.isEmpty then Kyo.unit
-                                                        else eventChannel.put(Event.Emission(chunk))
-                                                    }.andThen(Loop.continue(cont(())))
-                                        ).andThen(eventChannel.put(Event.End))
-                                    }.andThen(eventLoop(initTs))
-                        }.unit
+                    // Single fiber collecting emitted values and emitting them as chunks
+                    // when the buffer exceeds the max size or a flush is requested
+                    // TODO: flush when push fiber completes with abort
+                    val pull: Fiber[E | Closed, Unit] => Unit < (Abort[E | Closed] & Async & Emit[Chunk[Chunk[V]]]) = _ =>
+                        Loop(Chunk.empty[V]): buffer =>
+                            channel.take.map:
+                                case Data(chunk) =>
+                                    val combined = buffer.concat(chunk)
+                                    if combined.size >= safeMax then
+                                        Emit.valueWith(Chunk(combined.take(safeMax)))(Loop.continue(combined.drop(safeMax)))
+                                    else
+                                        Loop.continue(combined)
+                                    end if
+                                case Tick =>
+                                    if buffer.nonEmpty then
+                                        Emit.valueWith(Chunk(buffer))(Loop.continue(Chunk.empty))
+                                    else
+                                        Loop.continue(buffer)
+                                case Flush =>
+                                    if buffer.nonEmpty then
+                                        Emit.valueWith(Chunk(buffer))(Loop.done)
+                                    else
+                                        Loop.done
+
+                    // Start the tick and push fibers, then 'run' the pull loop
+                    (for
+                        _      <- tick
+                        fiber  <- push
+                        result <- pull(fiber)
+                        _      <- fiber.get
+                    yield result).handle(Resource.run, Abort.run[Closed], _.unit)
+                }
         end groupedWithin
 
     end extension
