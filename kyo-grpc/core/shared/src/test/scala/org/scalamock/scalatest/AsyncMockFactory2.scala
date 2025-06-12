@@ -4,6 +4,7 @@ import org.scalamock.handlers.{Handlers, OrderedHandlers, UnorderedHandlers}
 import org.scalatest.AsyncTestSuite
 
 // Workaround for https://github.com/ScalaMock/ScalaMock/issues/627
+// Remove this once Scalamock 7.3.3 has been released.
 trait AsyncMockFactory2 extends AsyncMockFactory { this: AsyncTestSuite =>
 
     private def inContext[T](context: Handlers)(what: => T): T = {
