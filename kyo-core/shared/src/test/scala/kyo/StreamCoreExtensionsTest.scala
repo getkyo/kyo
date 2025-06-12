@@ -493,7 +493,7 @@ class StreamCoreExtensionsTest extends Test:
 
             "single" in run {
                 Stream.range(0, 1).groupedWithin(5, Duration.Infinity).run.map: result =>
-                    assert(result == Chunk(0))
+                    assert(result == Chunk(Chunk(0)))
             }
 
             "with Env" in run {
