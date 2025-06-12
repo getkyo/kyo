@@ -22,7 +22,6 @@ object Docx {
     }
 
     def literal(str: String): Doc = {
-        // TODO: Doc.text should also use Doc.char here.
         def tx(i: Int, j: Int): Doc =
             if (i == j) Empty
             else if (i == j - 1) Doc.char(str.charAt(i))
@@ -31,7 +30,6 @@ object Docx {
         // parse the string right-to-left, splitting at newlines.
         // this ensures that our concatenations are right-associated.
         @tailrec def parse(i: Int, limit: Int, doc: Doc): Doc =
-            // TODO: Doc.text should also remove empties and not do the str.indexOf('\n')
             if (i < 0) {
                 val next = tx(0, limit)
                 if (doc.isEmpty) next else next + doc
