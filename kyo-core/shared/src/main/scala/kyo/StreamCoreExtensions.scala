@@ -182,6 +182,7 @@ object StreamCoreExtensions:
                             ))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
+
     end extension
 
     extension [V, S, E](stream: Stream[V, S & Abort[E] & Async])
@@ -502,12 +503,9 @@ object StreamCoreExtensions:
                                                 Loop(initialPar): currentPar =>
                                                     if currentPar > 0 then
                                                         parRef.updateAndGet(_ - 1).andThen:
-                                                            // java.lang.System.err.println(s"RUNNING ASYNCHRONOUSLY $input")
                                                             Async.run {
                                                                 f(input).map: chunk =>
-                                                                    // java.lang.System.err.println(s"TRANSFORMED $input to $chunk")
                                                                     prevFiber.get.andThen:
-                                                                        // java.lang.System.err.println(s"PUTTING $chunk")
                                                                         channel.put(Present(chunk)).andThen:
                                                                             parRef.updateAndGet(_ + 1).unit
                                                             }.map: newFiber =>
@@ -621,6 +619,87 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
+
+        /** Collects values that are emitted by the original stream within the duration [[maxTime]] up to the amount [[maxSize]] and emits
+          * them as a chunk.
+          *
+          * If no elements are emitted by the original stream within [[maxTime]], as soon as any other elements are emitted the result
+          * stream will emit them as a group.
+          *
+          * @param maxSize
+          *   Maximum number of elements to be collected within a single duration. Values of less than one are ignored and treated as one.
+          * @param maxTime
+          *   Maximum amount of time to collect and emit elements
+          * @return
+          *   A new stream that emits collected chunks of elements
+          */
+        def groupedWithin(maxSize: Int, maxTime: Duration, bufferSize: Int = defaultAsyncStreamBufferSize)(using
+            t1: Tag[Emit[Chunk[V]]],
+            t2: Tag[Emit[Chunk[Chunk[V]]]],
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Contextual[S, Abort[E] & Async],
+            ct: SafeClassTag[Closed | E],
+            fr: Frame
+        ): Stream[Chunk[V], S & Abort[E] & Async] =
+            import Event.*
+            enum Event derives CanEqual:
+                case Data(chunk: Chunk[V])
+                case Tick, Flush
+            end Event
+
+            Stream[Chunk[V], S & Abort[E] & Async]:
+                IO.Unsafe {
+                    val safeMax = 1 max maxSize
+                    val channel = Channel.Unsafe.init[Event](1 max bufferSize).safe
+
+                    // Handle loop collecting emitted values and flushing them until completion
+                    val push: Fiber[E | Closed, Unit] < (IO & S) =
+                        Async.run[E | Closed, Unit, S]:
+                            IO.ensure(Async.run[Closed, Unit, Any](channel.put(Flush))):
+                                ArrowEffect.handleLoop(t1, stream.emit)(
+                                    handle = [C] =>
+                                        (chunk, cont) =>
+                                            channel.put(Data(chunk)).andThen:
+                                                Loop.continue(cont(()))
+                                )
+
+                    // Single fiber emitting a tick at constant interval
+                    val tick: Fiber[Closed, Unit] < (IO & Resource) =
+                        if maxTime == Duration.Infinity then Fiber.unit
+                        else
+                            Resource.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)
+
+                    // Loop collecting values from the channel and re-emitting them as chunks.
+                    // Chunks are emitted when the buffer exceeds the max size or a flush is requested.
+                    val pull: Unit < (Abort[Closed] & Async & Emit[Chunk[Chunk[V]]]) =
+                        Loop(Chunk.empty[V]): buffer =>
+                            channel.take.map:
+                                case Data(chunk) =>
+                                    val combined = buffer.concat(chunk)
+                                    if combined.size >= safeMax then
+                                        Emit.valueWith(Chunk(combined.take(safeMax)))(Loop.continue(combined.drop(safeMax)))
+                                    else
+                                        Loop.continue(combined)
+                                    end if
+                                case Tick =>
+                                    if buffer.nonEmpty then
+                                        Emit.valueWith(Chunk(buffer))(Loop.continue(Chunk.empty))
+                                    else
+                                        Loop.continue(buffer)
+                                case Flush =>
+                                    if buffer.nonEmpty then
+                                        Emit.valueWith(Chunk(buffer))(Loop.done)
+                                    else
+                                        Loop.done
+
+                    (for
+                        _     <- tick
+                        fiber <- push
+                        _     <- Abort.run[Closed](pull) // ignore Closed channel, join the push fiber to capture any Abort.
+                        _     <- fiber.get
+                    yield ()).handle(Resource.run, Abort.run[Closed], _.unit)
+                }
+        end groupedWithin
 
     end extension
 
