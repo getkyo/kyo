@@ -1,6 +1,7 @@
 package kyo
 
 import Result.Error
+import kyo.internal.OsSignal
 
 /** An abstract base class for Kyo applications.
   *
@@ -12,8 +13,24 @@ import Result.Error
 abstract class KyoApp extends KyoAppPlatformSpecific:
     override def timeout: Duration = Duration.Infinity
 
+    private val awaitInterrupt =
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        val promise       = Promise.Unsafe.init[Nothing, Nothing]()
+
+        val interrupt = (signal: String) =>
+            () =>
+                promise
+                    .completeDiscard(Result.panic(Fiber.Interrupted(Frame.internal, s"Interrupt Signal Reached: $signal")))
+
+        if System.live.unsafe.operatingSystem() != System.OS.Windows then
+            OsSignal.handle("INT", interrupt("INT"))
+            OsSignal.handle("TERM", interrupt("TERM"))
+
+        promise.mask().safe
+    end awaitInterrupt
+
     override protected def handle[A](v: A < (Async & Resource & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
-        Resource.run(v)
+        Async.raceFirst(Resource.run(v), awaitInterrupt.get)
     end handle
 end KyoApp
 
@@ -35,7 +52,7 @@ object KyoApp:
 
         private var _args: Array[String] = null
 
-        protected var initCode: List[() => Unit] = List.empty
+        protected var initCode: Chunk[() => Unit] = Chunk.empty
 
         final def main(args: Array[String]) =
             this._args = args
