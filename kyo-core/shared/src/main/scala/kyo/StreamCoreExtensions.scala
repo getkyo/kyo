@@ -653,16 +653,16 @@ object StreamCoreExtensions:
                     val channel = Channel.Unsafe.init[Event](1 max bufferSize).safe
 
                     // Handle loop collecting emitted values and flushing them until completion
-                    val push: Fiber[E | Closed, Unit] < (IO & Resource & S) =
-                        Async.run[E | Closed, Unit, S & Resource]:
-                            Resource.ensure(channel.close).andThen:
+                    val push: Fiber[E | Closed, Unit] < (IO & S) =
+                        Async.run[E | Closed, Unit, S]:
+                            IO.ensure(Async.run[Closed, Unit, Any](channel.put(Flush))):
                                 ArrowEffect.handleLoop(t1, (), stream.emit)(
                                     handle = [C] =>
                                         (chunk, _, cont) =>
                                             channel.put(Data(chunk)).andThen:
                                                 Loop.continue((), cont(()))
                                     ,
-                                    done = (_, _) => channel.put(Flush)
+                                    done = (_, _) => ()
                                 )
 
                     // Single fiber emitting a tick at constant interval
@@ -671,10 +671,9 @@ object StreamCoreExtensions:
                         else
                             Resource.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)
 
-                    // Single fiber collecting emitted values and emitting them as chunks
-                    // when the buffer exceeds the max size or a flush is requested
-                    // TODO: flush when push fiber completes with abort
-                    val pull: Fiber[E | Closed, Unit] => Unit < (Abort[E | Closed] & Async & Emit[Chunk[Chunk[V]]]) = _ =>
+                    // Loop collecting values from the channel and re-emitting them as chunks.
+                    // Chunks are emitted when the buffer exceeds the max size or a flush is requested.
+                    val pull: Unit < (Abort[E | Closed] & Async & Emit[Chunk[Chunk[V]]]) =
                         Loop(Chunk.empty[V]): buffer =>
                             channel.take.map:
                                 case Data(chunk) =>
@@ -695,13 +694,12 @@ object StreamCoreExtensions:
                                     else
                                         Loop.done
 
-                    // Start the tick and push fibers, then 'run' the pull loop
                     (for
-                        _      <- tick
-                        fiber  <- push
-                        result <- pull(fiber)
-                        _      <- fiber.get
-                    yield result).handle(Resource.run, Abort.run[Closed], _.unit)
+                        _     <- tick
+                        fiber <- push
+                        _     <- Abort.run[Closed](pull) // ignore Closed channel, join the push fiber to capture any Abort.
+                        _     <- fiber.get
+                    yield ()).handle(Resource.run, Abort.run[Closed], _.unit)
                 }
         end groupedWithin
 

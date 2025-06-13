@@ -513,19 +513,29 @@ class StreamCoreExtensionsTest extends Test:
                 }
             }
 
-            // "with Abort" in run {
-            //     val abortStream = Stream {
-            //         Loop(1): i =>
-            //             if i > 3 then Abort.fail("Stream failed")
-            //             else Emit.valueWith(Chunk(i))(Loop.continue(i + 1))
-            //     }
+            "with Abort" in run {
+                val abortStream = Stream {
+                    Loop(1): i =>
+                        if i > 3 then Abort.fail("Stream failed")
+                        else Emit.valueWith(Chunk(i))(Loop.continue(i + 1))
+                }
 
-            //     Abort.run {
-            //         abortStream.groupedWithin(5, Duration.Infinity).run
-            //     }.map:
-            //         case Result.Error(error) => assert(error.toString == "Stream failed")
-            //         case Result.Success(_)   => fail("Expected stream to fail")
-            // }
+                Abort.run {
+                    abortStream.groupedWithin(5, 50.millis).run
+                }.map:
+                    case Result.Error(error) => assert(error.toString == "Stream failed")
+                    case Result.Success(_)   => fail("Expected stream to fail")
+            }
+
+            "buffer sizes" in run {
+                val stream = Stream.range(1, 11)
+                Choice.run {
+                    for
+                        bufSize <- Choice.eval(0, 1, 2, 5, 10)
+                        result  <- stream.groupedWithin(3, Duration.Infinity, bufSize).run
+                    yield assert(result.flatten == (1 to 10))
+                }.andThen(succeed)
+            }
         }
     }
 
