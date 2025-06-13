@@ -656,13 +656,11 @@ object StreamCoreExtensions:
                     val push: Fiber[E | Closed, Unit] < (IO & S) =
                         Async.run[E | Closed, Unit, S]:
                             IO.ensure(Async.run[Closed, Unit, Any](channel.put(Flush))):
-                                ArrowEffect.handleLoop(t1, (), stream.emit)(
+                                ArrowEffect.handleLoop(t1, stream.emit)(
                                     handle = [C] =>
-                                        (chunk, _, cont) =>
+                                        (chunk, cont) =>
                                             channel.put(Data(chunk)).andThen:
-                                                Loop.continue((), cont(()))
-                                    ,
-                                    done = (_, _) => ()
+                                                Loop.continue(cont(()))
                                 )
 
                     // Single fiber emitting a tick at constant interval
@@ -673,7 +671,7 @@ object StreamCoreExtensions:
 
                     // Loop collecting values from the channel and re-emitting them as chunks.
                     // Chunks are emitted when the buffer exceeds the max size or a flush is requested.
-                    val pull: Unit < (Abort[E | Closed] & Async & Emit[Chunk[Chunk[V]]]) =
+                    val pull: Unit < (Abort[Closed] & Async & Emit[Chunk[Chunk[V]]]) =
                         Loop(Chunk.empty[V]): buffer =>
                             channel.take.map:
                                 case Data(chunk) =>
