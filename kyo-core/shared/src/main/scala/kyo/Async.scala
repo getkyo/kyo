@@ -213,6 +213,9 @@ object Async extends AsyncPlatformSpecific:
       * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
       * platforms supporting parallel execution (like JVM), computations may run in parallel.
       *
+      * Note: Unlike `raceFirst`, this method will only complete when a successful computation completes. If all computations fail, it will
+      * wait for the last failure. If some fail while others never complete, it will wait indefinitely for a success.
+      *
       * @param seq
       *   The sequence of computations to race
       * @return
@@ -230,6 +233,9 @@ object Async extends AsyncPlatformSpecific:
     end race
 
     /** Races two or more computations and returns the result of the first successful computation to complete.
+      *
+      * Note: Unlike `race`, this method will only complete when a successful computation completes. If all computations fail, it will wait
+      * for the last failure. If some fail while others never complete, it will wait indefinitely for a success.
       *
       * @param first
       *   The first computation
@@ -254,6 +260,10 @@ object Async extends AsyncPlatformSpecific:
       * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
       * platforms supporting parallel execution (like JVM), computations may run in parallel.
       *
+      * Note: Unlike `race`, this method will complete as soon as any computation completes, regardless of whether it succeeded or failed.
+      * For example, if one computation fails while another never completes, this method will return the failure, interrupting the other
+      * computation(s).
+      *
       * @param seq
       *   The sequence of computations to race
       * @return
@@ -272,6 +282,10 @@ object Async extends AsyncPlatformSpecific:
 
     /** Races two or more computations and returns the result of the first to complete. When one computation completes, all other
       * computations are interrupted.
+      *
+      * Note: Unlike `race`, this method will complete as soon as any computation completes, regardless of whether it succeeded or failed.
+      * For example, if one computation fails while another never completes, this method will return the failure, interrupting the other
+      * computation(s).
       *
       * @param first
       *   The first computation
