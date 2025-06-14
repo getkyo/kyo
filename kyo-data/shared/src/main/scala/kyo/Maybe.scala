@@ -360,6 +360,9 @@ object Maybe:
         def iterator: Iterator[A] =
             if isEmpty then collection.Iterator.empty else collection.Iterator.single(get)
 
+        /** Converts the Maybe to a Chunk. */
+        def toChunk: Chunk[A] = Chunk.from(self)
+
         /** Converts the Maybe to a List.
           *
           * @return

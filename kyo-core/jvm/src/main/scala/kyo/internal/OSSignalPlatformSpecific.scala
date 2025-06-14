@@ -39,11 +39,11 @@ private[internal] class OsSignalPlatformSpecific:
         constructorMethodHandle: MethodHandle,
         staticMethodHandle: MethodHandle
     ) extends Handler:
-        override def apply(signal: String, handle: => Unit): Unit =
+        override def apply(signal: String, handle: () => Unit): Unit =
             val invocationHandler =
                 new InvocationHandler:
                     def invoke(proxy: Any, method: Method, args: Array[AnyRef]): AnyRef =
-                        if args.nonEmpty then handle
+                        if args.nonEmpty then handle()
                         this
 
             val proxy = Proxy.newProxyInstance(
