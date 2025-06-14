@@ -357,7 +357,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.0.2"
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.0"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)

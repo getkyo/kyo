@@ -1,5 +1,6 @@
 package kyo.internal
 
+import cps.AsyncShift
 import cps.CpsMonad
 import cps.runtime.IterableOpsAsyncShift
 import kyo.*
@@ -17,8 +18,18 @@ end asyncShiftLowPriorityImplicit1
 object asyncShift extends asyncShiftLowPriorityImplicit1:
 
     transparent inline given shiftedChunk[A]: ChunkAsyncShift[A] = new ChunkAsyncShift[A]
+    transparent inline given shiftedMaybe: MaybeAsyncShift       = new MaybeAsyncShift
 
 end asyncShift
+
+class MaybeAsyncShift(using Frame) extends AsyncShift[Maybe.type]:
+    def map[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])[B](f: A => F[B]): F[Maybe[B]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match {
+                case Maybe.Present(a) => f(a)
+                case Maybe.Absent => Maybe.Absent
+            }
+end MaybeAsyncShift
 
 class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
 

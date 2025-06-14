@@ -82,6 +82,10 @@ private[kyo] object Validate:
                 case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
 
         Trees.traverseGoto(expr.asTerm) {
+            case Apply(TypeApply(Apply(TypeApply(Select(Ident("Maybe" | "Result"), _), _), List(qualifier)), _), argGroup0) =>
+                Trees.Step.goto(qualifier)
+                asyncShiftDive(argGroup0)
+
             case Apply(Apply(TypeApply(select: Select, _), argGroup0), argGroup1) if validAsyncShift(select) =>
                 Trees.Step.goto(select.qualifier)
                 asyncShiftDive(argGroup0)
