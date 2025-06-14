@@ -815,7 +815,7 @@ object Async extends AsyncPlatformSpecific:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): A < (reduce.SReduced & Async) =
-        reduce(use(v)(identity))
+        use(v)(identity)
 
     private[kyo] def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(
         using
