@@ -484,31 +484,10 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initWith[Maybe[Chunk[V2]]](bufferSize): channel =>
-                    IO.ensure(channel.close):
-                        Signal.initRefWith(parallel): parRef =>
-                            val background = Async.run:
-                                val handledStream = ArrowEffect.handleLoop(t1, initialState, stream.emit)(
-                                    handle = [C] =>
-                                        (input, prevFiber, cont) =>
-                                            parRef.currentWith: initialPar =>
-                                                Loop(initialPar): currentPar =>
-                                                    if currentPar > 0 then
-                                                        parRef.updateAndGet(_ - 1).andThen:
-                                                            Async.run {
-                                                                f(input).map: chunk =>
-                                                                    prevFiber.get.andThen:
-                                                                        channel.put(Present(chunk)).andThen:
-                                                                            parRef.updateAndGet(_ + 1).unit
-                                                            }.map: newFiber =>
-                                                                Loop.done(Loop.continue(newFiber, cont(())))
-                                                    else
-                                                        parRef.nextWith: nextPar =>
-                                                            Loop.continue(nextPar)
-                                                    end if
-                                    ,
-                                    done = (finalFiber, _) => finalFiber.get
-                                )
+                Channel.initWith[Maybe[Chunk[V2]]](bufferSize): outputChannel =>
+                    // Staging channel size is one less than parallel because the `handleStaging` loop
+                    // will always pull one value out and wait for it to complete
+                    Channel.initWith[Fiber[E | Closed, Maybe[Chunk[V2]]]](parallel - 1): stagingChannel =>
 
                         // Handle original stream by running transformation asynchronously and publishing resulting *fiber*
                         // to the staging channel. Throttling is enforced by the size of the staging channel. Publish final
