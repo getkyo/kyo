@@ -10,10 +10,20 @@ class StreamTest extends Test:
                 Var.update[Int](_ + i)
 
             val newStream1: Stream[Int, Any] < Var[Int] = direct:
-                stream.map(x => f(x).now)
+                stream.map(x => f(x).now) //TODO don't support .now
 
             val newStream2: Stream[Int, Var[Int]] < Any = direct:
-                stream.map(x => f(x).later)
+                stream.map(x => f(x).later) //TODO remove .later
+
+            val newStream3 = direct:
+                stream.map(x =>
+                    direct:
+                        f(x).now + 1
+                    .later //TODO remove .later
+                )
+
+            val x = direct:
+                direct(1 + 1).now
 
             def check(stream: Stream[Int, Var[Int]] < Var[Int], expected: Chunk[Int]) =
                 Var.run(0):
