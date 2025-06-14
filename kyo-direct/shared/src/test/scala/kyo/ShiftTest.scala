@@ -170,6 +170,52 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
                 assert(d.eval == Seq(1, 2, 3, 4))
             }
+            "map - List" in {
+                val d: List[Int] < Any = defer:
+                    xs.map(_.now).toList
+
+                assert(d.eval == List(1, 2, 3, 4))
+            }
+            "flatMap - List" in {
+                val d: List[Int] < Any = defer:
+
+                    def f(i: Int) = List(1)
+
+                    xs.flatMap(i => f(i.now)).toList.distinct
+
+                assert(d.eval == List(1))
+            }
+            "collect - List" in {
+                val d: List[Int] < Any = defer:
+                    xs.collect({
+                        case i => i.now
+                    }).toList
+
+                assert(d.eval == List(1, 2, 3, 4))
+            }
+            "map - Vector" in {
+                val d: Vector[Int] < Any = defer:
+                    xs.map(_.now).toVector
+
+                assert(d.eval == Vector(1, 2, 3, 4))
+            }
+            "flatMap - Vector" in {
+                val d: Vector[Int] < Any = defer:
+
+                    def f(i: Int) = Vector(1)
+
+                    xs.flatMap(i => f(i.now)).toVector.distinct
+
+                assert(d.eval == Vector(1))
+            }
+            "collect - Vector" in {
+                val d: Vector[Int] < Any = defer:
+                    xs.collect({
+                        case i => i.now
+                    }).toVector
+
+                assert(d.eval == Vector(1, 2, 3, 4))
+            }
             "dropWhile" in {
                 def f(i: Int): Boolean < Any = i < 3
 
