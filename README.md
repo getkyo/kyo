@@ -1447,6 +1447,50 @@ val strings = Stream.init(Seq("one", "two", "three"))
 val avgStringLength: Double < Any = strings.into(avgStringLengthSink)
 ```
 
+#### Pipe: stream transformation
+
+Just as `Sink` can be used to separate the evaluation of streams from the stream itself, `Pipe` provides the ability to construct and manipulate stream transformations independently of any particular stream. A `Pipe[A, B, S]` represents a transformation of `Stream[A, ?]` to `Stream[B, ?]` using effect type `S`.
+
+To use a pipe to transform a stream, you can use `Stream#into` or `Pipe.transform`.
+
+All of the transformation combinators on `Stream` are available as `Pipe` constructors, e.g.:
+
+```scala
+import kyo.*
+
+val stream = Stream.init(1 to 10)
+
+val mapValuesPipe: Pipe[Int, String, Any] = Pipe.map(_.toString)
+val mappedStream: Stream[String, Any] = stream.into(mapValuesPipe)
+
+val printValuesPipe: Pipe[Int, Int, IO] = Pipe.tap((v: Int) => Console.printLine(s"Value: $v"))
+val printedStream: Stream[Int, IO] = stream.into(printValuesPipe)
+
+val takeWhilePipe: Pipe[Int, Int, Any] = Pipe.takeWhile[Int](_ < 5)
+val shorterStream: Stream[Int, Any] = stream.into(takeWhilePipe)
+```
+
+Pipes can be combined with other pipes to produce new pipes, or with sinks to produce new sinks:
+
+```scala
+import kyo.*
+import scala.util.Try
+
+val pipe1 = Pipe.map[String](v => Try(v.toInt))
+val pipe2 = Pipe.collect[Try[Int]](v => Maybe.fromOption(v.toOption))
+val sink = Sink.fold[Int, Int](0)(_ + _)
+
+val pipe3 = pipe1.join(pipe2)
+val sink2 = pipe3.join(sink)
+
+val stream = Stream.init(Seq("one", "tow", "three", "fuor", "five", "xis"))
+val result = stream.into(sink2)
+
+// OR you can just run the stream `into` the pipes and sink
+
+val result2 = stream.into(pipe1).into(pipe2).into(sink)
+```
+
 ### Var: Stateful Computations
 
 The `Var` effect allows for stateful computations, similar to the `State` monad. It enables the management of state within a computation in a purely functional manner.
