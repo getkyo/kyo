@@ -447,7 +447,7 @@ object Queue:
                         def size()(using AllowUnsafe)              = op(0)
                         def empty()(using AllowUnsafe)             = op(true)
                         def full()(using AllowUnsafe)              = op(true)
-                        def offer(v: A)(using AllowUnsafe)         = op(false)
+                        def offer(v: A)(using AllowUnsafe)         = offerOp(false, false)
                         def poll()(using AllowUnsafe)              = pollOp(Maybe.empty)
                         def peek()(using AllowUnsafe)              = op(Maybe.empty)
                         def _drain(max: Maybe[Int] = Maybe.Absent) = Chunk.empty
