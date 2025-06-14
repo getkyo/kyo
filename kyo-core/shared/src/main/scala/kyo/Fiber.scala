@@ -298,27 +298,64 @@ object Fiber:
     private[kyo] def race[E, A, S](
         using isolate: Isolate.Contextual[S, IO]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): Fiber[E, A] < (IO & S) =
-        IO.Unsafe {
-            class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
-                val pending = AtomicInt.Unsafe.init(iterable.size)
-                def apply(result: Result[E, A]): Unit =
-                    val last = pending.decrementAndGet() == 0
-                    result.foldError(v => completeDiscard(Result.succeed(v)), e => if last then completeDiscard(e))
-                end apply
-            end State
-            val state = new State
-            import state.*
-            isolate.runInternal { (trace, context) =>
-                val safepoint             = Safepoint.get
-                inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
-                foreach(iterable) { (_, v) =>
-                    val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                    state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
-                    fiber.onComplete(state)
+        Race.success[E, A, S](using isolate)(iterable)(using frame)
+
+    private[kyo] def raceFirst[E, A, S](
+        using isolate: Isolate.Contextual[S, IO]
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): Fiber[E, A] < (IO & S) =
+        Race.first[E, A, S](using isolate)(iterable)(using frame)
+
+    /** Race state for a race between multiple Fibers.
+      */
+    sealed abstract private class Race[E, A](frame: Frame) extends IOPromise[E, A] with (Result[E, A] => Unit):
+        protected inline given AllowUnsafe = AllowUnsafe.embrace.danger
+
+        final def interrupts(fiber: Fiber.Unsafe[E, A]): Unit =
+            this.onComplete(_ => Unsafe.interruptDiscard(fiber)(Result.Panic(Fiber.Interrupted(frame))))
+    end Race
+    private[Fiber] object Race:
+        private inline def apply[E, A, S](using
+            isolate: Isolate.Contextual[S, IO]
+        )(state: Race[E, A], iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): Fiber[E, A] < (IO & S) =
+            IO.Unsafe {
+                val safepoint = Safepoint.get
+                isolate.runInternal { (trace, context) =>
+                    foreach(iterable) { (_, v) =>
+                        val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                        state.interrupts(fiber)
+                        fiber.onComplete(state)
+                    }
+                    state
                 }
-                state
             }
-        }
+        end apply
+
+        inline def success[E, A, S](using
+            isolate: Isolate.Contextual[S, IO]
+        )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): Fiber[E, A] < (IO & S) =
+            apply(new Success[E, A](iterable.size, frame), iterable)
+
+        inline def first[E, A, S](using
+            isolate: Isolate.Contextual[S, IO]
+        )(iterable: Iterable[A < (Abort[E] & Async & S)])(using frame: Frame): Fiber[E, A] < (IO & S) =
+            apply(new First[E, A](frame), iterable)
+
+        final class Success[E, A](size: Int, frame: Frame) extends Race[E, A](frame):
+            val pending = AtomicInt.Unsafe.init(size)
+            def apply(result: Result[E, A]): Unit =
+                val last = pending.decrementAndGet() == 0
+                result.foldError(
+                    v => completeDiscard(Result.succeed(v)),
+                    e => if last then completeDiscard(e)
+                )
+            end apply
+        end Success
+
+        final class First[E, A](frame: Frame) extends Race[E, A](frame):
+            def apply(result: Result[E, A]): Unit =
+                completeDiscard(result)
+        end First
+    end Race
 
     /** Concurrently executes effects and collects up to `max` successful results.
       *

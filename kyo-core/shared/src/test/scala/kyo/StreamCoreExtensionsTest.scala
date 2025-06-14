@@ -459,6 +459,86 @@ class StreamCoreExtensionsTest extends Test:
                 Choice.run(test).andThen(succeed)
             }
         }
+
+        "groupedWithin" - {
+            val stream = Stream {
+                Loop(1): i =>
+                    Emit.valueWith(Chunk(i)):
+                        (if i % 5 == 0 then Async.sleep(30.millis) else Kyo.unit)
+                            .andThen(Loop.continue(i + 1))
+            }.take(11)
+
+            "group by size" in run {
+                stream.groupedWithin(3, Duration.Infinity).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
+            }
+
+            "group by time" in run {
+                stream.groupedWithin(Int.MaxValue, 20.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
+            }
+
+            "group by size and time" in run {
+                stream.groupedWithin(3, 20.millis).run.map: result =>
+                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
+            }
+
+            "group to single chunk with max size + time" in run {
+                stream.groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
+                    assert(result == Chunk(1 to 11))
+            }
+
+            "empty" in run {
+                Stream.empty[Int].groupedWithin(3, 100.millis).run.map: result =>
+                    assert(result.isEmpty)
+            }
+
+            "single" in run {
+                Stream.range(0, 1).groupedWithin(5, Duration.Infinity).run.map: result =>
+                    assert(result == Chunk(Chunk(0)))
+            }
+
+            "with Env" in run {
+                val envStream = Stream {
+                    Env.use[Int]: maxValue =>
+                        Loop(1): i =>
+                            if i > maxValue then Loop.done
+                            else
+                                Emit.valueWith(Chunk(i)):
+                                    Async.sleep(5.millis).andThen(Loop.continue(i + 1))
+                }
+
+                Env.run(7) {
+                    envStream.groupedWithin(3, 15.millis).run.map: result =>
+                        assert(result.flatten == (1 to 7))
+                        assert(result.size >= 2) // Should have multiple groups due to timing
+                }
+            }
+
+            "with Abort" in run {
+                val abortStream = Stream {
+                    Loop(1): i =>
+                        if i > 3 then Abort.fail("Stream failed")
+                        else Emit.valueWith(Chunk(i))(Loop.continue(i + 1))
+                }
+
+                Abort.run {
+                    abortStream.groupedWithin(5, 50.millis).run
+                }.map:
+                    case Result.Error(error) => assert(error.toString == "Stream failed")
+                    case Result.Success(_)   => fail("Expected stream to fail")
+            }
+
+            "buffer sizes" in run {
+                val stream = Stream.range(1, 11)
+                Choice.run {
+                    for
+                        bufSize <- Choice.eval(0, 1, 2, 5, 10)
+                        result  <- stream.groupedWithin(3, Duration.Infinity, bufSize).run
+                    yield assert(result.flatten == (1 to 10))
+                }.andThen(succeed)
+            }
+        }
     }
 
 end StreamCoreExtensionsTest
