@@ -92,15 +92,16 @@ class QueueTest extends Test:
                     c2.isEmpty
             )
         }
-
         "states" in run {
             for
-                q      <- Queue.init[Int](2)
-                _      <- q.offer(1)
-                _      <- q.close
-                closed <- q.closed
-                open   <- q.open
-            yield assert(closed && !open)
+                q       <- Queue.init[Int](2)
+                closed1 <- q.closed
+                open1   <- q.open
+                _       <- q.offer(1)
+                _       <- q.close
+                closed2 <- q.closed
+                open2   <- q.open
+            yield assert(!closed1 && open1 && closed2 && !open2)
         }
     }
 
@@ -431,16 +432,16 @@ class QueueTest extends Test:
 
         "returns true when queue becomes empty after closing" in run {
             for
-                queue     <- Queue.init[Int](10)
-                _         <- queue.offer(1)
-                _         <- queue.offer(2)
-                fiber     <- Async.run(queue.closeAwaitEmpty)
-                wasClosed <- queue.closed
-                _         <- queue.poll
-                _         <- queue.poll
-                result    <- fiber.get
-                closed    <- queue.closed
-            yield assert(!wasClosed && result && closed)
+                queue   <- Queue.init[Int](10)
+                _       <- queue.offer(1)
+                _       <- queue.offer(2)
+                fiber   <- Async.run(queue.closeAwaitEmpty)
+                closed1 <- queue.closed
+                _       <- queue.poll
+                _       <- queue.poll
+                result  <- fiber.get
+                closed2 <- queue.closed
+            yield assert(!closed1 && result && closed2)
         }
 
         "returns false if queue is already closed" in run {
@@ -631,18 +632,25 @@ class QueueTest extends Test:
 
         "returns true when queue becomes empty after closing" in run {
             for
-                queue     <- Queue.init[Int](10)
-                _         <- queue.offer(1)
-                _         <- queue.offer(2)
-                fiber     <- queue.closeAwaitEmptyFiber
-                wasClosed <- queue.closed
-                wasOpen   <- queue.open
-                _         <- queue.poll
-                _         <- queue.poll
-                result    <- fiber.get
-                closed    <- queue.closed
-                open      <- queue.open
-            yield assert(!wasClosed && !wasOpen && !open && result && closed && !open)
+                queue   <- Queue.init[Int](10)
+                _       <- queue.offer(1)
+                _       <- queue.offer(2)
+                fiber   <- queue.closeAwaitEmptyFiber
+                closed1 <- queue.closed
+                open1   <- queue.open
+                _       <- queue.poll
+                _       <- queue.poll
+                result  <- fiber.get
+                closed2 <- queue.closed
+                open2   <- queue.open
+            yield assert(
+                !closed1 &&
+                    !open1 &&
+                    !open2 &&
+                    result &&
+                    closed2 &&
+                    !open2
+            )
         }
 
         "returns false if queue is already closed" in run {
