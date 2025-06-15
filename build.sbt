@@ -6,7 +6,6 @@ import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
 val scala3Version   = "3.7.0"
-val scala212Version = "2.12.20"
 val scala213Version = "2.13.16"
 
 val zioVersion       = "2.1.17"
@@ -61,7 +60,7 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
 
 Global / onLoad := {
@@ -179,13 +178,11 @@ lazy val `kyo-scheduler` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions                     := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(
             `native-settings`,
-            crossScalaVersions                         := List(scala3Version),
             libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
         )
         .jsSettings(
@@ -203,8 +200,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     )
     .jvmSettings(mimaCheck(false))
     .settings(
-        scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+        scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value
     )
 
 lazy val `kyo-scheduler-cats` =
@@ -219,8 +215,7 @@ lazy val `kyo-scheduler-cats` =
         )
         .jvmSettings(mimaCheck(false))
         .settings(
-            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value
         )
 
 lazy val `kyo-scheduler-pekko` =
@@ -236,8 +231,7 @@ lazy val `kyo-scheduler-pekko` =
         )
         .jvmSettings(mimaCheck(false))
         .settings(
-            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value
         )
 
 lazy val `kyo-scheduler-finagle` =
@@ -393,8 +387,7 @@ lazy val `kyo-stats-registry` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
-            crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
+            libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
