@@ -10,9 +10,9 @@ class StreamChannelTest extends Test:
     "put" - {
         "does not close" in run {
             for
-                channel        <- StreamChannel.init[Int, String]
-                _              <- channel.put(42)
-                closed <- channel.closed
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.put(42)
+                closed  <- channel.closed
             yield assert(!closed)
         }
 
@@ -45,22 +45,27 @@ class StreamChannelTest extends Test:
     "error" - {
         "does not close" in run {
             for
-                channel        <- StreamChannel.init[Int, String]
-                _              <- channel.error("error")
-                closed <- channel.closed
-            yield assert(closed)
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.error("error")
+                closed  <- channel.closed
+            yield assert(!closed)
         }
 
-        "before take closes" in run {
+        "fails when called more than once when empty" in run {
             for
-                channel   <- StreamChannel.init[Int, String]
-                _         <- channel.error("error")
-                wasClosed <- channel.closed
-                _         <- Abort.run(channel.take)
-                isClosed  <- channel.closed
-            yield
-                assert(!wasClosed)
-                assert(isClosed)
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.error("error 1")
+                result  <- Abort.run[Closed](channel.error("error 2"))
+            yield assert(result.isFailure)
+        }
+
+        "fails when called more than once when not empty" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.put(1)
+                _       <- channel.error("error 1")
+                result  <- Abort.run[Closed](channel.error("error 2"))
+            yield assert(result.isFailure)
         }
 
         "fails when producer closed and empty" in run {

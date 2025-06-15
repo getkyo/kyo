@@ -45,7 +45,7 @@ class RequestStreamObserver[Request, Response](
     end onError
 
     override def onCompleted(): Unit =
-        val _ = IO.Unsafe.evalOrThrow(Async.run(requestChannel.closeProducer))
+        IO.Unsafe.evalOrThrow(requestChannel.closeProducer)
 
 end RequestStreamObserver
 

@@ -46,7 +46,7 @@ class BidiRequestStreamObserver[Request, Response] private (
     end onError
 
     override def onCompleted(): Unit =
-        val _ = IO.Unsafe.evalOrThrow(Async.run(requestChannel.closeProducer))
+        IO.Unsafe.evalOrThrow(requestChannel.closeProducer)
 
 end BidiRequestStreamObserver
 

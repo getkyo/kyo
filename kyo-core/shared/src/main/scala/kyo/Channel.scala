@@ -197,20 +197,49 @@ object Channel:
         /** Closes the channel and asynchronously waits until it's empty.
           *
           * This method closes the channel to new elements and returns a computation that completes when all elements have been consumed.
-          * Unlike the regular `close` method, this allows consumers to process all remaining elements before considering the channel fully
-          * closed.
+          * Unlike the regular [[close]] method, this allows consumers to process all remaining elements before considering the channel
+          * fully closed.
           *
           * @return
-          *   true if the channel was successfully closed and emptied, false if it was already closed
+          *   `true` if the channel was successfully closed and emptied, `false` if it was already closed
           */
         def closeAwaitEmpty(using Frame): Boolean < Async = IO.Unsafe(self.closeAwaitEmpty().safe.get)
 
-        /** Checks if the channel is closed.
+        /** Closes the channel and returns the [[Fiber]] waits until it's empty.
+          *
+          * This method closes the channel to new elements and returns a `Fiber` that completes when all elements have been consumed. Unlike
+          * the regular [[close]] method, this allows consumers to process all remaining elements before considering the channel fully
+          * closed.
+          *
+          * This differs from [[closeAwaitEmpty]] in that once the `Fiber` has been obtained it guarantees to have begun closing the channel
+          * and future offers to the channel will abort with [[Closed]] even if the channel is not yet completely closed. On the other hand,
+          * when handling the `Async` effect from `closeAwaitEmpty` the `Fiber` it returns may not have started closing the channel yet.
           *
           * @return
-          *   true if the channel is closed, false otherwise
+          *   a `Fiber` that completes with `true` if the channel was successfully closed and emptied, `false` if it was already closed
+          */
+        def closeAwaitEmptyFiber(using Frame): Fiber[Nothing, Boolean] < IO = IO.Unsafe(self.closeAwaitEmpty().safe)
+
+        /** Checks if the channel is closed.
+          *
+          * A channel is considered closed if it has fully closed, i.e. it is not open and it is empty.
+          *
+          * This will always be `true` after [[close]]. In the case of [[closeAwaitEmpty]] and [[closeAwaitEmptyFiber]], it will only be
+          * `true` once the channel has been emptied.
+          *
+          * @return
+          *   `true` if the channel is closed, `false` otherwise
           */
         def closed(using Frame): Boolean < IO = IO.Unsafe(self.closed())
+
+        /** Checks if the channel is open.
+          *
+          * A channel is considered open if it has not begun closing, and it may still accept new elements (although it might be full).
+          *
+          * @return
+          *   `true` if the channel is open, `false` otherwise
+          */
+        def open(using Frame): Boolean < IO = IO.Unsafe(self.open())
 
         /** Checks if the channel is empty.
           *
@@ -327,6 +356,7 @@ object Channel:
         def empty()(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def full()(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def closed()(using AllowUnsafe): Boolean
+        def open()(using AllowUnsafe): Boolean
 
         def safe: Channel[A] = this
     end Unsafe
@@ -520,6 +550,7 @@ object Channel:
             def empty()(using AllowUnsafe, Frame) = succeedIfOpen(true)
             def full()(using AllowUnsafe, Frame)  = succeedIfOpen(true)
             def closed()(using AllowUnsafe)       = isClosed.get()
+            def open()(using AllowUnsafe)         = !isClosed.get()
 
             @tailrec protected def flush()(using Frame): Unit =
                 // This method ensures that all values are processed
@@ -673,6 +704,7 @@ object Channel:
             def empty()(using AllowUnsafe, Frame) = queue.empty()
             def full()(using AllowUnsafe, Frame)  = queue.full()
             def closed()(using AllowUnsafe)       = queue.closed()
+            def open()(using AllowUnsafe)         = queue.open()
 
             @tailrec protected def flush()(using Frame): Unit =
                 // This method ensures that all values are processed
