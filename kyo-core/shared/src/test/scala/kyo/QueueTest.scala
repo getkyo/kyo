@@ -66,30 +66,42 @@ class QueueTest extends Test:
         }
     }
 
-    "close" in run {
-        for
-            q  <- Queue.init[Int](2)
-            b  <- q.offer(1)
-            c1 <- q.close
-            v1 <- Abort.run(q.size)
-            v2 <- Abort.run(q.empty)
-            v3 <- Abort.run(q.full)
-            v4 <- Abort.run(q.offer(2))
-            v5 <- Abort.run(q.poll)
-            v6 <- Abort.run(q.peek)
-            v7 <- Abort.run(q.drain)
-            c2 <- q.close
-        yield assert(
-            b && c1 == Maybe(Seq(1)) &&
-                v1.isFailure &&
-                v2.isFailure &&
-                v3.isFailure &&
-                v4.isFailure &&
-                v5.isFailure &&
-                v6.isFailure &&
-                v7.isFailure &&
-                c2.isEmpty
-        )
+    "close" - {
+        "allowed following ops" in run {
+            for
+                q  <- Queue.init[Int](2)
+                b  <- q.offer(1)
+                c1 <- q.close
+                v1 <- Abort.run(q.size)
+                v2 <- Abort.run(q.empty)
+                v3 <- Abort.run(q.full)
+                v4 <- Abort.run(q.offer(2))
+                v5 <- Abort.run(q.poll)
+                v6 <- Abort.run(q.peek)
+                v7 <- Abort.run(q.drain)
+                c2 <- q.close
+            yield assert(
+                b && c1 == Maybe(Seq(1)) &&
+                    v1.isFailure &&
+                    v2.isFailure &&
+                    v3.isFailure &&
+                    v4.isFailure &&
+                    v5.isFailure &&
+                    v6.isFailure &&
+                    v7.isFailure &&
+                    c2.isEmpty
+            )
+        }
+
+        "states" in run {
+            for
+                q      <- Queue.init[Int](2)
+                _      <- q.offer(1)
+                _      <- q.close
+                closed <- q.closed
+                open   <- q.open
+            yield assert(closed && !open)
+        }
     }
 
     "drain" in run {
@@ -413,19 +425,22 @@ class QueueTest extends Test:
             for
                 queue  <- Queue.init[Int](10)
                 result <- queue.closeAwaitEmpty
-            yield assert(result)
+                closed <- queue.closed
+            yield assert(result && closed)
         }
 
         "returns true when queue becomes empty after closing" in run {
             for
-                queue  <- Queue.init[Int](10)
-                _      <- queue.offer(1)
-                _      <- queue.offer(2)
-                fiber  <- Async.run(queue.closeAwaitEmpty)
-                _      <- queue.poll
-                _      <- queue.poll
-                result <- fiber.get
-            yield assert(result)
+                queue     <- Queue.init[Int](10)
+                _         <- queue.offer(1)
+                _         <- queue.offer(2)
+                fiber     <- Async.run(queue.closeAwaitEmpty)
+                wasClosed <- queue.closed
+                _         <- queue.poll
+                _         <- queue.poll
+                result    <- fiber.get
+                closed    <- queue.closed
+            yield assert(!wasClosed && result && closed)
         }
 
         "returns false if queue is already closed" in run {
@@ -572,6 +587,208 @@ class QueueTest extends Test:
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
+                    )
+                )
+                producerFiber2 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.close)
+                    )
+                )
+
+                consumerFiber <- Async.run(
+                    latch.await.andThen(
+                        Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
+                    )
+                )
+
+                _        <- latch.release
+                result1  <- producerFiber1.getResult
+                result2  <- producerFiber2.getResult
+                isClosed <- queue.closed
+                _        <- consumerFiber.getResult
+            yield
+                assert(isClosed)
+                assert(
+                    (result1.isFailure || result1.contains(false)) && !result2.contains(Absent) ||
+                        (result1.contains(true)) && result2.contains(Absent)
+                )
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+    }
+
+    "closeAwaitEmptyFiber" - {
+        "returns true when queue is already empty" in run {
+            for
+                queue  <- Queue.init[Int](10)
+                result <- queue.closeAwaitEmptyFiber.map(_.get)
+                closed <- queue.closed
+                open   <- queue.open
+            yield assert(result && closed && !open)
+        }
+
+        "returns true when queue becomes empty after closing" in run {
+            for
+                queue     <- Queue.init[Int](10)
+                _         <- queue.offer(1)
+                _         <- queue.offer(2)
+                fiber     <- queue.closeAwaitEmptyFiber
+                wasClosed <- queue.closed
+                wasOpen   <- queue.open
+                _         <- queue.poll
+                _         <- queue.poll
+                result    <- fiber.get
+                closed    <- queue.closed
+                open      <- queue.open
+            yield assert(!wasClosed && !wasOpen && !open && result && closed && !open)
+        }
+
+        "returns false if queue is already closed" in run {
+            for
+                queue  <- Queue.init[Int](10)
+                _      <- queue.close
+                result <- queue.closeAwaitEmptyFiber.map(_.get)
+            yield assert(!result)
+        }
+
+        "unbounded queue" - {
+            "returns true when queue is already empty" in run {
+                for
+                    queue  <- Queue.Unbounded.init[Int]()
+                    result <- queue.closeAwaitEmptyFiber.map(_.get)
+                yield assert(result)
+            }
+
+            "returns true when queue becomes empty after closing" in run {
+                for
+                    queue  <- Queue.Unbounded.init[Int]()
+                    _      <- queue.add(1)
+                    _      <- queue.add(2)
+                    fiber  <- queue.closeAwaitEmptyFiber
+                    _      <- queue.poll
+                    _      <- queue.poll
+                    result <- fiber.get
+                yield assert(result)
+            }
+        }
+
+        "concurrent polling and waiting" in run {
+            for
+                queue  <- Queue.init[Int](10)
+                _      <- Kyo.foreach(1 to 5)(i => queue.offer(i))
+                fiber  <- queue.closeAwaitEmptyFiber
+                _      <- Async.foreach(1 to 5)(_ => queue.poll)
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "sliding queue" in run {
+            for
+                queue  <- Queue.Unbounded.initSliding[Int](2)
+                _      <- queue.add(1)
+                _      <- queue.add(2)
+                fiber  <- queue.closeAwaitEmptyFiber
+                _      <- queue.poll
+                _      <- queue.poll
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "dropping queue" in run {
+            for
+                queue  <- Queue.Unbounded.initDropping[Int](2)
+                _      <- queue.add(1)
+                _      <- queue.add(2)
+                fiber  <- queue.closeAwaitEmptyFiber
+                _      <- queue.poll
+                _      <- queue.poll
+                result <- fiber.get
+            yield assert(result)
+        }
+
+        "zero capacity queue" in run {
+            for
+                queue  <- Queue.init[Int](0)
+                result <- queue.closeAwaitEmptyFiber.map(_.get)
+            yield assert(result)
+        }
+
+        "race between closeAwaitEmpty and close" in run {
+            (for
+                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                _     <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
+                latch <- Latch.init(1)
+                closeAwaitEmptyFiber <- Async.run(
+                    latch.await.andThen(queue.closeAwaitEmptyFiber.map(_.get))
+                )
+                closeFiber <- Async.run(
+                    latch.await.andThen(queue.close)
+                )
+                _        <- latch.release
+                _        <- Abort.run(queue.drain)
+                result1  <- closeAwaitEmptyFiber.get
+                result2  <- closeFiber.get
+                isClosed <- queue.closed
+            yield
+                assert(isClosed)
+                assert((result1 && result2.isEmpty) || (!result1 && result2.isDefined))
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+
+        "two producers calling closeAwaitEmpty" in run {
+            (for
+                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+
+                producerFiber1 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.closeAwaitEmptyFiber.map(_.get))
+                    )
+                )
+                producerFiber2 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.closeAwaitEmptyFiber.map(_.get))
+                    )
+                )
+
+                consumerFiber <- Async.run(
+                    latch.await.andThen(
+                        Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
+                    )
+                )
+
+                _        <- latch.release
+                result1  <- producerFiber1.getResult
+                result2  <- producerFiber2.getResult
+                isClosed <- queue.closed
+                _        <- consumerFiber.getResult
+            yield
+                assert(isClosed)
+                assert(Seq(result1, result2).count(_.contains(true)) == 1)
+                assert(Seq(result1, result2).count(r => r.contains(false) || r.isFailure) == 1)
+            )
+                .handle(Choice.run, _.unit, Loop.repeat(10))
+                .andThen(succeed)
+        }
+
+        "producer calling closeAwaitEmpty and another calling close" in run {
+            (for
+                size  <- Choice.eval(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+
+                producerFiber1 <- Async.run(
+                    latch.await.andThen(
+                        Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
+                            .andThen(queue.closeAwaitEmptyFiber.map(_.get))
                     )
                 )
                 producerFiber2 <- Async.run(
