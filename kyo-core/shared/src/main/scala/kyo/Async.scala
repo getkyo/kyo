@@ -189,7 +189,7 @@ object Async extends AsyncPlatformSpecific:
     def timeout[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        if after == Duration.Zero then Abort.fail(Timeout())
+        if after == Duration.Zero then Abort.fail(Timeout(Present(after)))
         else if !after.isFinite then v
         else
             isolate.capture { state =>
@@ -197,7 +197,7 @@ object Async extends AsyncPlatformSpecific:
                     Clock.use { clock =>
                         IO.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
-                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout()))))
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                             isolate.restore(task.get)
                         }
@@ -207,16 +207,19 @@ object Async extends AsyncPlatformSpecific:
         end if
     end timeout
 
-    /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
-      * are interrupted.
+    /** Races multiple computations and returns the result of the first successful computation to complete. When one computation succeeds,
+      * all other computations are interrupted.
       *
       * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
       * platforms supporting parallel execution (like JVM), computations may run in parallel.
       *
+      * Note: Unlike `raceFirst`, this method will only complete when a successful computation completes. If all computations fail, it will
+      * wait for the last failure. If some fail while others never complete, it will wait indefinitely for a success.
+      *
       * @param seq
       *   The sequence of computations to race
       * @return
-      *   The result of the first computation to complete
+      *   The result of the first successful computation to complete
       */
     def race[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
@@ -229,14 +232,17 @@ object Async extends AsyncPlatformSpecific:
         }
     end race
 
-    /** Races two or more computations and returns the result of the first to complete.
+    /** Races two or more computations and returns the result of the first successful computation to complete.
+      *
+      * Note: Unlike `race`, this method will only complete when a successful computation completes. If all computations fail, it will wait
+      * for the last failure. If some fail while others never complete, it will wait indefinitely for a success.
       *
       * @param first
       *   The first computation
       * @param rest
       *   The rest of the computations
       * @return
-      *   The result of the first computation to complete
+      *   The result of the first successful computation to complete
       */
     def race[E, A, S](
         using Isolate.Stateful[S, Abort[E] & Async]
@@ -247,6 +253,55 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         race[E, A, S](first +: rest)
+
+    /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
+      * are interrupted.
+      *
+      * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
+      * platforms supporting parallel execution (like JVM), computations may run in parallel.
+      *
+      * Note: Unlike `race`, this method will complete as soon as any computation completes, regardless of whether it succeeded or failed.
+      * For example, if one computation fails while another never completes, this method will return the failure, interrupting the other
+      * computation(s).
+      *
+      * @param seq
+      *   The sequence of computations to race
+      * @return
+      *   The result of the first computation to complete
+      */
+    def raceFirst[E, A, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(
+        using frame: Frame
+    ): A < (Abort[E] & Async & S) =
+        require(iterable.nonEmpty, "Can't race an empty collection.")
+        isolate.capture { state =>
+            Fiber.raceFirst(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
+        }
+    end raceFirst
+
+    /** Races two or more computations and returns the result of the first to complete. When one computation completes, all other
+      * computations are interrupted.
+      *
+      * Note: Unlike `race`, this method will complete as soon as any computation completes, regardless of whether it succeeded or failed.
+      * For example, if one computation fails while another never completes, this method will return the failure, interrupting the other
+      * computation(s).
+      *
+      * @param first
+      *   The first computation
+      * @param rest
+      *   The rest of the computations
+      * @return
+      */
+    def raceFirst[E, A, S](
+        using Isolate.Stateful[S, Abort[E] & Async]
+    )(
+        first: A < (Abort[E] & Async & S),
+        rest: A < (Abort[E] & Async & S)*
+    )(
+        using frame: Frame
+    ): A < (Abort[E] & Async & S) =
+        raceFirst[E, A, S](first +: rest)
 
     /** Concurrently executes two or more computations and collects their successful results.
       *
@@ -337,8 +392,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations with indexed access, using bounded concurrency.
       *
-      * @param seq
-      *   The sequence of elements to process
+      * @param iterable
+      *   The collection of elements to process
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
       * @param f
@@ -372,8 +427,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations using bounded concurrency.
       *
-      * @param seq
-      *   The sequence of elements to process
+      * @param iterable
+      *   The collection of elements to process
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
       * @param f
@@ -390,8 +445,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations in parallel, discarding the results.
       *
-      * @param seq
-      *   The sequence of elements to process
+      * @param iterable
+      *   The collection of elements to process
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to defaultConcurrency)
       * @param f
@@ -406,8 +461,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Filters elements from a sequence using bounded concurrency.
       *
-      * @param seq
-      *   The sequence to filter
+      * @param iterable
+      *   The collection to filter
       * @param concurrency
       *   Maximum number of concurrent predicate evaluations (defaults to [[defaultConcurrency]])
       * @param f
@@ -424,8 +479,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Transforms and filters elements from a sequence using bounded concurrency.
       *
-      * @param seq
-      *   The sequence to process
+      * @param iterable
+      *   The collection to process
       * @param concurrency
       *   Maximum number of concurrent evaluations (defaults to [[defaultConcurrency]])
       * @param f
@@ -442,8 +497,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations using bounded concurrency.
       *
-      * @param seq
-      *   The sequence of computations to execute
+      * @param iterable
+      *   The collection of computations to execute
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
       * @return
@@ -458,8 +513,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations in parallel, discarding their results.
       *
-      * @param seq
-      *   The sequence of computations to execute
+      * @param iterable
+      *   The collection of computations to execute
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to defaultConcurrency)
       */
@@ -760,7 +815,7 @@ object Async extends AsyncPlatformSpecific:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): A < (reduce.SReduced & Async) =
-        reduce(use(v)(identity))
+        use(v)(identity)
 
     private[kyo] def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(
         using

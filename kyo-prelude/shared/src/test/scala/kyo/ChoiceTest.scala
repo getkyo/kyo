@@ -19,7 +19,7 @@ class ChoiceTest extends Test:
     "nested eval" in {
         assert(
             Choice.run(Choice.evalWith(Seq(1, 2, 3))(i =>
-                Choice.eval(Seq(i * 10, i * 100))
+                Choice.eval(i * 10, i * 100)
             )).eval == Seq(10, 100, 20, 200, 30, 300)
         )
     }
@@ -27,7 +27,7 @@ class ChoiceTest extends Test:
     "drop" in {
         assert(
             Choice.run(Choice.evalWith(Seq(1, 2, 3))(i =>
-                if i < 2 then Choice.drop else Choice.eval(Seq(i * 10, i * 100))
+                if i < 2 then Choice.drop else Choice.eval(i * 10, i * 100)
             )).eval == Seq(20, 200, 30, 300)
         )
     }
@@ -35,7 +35,7 @@ class ChoiceTest extends Test:
     "filter" in {
         assert(
             Choice.run(Choice.evalWith(Seq(1, 2, 3))(i =>
-                Choice.dropIf(i < 2).map(_ => Choice.eval(Seq(i * 10, i * 100)))
+                Choice.dropIf(i < 2).map(_ => Choice.eval(i * 10, i * 100))
             )).eval == Seq(20, 200, 30, 300)
         )
     }
@@ -76,7 +76,7 @@ class ChoiceTest extends Test:
         val largeChoice = Seq.range(0, 100000)
         try
             assert(
-                Choice.run(Choice.eval(largeChoice)).eval == largeChoice
+                Choice.run(Choice.eval(largeChoice*)).eval == largeChoice
             )
         catch
             case ex: StackOverflowError => fail()
@@ -85,9 +85,9 @@ class ChoiceTest extends Test:
 
     "large number of suspensions" taggedAs notNative in pendingUntilFixed {
         // https://github.com/getkyo/kyo/issues/208
-        var v = Choice.eval(Seq(1))
+        var v = Choice.eval(1)
         for _ <- 0 until 100000 do
-            v = v.map(_ => Choice.eval(Seq(1)))
+            v = v.map(_ => Choice.eval(1))
         try
             assert(
                 Choice.run(v).eval == Seq(1)
@@ -102,7 +102,7 @@ class ChoiceTest extends Test:
         "foreach" in {
             val result = Choice.run(
                 Kyo.foreach(List("x", "y")) { str =>
-                    Choice.eval(List(true, false)).map(b =>
+                    Choice.eval(true, false).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -118,7 +118,7 @@ class ChoiceTest extends Test:
         "collect" in {
             val effects =
                 List("x", "y").map { str =>
-                    Choice.eval(List(true, false)).map(b =>
+                    Choice.eval(true, false).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -134,7 +134,7 @@ class ChoiceTest extends Test:
         "foldLeft" in {
             val result = Choice.run(
                 Kyo.foldLeft(List(1, 1))(0) { (acc, _) =>
-                    Choice.eval(List(0, 1)).map(n => acc + n)
+                    Choice.eval(0, 1).map(n => acc + n)
                 }
             ).eval
 
@@ -147,7 +147,7 @@ class ChoiceTest extends Test:
         "foreach - array" in {
             val result = Choice.run(
                 Kyo.foreach(Array("x", "y")) { str =>
-                    Choice.eval(Seq(true, false)).map(b =>
+                    Choice.eval(true, false).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -163,7 +163,7 @@ class ChoiceTest extends Test:
         "collect - array" in {
             val effects =
                 Array("x", "y").map { str =>
-                    Choice.eval(Seq(true, false)).map(b =>
+                    Choice.eval(true, false).map(b =>
                         if b then str.toUpperCase else str
                     )
                 }
@@ -179,7 +179,7 @@ class ChoiceTest extends Test:
         "foldLeft - array" in {
             val result = Choice.run(
                 Kyo.foldLeft(Array(1, 1))(0) { (acc, _) =>
-                    Choice.eval(Seq(0, 1)).map(n => acc + n)
+                    Choice.eval(0, 1).map(n => acc + n)
                 }
             ).eval
 
@@ -192,7 +192,7 @@ class ChoiceTest extends Test:
 
     "runStream" - {
         "returns all possible outcomes" in {
-            val computation = Choice.eval(Seq(1, 2, 3))
+            val computation = Choice.eval(1, 2, 3)
             val stream      = Choice.runStream(computation)
             val result      = stream.run.eval
 
@@ -200,13 +200,13 @@ class ChoiceTest extends Test:
         }
 
         "handles empty choices" in {
-            val stream = Choice.runStream(Choice.eval(Seq.empty[Int]))
+            val stream = Choice.runStream(Choice.eval[Int]())
             val result = stream.run.eval
             assert(result.isEmpty)
         }
 
         "supports incremental consumption" in {
-            val computation = Choice.eval(Seq(1, 2, 3, 4, 5))
+            val computation = Choice.eval(1, 2, 3, 4, 5)
             val stream      = Choice.runStream(computation)
 
             val firstThree = stream.take(3).run.eval
@@ -218,7 +218,7 @@ class ChoiceTest extends Test:
         "works with filtering" in {
             val computation =
                 for
-                    x <- Choice.eval(Seq(1, 2, 3, 4))
+                    x <- Choice.eval(1, 2, 3, 4)
                     _ <- Choice.dropIf(x % 2 == 0)
                 yield x
 
@@ -228,7 +228,7 @@ class ChoiceTest extends Test:
         }
 
         "integrates with stream operations" in {
-            val computation = Choice.eval(Seq(1, 2, 3, 4, 5))
+            val computation = Choice.eval(1, 2, 3, 4, 5)
             val stream      = Choice.runStream(computation)
 
             val result = stream
@@ -243,7 +243,7 @@ class ChoiceTest extends Test:
             "with Var" in {
                 val computation =
                     for
-                        x       <- Choice.eval(Seq(1, 2, 3))
+                        x       <- Choice.eval(1, 2, 3)
                         _       <- Var.update[Int](_ + x)
                         current <- Var.get[Int]
                     yield current
@@ -258,7 +258,7 @@ class ChoiceTest extends Test:
             "with Env" in {
                 val computation =
                     for
-                        x          <- Choice.eval(Seq(1, 2, 3))
+                        x          <- Choice.eval(1, 2, 3)
                         multiplier <- Env.get[Int]
                     yield x * multiplier
 
@@ -271,7 +271,7 @@ class ChoiceTest extends Test:
             "with filtering" in {
                 val computation =
                     for
-                        x <- Choice.eval(Seq(1, 2, 3, 4))
+                        x <- Choice.eval(1, 2, 3, 4)
                         _ <- Choice.dropIf(x % 2 == 0)
                     yield x
 
@@ -284,7 +284,7 @@ class ChoiceTest extends Test:
             "with nested effects" in {
                 val computation =
                     for
-                        x <- Choice.eval(Seq(1, 2, 3))
+                        x <- Choice.eval(1, 2, 3)
                         y <- Env.use[Int](multiplier =>
                             Var.updateWith[Int](_ + x) { current =>
                                 if current > 5 then Choice.drop else x * multiplier
@@ -302,7 +302,7 @@ class ChoiceTest extends Test:
             "with incremental consumption and state" in {
                 val computation =
                     for
-                        x <- Choice.eval(Seq(1, 2, 3, 4, 5))
+                        x <- Choice.eval(1, 2, 3, 4, 5)
                         _ <- Var.update[Int](_ + x)
                     yield x
 
@@ -316,7 +316,7 @@ class ChoiceTest extends Test:
             "with isolate" in {
                 val computation =
                     for
-                        x <- Choice.eval(Seq(1, 2, 3))
+                        x <- Choice.eval(1, 2, 3)
                         _ <- Var.isolate.discard[Int].run {
                             Var.update[Int](_ + x * 10)
                         }

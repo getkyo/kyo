@@ -1084,6 +1084,32 @@ class StreamTest extends Test:
         }
     }
 
+    "handle" - {
+        "handle other effects" in run {
+            val stream = Stream:
+                for
+                    _  <- Emit.value(Chunk(1, 2, 3))
+                    i1 <- Var.get[Int]
+                    _  <- Emit.value(Chunk(i1))
+                    i2 <- Env.get[Int]
+                    _  <- Emit.value(Chunk(i2))
+                    _  <- Abort.fail("failure")
+                    _  <- Emit.value(Chunk(4, 5, 6))
+                yield ()
+
+            val handledStream       = stream.handle(Abort.run[String](_), Var.run(4)(_), Env.run(5)(_))
+            val _: Stream[Int, Any] = handledStream
+            assert(handledStream.run.eval == Chunk(1, 2, 3, 4, 5))
+        }
+
+        "transform emit type" in run {
+            val stream                 = Stream.init(1 to 3)
+            val transformed            = stream.handle(eff => Emit.runForeach[Chunk[Int]](eff)(chunk => Emit.value(chunk.map(_.toString))))
+            val _: Stream[String, Any] = transformed
+            assert(transformed.run.eval == Chunk("1", "2", "3"))
+        }
+    }
+
     "chunking" - {
         val chunkSize: Int = 64
 
@@ -1120,6 +1146,25 @@ class StreamTest extends Test:
             (_.rechunk(chunkSize), "rechunk"),
             (_.flatMapChunk(c => Stream.init(c)), "flatMapChunk")
         )
+    }
+
+    "unwrap" - {
+        "should fuse effect contexts" in {
+            val stream: Stream[Int, Choice] =
+                Stream.unwrap:
+                    Choice.eval(3, 4).map: size =>
+                        Stream.init(1 to size)
+
+            val allChoices: Chunk[Int] = stream.handle(Choice.run).run.eval
+            assert(allChoices == Chunk(1, 2, 3, 1, 2, 3, 4))
+
+            val someChoices: Chunk[Int] = stream.filter[Choice]({
+                case 4 => Choice.drop
+                case i => i % 2 == 1
+            }).handle(Choice.run).run.eval
+
+            assert(someChoices == Chunk(1, 3))
+        }
     }
 
 end StreamTest
