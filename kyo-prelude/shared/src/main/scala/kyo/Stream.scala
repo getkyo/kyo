@@ -327,7 +327,28 @@ sealed abstract class Stream[+V, -S] extends Serializable:
     /** Drops elements from the stream while the predicate is true.
       *
       * @param f
-      *   The predicate function
+      *   The pure predicate function
+      * @return
+      *   A new stream with initial elements that satisfy the predicate removed
+      */
+    def dropWhile[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
+        Stream(
+            ArrowEffect.handleLoop(tag, true, emit)(
+                [C] =>
+                    (input, state, cont) =>
+                        if state then
+                            val chunk = input.dropWhile(f)
+                            if chunk.isEmpty then Loop.continue(true, cont(()))
+                            else Emit.valueWith(chunk)(Loop.continue(false, cont(())))
+                        else
+                            Emit.valueWith(input)(Loop.continue(false, cont(())))
+            )
+        )
+
+    /** Drops elements from the stream while the effectful predicate is true.
+      *
+      * @param f
+      *   The effectful predicate function
       * @return
       *   A new stream with initial elements that satisfy the predicate removed
       */
