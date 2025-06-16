@@ -339,7 +339,7 @@ class PreludeTest extends Test:
                 direct {
                     val env = Env.get[Int].now
                     val stream = Stream.init(1 to 3)
-                        .map { x =>
+                        .mapKyo { x =>
                             direct {
                                 val value = Var.get[Int].now
                                 Var.update[Int](_ + x).now
