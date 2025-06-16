@@ -185,7 +185,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       *   An effect generating an output value from elements consumed from the stream
       */
     final def drain[S2](stream: Stream[V, S2])(using Tag[Poll[Chunk[V]]], Tag[Emit[Chunk[V]]], Frame): A < (S & S2) =
-        Poll.run(stream.emit)(poll).map(_._2)
+        Poll.runEmit(stream.emit)(poll).map(_._2)
 end Sink
 
 object Sink:

@@ -196,14 +196,14 @@ class PollTest extends Test:
         }
     }
 
-    "run Emit" - {
+    "runEmit" - {
         "one" in {
-            val result = Poll.run(Emit.value(1))(Poll.one[Int])
+            val result = Poll.runEmit(Emit.value(1))(Poll.one[Int])
             assert(result.eval == ((), Maybe(1)))
         }
 
         "two" in {
-            val result = Poll.run(Emit.value(1).andThen(Emit.value(2))) {
+            val result = Poll.runEmit(Emit.value(1).andThen(Emit.value(2))) {
                 Poll.andMap[Int] {
                     case Absent     => Maybe.empty
                     case Present(v) => Maybe(v * 3)
@@ -226,7 +226,7 @@ class PollTest extends Test:
                     v2 <- Poll.one[Int]
                 yield (v1, v2)
 
-            val result = Poll.run(emitter)(poller)
+            val result = Poll.runEmit(emitter)(poller)
             assert(result.eval == ("emitted", (Maybe(1), Maybe(2))))
         }
 
@@ -240,7 +240,7 @@ class PollTest extends Test:
 
             val poller = Poll.one[Int]
 
-            val result = Poll.run(emitter)(poller)
+            val result = Poll.runEmit(emitter)(poller)
             assert(result.eval == ("emitted", Maybe(1)))
         }
 
@@ -254,7 +254,7 @@ class PollTest extends Test:
 
             val poller = Poll.fold[Int](0)(_ + _)
 
-            val result = Poll.run(emitter)(poller)
+            val result = Poll.runEmit(emitter)(poller)
             assert(result.eval == ("done", 6))
         }
 
@@ -277,10 +277,72 @@ class PollTest extends Test:
                 yield (v1, v2)
 
             val result = Var.runTuple(0) {
-                Poll.run(emitter)(poller)
+                Poll.runEmit(emitter)(poller)
             }
             assert(result.eval == (3, ("emitted", (Maybe(1), Maybe(2)))))
         }
+    }
+
+    "partial handling" - {
+        enum T:
+            case T1(int: Int)
+            case T2(str: String)
+        object T:
+            given CanEqual[T, T] = CanEqual.derived
+
+        val poll =
+            for
+                t11 <- Poll.one[T.T1]
+                t21 <- Poll.one[T.T2]
+                t12 <- Poll.one[T.T1]
+                t22 <- Poll.one[T.T2]
+                t13 <- Poll.one[T.T1]
+                t23 <- Poll.one[T.T2]
+            yield (
+                Chunk(t11, t12, t13).collect { case Present(v) => v.int },
+                Chunk(t21, t22, t23).collect { case Present(v) => v.str }
+            )
+
+        "run" in run {
+            assert(Poll.run[T.T2](Chunk.empty[T.T2])(Poll.run[T.T1](Chunk(T.T1(0), T.T1(1), T.T1(2)))(poll)).eval == (
+                Chunk(0, 1, 2),
+                Chunk()
+            ))
+            assert(Poll.run[T.T2](Chunk(T.T2("zero"), T.T2("one"), T.T2("two")))(Poll.run[T.T1](Chunk.empty)(poll)).eval == (
+                Chunk(),
+                Chunk("zero", "one", "two")
+            ))
+        }
+
+        "runFirst" in run {
+            val ranFirst = Poll.run(Chunk.empty):
+                Poll.runFirst[T.T2](poll).map:
+                    case Right(cont) =>
+                        Poll.runFirst[T.T1](cont(Present(T.T2("zero")))).map:
+                            case Right(cont) =>
+                                Poll.run(Chunk.empty)(cont(Present(T.T1(0))))
+                            case Left(a) => a
+                    case Left(a) => a
+
+            assert(ranFirst.eval == (Chunk(0), Chunk("zero")))
+        }
+
+        "runEmit" in run {
+            val emit =
+                for
+                    _ <- Emit.value[T.T1](T.T1(0))
+                    _ <- Emit.value[T.T2](T.T2("zero"))
+                    _ <- Emit.value[T.T1](T.T1(1))
+                    _ <- Emit.value[T.T2](T.T2("one"))
+                    _ <- Emit.value[T.T1](T.T1(2))
+                    _ <- Emit.value[T.T2](T.T2("two"))
+                yield ()
+
+            assert:
+                Poll.runEmit[T.T1](emit)(poll)
+                    .handle(Poll.run(Chunk.empty[T.T2])(_), Emit.runDiscard[T.T2](_)).eval == ((), (Chunk(0, 1, 2), Chunk()))
+        }
+
     }
 
 end PollTest
