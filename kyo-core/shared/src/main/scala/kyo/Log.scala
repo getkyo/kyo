@@ -4,32 +4,31 @@ import kyo.internal.LogPlatformSpecific
 
 final case class Log(unsafe: Log.Unsafe):
     def level: Log.Level                                                        = unsafe.level
-    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.trace(msg.show))
+    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.trace(msg))
     inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        IO.Unsafe(unsafe.trace(msg.show, t))
-    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.debug(msg.show))
+        IO.Unsafe(unsafe.trace(msg, t))
+    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.debug(msg))
     inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        IO.Unsafe(unsafe.debug(msg.show, t))
-    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.info(msg.show))
-    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.info(msg.show, t))
-    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.warn(msg.show))
-    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO        = IO.Unsafe(unsafe.warn(msg.show, t))
-    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < IO                        = IO.Unsafe(unsafe.error(msg.show))
-    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.error(msg.show, t))
+        IO.Unsafe(unsafe.debug(msg, t))
+    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.info(msg))
+    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.info(msg, t))
+    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.warn(msg))
+    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO        = IO.Unsafe(unsafe.warn(msg, t))
+    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < IO                        = IO.Unsafe(unsafe.error(msg))
+    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO       = IO.Unsafe(unsafe.error(msg, t))
 end Log
 
 /** Logging utility object for Kyo applications. */
 object Log extends LogPlatformSpecific:
 
-    sealed abstract class Level(private val priority: Int) derives CanEqual:
+    enum Level(private val priority: Int) derives CanEqual:
         def enabled(other: Level): Boolean = other.priority <= priority
-    object Level:
-        case object trace  extends Level(10)
-        case object debug  extends Level(20)
-        case object info   extends Level(30)
-        case object warn   extends Level(40)
-        case object error  extends Level(50)
-        case object silent extends Level(60)
+        case trace  extends Level(10)
+        case debug  extends Level(20)
+        case info   extends Level(30)
+        case warn   extends Level(40)
+        case error  extends Level(50)
+        case silent extends Level(60)
     end Level
 
     private val local = Local.init(live)
@@ -170,12 +169,12 @@ object Log extends LogPlatformSpecific:
         end ConsoleLogger
     end Unsafe
 
-    private inline def logWhen(inline level: Level)(inline doLog: Log => Any < IO)(using
+    private inline def logWhen(inline level: Level)(inline doLog: Log => Unit < IO)(using
         inline frame: Frame
     ): Unit < IO =
         IO.Unsafe.withLocal(local) { log =>
             if level.enabled(log.level) then
-                doLog(log).unit
+                doLog(log)
             else
                 (
             )

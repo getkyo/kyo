@@ -36,9 +36,10 @@ import kyo.kernel.ArrowEffect
   * @see
   *   [[kyo.Stream]] for higher-level streaming operations
   */
-sealed trait Poll[V] extends ArrowEffect[Const[Unit], Const[Maybe[V]]]
+sealed trait Poll[+V] extends ArrowEffect[Const[Unit], Const[Maybe[V]]]
 
 object Poll:
+    given eliminatePoll: Reducible.Eliminable[Poll[Any]] with {}
 
     /** Attempts to poll a single value.
       *
@@ -135,15 +136,17 @@ object Poll:
       * @return
       *   The result of running the Poll computation with the provided values
       */
-    def run[V, A, S](inputs: Chunk[V])(v: A < (Poll[V] & S))(
+    def run[V](inputs: Chunk[V])[A, VR, S](v: A < (Poll[V] & Poll[VR] & S))(
         using
         tag: Tag[Poll[V]],
+        reduce: Reducible[Poll[VR]],
         frame: Frame
-    ): A < S =
-        ArrowEffect.handleLoop(tag, inputs, v)(
-            [C] =>
-                (unit, state, cont) => Loop.continue(state.drop(1), cont(state.headMaybe))
-        )
+    ): A < (reduce.SReduced & S) =
+        reduce:
+            ArrowEffect.handleLoop(tag, inputs, v)(
+                [C] =>
+                    (unit, state, cont) => Loop.continue(state.drop(1), cont(state.headMaybe))
+            )
 
     /** Runs a Poll effect with a single input value, stopping after the first poll operation.
       *
@@ -157,17 +160,21 @@ object Poll:
       */
     def runFirst[V](
         using Frame
-    )[A, S](v: A < (Poll[V] & S))(using tag: Tag[Poll[V]]): Either[A, Maybe[V] => A < (Poll[V] & S)] < S =
-        ArrowEffect.handleFirst(tag, v)(
-            handle = [C] =>
-                (input, cont) =>
-                    // Effect found, return the input an continuation
-                    Right(cont),
-            done = r =>
-                // Effect not found, return empty input and a placeholder continuation
-                // that returns the result of the computation
-                Left(r)
-        )
+    )[A, VR, S](v: A < (Poll[V] & Poll[VR] & S))(using
+        tag: Tag[Poll[V]],
+        reduce: Reducible[Poll[VR]]
+    ): Either[A, Maybe[V] => A < (Poll[V & VR] & S)] < (reduce.SReduced & S) =
+        reduce:
+            ArrowEffect.handleFirst(tag, v)(
+                handle = [C] =>
+                    (input, cont) =>
+                        // Effect found, return the input an continuation
+                        Right(cont),
+                done = r =>
+                    // Effect not found, return empty input and a placeholder continuation
+                    // that returns the result of the computation
+                    Left(r)
+            )
 
     /** Connects an emitting source to a polling consumer with flow control.
       *
@@ -187,39 +194,45 @@ object Poll:
       * @return
       *   A tuple containing results from both the emitter and poller
       */
-    def run[V, A, B, S, S2](emit: A < (Emit[V] & S))(poll: B < (Poll[V] & S2))(
+    def runEmit[V](
         using
         emitTag: Tag[Emit[V]],
-        pollTag: Tag[Poll[V]],
+        pollTag: Tag[Poll[V]]
+    )[A, B, VRE, VRP, S, S2](emit: A < (Emit[V] & Emit[VRE] & S))(poll: B < (Poll[V] & Poll[VRP] & S2))(
+        using
+        reduceEmit: Reducible[Emit[VRE]],
+        reducePoll: Reducible[Poll[VRP]],
         frame: Frame
-    ): (A, B) < (S & S2) =
-        // Start by handling the first emission
-        Loop(emit, poll) { (emit, poll) =>
-            ArrowEffect.handleFirst(emitTag, emit)(
-                handle = [C] =>
-                    (emitted, emitCont) =>
-                        // Once we have an emitted value, handle the first poll operation
-                        // This creates the demand-driven cycle between emit and poll
-                        ArrowEffect.handleFirst(pollTag, poll)(
-                            handle = [C2] =>
-                                (_, pollCont) =>
-                                    // Continue the emit-poll cycle:
-                                    // 1. Pass the ack back to emitter to control flow
-                                    // 2. Pass the emitted value to poller for consumption
-                                    // 3. Recursively continue the cycle
-                                    Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
-                            // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
-                            done = b =>
-                                // Poller completed early (e.g., received all needed values)
-                                // Discard remaining emit operations
-                                Emit.runDiscard(emitCont(())).map(a => Loop.done((a, b)))
-                    ),
-                done = a =>
-                    // Emitter completed (no more values to emit)
-                    // Run remaining poll operations with empty chunk to signal completion
-                    Poll.run(Chunk.empty)(poll).map(b => Loop.done((a, b)))
-            )
-        }
-    end run
+    ): (A, B) < (reduceEmit.SReduced & reducePoll.SReduced & S & S2) =
+        reduceEmit:
+            reducePoll:
+                // Start by handling the first emission
+                Loop(emit, poll) { (emit, poll) =>
+                    ArrowEffect.handleFirst(emitTag, emit)(
+                        handle = [C] =>
+                            (emitted, emitCont) =>
+                                // Once we have an emitted value, handle the first poll operation
+                                // This creates the demand-driven cycle between emit and poll
+                                ArrowEffect.handleFirst(pollTag, poll)(
+                                    handle = [C2] =>
+                                        (_, pollCont) =>
+                                            // Continue the emit-poll cycle:
+                                            // 1. Pass the ack back to emitter to control flow
+                                            // 2. Pass the emitted value to poller for consumption
+                                            // 3. Recursively continue the cycle
+                                            Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
+                                    // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
+                                    done = b =>
+                                        // Poller completed early (e.g., received all needed values)
+                                        // Discard remaining emit operations
+                                        Emit.runDiscard[V](emitCont(())).map(a => Loop.done((a, b)))
+                            ),
+                        done = a =>
+                            // Emitter completed (no more values to emit)
+                            // Run remaining poll operations with empty chunk to signal completion
+                            Poll.run[V](Chunk.empty)(poll).map(b => Loop.done((a, b)))
+                    )
+                }
+    end runEmit
 
 end Poll

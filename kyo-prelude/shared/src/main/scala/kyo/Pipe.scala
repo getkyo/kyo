@@ -218,7 +218,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
       */
     def join[C, S1](pipe: Pipe[B, C, S1])(using Tag[Emit[Chunk[B]]], Tag[Poll[Chunk[B]]], Frame): Pipe[A, C, S & S1] =
         Pipe:
-            Poll.run(pollEmit)(pipe.pollEmit).unit
+            Poll.runEmit[Chunk[B]](pollEmit)(pipe.pollEmit).unit
 
     /** Join to a sink producing a new sink that transforms the stream prior to processing it.
       *
@@ -229,7 +229,7 @@ sealed abstract class Pipe[A, B, -S] extends Serializable:
       */
     def join[C, S1](sink: Sink[B, C, S1])(using Tag[Emit[Chunk[B]]], Tag[Poll[Chunk[B]]], Frame): Sink[A, C, S & S1] =
         Sink:
-            Poll.run(pollEmit)(sink.poll).map(_._2)
+            Poll.runEmit[Chunk[B]](pollEmit)(sink.poll).map(_._2)
 
     /** Consume a stream to produce a new stream
       *
