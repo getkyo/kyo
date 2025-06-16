@@ -28,8 +28,8 @@ class ResultAsyncShift(using Frame) extends AsyncShift[Result.type]:
     def map[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])[B](f: A => F[B]): F[Result[E, B]] =
         monad match
             case _: KyoCpsMonad[?] => ma match
-                    case Result.Success(a) => f(a).map(Result.Success(_))
-                    case Result.Failure(e) => monad.pure(Result.Failure(e))
+                    case Result.Success(a)             => f(a).map(Result.Success(_))
+                    case e: Result.Error[E] @unchecked => monad.pure(e)
 
     def flatMap[F[_], E, A](
         result: Result.type,
@@ -37,8 +37,20 @@ class ResultAsyncShift(using Frame) extends AsyncShift[Result.type]:
     )(ma: Result[E, A])[E2, B](f: A => F[Result[E2, B]]): F[Result[E | E2, B]] =
         monad match
             case _: KyoCpsMonad[?] => ma match
-                    case Result.Success(a) => f(a)
-                    case Result.Failure(e) => monad.pure(Result.Failure(e))
+                    case Result.Success(a)             => f(a)
+                    case e: Result.Error[E] @unchecked => monad.pure(e)
+
+    def exists[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])(p: A => F[Boolean]): F[Boolean] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)  => p(a)
+                    case _: Result.Error[?] => monad.pure(false)
+
+    def forall[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])(p: A => F[Boolean]): F[Boolean] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)  => p(a)
+                    case _: Result.Error[?] => monad.pure(true)
 
     def filter[F[_], E, A](
         result: Result.type,
@@ -50,25 +62,13 @@ class ResultAsyncShift(using Frame) extends AsyncShift[Result.type]:
                         p(a).map:
                             case true  => Result.Success(a)
                             case false => Result.Failure(defaultFilterError)
-                    case Result.Failure(e) => monad.pure(Result.Failure(e))
-
-    def exists[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])(p: A => F[Boolean]): F[Boolean] =
-        monad match
-            case _: KyoCpsMonad[?] => ma match
-                    case Result.Success(a) => p(a)
-                    case Result.Failure(_) => monad.pure(false)
-
-    def forall[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])(p: A => F[Boolean]): F[Boolean] =
-        monad match
-            case _: KyoCpsMonad[?] => ma match
-                    case Result.Success(a) => p(a)
-                    case Result.Failure(_) => monad.pure(true)
+                    case e: Result.Error[E] @unchecked => monad.pure(e)
 
     def filterNot[F[_], E, A](
         result: Result.type,
         monad: CpsMonad[F]
     )(ma: Result[E, A])(p: A => F[Boolean]): F[Result[E | NoSuchElementException, A]] =
-        filter(result, monad)(ma)(a => monad.map(p(a))(!_))
+        filter(result, monad)(ma)(a => monad.map(p(a))(b => !b))
 
     def fold[F[_], E, A](
         result: Result.type,
@@ -92,14 +92,14 @@ class ResultAsyncShift(using Frame) extends AsyncShift[Result.type]:
     )(ma: Result[E, A])[E2, B >: A](ifEmpty: () => F[Result[E2, B]]): F[Result[E | E2, B]] =
         monad match
             case _: KyoCpsMonad[?] => ma match
-                    case Result.Success(a) => monad.pure(Result.Success(a))
-                    case Result.Failure(e) => ifEmpty()
+                    case Result.Success(a)  => monad.pure(Result.Success(a))
+                    case _: Result.Error[?] => ifEmpty()
 
     def getOrElse[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])[B >: A](ifEmpty: () => F[B]): F[B] =
         monad match
             case _: KyoCpsMonad[?] => ma match
-                    case Result.Success(a) => monad.pure(a)
-                    case Result.Failure(e) => ifEmpty()
+                    case Result.Success(a)  => monad.pure(a)
+                    case _: Result.Error[?] => ifEmpty()
 
     private def defaultFilterError: NoSuchElementException =
         new NoSuchElementException("filter predicate failed")

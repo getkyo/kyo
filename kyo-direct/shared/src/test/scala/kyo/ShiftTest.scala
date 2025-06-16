@@ -602,6 +602,19 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(d.eval == 2)
         }
 
+        "panic" in {
+            val x: Result[Throwable, Int] = Result.Panic(new Exception("panic"))
+
+            def f(i: Int): Int < Any        = ???
+            def pred(i: Int): Boolean < Any = ???
+
+            val prg = direct:
+                val x1 = x.map(i => f(i).now)
+                val x2 = x1.filter(i => pred(i).now)
+                val x3 = x2.flatMap(i => Result.succeed(f(i).now))
+
+        }
+
     }
 
 end ShiftMethodSupportTest
