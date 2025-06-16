@@ -101,7 +101,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
         using
         tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
@@ -287,7 +286,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       */
     def takeWhile[VV >: V](f: VV => Boolean)(using
         tag: Tag[Emit[Chunk[VV]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[VV, S] =
         Stream(
@@ -386,7 +384,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
             )
         )
 
-    def filter[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], discr: Discriminator, frame: Frame): Stream[VV, S] =
+    def filter[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -423,7 +421,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
     def collect[VV >: V, V2](f: VV => Maybe[V2])(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
@@ -469,7 +466,6 @@ sealed abstract class Stream[+V, -S] extends Serializable:
     def collectWhile[VV >: V, V2](f: VV => Maybe[V2])(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
-        discr: Discriminator,
         frame: Frame
     ): Stream[V2, S] =
         Stream(
