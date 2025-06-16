@@ -47,6 +47,23 @@ class StreamCoreExtensionsTest extends Test:
     }
 
     "combinator" - {
+        "merge variance" in run {
+            enum T:
+                case T1(int: Int)
+                case T2(str: String)
+            object T:
+                given CanEqual[T, T] = CanEqual.derived
+
+            val stream1: Stream[T.T1, Any] = Stream.init(Seq[T.T1](T.T1(0), T.T1(1), T.T1(2)))
+            val stream2: Stream[T.T2, Any] = Stream.init(Seq[T.T2](T.T2("zero"), T.T2("one"), T.T2("two")))
+
+            val merged              = stream1.merge(stream2)
+            val _: Stream[T, Async] = merged
+
+            merged.run.map: chunk =>
+                assert(chunk.toSet == Set(T.T1(0), T.T1(1), T.T1(2), T.T2("zero"), T.T2("one"), T.T2("two")))
+        }
+
         "mergeHaltingLeft/Right" - {
             "should halt if non-halting side completes" in run {
                 Choice.run {
