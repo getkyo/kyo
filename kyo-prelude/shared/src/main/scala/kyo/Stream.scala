@@ -64,31 +64,23 @@ sealed abstract class Stream[V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def map[V2](f: V => V2)(using
+    def map[V2, S2](f: V => V2 < S2)(using
         t1: Tag[Emit[Chunk[V]]],
         t2: Tag[Emit[Chunk[V2]]],
-        ev: NotGiven[V2 <:< (Any < Nothing)],
         fr: Frame
-    ): Stream[V2, S] =
+    ): Stream[V2, S & S2] =
         Stream(
-            ArrowEffect.handleLoop(t1, emit)(
-                [C] =>
-                    (input, cont) =>
-                        val c = input.map(f)
-                        if c.isEmpty then Loop.continue(cont(()))
-                        else Emit.valueWith(c)(Loop.continue(cont(())))
-            )
+            f match
+                case f: kernel.`<`.PendingFn1[V, V2] @unchecked =>
+                    ArrowEffect.handleLoop(t1, emit)(
+                        [C] =>
+                            (input, cont) =>
+                                val c = input.map(f.pure)
+                                if c.isEmpty then Loop.continue(cont(()))
+                                else Emit.valueWith(c)(Loop.continue(cont(())))
+                    )
+                case _ => mapChunk(c => Kyo.foreach(c)(f)).emit
         )
-
-    /** Transforms each value in the stream using the given effectful function.
-      *
-      * @param f
-      *   The function to apply to each value
-      * @return
-      *   A new stream with transformed values
-      */
-    def map[V2, S2](f: V => V2 < S2)(using Tag[Emit[Chunk[V]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
-        mapChunk(c => Kyo.foreach(c)(f))
 
     /** Transforms each chunk in the stream using the given pure function.
       *

@@ -430,11 +430,18 @@ object `<`:
         )
     end liftUnitImpl
 
+    private[kyo] trait PendingFn1[A, B] extends (A => B < Any):
+        final def apply(a: A): B < Any = pure(a)
+        def pure(a: A): B
+    end PendingFn1
+
     /** Converts a pure single-argument function to an effectful computation. */
+    @annotation.nowarn("msg=anonymous")
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
         using inline flat: WeakFlat[B]
     ): A1 => B < Any =
-        a1 => f(a1)
+        new PendingFn1[A1, B]:
+            def pure(a: A1): B = f(a)
 
     /** Converts a pure two-argument function to an effectful computation. */
     implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
