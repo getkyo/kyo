@@ -236,8 +236,11 @@ object Var:
           */
         def merge[V](using Tag[Var[V]])[S](f: (V, V) => V < S): Isolate.Stateful[Var[V], S] =
             new Base[V, S]:
-                def restore[A, S2](v: (V, A) < S2)(using Frame) =
-                    Var.use[V](prev => v.map((state, r) => f(prev, state).map(Var.setWith(_)(r))))
+                def restore[A, S2](v: (V, A) < S2)(using Frame): A < (Var[V] & S2 & S) =
+                    v.map: (state, a) =>
+                        Var.use[V]: prev =>
+                            f(prev, state).map: next =>
+                                Var.setWith(next)(a)
 
         /** Creates an isolate that keeps Var modifications local.
           *
