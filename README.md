@@ -1339,12 +1339,12 @@ case class Config(someConfig: String)
 // Stream with IO effect
 val a: Stream[String, IO] =
     Stream.init(Seq("file1.txt", "file2.txt"))
-        .mapKyo(fileName => IO(scala.io.Source.fromFile(fileName).mkString))
+        .map(fileName => IO(scala.io.Source.fromFile(fileName).mkString))
 
 // Stream with Abort effect
 val b: Stream[Int, Abort[NumberFormatException]] =
     Stream.init(Seq("1", "2", "abc", "3"))
-        .mapKyo(s => Abort.catching[NumberFormatException](s.toInt))
+        .map(s => Abort.catching[NumberFormatException](s.toInt))
 
 def fetchUserData(config: Config, username: String): Seq[String] < Async =
     Seq(s"user data for $username") // mock implementation
@@ -1400,7 +1400,7 @@ assert(handled.run.eval == Chunk(-9, -8, -7))
 
 The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
 
-Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) are separated into pure and effectful versions, which have a `-Kyo` suffix. For instance, `map` transforms streamed elements using a function in the form `V => V1`, whereas `mapKyo` transforms elements with a function `V => V1 < S1`, allowing you to use arbitrary effects in the transformation. Any of the `-Kyo` methods will also accept pure functions, since any value can be lifted to a pending type, but the performance will be worse. For optimal performance, be sure to use the pure versions when you can.
+Note that a number of `Stream` methods (e.g., `map`, `filter`, `mapChunk`) have variants that only accept pure functions. These variants have suffix `-Pure`. For instance, `mapPure` transforms streamed elements using a function in the form `V => V1`, whereas `map` transforms elements with a function `V => V1 < S1` allowing you to use arbitrary effects in the transformation. While any of the non-pure methods will also accept pure functions, since any value can be lifted to a pending type, the `-Pure` variants are optimized for pure functions.
 
 #### Sink: stream evaluation
 
@@ -2034,7 +2034,7 @@ val lines: Stream[String, Resource & IO] =
 
 // Process the stream
 val result: Unit < (Resource & Console & Async & Abort[IOException]) =
-    lines.mapKyo(line => Console.printLine(line)).discard
+    lines.map(line => Console.printLine(line)).discard
 
 // Walk a directory tree
 val tree: Stream[Path, IO] =
@@ -2042,7 +2042,7 @@ val tree: Stream[Path, IO] =
 
 // Process each file in the tree
 val processedTree: Unit < (Console & Async & Abort[IOException]) =
-    tree.mapKyo(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).discard
+    tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).discard
 ```
 
 `Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
