@@ -64,7 +64,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def map[VV >: V, V2](f: VV => V2)(using
+    def mapPure[VV >: V, V2](f: VV => V2)(using
         t1: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         ev: NotGiven[V2 <:< (Any < Nothing)],
@@ -87,8 +87,8 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def mapKyo[VV >: V, V2, S2](f: VV => V2 < S2)(using Tag[Emit[Chunk[VV]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
-        mapChunkKyo[VV, V2, S2](c => Kyo.foreach(c)(f))
+    def map[VV >: V, V2, S2](f: VV => V2 < S2)(using Tag[Emit[Chunk[VV]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
+        mapChunk[VV, V2, S2](c => Kyo.foreach(c)(f))
 
     /** Transforms each chunk in the stream using the given pure function.
       *
@@ -97,7 +97,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed chunks
       */
-    def mapChunk[VV >: V, V2](f: Chunk[VV] => Seq[V2])(
+    def mapChunkPure[VV >: V, V2](f: Chunk[VV] => Seq[V2])(
         using
         tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
@@ -126,7 +126,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed chunks
       */
-    def mapChunkKyo[VV >: V, V2, S2](f: Chunk[VV] => Seq[V2] < S2)(
+    def mapChunk[VV >: V, V2, S2](f: Chunk[VV] => Seq[V2] < S2)(
         using
         tagV: Tag[Emit[Chunk[VV]]],
         tagV2: Tag[Emit[Chunk[V2]]],
@@ -284,7 +284,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
-    def takeWhile[VV >: V](f: VV => Boolean)(using
+    def takeWhilePure[VV >: V](f: VV => Boolean)(using
         tag: Tag[Emit[Chunk[VV]]],
         frame: Frame
     ): Stream[VV, S] =
@@ -299,7 +299,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
                             Emit.valueWith(c)(Loop.continue(c.size == input.size, cont(())))
             )
         )
-    end takeWhile
+    end takeWhilePure
 
     /** Takes elements from the stream while the effectful predicate is true.
       *
@@ -308,7 +308,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing elements that satisfy the predicate
       */
-    def takeWhileKyo[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
+    def takeWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
@@ -320,7 +320,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
                         }
             )
         )
-    end takeWhileKyo
+    end takeWhile
 
     /** Drops elements from the stream while the predicate is true.
       *
@@ -329,7 +329,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with initial elements that satisfy the predicate removed
       */
-    def dropWhile[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
+    def dropWhilePure[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
@@ -350,7 +350,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with initial elements that satisfy the predicate removed
       */
-    def dropWhileKyo[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
+    def dropWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, true, emit)(
                 [C] =>
@@ -372,7 +372,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing only elements that satisfy the predicate
       */
-    def filterKyo[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
+    def filter[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -384,7 +384,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
             )
         )
 
-    def filter[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
+    def filterPure[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream(
             ArrowEffect.handleLoop(tag, emit)(
                 [C] =>
@@ -403,7 +403,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing transformed elements
       */
-    def collectKyo[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
+    def collect[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -418,7 +418,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
             )
         )
 
-    def collect[VV >: V, V2](f: VV => Maybe[V2])(using
+    def collectPure[VV >: V, V2](f: VV => Maybe[V2])(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -441,7 +441,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream containing transformed elements
       */
-    def collectWhileKyo[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
+    def collectWhile[VV >: V, V2, S2](f: VV => Maybe[V2] < S2)(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -463,7 +463,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
             )
         )
 
-    def collectWhile[VV >: V, V2](f: VV => Maybe[V2])(using
+    def collectWhilePure[VV >: V, V2](f: VV => Maybe[V2])(using
         tag: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
         frame: Frame
@@ -605,7 +605,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   The final accumulated value
       */
-    def fold[VV >: V, A](acc: A)(f: (A, VV) => A)(using
+    def foldPure[VV >: V, A](acc: A)(f: (A, VV) => A)(using
         tag: Tag[Emit[Chunk[VV]]],
         frame: Frame
     ): A < S =
@@ -625,7 +625,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   The final accumulated value
       */
-    def foldKyo[VV >: V, A, S2](acc: A)(f: (A, VV) => A < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
+    def fold[VV >: V, A, S2](acc: A)(f: (A, VV) => A < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): A < (S & S2) =
         ArrowEffect.handleLoop(tag, acc, emit)(
             handle = [C] =>
                 (input, state, cont) =>
@@ -919,7 +919,7 @@ object Stream:
       * @return
       *   A stream containing the unfolded values
       */
-    def unfoldKyo[A, V, S](acc: A, chunkSize: Int = DefaultChunkSize)(f: A => (Maybe[(V, A)] < S))(using
+    def unfold[A, V, S](acc: A, chunkSize: Int = DefaultChunkSize)(f: A => (Maybe[(V, A)] < S))(using
         tag: Tag[Emit[Chunk[V]]],
         frame: Frame
     ): Stream[V, S] =

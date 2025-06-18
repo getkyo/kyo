@@ -33,7 +33,7 @@ abstract private class PublisherToSubscriberTest extends Test:
         pending
         val inputStream: Stream[Int, IO] = Stream
             .range(0, 10, 1, 1)
-            .mapKyo { int =>
+            .map { int =>
                 if int < 5 then
                     IO(int)
                 else

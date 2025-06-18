@@ -128,7 +128,7 @@ class TopicTest extends Test:
                             slowFiber <-
                                 Async.run(started.release.andThen(
                                     Topic.stream[Message](uri)
-                                        .mapKyo(r => Async.delay(1.millis)(r))
+                                        .map(r => Async.delay(1.millis)(r))
                                         .take(messages.size)
                                         .run
                                 ))
@@ -259,7 +259,7 @@ class TopicTest extends Test:
                         failingFiber <- Async.run(
                             started.release.andThen(
                                 Topic.stream[Message](uri)
-                                    .mapKyo(_ => Abort.fail("Planned failure"): Message < Abort[String])
+                                    .map(_ => Abort.fail("Planned failure"): Message < Abort[String])
                                     .take(messageCount)
                                     .run
                             )

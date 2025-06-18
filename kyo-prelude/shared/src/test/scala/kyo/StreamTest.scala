@@ -46,7 +46,7 @@ class StreamTest extends Test:
         }
 
         "unfoldKyo" in {
-            val stream = Stream.unfoldKyo(0): cur =>
+            val stream = Stream.unfold(0): cur =>
                 for
                     fromVar <- Var.get[Int]
                     _       <- Var.update[Int](_ + cur)
@@ -285,7 +285,7 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val taken = stream.takeWhileKyo { v =>
+            val taken = stream.takeWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 4)
             }.run
             assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
@@ -294,6 +294,42 @@ class StreamTest extends Test:
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1)).takeWhile(_ == 1).run.eval ==
+                    Seq.fill(n)(1)
+            )
+        }
+    }
+
+    "takeWhilePure" - {
+        "take none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).takeWhilePure(_ < 0).run.eval == Seq.empty
+            )
+        }
+
+        "take some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).takeWhilePure(_ < 4).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "take all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).takeWhilePure(_ < 10).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).takeWhilePure(_ => true).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).takeWhilePure(_ == 1).run.eval ==
                     Seq.fill(n)(1)
             )
         }
@@ -330,7 +366,7 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val dropped = stream.dropWhileKyo { v =>
+            val dropped = stream.dropWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 3)
             }.run
             assert(Var.runTuple(0)(dropped).eval == (3, Seq(3, 4, 5)))
@@ -339,6 +375,43 @@ class StreamTest extends Test:
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1) ++ Seq(2)).dropWhile(_ == 1).run.eval ==
+                    Seq(2)
+            )
+        }
+    }
+
+    "dropWhilePure" - {
+        "drop none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).dropWhilePure(_ < 0).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "drop some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).dropWhilePure(_ < 4).run.eval ==
+                    Seq(4, 5)
+            )
+        }
+
+        "drop all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).dropWhilePure(_ < 10).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).dropWhilePure(_ => false).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1) ++ Seq(2)).dropWhilePure(_ == 1).run.eval ==
                     Seq(2)
             )
         }
@@ -375,9 +448,39 @@ class StreamTest extends Test:
 
         "with effects" in {
             def predicate(i: Int) = Var.get[Boolean].map(b => Var.set(!b).andThen(b && !(i % 3 == 0)))
-            val result            = Var.run(false)(Stream.init(1 to n).filterKyo(predicate).run).eval
+            val result            = Var.run(false)(Stream.init(1 to n).filter(predicate).run).eval
             assert(
                 result.size > 0 && result.forall(_ % 2 == 0) && result.forall(i => !(i % 3 == 0))
+            )
+        }
+    }
+
+    "filterPure" - {
+        "non-empty" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).filterPure(_ % 2 == 0).run.eval ==
+                    Seq(2)
+            )
+        }
+
+        "all in" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).filterPure(_ => true).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "all out" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).filterPure(_ => false).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(1 to n).filterPure(_ % 2 == 0).run.eval.size ==
+                    n / 2
             )
         }
     }
@@ -399,7 +502,7 @@ class StreamTest extends Test:
 
         "all out" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).collect[Int, Int](_ => Absent).run.eval ==
+                Stream.init(Seq(1, 2, 3)).collect(_ => Absent).run.eval ==
                     Seq.empty
             )
         }
@@ -414,9 +517,39 @@ class StreamTest extends Test:
         "with effects" in {
             def predicate(v: Int) =
                 Var.update[Boolean](!_).map(if _ then Present(v) else Absent)
-            val result = Var.run(false)(Stream.init(1 to 10).collectKyo(predicate).run).eval
+            val result = Var.run(false)(Stream.init(1 to 10).collect(predicate).run).eval
             assert(
                 result == (1 to 10 by 2)
+            )
+        }
+    }
+
+    "collectPure" - {
+        "non-empty" in {
+            assert(
+                Stream.init(Seq(None, Some(2), None)).collectPure(Maybe.fromOption(_)).run.eval ==
+                    Seq(2)
+            )
+        }
+
+        "all in" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectPure(Present(_)).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "all out" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectPure[Int, Int](_ => Absent).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(1 to n).collectPure(v => if v % 2 == 0 then Present(v) else Absent).run.eval.size ==
+                    n / 2
             )
         }
     }
@@ -458,7 +591,7 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val collected = stream.collectWhileKyo { v =>
+            val collected = stream.collectWhile { v =>
                 Var.update[Boolean](!_).map(if _ then Present(v * 2) else Absent)
             }.run
             assert(Var.run(false)(collected).eval == Seq(2))
@@ -467,6 +600,49 @@ class StreamTest extends Test:
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1)).collectWhile(i => Present(i)).run.eval ==
+                    Seq.fill(n)(1)
+            )
+        }
+    }
+
+    "collectWhilePure" - {
+        "take none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectWhilePure(i => if i < 0 then Present(i + 1) else Absent).run.eval == Seq.empty
+            )
+        }
+
+        "take some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhilePure(i => if i < 4 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take some even if subsequent elements pass predicate" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhilePure(i => if i != 4 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhilePure(i => if i < 10 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4, 5, 6)
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).collectWhilePure(i => Present(i + 1)).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).collectWhilePure(i => Present(i)).run.eval ==
                     Seq.fill(n)(1)
             )
         }
@@ -525,13 +701,13 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream      = Stream.init(Seq(1, 2, 3))
-            val transformed = stream.mapKyo(v => Env.use[Int](v * _)).run
+            val transformed = stream.map(v => Env.use[Int](v * _)).run
             assert(Env.run(2)(transformed).eval == Seq(2, 4, 6))
         }
 
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
-            val transformed = stream.mapKyo(v => Abort.catching[NumberFormatException](v.toInt)).run
+            val transformed = stream.map(v => Abort.catching[NumberFormatException](v.toInt)).run
             assert(Abort.run(transformed).eval.isFailure)
         }
 
@@ -547,6 +723,40 @@ class StreamTest extends Test:
                 Stream
                     .init(0 until 100)
                     .map(_ => counter += 1)
+                    .take(0)
+                    .run
+                    .eval
+            assert(counter == 0)
+            assert(result.isEmpty)
+        }
+    }
+
+    "mapPure" - {
+        "double" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapPure(_ * 2).run.eval == Seq(2, 4, 6)
+            )
+        }
+
+        "to string" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapPure(_.toString).run.eval ==
+                    Seq("1", "2", "3")
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).mapPure(_ + 1).run.eval ==
+                    Seq.fill(n)(2)
+            )
+        }
+        "produce until" in {
+            var counter = 0
+            val result =
+                Stream
+                    .init(0 until 100)
+                    .mapPure(_ => counter += 1)
                     .take(0)
                     .run
                     .eval
@@ -571,13 +781,13 @@ class StreamTest extends Test:
 
         "with effects" in {
             val stream      = Stream.init(Seq(1, 2, 3))
-            val transformed = stream.mapChunkKyo(v => Env.use[Int](i => v.map(_ * i))).run
+            val transformed = stream.mapChunk(v => Env.use[Int](i => v.map(_ * i))).run
             assert(Env.run(2)(transformed).eval == Seq(2, 4, 6))
         }
 
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
-            val transformed = stream.mapChunkKyo(c => Abort.catching[NumberFormatException](c.map(_.toInt))).run
+            val transformed = stream.mapChunk(c => Abort.catching[NumberFormatException](c.map(_.toInt))).run
             assert(Abort.run(transformed).eval.isFailure)
         }
 
@@ -593,6 +803,40 @@ class StreamTest extends Test:
                 Stream
                     .init(0 until 100)
                     .mapChunk(_.map(_ => counter += 1))
+                    .take(0)
+                    .run
+                    .eval
+            assert(counter == 0)
+            assert(result.isEmpty)
+        }
+    }
+
+    "mapChunkPure" - {
+        "double" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapChunkPure(_.take(2).map(_ * 2)).run.eval == Seq(2, 4)
+            )
+        }
+
+        "to string" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapChunkPure(_.append(4).map(_.toString)).run.eval ==
+                    Seq("1", "2", "3", "4")
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).mapChunkPure(_.map(_ + 1)).run.eval ==
+                    Seq.fill(n)(2)
+            )
+        }
+        "produce until" in {
+            var counter = 0
+            val result =
+                Stream
+                    .init(0 until 100)
+                    .mapChunkPure(_.map(_ => counter += 1))
                     .take(0)
                     .run
                     .eval
@@ -617,7 +861,7 @@ class StreamTest extends Test:
         "nested effects" in {
             val result = Env.run(10) {
                 Stream.init(Seq(1, 2, 3))
-                    .flatMap(i => Stream.init(Seq(i, i + 1)).mapKyo(j => Env.use[Int](_ + j)))
+                    .flatMap(i => Stream.init(Seq(i, i + 1)).map(j => Env.use[Int](_ + j)))
                     .run
             }
             assert(result.eval == Seq(11, 12, 12, 13, 13, 14))
@@ -787,7 +1031,7 @@ class StreamTest extends Test:
         }
 
         "with effects" in {
-            val stream = Stream.range(0, 100).mapKyo(i => Env.use[Int](_ + i)).rechunk(48)
+            val stream = Stream.range(0, 100).map(i => Env.use[Int](_ + i)).rechunk(48)
             val result = Env.run(10)(stream.run).eval
             val chunks = Env.run(10)(chunkSizes(stream)).eval
             assert(result == (10 until 110))
@@ -821,7 +1065,7 @@ class StreamTest extends Test:
         "non-empty stream" in {
             assert(
                 Var.run(0) {
-                    Stream.init(0 until 100).mapKyo(i => Var.update[Int](_ + i)).discard.andThen(Var.get[Int])
+                    Stream.init(0 until 100).map(i => Var.update[Int](_ + i)).discard.andThen(Var.get[Int])
                 }.eval == 4950
             )
         }
@@ -919,7 +1163,7 @@ class StreamTest extends Test:
 
         "early termination" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val folded = stream.foldKyo(0) { (acc, v) =>
+            val folded = stream.fold(0) { (acc, v) =>
                 if acc < 6 then acc + v else Abort.fail(())
             }
             assert(Abort.run[Unit](folded).eval.foldError(_ => false, _ => true))
@@ -928,6 +1172,26 @@ class StreamTest extends Test:
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1)).fold(0)(_ + _).eval == n
+            )
+        }
+    }
+
+    "foldPure" - {
+        "sum" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).foldPure(0)(_ + _).eval == 6
+            )
+        }
+
+        "concat" in {
+            assert(
+                Stream.init(Seq("a", "b", "c")).foldPure("")(_ + _).eval == "abc"
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).foldPure(0)(_ + _).eval == n
             )
         }
     }
@@ -1011,7 +1275,7 @@ class StreamTest extends Test:
             val result = Env.run(10) {
                 Stream.init(Seq(1, 2, 3))
                     .flatMap(i =>
-                        Stream.init(Seq(i, i + 1)).mapKyo { j =>
+                        Stream.init(Seq(i, i + 1)).map { j =>
                             sum += j
                             Env.use[Int](env => if sum > env then Abort.fail("Sum too large") else j)
                         }
@@ -1030,7 +1294,7 @@ class StreamTest extends Test:
                     if counter % 2 == 0 then
                         Abort.fail(s"Even counter: $counter")
                     else
-                        Stream.init(Seq(n, n * 10)).mapKyo { m =>
+                        Stream.init(Seq(n, n * 10)).map { m =>
                             if m > 20 then Abort.fail(s"Value too large: $m")
                             else Env.use[Int](_ + m)
                         }
@@ -1045,7 +1309,7 @@ class StreamTest extends Test:
             val stream = Stream.init(Chunk(1, 2, 3, 4, 5))
             val result = Abort.run[String] {
                 Var.run(0) {
-                    stream.mapChunkKyo { chunk =>
+                    stream.mapChunk { chunk =>
                         Var.update[Int](_ + chunk.size).map { newState =>
                             if newState > 3 then Abort.fail(s"State too high: $newState")
                             else chunk.map(_ * newState)
@@ -1129,19 +1393,19 @@ class StreamTest extends Test:
         end maintains
 
         maintains(
-            (_.map(identity), "map"),
-            (_.mapKyo(Kyo.lift), "map (kyo)"),
-            (_.mapChunk(identity), "mapChunk"),
-            (_.mapChunkKyo(Kyo.lift), "mapChunk (kyo)"),
+            (_.mapPure(identity), "mapPure"),
+            (_.map(Kyo.lift), "map (kyo)"),
+            (_.mapChunkPure(identity), "mapChunkPure"),
+            (_.mapChunk(Kyo.lift), "mapChunk (kyo)"),
             (_.tap(identity), "tap"),
             (_.tapChunk(identity), "tapChunk"),
             (_.take(Int.MaxValue), "take"),
-            (_.takeWhile(_ => true), "takeWhile"),
-            (_.takeWhileKyo(_ => Kyo.lift(true)), "takeWhile (kyo)"),
-            (_.dropWhile(_ => false), "dropWhile"),
-            (_.dropWhileKyo(_ => Kyo.lift(false)), "dropWhile (kyo)"),
-            (_.filter(_ => true), "filter"),
-            (_.filterKyo(_ => Kyo.lift(true)), "filter (kyo)"),
+            (_.takeWhilePure(_ => true), "takeWhilePure"),
+            (_.takeWhile(_ => Kyo.lift(true)), "takeWhile (kyo)"),
+            (_.dropWhilePure(_ => false), "dropWhilePure"),
+            (_.dropWhile(_ => Kyo.lift(false)), "dropWhile (kyo)"),
+            (_.filterPure(_ => true), "filterPure"),
+            (_.filter(_ => Kyo.lift(true)), "filter (kyo)"),
             (_.changes, "changes"),
             (_.rechunk(chunkSize), "rechunk"),
             (_.flatMapChunk(c => Stream.init(c)), "flatMapChunk")
@@ -1158,7 +1422,7 @@ class StreamTest extends Test:
             val allChoices: Chunk[Int] = stream.handle(Choice.run).run.eval
             assert(allChoices == Chunk(1, 2, 3, 1, 2, 3, 4))
 
-            val someChoices: Chunk[Int] = stream.filterKyo({
+            val someChoices: Chunk[Int] = stream.filter({
                 case 4 => Choice.drop
                 case i => i % 2 == 1
             }).handle(Choice.run).run.eval

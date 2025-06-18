@@ -274,7 +274,7 @@ class StreamCoreExtensionsTest extends Test:
                     val it = Iterator("a", "b", "c")
 
                     val stream: Stream[String, IO & Choice] =
-                        Stream.fromIterator(it, chunkSize).rechunk(10).mapKyo: str =>
+                        Stream.fromIterator(it, chunkSize).rechunk(10).map: str =>
                             Choice.eval(true, false).map:
                                 case true  => str.toUpperCase
                                 case false => str
@@ -421,7 +421,7 @@ class StreamCoreExtensionsTest extends Test:
                 "map with Choice" in run {
                     val it = Iterator("a", "b", "c")
                     val stream: Stream[String, IO & Choice & Abort[Throwable]] =
-                        Stream.fromIteratorCatching[Throwable](it, chunkSize).rechunk(10).mapKyo: str =>
+                        Stream.fromIteratorCatching[Throwable](it, chunkSize).rechunk(10).map: str =>
                             Choice.eval(true, false).map:
                                 case true  => str.toUpperCase
                                 case false => str
