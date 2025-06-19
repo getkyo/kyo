@@ -148,6 +148,25 @@ class VarTest extends Test:
                 assert(result.eval == (8, (1, 2, 3, 5, 8)))
             }
 
+            "with multishot" in run {
+                val result: (Int, Chunk[Int]) < Any = Var.runTuple(1) {
+                    Choice.run:
+                        Choice.eval(1, 2, 3).map: i =>
+                            Var.update[Int](_ + i)
+                }
+
+                assert(result.eval == (1 + 1 + 2 + 3, Chunk(2, 4, 7)))
+
+                val resultIsolate: (Int, Chunk[Int]) < Any = Var.runTuple(1) {
+                    Choice.run:
+                        Var.isolate.merge[Int](_ + _).run:
+                            Choice.eval(1, 2, 3).map: i =>
+                                Var.update[Int](_ + i)
+                }
+
+                assert(resultIsolate.eval == (1 + 2 + 3 + 4, Chunk(2, 3, 4)))
+            }
+
         }
 
         "update" - {
