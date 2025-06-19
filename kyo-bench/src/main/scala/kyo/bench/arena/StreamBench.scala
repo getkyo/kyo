@@ -19,7 +19,7 @@ class StreamBench extends ArenaBench.SyncAndFork(25000000):
         import kyo.*
         Stream.init(seq)
             .filterPure(_ % 2 == 0)
-            .mapPure(_ + 1)
+            .map(_ + 1)
             .foldPure(0)(_ + _)
     end kyoBench
 

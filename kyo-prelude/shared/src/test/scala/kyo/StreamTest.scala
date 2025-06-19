@@ -685,16 +685,16 @@ class StreamTest extends Test:
         }
     }
 
-    "map" - {
+    "map (Kyo)" - {
         "double" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).map(_ * 2).run.eval == Seq(2, 4, 6)
+                Stream.init(Seq(1, 2, 3)).map(_ * 2: Int < Any).run.eval == Seq(2, 4, 6)
             )
         }
 
         "to string" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).map(_.toString).run.eval ==
+                Stream.init(Seq(1, 2, 3)).map(_.toString: String < Any).run.eval ==
                     Seq("1", "2", "3")
             )
         }
@@ -713,6 +713,40 @@ class StreamTest extends Test:
 
         "stack safety" in {
             assert(
+                Stream.init(Seq.fill(n)(1)).map(_ + 1: Int < Any).run.eval ==
+                    Seq.fill(n)(2)
+            )
+        }
+        "produce until" in {
+            var counter = 0
+            val result =
+                Stream
+                    .init(0 until 100)
+                    .map(_ => Kyo.lift(counter += 1))
+                    .take(0)
+                    .run
+                    .eval
+            assert(counter == 0)
+            assert(result.isEmpty)
+        }
+    }
+
+    "map" - {
+        "double" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).map(_ * 2).run.eval == Seq(2, 4, 6)
+            )
+        }
+
+        "to string" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).map(_.toString).run.eval ==
+                    Seq("1", "2", "3")
+            )
+        }
+
+        "stack safety" in {
+            assert(
                 Stream.init(Seq.fill(n)(1)).map(_ + 1).run.eval ==
                     Seq.fill(n)(2)
             )
@@ -723,40 +757,6 @@ class StreamTest extends Test:
                 Stream
                     .init(0 until 100)
                     .map(_ => counter += 1)
-                    .take(0)
-                    .run
-                    .eval
-            assert(counter == 0)
-            assert(result.isEmpty)
-        }
-    }
-
-    "mapPure" - {
-        "double" in {
-            assert(
-                Stream.init(Seq(1, 2, 3)).mapPure(_ * 2).run.eval == Seq(2, 4, 6)
-            )
-        }
-
-        "to string" in {
-            assert(
-                Stream.init(Seq(1, 2, 3)).mapPure(_.toString).run.eval ==
-                    Seq("1", "2", "3")
-            )
-        }
-
-        "stack safety" in {
-            assert(
-                Stream.init(Seq.fill(n)(1)).mapPure(_ + 1).run.eval ==
-                    Seq.fill(n)(2)
-            )
-        }
-        "produce until" in {
-            var counter = 0
-            val result =
-                Stream
-                    .init(0 until 100)
-                    .mapPure(_ => counter += 1)
                     .take(0)
                     .run
                     .eval
@@ -1393,8 +1393,8 @@ class StreamTest extends Test:
         end maintains
 
         maintains(
-            (_.mapPure(identity), "mapPure"),
-            (_.map(Kyo.lift), "map (kyo)"),
+            (_.map(identity[Int]), "map"),
+            (_.map(Kyo.lift(_)), "map (kyo)"),
             (_.mapChunkPure(identity), "mapChunkPure"),
             (_.mapChunk(Kyo.lift), "mapChunk (kyo)"),
             (_.tap(identity), "tap"),
