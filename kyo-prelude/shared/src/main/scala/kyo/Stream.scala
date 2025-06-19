@@ -693,7 +693,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   An effect producing a value of sink's output type `A`
       */
-    def into[VV >: V, A, S2](sink: Sink[VV, A, S2])(using t1: Tag[Poll[Chunk[VV]]], t2: Tag[Emit[Chunk[VV]]], f: Frame): A < (S & S2) =
+    def into[VV >: V, A, S2](sink: Sink[VV, A, S2])(using Tag[Poll[Chunk[VV]]], Tag[Emit[Chunk[VV]]], Frame): A < (S & S2) =
         sink.drain[VV, S](this)
     end into
 
