@@ -31,6 +31,87 @@ object StreamCoreExtensions:
         Abort.run(emit).unit
     end emitMaybeElementsFromChannel
 
+    sealed trait StreamHub[A, E]:
+        def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async)
+
+    private class StreamHubImpl[A, E](
+        hub: Hub[Result.Partial[E, Maybe[Chunk[A]]]],
+        streamStatus: AtomicRef.Unsafe[Maybe[Result.Partial[E, Unit]]],
+        latch: Latch
+    )(
+        using
+        Tag[Emit[Chunk[A]]],
+        Tag[Emit[Chunk[Chunk[A]]]]
+    ) extends StreamHub[A, E]:
+        private def emit(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
+            listener
+                .stream(1)
+                .collectWhile[Chunk[A], Abort[E]] {
+                    case Result.Success(maybeChunk) => maybeChunk
+                    case Result.Failure(e)          => Abort.fail(e)
+                }
+                .mapChunk(v => v.flattenChunk)
+                .emit
+        end emit
+
+        private def emitWithStatus(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
+            // Ensure the end-of-stream signal is propagated to new listeners
+            IO.Unsafe(streamStatus.get()).map:
+                case Present(Result.Success(_)) =>
+                    Abort.run[Closed](hub.put(Result.Success(Absent))).andThen(emit(listener))
+                case Present(Result.Failure(e)) =>
+                    Abort.run[Closed](hub.put(Result.Failure(e))).andThen(emit(listener))
+                case Absent =>
+                    emit(listener)
+
+        def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async) =
+            Abort.runPartial[Closed](hub.listen).map:
+                case Result.Success(listener) =>
+                    Stream:
+                        latch.release.andThen:
+                            Abort.run[Closed](hub.empty).map: hubIsEmptyResult =>
+                                // If the hub is not empty post subscription, we don't need to check status
+                                if hubIsEmptyResult.getOrElse(true) then
+                                    emitWithStatus(listener)
+                                else emit(listener)
+
+                case Result.Failure(e) => Abort.panic(e)
+
+        def consume[S](stream: Stream[A, Abort[E] & S & Async])(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Abort[E] & Async],
+            t1: SafeClassTag[E],
+            t2: Tag[Emit[Chunk[A]]],
+            fr: Frame
+        ): Unit < (Async & S & Resource) =
+            Resource.acquireRelease(Async.run {
+                Abort.run[E](
+                    Abort.run[Closed](
+                        latch.await.andThen(stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk)))))
+                    )
+                ).map:
+                    case Result.Success(_) =>
+                        IO.Unsafe(streamStatus.set(Present(Result.Success(())))).andThen(hub.put(Result.Success(Absent)))
+                    case Result.Failure(e) => IO.Unsafe(streamStatus.set(Present(Result.Failure(e)))).andThen(hub.put(Result.Failure(e)))
+                    case panic @ Result.Panic(e) => Abort.get(panic)
+            })(_.interrupt).unit
+    end StreamHubImpl
+
+    private object StreamHubImpl:
+        def init[A, E](bufferSize: Int)(
+            using
+            Tag[A],
+            Tag[Emit[Chunk[A]]],
+            Tag[Emit[Chunk[Chunk[A]]]],
+            Frame
+        ): StreamHubImpl[A, E] < (Async & Resource) =
+            IO.Unsafe:
+                Latch.initWith(1): latch =>
+                    Hub.initWith[Result.Partial[E, Maybe[Chunk[A]]]](bufferSize): hub =>
+                        StreamHubImpl(hub, AtomicRef.Unsafe.init(Absent), latch)
+    end StreamHubImpl
+
     extension (streamObj: Stream.type)
         /** Merges multiple streams asynchronously. Stream stops when all sources streams have completed.
           *
@@ -627,6 +708,244 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
+
+        /** Broadcast to two streams that can be evaluated in parallel. Original stream begins to run as soon as either of the original
+          * streams does.
+          *
+          * @param bufferSize
+          *   Size of underlying channel communicating streamed elements to broadcasted streams
+          * @return
+          *   2-tuple of broadcasted streams
+          */
+        def broadcast2(bufferSize: Int = defaultAsyncStreamBufferSize)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): (Stream[V, Abort[E] & Async], Stream[V, Abort[E] & Resource & Async]) < (Resource & Async & S) =
+            broadcastDynamicWith(bufferSize) { streamHub =>
+                for
+                    s1 <- streamHub.subscribe
+                    s2 <- streamHub.subscribe
+                yield (s1, s2)
+            }(using i1, i2, t1, t2, t3, t4, fr)
+
+        /** Broadcast to three streams that can be evaluated in parallel.
+          */
+        def broadcast3(bufferSize: Int = defaultAsyncStreamBufferSize)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): (
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async]
+        ) < (Resource & Async & S) =
+            broadcastDynamicWith(bufferSize) { streamHub =>
+                for
+                    s1 <- streamHub.subscribe
+                    s2 <- streamHub.subscribe
+                    s3 <- streamHub.subscribe
+                yield (s1, s2, s3)
+            }(using i1, i2, t1, t2, t3, t4, fr)
+
+        /** Broadcast to four streams that can be evaluated in parallel.
+          */
+        def broadcast4(bufferSize: Int = defaultAsyncStreamBufferSize)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): (
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async]
+        ) < (Resource & Async & S) =
+            broadcastDynamicWith(bufferSize) { streamHub =>
+                for
+                    s1 <- streamHub.subscribe
+                    s2 <- streamHub.subscribe
+                    s3 <- streamHub.subscribe
+                    s4 <- streamHub.subscribe
+                yield (s1, s2, s3, s4)
+            }(using i1, i2, t1, t2, t3, t4, fr)
+
+        /** Broadcast to five streams that can be evaluated in parallel.
+          */
+        def broadcast5(bufferSize: Int = defaultAsyncStreamBufferSize)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): (
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async],
+            Stream[V, Abort[E] & Async]
+        ) < (Resource & Async & S) =
+            broadcastDynamicWith(bufferSize) { streamHub =>
+                for
+                    s1 <- streamHub.subscribe
+                    s2 <- streamHub.subscribe
+                    s3 <- streamHub.subscribe
+                    s4 <- streamHub.subscribe
+                    s5 <- streamHub.subscribe
+                yield (s1, s2, s3, s4, s5)
+            }(using i1, i2, t1, t2, t3, t4, fr)
+
+        /** Broadcast to a specified number of streams that can be evaluated in parallel.
+          *
+          * @param numStreams
+          *   Number of streams to broadcast the original stream to
+          * @param bufferSize
+          *   Size of underlying channel communicating streamed elements to broadcasted streams
+          * @return
+          *   Chunk of streams of length [[numStreams]] containing the broadcasted streams
+          */
+        def broadcastN(numStreams: Int, bufferSize: Int = defaultAsyncStreamBufferSize)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): Chunk[Stream[V, Abort[E] & Resource & Async]] < (Resource & Async & S) =
+            broadcastDynamicWith(bufferSize) { streamHub =>
+                val builder = Chunk.newBuilder[Stream[V, Abort[E] & Resource & Async]]
+                Loop(numStreams): remaining =>
+                    if remaining <= 0 then
+                        IO(builder.result()).map(chunk => Loop.done(chunk))
+                    else
+                        streamHub.subscribe.map: stream =>
+                            IO(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
+            }(using i1, i2, t1, t2, t3, t4, fr)
+
+        /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream
+          * begins to run as soon as the broadcasted stream is run for the first time.
+          *
+          * @note
+          *   This method should only be used when it is not necessary for each evaluation of the resulting stream to consume all the
+          *   elements of the original stream. Elements handled by all currently running instances of the stream prior to a subsequent runs
+          *   will be lost. As soon a single run commences, elements will start being pulled from the original stream and may be lost prior
+          *   to subsequent runs. To guarantee all runs handle the same elements, use [[broadcastDynamicWith]] or [[broadcast[N]]].
+          * @param bufferSize
+          *   Size of underlying channel communicating streamed elements to broadcasted stream
+          * @return
+          *   A resourceful, asynchronous effect producing a stream that can be run multiple times in parallel
+          */
+        def broadcasted(bufferSize: Int = defaultAsyncStreamBufferSize)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): Stream[V, Abort[E] & Async & Resource] < (Resource & Async & S) =
+            broadcastDynamic(bufferSize).map: streamHub =>
+                Stream:
+                    streamHub.subscribe.map(_.emit)
+
+        /** Construct a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. Original stream begins to
+          * run the first time any subscribed stream is run.
+          *
+          * @note
+          *   This method should only be used when it is not necessary for each subscription to consume all the elements of the original
+          *   stream. Elements handled by all subscriptions prior to a subsequent subscription [[StreamHub]] will be lost. As soon a single
+          *   subscription is constructed and evaluated, elements will be pulled from the original stream, meaning that elements may be lost
+          *   between subscriptions. To guarantee all streams include the same elements, use [[broadcastDynamicWith]] or [[broadcastN]].
+          * @param bufferSize
+          *   Size of underlying channel communicating streamed elements to broadcasted stream
+          * @return
+          *   A resourceful, asynchronous effect producing a stream that can be run multiple times in parallel
+          */
+        def broadcastDynamic(bufferSize: Int = defaultAsyncStreamBufferSize)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): StreamHub[V, E] < (Resource & Async & S) =
+            Latch.initWith(1): latch =>
+                StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
+                    streamHub.consume(stream).andThen:
+                        streamHub
+        end broadcastDynamic
+
+        /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
+          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]]. Original stream
+          * begins to run the first time any subscribed stream is run.
+          *
+          * @note
+          *   Do not await evaluation of subscribed streams within [[fn]].
+          * @param bufferSize
+          *   Size of underlying channel communicating streamed elements to broadcasted stream
+          * @return
+          *   A resourceful, asynchronous effect producing a stream that can be run multiple times in parallel
+          */
+        def broadcastDynamicWith[A, S1](bufferSize: Int)(fn: StreamHub[V, E] => A < S1)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): A < (Resource & Async & S & S1) =
+            StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
+                fn(streamHub).map: a =>
+                    streamHub.consume(stream).andThen(a)
+
+        /** Use a [[StreamHub]] to broadcast copies of the original streams that may be handled in parallel. The original stream will not
+          * begin broadcasting to any subscribed streams prior to the completion of the effect produced by parameter [[fn]]. Original stream
+          * begins to run the first time any subscribed stream is run.
+          *
+          * Uses a default buffer size.
+          *
+          * @note
+          *   Do not await evaluation of subscribed streams within [[fn]].
+          * @return
+          *   A resourceful, asynchronous effect producing a stream that can be run multiple times in parallel
+          */
+        def broadcastDynamicWith[A, S1](fn: StreamHub[V, E] => A < S1)(
+            using
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Stateful[S, Async],
+            t1: Tag[V],
+            t2: Tag[Emit[Chunk[V]]],
+            t3: Tag[Emit[Chunk[Chunk[V]]]],
+            t4: SafeClassTag[E],
+            fr: Frame
+        ): A < (Resource & Async & S & S1) =
+            StreamHubImpl.init[V, E](defaultAsyncStreamBufferSize).map: streamHub =>
+                fn(streamHub).map: a =>
+                    streamHub.consume(stream).andThen(a)
 
         /** Collects values that are emitted by the original stream within the duration [[maxTime]] up to the amount [[maxSize]] and emits
           * them as a chunk.
