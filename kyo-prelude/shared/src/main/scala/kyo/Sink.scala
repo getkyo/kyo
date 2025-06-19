@@ -8,8 +8,13 @@ import scala.annotation.targetName
 
 /** Processes a stream of type `V`, producing a value of type `A`.
   *
-  * `Sink` provides a composable abstraction for processing `Stream` s. A `Sink[V, A, S]` can process a stream of type `Stream[V, S2]` to
-  * produce a value of type `A` using effects `S & S2`.
+  * `Sink` provides a composable abstraction for processing `Stream` s. A `Sink[V, A, S]` can evaluate a stream of type `Stream[V, S2]`,
+  * producing a value of type `A` using effects `S & S2`.
+  *
+  * @see
+  *   [[kyo.Sink.drain]]
+  * @see
+  *   [[kyo.Stream]] [[kyo.Pipe]]
   *
   * @tparam V
   *   The type of values that this sink can process
@@ -74,7 +79,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @param f
       *   Function mapping new stream element type to original stream element type
       * @return
-      *   A new sink that processes streams of the new element type
+      *   A sink that processes streams of the new element type
       */
     final def contramap[V2](f: V2 => V)(using
         t1: Tag[Poll[Chunk[V]]],
@@ -95,7 +100,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @param f
       *   Effectful function mapping new stream element type to original stream element type
       * @return
-      *   A new sink that processes streams of the new element type
+      *   A sink that processes streams of the new element type
       */
     final def contramap[V2, S2](f: V2 => V < S2)(using
         t1: Tag[Poll[Chunk[V]]],
@@ -161,7 +166,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
                                     Loop.continue(cont(Present(chunk1)))
             )
 
-    /** Transform a sink to produce a new output type using a function that transforms the original stream's result.
+    /** Transform a sink to produce a new output type using a function that transforms the original pipe's result.
       *
       * @param f
       *   Function mapping the original output to a new output value
@@ -184,8 +189,25 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   An effect generating an output value from elements consumed from the stream
       */
-    final def drain[S2](stream: Stream[V, S2])(using Tag[Poll[Chunk[V]]], Tag[Emit[Chunk[V]]], Frame): A < (S & S2) =
-        Poll.runEmit(stream.emit)(poll).map(_._2)
+    final def drain[S2](stream: Stream[V, S2])(using
+        emitTag: Tag[Emit[Chunk[V]]],
+        pollTag: Tag[Poll[Chunk[V]]],
+        fr: Frame
+    ): A < (S & S2) =
+        Loop(stream.emit, poll) { (emit, poll) =>
+            ArrowEffect.handleFirst(pollTag, poll)(
+                handle = [C] =>
+                    (_, pollCont) =>
+                        ArrowEffect.handleFirst(emitTag, emit)(
+                            handle = [C2] =>
+                                (emitted, emitCont) =>
+                                    Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
+                            done = _ => Loop.continue(Kyo.unit, pollCont(Absent))
+                    ),
+                done = a =>
+                    Loop.done(a)
+            )
+        }
 end Sink
 
 object Sink:
