@@ -314,6 +314,30 @@ class ClockTest extends Test:
         }
     }
 
+    "TimeControl wallClockDelay" - {
+        "custom delay" in run {
+            Clock.withTimeControl { control =>
+                for
+                    executed    <- AtomicBoolean.init(false)
+                    fiber       <- Clock.sleep(1.milli).map(_.onComplete(_ => executed.set(true)))
+                    _           <- control.advance(5.millis, 10.millis)
+                    wasExecuted <- executed.get
+                yield assert(wasExecuted)
+            }
+        }
+
+        "default behavior" in run {
+            Clock.withTimeControl { control =>
+                for
+                    executed    <- AtomicBoolean.init(false)
+                    fiber       <- Clock.sleep(1.milli).map(_.onComplete(_ => executed.set(true)))
+                    _           <- control.advance(10.millis)
+                    wasExecuted <- executed.get
+                yield assert(wasExecuted)
+            }
+        }
+    }
+
     def intervals(instants: Seq[Instant]): Seq[Duration] =
         instants.drop(1).sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
 
