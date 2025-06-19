@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.Clock.TimeControl
+
 class StreamCoreExtensionsTest extends Test:
 
     "factory" - {
@@ -478,35 +480,43 @@ class StreamCoreExtensionsTest extends Test:
         }
 
         "groupedWithin" - {
-            val stream = Stream {
+            def stream(tc: TimeControl) = Stream {
                 Loop(1): i =>
                     Emit.valueWith(Chunk(i)):
-                        (if i % 5 == 0 then Async.sleep(30.millis) else Kyo.unit)
+                        (if i % 5 == 0 then tc.advance(30.millis) else Kyo.unit)
                             .andThen(Loop.continue(i + 1))
             }.take(11)
 
             "group by size" in run {
-                stream.groupedWithin(3, Duration.Infinity).run.map: result =>
-                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(3, Duration.Infinity).run.map: result =>
+                        assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
+                }
             }
 
             "group by time" in run {
-                stream.groupedWithin(Int.MaxValue, 20.millis).run.map: result =>
-                    assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(Int.MaxValue, 20.millis).run.map: result =>
+                        assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
+                }
             }
 
             "group by size and time" in run {
-                stream.groupedWithin(3, 20.millis).run.map: result =>
-                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(3, 20.millis).run.map: result =>
+                        assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
+                }
             }
 
             "group to single chunk with max size + time" in run {
-                stream.groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
-                    assert(result == Chunk(1 to 11))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
+                        assert(result == Chunk(1 to 11))
+                }
             }
 
             "empty" in run {
-                Stream.empty[Int].groupedWithin(3, 100.millis).run.map: result =>
+                Stream.empty[Int].groupedWithin(3, 10.millis).run.map: result =>
                     assert(result.isEmpty)
             }
 
@@ -516,19 +526,21 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "with Env" in run {
-                val envStream = Stream {
-                    Env.use[Int]: maxValue =>
-                        Loop(1): i =>
-                            if i > maxValue then Loop.done
-                            else
-                                Emit.valueWith(Chunk(i)):
-                                    Async.sleep(5.millis).andThen(Loop.continue(i + 1))
-                }
+                Clock.withTimeControl { tc =>
+                    val envStream = Stream {
+                        Env.use[Int]: maxValue =>
+                            Loop(1): i =>
+                                if i > maxValue then Loop.done
+                                else
+                                    Emit.valueWith(Chunk(i)):
+                                        tc.advance(5.millis).andThen(Loop.continue(i + 1))
+                    }
 
-                Env.run(7) {
-                    envStream.groupedWithin(3, 15.millis).run.map: result =>
-                        assert(result.flatten == (1 to 7))
-                        assert(result.size >= 2) // Should have multiple groups due to timing
+                    Env.run(7) {
+                        envStream.groupedWithin(3, 15.millis).run.map: result =>
+                            assert(result.flatten == (1 to 7))
+                            assert(result.size >= 2) // Should have multiple groups due to timing
+                    }
                 }
             }
 
