@@ -266,7 +266,7 @@ class PipeTest extends Test:
 
             "all out" in {
                 assert(
-                    Stream.init(Seq(1, 2, 3)).collect[Int](_ => Absent).run.eval ==
+                    Stream.init(Seq(1, 2, 3)).collectPure(_ => Absent).run.eval ==
                         Seq.empty
                 )
             }

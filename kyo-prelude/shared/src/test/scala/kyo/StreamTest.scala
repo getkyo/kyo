@@ -46,7 +46,7 @@ class StreamTest extends Test:
         }
 
         "unfoldKyo" in {
-            val stream = Stream.unfoldKyo(0): cur =>
+            val stream = Stream.unfold(0): cur =>
                 for
                     fromVar <- Var.get[Int]
                     _       <- Var.update[Int](_ + cur)
@@ -299,6 +299,42 @@ class StreamTest extends Test:
         }
     }
 
+    "takeWhilePure" - {
+        "take none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).takeWhilePure(_ < 0).run.eval == Seq.empty
+            )
+        }
+
+        "take some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).takeWhilePure(_ < 4).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "take all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).takeWhilePure(_ < 10).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).takeWhilePure(_ => true).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).takeWhilePure(_ == 1).run.eval ==
+                    Seq.fill(n)(1)
+            )
+        }
+    }
+
     "dropWhile" - {
         "drop none" in {
             assert(
@@ -344,6 +380,43 @@ class StreamTest extends Test:
         }
     }
 
+    "dropWhilePure" - {
+        "drop none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).dropWhilePure(_ < 0).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "drop some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).dropWhilePure(_ < 4).run.eval ==
+                    Seq(4, 5)
+            )
+        }
+
+        "drop all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).dropWhilePure(_ < 10).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).dropWhilePure(_ => false).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1) ++ Seq(2)).dropWhilePure(_ == 1).run.eval ==
+                    Seq(2)
+            )
+        }
+    }
+
     "filter" - {
         "non-empty" in {
             assert(
@@ -382,6 +455,36 @@ class StreamTest extends Test:
         }
     }
 
+    "filterPure" - {
+        "non-empty" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).filterPure(_ % 2 == 0).run.eval ==
+                    Seq(2)
+            )
+        }
+
+        "all in" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).filterPure(_ => true).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "all out" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).filterPure(_ => false).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(1 to n).filterPure(_ % 2 == 0).run.eval.size ==
+                    n / 2
+            )
+        }
+    }
+
     "collect" - {
         "non-empty" in {
             assert(
@@ -399,7 +502,7 @@ class StreamTest extends Test:
 
         "all out" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).collect[Int](_ => Absent).run.eval ==
+                Stream.init(Seq(1, 2, 3)).collect(_ => Absent).run.eval ==
                     Seq.empty
             )
         }
@@ -417,6 +520,36 @@ class StreamTest extends Test:
             val result = Var.run(false)(Stream.init(1 to 10).collect(predicate).run).eval
             assert(
                 result == (1 to 10 by 2)
+            )
+        }
+    }
+
+    "collectPure" - {
+        "non-empty" in {
+            assert(
+                Stream.init(Seq(None, Some(2), None)).collectPure(Maybe.fromOption(_)).run.eval ==
+                    Seq(2)
+            )
+        }
+
+        "all in" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectPure(Present(_)).run.eval ==
+                    Seq(1, 2, 3)
+            )
+        }
+
+        "all out" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectPure[Int, Int](_ => Absent).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(1 to n).collectPure(v => if v % 2 == 0 then Present(v) else Absent).run.eval.size ==
+                    n / 2
             )
         }
     }
@@ -467,6 +600,49 @@ class StreamTest extends Test:
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1)).collectWhile(i => Present(i)).run.eval ==
+                    Seq.fill(n)(1)
+            )
+        }
+    }
+
+    "collectWhilePure" - {
+        "take none" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).collectWhilePure(i => if i < 0 then Present(i + 1) else Absent).run.eval == Seq.empty
+            )
+        }
+
+        "take some" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhilePure(i => if i < 4 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take some even if subsequent elements pass predicate" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhilePure(i => if i != 4 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4)
+            )
+        }
+
+        "take all" in {
+            assert(
+                Stream.init(Seq(1, 2, 3, 4, 5)).collectWhilePure(i => if i < 10 then Present(i + 1) else Absent).run.eval ==
+                    Seq(2, 3, 4, 5, 6)
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Stream.init(Seq.empty[Int]).collectWhilePure(i => Present(i + 1)).run.eval ==
+                    Seq.empty
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).collectWhilePure(i => Present(i)).run.eval ==
                     Seq.fill(n)(1)
             )
         }
@@ -555,6 +731,40 @@ class StreamTest extends Test:
         }
     }
 
+    "mapPure" - {
+        "double" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapPure(_ * 2).run.eval == Seq(2, 4, 6)
+            )
+        }
+
+        "to string" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapPure(_.toString).run.eval ==
+                    Seq("1", "2", "3")
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).mapPure(_ + 1).run.eval ==
+                    Seq.fill(n)(2)
+            )
+        }
+        "produce until" in {
+            var counter = 0
+            val result =
+                Stream
+                    .init(0 until 100)
+                    .mapPure(_ => counter += 1)
+                    .take(0)
+                    .run
+                    .eval
+            assert(counter == 0)
+            assert(result.isEmpty)
+        }
+    }
+
     "mapChunk" - {
         "double" in {
             assert(
@@ -593,6 +803,40 @@ class StreamTest extends Test:
                 Stream
                     .init(0 until 100)
                     .mapChunk(_.map(_ => counter += 1))
+                    .take(0)
+                    .run
+                    .eval
+            assert(counter == 0)
+            assert(result.isEmpty)
+        }
+    }
+
+    "mapChunkPure" - {
+        "double" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapChunkPure(_.take(2).map(_ * 2)).run.eval == Seq(2, 4)
+            )
+        }
+
+        "to string" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).mapChunkPure(_.append(4).map(_.toString)).run.eval ==
+                    Seq("1", "2", "3", "4")
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).mapChunkPure(_.map(_ + 1)).run.eval ==
+                    Seq.fill(n)(2)
+            )
+        }
+        "produce until" in {
+            var counter = 0
+            val result =
+                Stream
+                    .init(0 until 100)
+                    .mapChunkPure(_.map(_ => counter += 1))
                     .take(0)
                     .run
                     .eval
@@ -919,7 +1163,7 @@ class StreamTest extends Test:
 
         "early termination" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val folded = stream.foldKyo(0) { (acc, v) =>
+            val folded = stream.fold(0) { (acc, v) =>
                 if acc < 6 then acc + v else Abort.fail(())
             }
             assert(Abort.run[Unit](folded).eval.foldError(_ => false, _ => true))
@@ -928,6 +1172,26 @@ class StreamTest extends Test:
         "stack safety" in {
             assert(
                 Stream.init(Seq.fill(n)(1)).fold(0)(_ + _).eval == n
+            )
+        }
+    }
+
+    "foldPure" - {
+        "sum" in {
+            assert(
+                Stream.init(Seq(1, 2, 3)).foldPure(0)(_ + _).eval == 6
+            )
+        }
+
+        "concat" in {
+            assert(
+                Stream.init(Seq("a", "b", "c")).foldPure("")(_ + _).eval == "abc"
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Stream.init(Seq.fill(n)(1)).foldPure(0)(_ + _).eval == n
             )
         }
     }
@@ -1129,18 +1393,18 @@ class StreamTest extends Test:
         end maintains
 
         maintains(
-            (_.map(identity), "map"),
+            (_.mapPure(identity), "mapPure"),
             (_.map(Kyo.lift), "map (kyo)"),
-            (_.mapChunk(identity), "mapChunk"),
+            (_.mapChunkPure(identity), "mapChunkPure"),
             (_.mapChunk(Kyo.lift), "mapChunk (kyo)"),
             (_.tap(identity), "tap"),
             (_.tapChunk(identity), "tapChunk"),
             (_.take(Int.MaxValue), "take"),
-            (_.takeWhile(_ => true), "takeWhile"),
+            (_.takeWhilePure(_ => true), "takeWhilePure"),
             (_.takeWhile(_ => Kyo.lift(true)), "takeWhile (kyo)"),
-            (_.dropWhile(_ => false), "dropWhile"),
+            (_.dropWhilePure(_ => false), "dropWhilePure"),
             (_.dropWhile(_ => Kyo.lift(false)), "dropWhile (kyo)"),
-            (_.filter(_ => true), "filter"),
+            (_.filterPure(_ => true), "filterPure"),
             (_.filter(_ => Kyo.lift(true)), "filter (kyo)"),
             (_.changes, "changes"),
             (_.rechunk(chunkSize), "rechunk"),
@@ -1158,7 +1422,7 @@ class StreamTest extends Test:
             val allChoices: Chunk[Int] = stream.handle(Choice.run).run.eval
             assert(allChoices == Chunk(1, 2, 3, 1, 2, 3, 4))
 
-            val someChoices: Chunk[Int] = stream.filter[Choice]({
+            val someChoices: Chunk[Int] = stream.filter({
                 case 4 => Choice.drop
                 case i => i % 2 == 1
             }).handle(Choice.run).run.eval
