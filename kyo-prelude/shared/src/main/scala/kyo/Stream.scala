@@ -64,9 +64,10 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def map[VV >: V, V2: kernel.internal.WeakFlat](f: VV => V2)(using
+    def mapPure[VV >: V, V2](f: VV => V2)(using
         t1: Tag[Emit[Chunk[VV]]],
         t2: Tag[Emit[Chunk[V2]]],
+        ev: NotGiven[V2 <:< (Any < Nothing)],
         fr: Frame
     ): Stream[V2, S] =
         Stream(
@@ -86,12 +87,7 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * @return
       *   A new stream with transformed values
       */
-    def map[VV >: V, V2, S2](f: VV => V2 < S2)(using
-        Tag[Emit[Chunk[VV]]],
-        Tag[Emit[Chunk[V2]]],
-        NotGiven[V2 <:< (Any < Any)],
-        Frame
-    ): Stream[V2, S & S2] =
+    def map[VV >: V, V2, S2](f: VV => V2 < S2)(using Tag[Emit[Chunk[VV]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
         mapChunk[VV, V2, S2](c => Kyo.foreach(c)(f))
 
     /** Transforms each chunk in the stream using the given pure function.
