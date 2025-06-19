@@ -1,8 +1,9 @@
 package kyo
 
-import kyo.Async.defaultConcurrency
 import kyo.ChunkBuilder
 import kyo.kernel.ArrowEffect
+import scala.annotation.implicitNotFound
+import scala.util.NotGiven
 
 object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
@@ -18,7 +19,7 @@ object StreamCoreExtensions:
     end emitMaybeChunksFromChannel
 
     private def emitMaybeElementsFromChannel[V](channel: Channel[Maybe[V]])(using Tag[Emit[Chunk[V]]], Frame) =
-        val emit = Loop(()): _ =>
+        val emit = Loop.foreach:
             channel.take.map: v =>
                 channel.drain.map: chunk =>
                     val fullChunk      = Chunk(v).concat(chunk)
@@ -150,28 +151,85 @@ object StreamCoreExtensions:
           * @param chunkSize
           *   Size of the chunks that the iterator will produce and the stream will read from
           */
-        def fromIterator[V, S](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
+        def fromIterator[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, IO] =
-            Stream:
-                IO:
-                    val it      = v
-                    val size    = chunkSize max 1
-                    val builder = ChunkBuilder.init[V]
+            val stream: Stream[V, IO] < IO = IO:
+                val it      = v
+                val size    = chunkSize max 1
+                val builder = ChunkBuilder.init[V]
 
-                    Stream.repeatPresent(
-                        IO:
+                val pull: Chunk[V] < IO =
+                    IO:
+                        var count = 0
+                        while count < size && it.hasNext do
+                            builder.addOne(it.next())
+                            count += 1
+
+                        builder.result()
+
+                Stream:
+                    Loop.foreach:
+                        Abort.run(pull).map:
+                            case Result.Success(chunk) if chunk.isEmpty => Loop.done
+                            case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
+                            case Result.Panic(throwable) =>
+                                IO:
+                                    val lastElements: Chunk[V] = builder.result()
+                                    Emit.valueWith(lastElements)(Abort.panic(throwable))
+
+            Stream.unwrap(stream)
+        end fromIterator
+
+        /** Creates a stream from an iterator.
+          *
+          * @typeParam
+          *   E type of Exception to catch
+          * @param v
+          *   Iterator to create a stream from
+          * @param chunkSize
+          *   Size of the chunks that the iterator will produce and the stream will read from
+          */
+        inline def fromIteratorCatching[E <: Throwable](using
+            frame: Frame
+        )[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
+            tag: Tag[Emit[Chunk[V]]],
+            ct: SafeClassTag[E],
+            @implicitNotFound(
+                "Missing *explicit* type param on `fromIteratorCatching[E = SomeException](iterator, chunkSize)`." +
+                    "\n - Cannot catch Exceptions as `Failure[E]` using `E = Nothing`, they are turned into `Panic`." +
+                    "\n       If you need this behaviour, use `fromIterator(iterator, chunkSize)` directly." +
+                    "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions as `Failure`."
+            ) notNothing: NotGiven[E =:= Nothing]
+        ): Stream[V, IO & Abort[E]] =
+            val stream: Stream[V, (IO & Abort[E])] < IO = IO:
+                val it      = v
+                val size    = chunkSize max 1
+                val builder = ChunkBuilder.init[V]
+
+                val pull: Chunk[V] < (IO & Abort[E]) =
+                    IO:
+                        Abort.catching[E]:
                             var count = 0
                             while count < size && it.hasNext do
                                 builder.addOne(it.next())
                                 count += 1
 
-                            val chunk = builder.result()
-                            Maybe.when(chunk.nonEmpty)(chunk)
-                    ).emit
+                            builder.result()
 
-        end fromIterator
+                Stream:
+                    Loop.foreach:
+                        Abort.run(pull).map:
+                            case Result.Success(chunk) if chunk.isEmpty => Loop.done
+                            case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
+                            case error: Result.Error[E] @unchecked =>
+                                IO:
+                                    val lastElements: Chunk[V] = builder.result()
+                                    Emit.valueWith(lastElements)(Abort.error(error))
+
+            Stream.unwrap(stream)
+        end fromIteratorCatching
 
         /** Merges multiple streams asynchronously. Stream stops as soon as any of the source streams complete.
           *
@@ -205,6 +263,7 @@ object StreamCoreExtensions:
                             ))
                             _ <- emitMaybeChunksFromChannel(channel)
                         yield ()
+
     end extension
 
     extension [V, S, E](stream: Stream[V, S & Abort[E] & Async])
@@ -449,7 +508,7 @@ object StreamCoreExtensions:
                                     stream.foreach(v => channelIn.put(Present(v)))
                                 ).andThen(channelIn.putBatch(Chunk.fill(parallel)(Absent)))
                                 val transform = Async.fill(parallel, parallel) {
-                                    Loop(()): _ =>
+                                    Loop.foreach:
                                         channelIn.take.map:
                                             case Absent => Loop.done
                                             case Present(v) =>
@@ -603,7 +662,7 @@ object StreamCoreExtensions:
                                     stream.foreachChunk(c => channelIn.put(Present(c)))
                                 ).andThen(channelIn.putBatch(Chunk.fill(parallel)(Absent)))
                                 val transform = Async.fill(parallel, parallel) {
-                                    Loop(()): _ =>
+                                    Loop.foreach:
                                         channelIn.take.map:
                                             case Absent => Loop.done
                                             case Present(c) =>
@@ -880,7 +939,89 @@ object StreamCoreExtensions:
                 fn(streamHub).map: a =>
                     streamHub.consume(stream).andThen(a)
 
+        /** Collects values that are emitted by the original stream within the duration [[maxTime]] up to the amount [[maxSize]] and emits
+          * them as a chunk.
+          *
+          * If no elements are emitted by the original stream within [[maxTime]], as soon as any other elements are emitted the result
+          * stream will emit them as a group.
+          *
+          * @param maxSize
+          *   Maximum number of elements to be collected within a single duration. Values of less than one are ignored and treated as one.
+          * @param maxTime
+          *   Maximum amount of time to collect and emit elements
+          * @return
+          *   A new stream that emits collected chunks of elements
+          */
+        def groupedWithin(maxSize: Int, maxTime: Duration, bufferSize: Int = defaultAsyncStreamBufferSize)(using
+            t1: Tag[Emit[Chunk[V]]],
+            t2: Tag[Emit[Chunk[Chunk[V]]]],
+            i1: Isolate.Contextual[S, IO],
+            i2: Isolate.Contextual[S, Abort[E] & Async],
+            ct: SafeClassTag[Closed | E],
+            fr: Frame
+        ): Stream[Chunk[V], S & Abort[E] & Async] =
+            import Event.*
+            enum Event derives CanEqual:
+                case Data(chunk: Chunk[V])
+                case Tick, Flush
+            end Event
+
+            Stream[Chunk[V], S & Abort[E] & Async]:
+                IO.Unsafe {
+                    val safeMax = 1 max maxSize
+                    val channel = Channel.Unsafe.init[Event](1 max bufferSize).safe
+
+                    // Handle loop collecting emitted values and flushing them until completion
+                    val push: Fiber[E | Closed, Unit] < (IO & S) =
+                        Async.run[E | Closed, Unit, S]:
+                            IO.ensure(Async.run[Closed, Unit, Any](channel.put(Flush))):
+                                ArrowEffect.handleLoop(t1, stream.emit)(
+                                    handle = [C] =>
+                                        (chunk, cont) =>
+                                            channel.put(Data(chunk)).andThen:
+                                                Loop.continue(cont(()))
+                                )
+
+                    // Single fiber emitting a tick at constant interval
+                    val tick: Fiber[Closed, Unit] < (IO & Resource) =
+                        if maxTime == Duration.Infinity then Fiber.unit
+                        else
+                            Resource.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)
+
+                    // Loop collecting values from the channel and re-emitting them as chunks.
+                    // Chunks are emitted when the buffer exceeds the max size or a flush is requested.
+                    val pull: Unit < (Abort[Closed] & Async & Emit[Chunk[Chunk[V]]]) =
+                        Loop(Chunk.empty[V]): buffer =>
+                            channel.take.map:
+                                case Data(chunk) =>
+                                    val combined = buffer.concat(chunk)
+                                    if combined.size >= safeMax then
+                                        Emit.valueWith(Chunk(combined.take(safeMax)))(Loop.continue(combined.drop(safeMax)))
+                                    else
+                                        Loop.continue(combined)
+                                    end if
+                                case Tick =>
+                                    if buffer.nonEmpty then
+                                        Emit.valueWith(Chunk(buffer))(Loop.continue(Chunk.empty))
+                                    else
+                                        Loop.continue(buffer)
+                                case Flush =>
+                                    if buffer.nonEmpty then
+                                        Emit.valueWith(Chunk(buffer))(Loop.done)
+                                    else
+                                        Loop.done
+
+                    (for
+                        _     <- tick
+                        fiber <- push
+                        _     <- Abort.run[Closed](pull) // ignore Closed channel, join the push fiber to capture any Abort.
+                        _     <- fiber.get
+                    yield ()).handle(Resource.run, Abort.run[Closed], _.unit)
+                }
+        end groupedWithin
+
     end extension
+
 end StreamCoreExtensions
 
 export StreamCoreExtensions.*

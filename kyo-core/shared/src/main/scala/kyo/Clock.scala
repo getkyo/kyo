@@ -251,6 +251,7 @@ object Clock:
       * behavior.
       */
     trait TimeControl:
+
         /** Sets the current time to a specific instant.
           *
           * @param now
@@ -258,7 +259,21 @@ object Clock:
           * @return
           *   Unit effect that updates the current time
           */
-        def set(now: Instant): Unit < IO
+        def set(now: Instant): Unit < Async
+
+        /** Sets the current time to a specific instant and waits for async operations to execute.
+          *
+          * When time is set, any pending sleep operations that should have completed are triggered. The wallClockDelay ensures these async
+          * operations have time to execute in wall clock time before returning.
+          *
+          * @param now
+          *   The instant to set the current time to
+          * @param wallClockDelay
+          *   Duration to wait in wall clock time for triggered async operations to execute
+          * @return
+          *   Unit effect that updates the current time and waits for async execution
+          */
+        def set(now: Instant, wallClockDelay: Duration): Unit < Async
 
         /** Advances the current time by the specified duration.
           *
@@ -267,7 +282,22 @@ object Clock:
           * @return
           *   Unit effect that advances the current time
           */
-        def advance(duration: Duration): Unit < IO
+        def advance(duration: Duration): Unit < Async
+
+        /** Advances the current time by the specified duration and waits for async operations to execute.
+          *
+          * When time is advanced, any pending sleep operations that should have completed are triggered. The wallClockDelay ensures these
+          * async operations have time to execute in wall clock time before returning.
+          *
+          * @param duration
+          *   The duration to advance time by
+          * @param wallClockDelay
+          *   Duration to wait in wall clock time for triggered async operations to execute
+          * @return
+          *   Unit effect that advances the current time and waits for async execution
+          */
+        def advance(duration: Duration, wallClockDelay: Duration): Unit < Async
+
     end TimeControl
 
     /** Runs an effect with a controlled Clock that allows manual time manipulation. This is primarily intended for testing scenarios where
@@ -301,16 +331,22 @@ object Clock:
                         Promise.Unsafe.fromIOPromise(task)
                     end sleep
 
-                    def set(now: Instant) =
+                    def set(now: Instant) = set(now, 100.millis)
+
+                    def set(now: Instant, wallClockDelay: Duration) =
                         IO {
                             current = now
                             tick()
+                            Clock.live.unsafe.sleep(wallClockDelay).safe.get
                         }
 
-                    def advance(duration: Duration) =
+                    def advance(duration: Duration) = advance(duration, duration.min(100.millis))
+
+                    def advance(duration: Duration, wallClockDelay: Duration) =
                         IO {
                             current = current + duration
                             tick()
+                            Clock.live.unsafe.sleep(wallClockDelay).safe.get
                         }
 
                     def tick(): Unit =
