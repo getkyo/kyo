@@ -46,7 +46,7 @@ object StreamCoreExtensions:
         private def emit(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
             listener
                 .stream(1)
-                .collectWhile[Chunk[A], Abort[E]] {
+                .collectWhile {
                     case Result.Success(maybeChunk) => maybeChunk
                     case Result.Failure(e)          => Abort.fail(e)
                 }
