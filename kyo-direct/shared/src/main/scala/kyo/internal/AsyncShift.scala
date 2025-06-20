@@ -1,5 +1,6 @@
 package kyo.internal
 
+import cps.AsyncShift
 import cps.CpsMonad
 import cps.runtime.IterableOpsAsyncShift
 import kyo.*
@@ -17,8 +18,161 @@ end asyncShiftLowPriorityImplicit1
 object asyncShift extends asyncShiftLowPriorityImplicit1:
 
     transparent inline given shiftedChunk[A]: ChunkAsyncShift[A] = new ChunkAsyncShift[A]
+    transparent inline given shiftedMaybe: MaybeAsyncShift       = new MaybeAsyncShift
+    transparent inline given shiftedResult: ResultAsyncShift     = new ResultAsyncShift
 
 end asyncShift
+
+class ResultAsyncShift(using Frame) extends AsyncShift[Result.type]:
+
+    def map[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])[B](f: A => F[B]): F[Result[E, B]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)             => f(a).map(Result.Success(_))
+                    case e: Result.Error[E] @unchecked => monad.pure(e)
+
+    def flatMap[F[_], E, A](
+        result: Result.type,
+        monad: CpsMonad[F]
+    )(ma: Result[E, A])[E2, B](f: A => F[Result[E2, B]]): F[Result[E | E2, B]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)             => f(a)
+                    case e: Result.Error[E] @unchecked => monad.pure(e)
+
+    def exists[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])(p: A => F[Boolean]): F[Boolean] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)  => p(a)
+                    case _: Result.Error[?] => monad.pure(false)
+
+    def forall[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])(p: A => F[Boolean]): F[Boolean] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)  => p(a)
+                    case _: Result.Error[?] => monad.pure(true)
+
+    def filter[F[_], E, A](
+        result: Result.type,
+        monad: CpsMonad[F]
+    )(ma: Result[E, A])(p: A => F[Boolean]): F[Result[E | NoSuchElementException, A]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a) =>
+                        p(a).map:
+                            case true  => Result.Success(a)
+                            case false => Result.Failure(defaultFilterError)
+                    case e: Result.Error[E] @unchecked => monad.pure(e)
+
+    def filterNot[F[_], E, A](
+        result: Result.type,
+        monad: CpsMonad[F]
+    )(ma: Result[E, A])(p: A => F[Boolean]): F[Result[E | NoSuchElementException, A]] =
+        filter(result, monad)(ma)(a => monad.map(p(a))(b => !b))
+
+    def fold[F[_], E, A](
+        result: Result.type,
+        monad: CpsMonad[F]
+    )(
+        ma: Result[E, A]
+    )[B](
+        onSuccess: A => F[B],
+        onFailure: E => F[B],
+        onPanic: Throwable => F[B]
+    ): F[B] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a) => onSuccess(a)
+                    case Result.Failure(e) => onFailure(e)
+                    case Result.Panic(ex)  => onPanic(ex)
+
+    def orElse[F[_], E, A](
+        result: Result.type,
+        monad: CpsMonad[F]
+    )(ma: Result[E, A])[E2, B >: A](ifEmpty: () => F[Result[E2, B]]): F[Result[E | E2, B]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)  => monad.pure(Result.Success(a))
+                    case _: Result.Error[?] => ifEmpty()
+
+    def getOrElse[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])[B >: A](ifEmpty: () => F[B]): F[B] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)  => monad.pure(a)
+                    case _: Result.Error[?] => ifEmpty()
+
+    private def defaultFilterError: NoSuchElementException =
+        new NoSuchElementException("filter predicate failed")
+
+end ResultAsyncShift
+
+class MaybeAsyncShift(using Frame) extends AsyncShift[Maybe.type]:
+    def map[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])[B](f: A => F[B]): F[Maybe[B]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => f(a).map(Maybe.Present.apply)
+                    case Maybe.Absent     => monad.pure(Maybe.Absent)
+
+    def flatMap[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])[B](f: A => F[Maybe[B]]): F[Maybe[B]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => f(a)
+                    case Maybe.Absent     => monad.pure(Maybe.Absent)
+
+    def filter[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])(p: A => F[Boolean]): F[Maybe[A]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => p(a).map(if _ then Maybe.Present(a) else Maybe.Absent)
+                    case Maybe.Absent     => monad.pure(Maybe.Absent)
+
+    def exists[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])(p: A => F[Boolean]): F[Boolean] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => p(a)
+                    case Maybe.Absent     => monad.pure(false)
+
+    def forall[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])(p: A => F[Boolean]): F[Boolean] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => p(a)
+                    case Maybe.Absent     => monad.pure(true)
+
+    def filterNot[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])(p: A => F[Boolean]): F[Maybe[A]] =
+        monad match
+            case _: KyoCpsMonad[?] => filter(maybe, monad)(ma)(a => monad.map(p(a))(i => !i))
+
+    def foreach[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])(f: A => F[Unit]): F[Unit] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => f(a)
+                    case Maybe.Absent     => Kyo.unit
+
+    def collect[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])[B](pf: PartialFunction[A, F[B]]): F[Maybe[B]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) if pf.isDefinedAt(a) =>
+                        monad.flatMap(pf(a))(b => monad.pure(Maybe.Present(b)))
+                    case _ => monad.pure(Maybe.Absent)
+
+    def fold[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])[B](ifEmpty: () => F[B])(f: A => F[B]): F[B] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => f(a)
+                    case Maybe.Absent     => ifEmpty()
+
+    def orElse[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])(ifEmpty: () => F[Maybe[A]]): F[Maybe[A]] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => monad.pure(Maybe.Present(a))
+                    case Maybe.Absent     => ifEmpty()
+
+    def getOrElse[F[_], A](maybe: Maybe.type, monad: CpsMonad[F])(ma: Maybe[A])[B >: A](ifEmpty: () => F[B]): F[B] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Maybe.Present(a) => monad.pure(a)
+                    case Maybe.Absent     => ifEmpty()
+
+end MaybeAsyncShift
 
 class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
 
