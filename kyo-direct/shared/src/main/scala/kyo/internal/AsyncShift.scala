@@ -1,11 +1,13 @@
 package kyo.internal
 
+import cps.AsyncShift
 import cps.CpsMonad
 import cps.runtime.IterableOpsAsyncShift
 import kyo.*
 import kyo.kernel.internal.Safepoint
 import scala.annotation.targetName
 import scala.collection.IterableOps
+import scala.util.NotGiven
 
 trait asyncShiftLowPriorityImplicit1:
 
@@ -16,9 +18,31 @@ end asyncShiftLowPriorityImplicit1
 
 object asyncShift extends asyncShiftLowPriorityImplicit1:
 
-    transparent inline given shiftedChunk[A]: ChunkAsyncShift[A] = new ChunkAsyncShift[A]
+    transparent inline given shiftedChunk[A]: ChunkAsyncShift[A]         = new ChunkAsyncShift[A]
+    transparent inline given shitferStream[V, S]: StreamAsyncShift[V, S] = new StreamAsyncShift
 
 end asyncShift
+
+class StreamAsyncShift[V, S] extends AsyncShift[Stream[V, S]]:
+    def map[F[_], V2](stream: Stream[V, S], monad: CpsMonad[F])(f: V => F[V2])(using
+        t1: Tag[Emit[Chunk[V]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        ev: NotGiven[V2 <:< (Any < Nothing)],
+        fr: Frame
+    ): F[Stream[V2, S]] =
+        monad match
+            case _: KyoCpsMonad[?] => monad.pure(stream.map(a => f(a)).asInstanceOf[Stream[V2, S]])
+    end map
+
+    def filter[F[_]](stream: Stream[V, S], monad: CpsMonad[F])(f: V => F[Boolean])(using
+        tag: Tag[Emit[Chunk[V]]],
+        discr: Discriminator,
+        frame: Frame
+    ): F[Stream[V, S]] =
+        monad match
+            case _: KyoCpsMonad[?] => monad.pure(stream.filter(f).asInstanceOf[Stream[V, S]])
+
+end StreamAsyncShift
 
 class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
 
