@@ -261,11 +261,14 @@ object Channel:
             else
                 val drainEffect =
                     if maxChunkSize == Int.MaxValue then Channel.drain(self)
-                    else Channel.drainUpTo(self)(maxChunkSize - 1)
+                    else Channel.drainUpTo(self)(maxChunkSize)
                 Loop[Unit, Unit, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
-                    Channel.take(self).map: a =>
-                        drainEffect.map: chunk =>
-                            Emit.valueWith(Chunk(a).concat(chunk))(Loop.continue)
+                    for
+                        optimisticChunk <- drainEffect
+                        chunk: Chunk[A] <-
+                            if optimisticChunk.nonEmpty then Kyo.lift(optimisticChunk)
+                            else Channel.take(self).map(Chunk(_))
+                    yield Emit.valueWith(chunk)(Loop.continue)
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than

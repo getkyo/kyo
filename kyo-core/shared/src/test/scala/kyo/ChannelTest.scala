@@ -934,6 +934,19 @@ class ChannelTest extends Test:
             yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
             end for
         }
+
+        "should stop when channel is closed async" in run {
+            val fullStream = Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8)
+            for
+                c <- Channel.init[Int](3)
+                stream = c.streamUntilClosed()
+                f <- Async.run(stream.run)
+                _ <- Kyo.foreach(fullStream)(c.put).andThen(c.close)
+                _ <- Async.run(c.closeAwaitEmpty)
+                r <- Fiber.get(f)
+            yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
+            end for
+        }
     }
 
     "closeAwaitEmpty" - {
