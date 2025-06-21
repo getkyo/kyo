@@ -37,7 +37,7 @@ object ArenaBench:
     abstract class Base[A](expectedResult: A) extends ArenaBench[A](expectedResult):
         def zioBench(): zio.UIO[A]
         def kyoBenchFiber(): kyo.<[A, kyo.Async & kyo.Abort[Throwable]] = kyoBench()
-        def kyoBench(): kyo.<[A, kyo.IO]
+        def kyoBench(): kyo.<[A, kyo.Sync]
         def catsBench(): cats.effect.IO[A]
     end Base
 
@@ -47,7 +47,7 @@ object ArenaBench:
         def forkKyo(warmup: KyoForkWarmup): A =
             import kyo.*
             import AllowUnsafe.embrace.danger
-            IO.Unsafe.evalOrThrow(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).getOrThrow
+            Sync.Unsafe.evalOrThrow(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).getOrThrow
         end forkKyo
 
         @Benchmark
@@ -68,7 +68,7 @@ object ArenaBench:
         @Benchmark
         def syncKyo(warmup: KyoSyncWarmup): A =
             import kyo.AllowUnsafe.embrace.danger
-            kyo.IO.Unsafe.evalOrThrow(kyoBench())
+            kyo.Sync.Unsafe.evalOrThrow(kyoBench())
         end syncKyo
 
         @Benchmark

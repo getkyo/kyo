@@ -3,7 +3,7 @@ package kyo.bench.arena
 class CollectParBench extends ArenaBench.ForkOnly(Seq.fill(1000)(1)):
 
     val count     = 1000
-    val kyoTasks  = List.fill(count)(kyo.IO(1))
+    val kyoTasks  = List.fill(count)(kyo.Sync(1))
     val catsTasks = List.fill(count)(cats.effect.IO(1))
     val zioTasks  = List.fill(count)(zio.ZIO.succeed(1))
 

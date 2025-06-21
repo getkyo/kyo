@@ -15,36 +15,36 @@ package object flow:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Stream[T, Async] < (Resource & IO) =
+    ): Stream[T, Async] < (Resource & Sync) =
         for
             subscriber <- StreamSubscriber[T](bufferSize, emitStrategy)
-            _          <- IO(publisher.subscribe(subscriber))
+            _          <- Sync(publisher.subscribe(subscriber))
             stream     <- subscriber.stream
         yield stream
 
     @nowarn("msg=anonymous")
     def subscribeToStream[T, S](
-        using Isolate.Contextual[S, IO]
+        using Isolate.Contextual[S, Sync]
     )(
-        stream: Stream[T, S & IO],
+        stream: Stream[T, S & Sync],
         subscriber: Subscriber[? >: T]
     )(
         using
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Subscription < (Resource & IO & S) =
+    ): Subscription < (Resource & Sync & S) =
         StreamSubscription.subscribe(stream, subscriber)
 
     def streamToPublisher[T, S](
-        using Isolate.Contextual[S, IO]
+        using Isolate.Contextual[S, Sync]
     )(
-        stream: Stream[T, S & IO]
+        stream: Stream[T, S & Sync]
     )(
         using
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Publisher[T] < (Resource & IO & S) = StreamPublisher[T, S](stream)
+    ): Publisher[T] < (Resource & Sync & S) = StreamPublisher[T, S](stream)
 
 end flow

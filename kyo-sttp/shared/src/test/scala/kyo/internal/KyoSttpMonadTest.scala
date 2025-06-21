@@ -7,25 +7,25 @@ import sttp.monad.Canceler
 class KyoSttpMonadTest extends Test:
 
     "map" in run {
-        KyoSttpMonad.map(IO(1))(_ + 1).map(r => assert(r == 2))
+        KyoSttpMonad.map(Sync(1))(_ + 1).map(r => assert(r == 2))
     }
 
     "flatMap" in run {
-        KyoSttpMonad.flatMap(IO(1))(v => IO(v + 1)).map(r => assert(r == 2))
+        KyoSttpMonad.flatMap(Sync(1))(v => Sync(v + 1)).map(r => assert(r == 2))
     }
 
     "handleError" - {
         "ok" in run {
-            KyoSttpMonad.handleError(IO(1))(_ => 2).map(r => assert(r == 1))
+            KyoSttpMonad.handleError(Sync(1))(_ => 2).map(r => assert(r == 1))
         }
         "nok" in run {
-            KyoSttpMonad.handleError(IO(throw new Exception))(_ => 2).map(r => assert(r == 2))
+            KyoSttpMonad.handleError(Sync(throw new Exception))(_ => 2).map(r => assert(r == 2))
         }
     }
 
     "ensure" in run {
         var calls = 0
-        KyoSttpMonad.ensure(IO(1), IO(calls += 1)).map { r =>
+        KyoSttpMonad.ensure(Sync(1), Sync(calls += 1)).map { r =>
             assert(r == 1)
             assert(calls == 1)
         }

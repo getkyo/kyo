@@ -21,7 +21,7 @@ final case class Image private (data: Array[Byte]):
       * @return
       *   Unit wrapped in IO effect
       */
-    def writeFileBinary(path: String)(using Frame): Unit < IO =
+    def writeFileBinary(path: String)(using Frame): Unit < Sync =
         writeFileBinary(Path(path))
 
     /** Writes the image to a file in binary format.
@@ -31,7 +31,7 @@ final case class Image private (data: Array[Byte]):
       * @return
       *   Unit wrapped in IO effect
       */
-    def writeFileBinary(path: Path)(using Frame): Unit < IO =
+    def writeFileBinary(path: Path)(using Frame): Unit < Sync =
         path.writeBytes(binary.unsafeArray)
 
     /** Writes the image to a file in base64 format.
@@ -41,7 +41,7 @@ final case class Image private (data: Array[Byte]):
       * @return
       *   Unit wrapped in IO effect
       */
-    def writeFileBase64(path: String)(using Frame): Unit < IO =
+    def writeFileBase64(path: String)(using Frame): Unit < Sync =
         writeFileBase64(Path(path))
 
     /** Writes the image to a file in base64 format.
@@ -51,7 +51,7 @@ final case class Image private (data: Array[Byte]):
       * @return
       *   Unit wrapped in IO effect
       */
-    def writeFileBase64(path: Path)(using Frame): Unit < IO =
+    def writeFileBase64(path: Path)(using Frame): Unit < Sync =
         path.write(base64)
 
     /** Converts the image data to an immutable array of bytes.

@@ -56,7 +56,7 @@ class ClockTest extends Test:
             Clock.withTimeControl { control =>
                 for
                     clock     <- Clock.get
-                    stopwatch <- IO.Unsafe(clock.unsafe.stopwatch())
+                    stopwatch <- Sync.Unsafe(clock.unsafe.stopwatch())
                     _         <- control.advance(5.seconds)
                 yield assert(stopwatch.elapsed() == 5.seconds)
                 end for
@@ -102,7 +102,7 @@ class ClockTest extends Test:
             Clock.withTimeControl { control =>
                 for
                     clock    <- Clock.get
-                    deadline <- IO.Unsafe(clock.unsafe.deadline(10.seconds))
+                    deadline <- Sync.Unsafe(clock.unsafe.deadline(10.seconds))
                     _        <- control.advance(3.seconds)
                 yield assert(deadline.timeLeft() == 7.seconds)
             }
@@ -113,7 +113,7 @@ class ClockTest extends Test:
             Clock.withTimeControl { control =>
                 for
                     deadline <- Clock.deadline(5.seconds)
-                    _        <- IO.Unsafe(assert(!deadline.unsafe.isOverdue()))
+                    _        <- Sync.Unsafe(assert(!deadline.unsafe.isOverdue()))
                     _        <- control.advance(6.seconds)
                 yield assert(deadline.unsafe.isOverdue())
             }

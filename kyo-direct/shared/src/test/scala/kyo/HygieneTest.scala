@@ -265,8 +265,8 @@ class HygieneTest extends Test:
     }
 
     "opaque types issue #993" in {
-        val maybe1: Maybe[Int] < IO = Maybe(1)
-        val maybe0: Maybe[Int]      = Maybe(0)
+        val maybe1: Maybe[Int] < Sync = Maybe(1)
+        val maybe0: Maybe[Int]        = Maybe(0)
         direct:
             maybe1.now.fold(2)(_ + 1)
             maybe1.now.contains(1)

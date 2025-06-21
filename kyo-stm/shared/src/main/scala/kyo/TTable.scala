@@ -113,7 +113,7 @@ object TTable:
       * @return
       *   A new TTable instance within the IO effect
       */
-    def init[Fields: AsFields](using Frame): TTable[Fields] < IO =
+    def init[Fields: AsFields](using Frame): TTable[Fields] < Sync =
         for
             nextId <- TRef.init(0)
             store  <- TMap.init[Int, Record[Fields]]
@@ -286,7 +286,7 @@ object TTable:
           * @return
           *   A new Indexed table instance within the IO effect
           */
-        def init[Fields: AsFields as fields, Indexes >: Fields: AsFields as indexFields](using Frame): Indexed[Fields, Indexes] < IO =
+        def init[Fields: AsFields as fields, Indexes >: Fields: AsFields as indexFields](using Frame): Indexed[Fields, Indexes] < Sync =
             for
                 table <- TTable.init[Fields]
                 indexes <-

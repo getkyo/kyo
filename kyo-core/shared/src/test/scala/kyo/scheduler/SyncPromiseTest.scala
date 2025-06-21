@@ -4,7 +4,7 @@ import kyo.*
 import org.scalatest.compatible.Assertion
 import scala.annotation.tailrec
 
-class IOPromiseTest extends Test:
+class SyncPromiseTest extends Test:
 
     def deadline(after: Duration = timeout) =
         import AllowUnsafe.embrace.danger
@@ -1015,4 +1015,4 @@ class IOPromiseTest extends Test:
         }
     }
 
-end IOPromiseTest
+end SyncPromiseTest

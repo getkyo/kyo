@@ -40,7 +40,7 @@ sealed abstract class Subject[A]:
       * @return
       *   true if the message was successfully sent, false if the recipient couldn't accept it immediately
       */
-    def trySend(message: A)(using Frame): Boolean < (IO & Abort[Closed])
+    def trySend(message: A)(using Frame): Boolean < (Sync & Abort[Closed])
 
     /** Sends a message and waits for a response.
       *
@@ -171,7 +171,7 @@ object Subject:
       */
     inline def init[A](
         inline send: Frame ?=> A => Unit < (Async & Abort[Closed]),
-        inline trySend: Frame ?=> A => Boolean < (IO & Abort[Closed])
+        inline trySend: Frame ?=> A => Boolean < (Sync & Abort[Closed])
     ): Subject[A] =
         _init(send, trySend)
 
@@ -179,7 +179,7 @@ object Subject:
     // Indirection to avoid parameter shaddowing
     private inline def _init[A](
         inline _send: Frame ?=> A => Unit < (Async & Abort[Closed]),
-        inline _trySend: Frame ?=> A => Boolean < (IO & Abort[Closed])
+        inline _trySend: Frame ?=> A => Boolean < (Sync & Abort[Closed])
     ): Subject[A] =
         new Subject[A]:
             def send(message: A)(using Frame)    = _send(message)

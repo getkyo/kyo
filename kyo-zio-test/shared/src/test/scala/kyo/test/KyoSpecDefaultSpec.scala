@@ -11,12 +11,12 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                     assertCompletes
                 },
                 test("IOs Succeed") {
-                    IO(assertCompletes)
+                    Sync(assertCompletes)
                 }
             ),
             suite("failing!")(
                 test("IO fail") {
-                    IO(throw new Exception("Fail!")).map(_ => assertCompletes)
+                    Sync(throw new Exception("Fail!")).map(_ => assertCompletes)
                 },
                 test("IO Succeed") {
                     Abort.fail[Throwable](new RuntimeException("Abort!")).map(_ => assertCompletes)
@@ -43,7 +43,7 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                 ),
                 test("checkKyo")(
                     check(Gen.boolean) { b =>
-                        IO(assertTrue(b == b))
+                        Sync(assertTrue(b == b))
                     }
                 )
             )

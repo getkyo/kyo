@@ -36,7 +36,7 @@ final case class LongAdder private (unsafe: LongAdder.Unsafe):
       * @return
       *   Unit
       */
-    inline def add(v: Long)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.add(v))
+    inline def add(v: Long)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.add(v))
 
     /** Decrements the sum by one.
       *
@@ -45,7 +45,7 @@ final case class LongAdder private (unsafe: LongAdder.Unsafe):
       * @return
       *   Unit
       */
-    inline def decrement(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.decrement())
+    inline def decrement(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.decrement())
 
     /** Increments the sum by one.
       *
@@ -54,7 +54,7 @@ final case class LongAdder private (unsafe: LongAdder.Unsafe):
       * @return
       *   Unit
       */
-    inline def increment(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.increment())
+    inline def increment(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.increment())
 
     /** Returns the current sum.
       *
@@ -64,7 +64,7 @@ final case class LongAdder private (unsafe: LongAdder.Unsafe):
       * @return
       *   The current sum
       */
-    inline def get(using inline frame: Frame): Long < IO = IO.Unsafe(unsafe.get())
+    inline def get(using inline frame: Frame): Long < Sync = Sync.Unsafe(unsafe.get())
 
     /** Resets the sum to zero.
       *
@@ -73,7 +73,7 @@ final case class LongAdder private (unsafe: LongAdder.Unsafe):
       * @return
       *   Unit
       */
-    inline def reset(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.reset())
+    inline def reset(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.reset())
 
     /** Returns the current sum and resets it to zero.
       *
@@ -83,7 +83,7 @@ final case class LongAdder private (unsafe: LongAdder.Unsafe):
       * @return
       *   The sum before reset,
       */
-    inline def sumThenReset(using inline frame: Frame): Long < IO = IO.Unsafe(unsafe.sumThenReset())
+    inline def sumThenReset(using inline frame: Frame): Long < Sync = Sync.Unsafe(unsafe.sumThenReset())
 
 end LongAdder
 
@@ -94,7 +94,7 @@ object LongAdder:
       * @return
       *   A new LongAdder
       */
-    def init(using frame: Frame): LongAdder < IO = initWith(identity)
+    def init(using frame: Frame): LongAdder < Sync = initWith(identity)
 
     /** Uses a new LongAdder.
       * @param f
@@ -102,8 +102,8 @@ object LongAdder:
       * @return
       *   The result of applying the function
       */
-    inline def initWith[A, S](inline f: LongAdder => A < S)(using inline frame: Frame): A < (IO & S) =
-        IO.Unsafe(f(LongAdder(Unsafe.init())))
+    inline def initWith[A, S](inline f: LongAdder => A < S)(using inline frame: Frame): A < (Sync & S) =
+        Sync.Unsafe(f(LongAdder(Unsafe.init())))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     opaque type Unsafe = j.LongAdder
@@ -158,7 +158,7 @@ final case class DoubleAdder private (unsafe: DoubleAdder.Unsafe):
       * @return
       *   Unit
       */
-    inline def add(v: Double)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.add(v))
+    inline def add(v: Double)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.add(v))
 
     /** Returns the current sum.
       *
@@ -168,7 +168,7 @@ final case class DoubleAdder private (unsafe: DoubleAdder.Unsafe):
       * @return
       *   The current sum
       */
-    inline def get(using inline frame: Frame): Double < IO = IO.Unsafe(unsafe.get())
+    inline def get(using inline frame: Frame): Double < Sync = Sync.Unsafe(unsafe.get())
 
     /** Resets the sum to zero.
       *
@@ -177,7 +177,7 @@ final case class DoubleAdder private (unsafe: DoubleAdder.Unsafe):
       * @return
       *   Unit
       */
-    inline def reset(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.reset())
+    inline def reset(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.reset())
 
     /** Returns the current sum and resets it to zero.
       *
@@ -187,7 +187,7 @@ final case class DoubleAdder private (unsafe: DoubleAdder.Unsafe):
       * @return
       *   The sum before reset,
       */
-    inline def sumThenReset(using inline frame: Frame): Double < IO = IO.Unsafe(unsafe.sumThenReset())
+    inline def sumThenReset(using inline frame: Frame): Double < Sync = Sync.Unsafe(unsafe.sumThenReset())
 
 end DoubleAdder
 
@@ -198,7 +198,7 @@ object DoubleAdder:
       * @return
       *   A new DoubleAdder
       */
-    def init(using Frame): DoubleAdder < IO = initWith(identity)
+    def init(using Frame): DoubleAdder < Sync = initWith(identity)
 
     /** Uses a new DoubleAdder.
       * @param f
@@ -206,8 +206,8 @@ object DoubleAdder:
       * @return
       *   The result of applying the function
       */
-    inline def initWith[A, S](inline f: DoubleAdder => A < S)(using inline frame: Frame): A < (IO & S) =
-        IO.Unsafe(f(DoubleAdder(Unsafe.init())))
+    inline def initWith[A, S](inline f: DoubleAdder => A < S)(using inline frame: Frame): A < (Sync & S) =
+        Sync.Unsafe(f(DoubleAdder(Unsafe.init())))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     opaque type Unsafe = j.DoubleAdder

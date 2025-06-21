@@ -5,7 +5,7 @@ import kyo.*
 import kyo.interop.flow.*
 
 object StreamReactiveStreamsExtensions:
-    extension [T, S](stream: Stream[T, S & IO])(using Isolate.Contextual[S, IO])
+    extension [T, S](stream: Stream[T, S & Sync])(using Isolate.Contextual[S, Sync])
         def subscribe(
             subscriber: Subscriber[? >: T]
         )(
@@ -13,7 +13,7 @@ object StreamReactiveStreamsExtensions:
             Frame,
             Tag[Emit[Chunk[T]]],
             Tag[Poll[Chunk[T]]]
-        ): Subscription < (Resource & IO & S) =
+        ): Subscription < (Resource & Sync & S) =
             subscribeToStream(stream, subscriber)
 
         def toPublisher(
@@ -21,7 +21,7 @@ object StreamReactiveStreamsExtensions:
             Frame,
             Tag[Emit[Chunk[T]]],
             Tag[Poll[Chunk[T]]]
-        ): Publisher[T] < (Resource & IO & S) =
+        ): Publisher[T] < (Resource & Sync & S) =
             streamToPublisher(stream)
     end extension
 end StreamReactiveStreamsExtensions

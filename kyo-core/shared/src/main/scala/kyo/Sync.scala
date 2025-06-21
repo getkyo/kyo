@@ -21,9 +21,15 @@ import kyo.kernel.internal.Safepoint
   *
   * Like Async includes IO, this effect includes Abort[Nothing] to represent potential panics (untracked, unexpected exceptions).
   */
-opaque type IO <: Abort[Nothing] = Abort[Nothing]
+opaque type Sync <: Abort[Nothing] = Abort[Nothing]
 
-object IO:
+@deprecated
+type IO = Sync
+
+@deprecated
+val IO = Sync
+
+object Sync:
 
     /** Suspends a potentially side-effecting computation in an IO effect.
       *
@@ -41,7 +47,7 @@ object IO:
       * @return
       *   The suspended computation wrapped in an IO effect.
       */
-    inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
         Effect.deferInline(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
@@ -58,7 +64,7 @@ object IO:
       * @tparam A
       *   The result type of the main computation.
       */
-    inline def ensure[A, S](inline f: => Any < IO)(v: => A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def ensure[A, S](inline f: => Any < Sync)(v: => A < S)(using inline frame: Frame): A < (Sync & S) =
         ensure(_ => f)(v)
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
@@ -80,8 +86,8 @@ object IO:
       * @return
       *   The result of the computation, with the finalizer guaranteed to run.
       */
-    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < IO)(v: => A < S)(using inline frame: Frame): A < (IO & S) =
-        Unsafe(Safepoint.ensure(ex => IO.Unsafe.evalOrThrow(f(ex)))(v))
+    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < Sync)(v: => A < S)(using inline frame: Frame): A < (Sync & S) =
+        Unsafe(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *
@@ -100,18 +106,18 @@ object IO:
       * @return
       *   An IO effect containing the result of applying the function
       */
-    def withLocal[A, B, S](local: Local[A])(f: A => B < S)(using Frame): B < (S & IO) =
+    def withLocal[A, B, S](local: Local[A])(f: A => B < S)(using Frame): B < (S & Sync) =
         local.use(f)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
-        inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
+        inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
             Effect.deferInline {
                 f(using AllowUnsafe.embrace.danger)
             }
 
-        def withLocal[A, B, S](local: Local[A])(f: AllowUnsafe ?=> A => B < S)(using Frame): B < (S & IO) =
+        def withLocal[A, B, S](local: Local[A])(f: AllowUnsafe ?=> A => B < S)(using Frame): B < (S & Sync) =
             local.use(f(using AllowUnsafe.embrace.danger))
 
         /** Evaluates an IO effect that may throw exceptions, converting any thrown exceptions into the final result.
@@ -128,7 +134,7 @@ object IO:
           * @throws Throwable
           *   If the evaluation results in an error
           */
-        def evalOrThrow[A](v: A < (IO & Abort[Throwable]))(using Frame, AllowUnsafe): A =
+        def evalOrThrow[A](v: A < (Sync & Abort[Throwable]))(using Frame, AllowUnsafe): A =
             Abort.run(v).eval.getOrThrow
 
         /** Runs an IO effect, evaluating it and its side effects.
@@ -150,8 +156,8 @@ object IO:
           * @return
           *   The result of the IO effect after executing its side effects.
           */
-        def run[E, A, S](v: => A < (IO & Abort[E] & S))(using Frame, AllowUnsafe): A < (S & Abort[E]) =
+        def run[E, A, S](v: => A < (Sync & Abort[E] & S))(using Frame, AllowUnsafe): A < (S & Abort[E]) =
             v
 
     end Unsafe
-end IO
+end Sync

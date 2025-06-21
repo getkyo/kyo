@@ -27,7 +27,7 @@ final class StreamPublisherTest extends PublisherVerification[Int](new TestEnvir
                 StreamPublisher.Unsafe(
                     createStream(n.toInt),
                     subscribeCallback = fiber =>
-                        discard(IO.Unsafe.evalOrThrow(Async.runAndBlock(Duration.Infinity)(fiber)))
+                        discard(Sync.Unsafe.evalOrThrow(Async.runAndBlock(Duration.Infinity)(fiber)))
                 )
             )
         end if
@@ -39,7 +39,7 @@ final class StreamPublisherTest extends PublisherVerification[Int](new TestEnvir
                 createStream(),
                 subscribeCallback = fiber =>
                     val asynced = Async.runAndBlock(Duration.Infinity)(fiber)
-                    val result  = IO.Unsafe.evalOrThrow(asynced)
+                    val result  = Sync.Unsafe.evalOrThrow(asynced)
                     discard(result.unsafe.interrupt())
             )
         )

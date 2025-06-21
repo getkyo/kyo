@@ -133,7 +133,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, par, Int.MaxValue)
-                        s2 = stream.mapPar(par, buf)(i => IO(i + 1))
+                        s2 = stream.mapPar(par, buf)(i => Sync(i + 1))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -168,7 +168,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapParUnordered(par, buf)(i => IO(i + 1))
+                        s2 = stream.mapParUnordered(par, buf)(i => Sync(i + 1))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet
@@ -205,7 +205,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkPar(par, buf)(c => IO(c.map(_ + 1)))
+                        s2 = stream.mapChunkPar(par, buf)(c => Sync(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -275,7 +275,7 @@ class StreamCoreExtensionsTest extends Test:
                 "map with Choice" in run {
                     val it = Iterator("a", "b", "c")
 
-                    val stream: Stream[String, IO & Choice] =
+                    val stream: Stream[String, Sync & Choice] =
                         Stream.fromIterator(it, chunkSize).rechunk(10).map: str =>
                             Choice.eval(true, false).map:
                                 case true  => str.toUpperCase
@@ -422,7 +422,7 @@ class StreamCoreExtensionsTest extends Test:
 
                 "map with Choice" in run {
                     val it = Iterator("a", "b", "c")
-                    val stream: Stream[String, IO & Choice & Abort[Throwable]] =
+                    val stream: Stream[String, Sync & Choice & Abort[Throwable]] =
                         Stream.fromIteratorCatching[Throwable](it, chunkSize).rechunk(10).map: str =>
                             Choice.eval(true, false).map:
                                 case true  => str.toUpperCase
@@ -447,7 +447,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkParUnordered(par, buf)(c => IO(c.map(_ + 1)))
+                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet

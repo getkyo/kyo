@@ -7,7 +7,7 @@ import kyo.*
 object KyoUtil:
     def nettyChannelFutureToScala(nettyFuture: ChannelFuture)(using Frame): Channel < Async =
         Promise.initWith[Nothing, Channel] { p =>
-            p.onComplete(_ => IO(discard(nettyFuture.cancel(true)))).andThen {
+            p.onComplete(_ => Sync(discard(nettyFuture.cancel(true)))).andThen {
                 nettyFuture.addListener((future: ChannelFuture) =>
                     discard {
                         import AllowUnsafe.embrace.danger
@@ -21,7 +21,7 @@ object KyoUtil:
 
     def nettyFutureToScala[A](f: io.netty.util.concurrent.Future[A])(using Frame): A < Async =
         Promise.initWith[Nothing, A] { p =>
-            p.onComplete(_ => IO(discard(f.cancel(true)))).andThen {
+            p.onComplete(_ => Sync(discard(f.cancel(true)))).andThen {
                 f.addListener((future: io.netty.util.concurrent.Future[A]) =>
                     discard {
                         import AllowUnsafe.embrace.danger

@@ -9,7 +9,7 @@ trait AsyncPlatformSpecific:
         fromCompletionStage(cs)
 
     def fromCompletionStage[A](cs: CompletionStage[A])(using Frame): A < Async =
-        IO.Unsafe {
+        Sync.Unsafe {
             val p = Promise.Unsafe.init[Nothing, A]()
             cs.whenComplete { (success, error) =>
                 if error == null then p.completeDiscard(Result.succeed(success))

@@ -56,7 +56,7 @@ object StreamCoreExtensions:
 
         private def emitWithStatus(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
             // Ensure the end-of-stream signal is propagated to new listeners
-            IO.Unsafe(streamStatus.get()).map:
+            Sync.Unsafe(streamStatus.get()).map:
                 case Present(Result.Success(_)) =>
                     Abort.run[Closed](hub.put(Result.Success(Absent))).andThen(emit(listener))
                 case Present(Result.Failure(e)) =>
@@ -79,7 +79,7 @@ object StreamCoreExtensions:
 
         def consume[S](stream: Stream[A, Abort[E] & S & Async])(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Abort[E] & Async],
             t1: SafeClassTag[E],
             t2: Tag[Emit[Chunk[A]]],
@@ -92,8 +92,8 @@ object StreamCoreExtensions:
                     )
                 ).map:
                     case Result.Success(_) =>
-                        IO.Unsafe(streamStatus.set(Present(Result.Success(())))).andThen(hub.put(Result.Success(Absent)))
-                    case Result.Failure(e) => IO.Unsafe(streamStatus.set(Present(Result.Failure(e)))).andThen(hub.put(Result.Failure(e)))
+                        Sync.Unsafe(streamStatus.set(Present(Result.Success(())))).andThen(hub.put(Result.Success(Absent)))
+                    case Result.Failure(e) => Sync.Unsafe(streamStatus.set(Present(Result.Failure(e)))).andThen(hub.put(Result.Failure(e)))
                     case panic @ Result.Panic(e) => Abort.get(panic)
             })(_.interrupt).unit
     end StreamHubImpl
@@ -106,7 +106,7 @@ object StreamCoreExtensions:
             Tag[Emit[Chunk[Chunk[A]]]],
             Frame
         ): StreamHubImpl[A, E] < (Async & Resource) =
-            IO.Unsafe:
+            Sync.Unsafe:
                 Latch.initWith(1): latch =>
                     Hub.initWith[Result.Partial[E, Maybe[Chunk[A]]]](bufferSize): hub =>
                         StreamHubImpl(hub, AtomicRef.Unsafe.init(Absent), latch)
@@ -127,14 +127,14 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
             using
-            Isolate.Contextual[S, IO],
+            Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, S & Async] =
             Stream:
                 Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
-                    IO.ensure(channel.close):
+                    Sync.ensure(channel.close):
                         for
                             _ <- Async.run[E, Unit, S](Abort.run {
                                 Async.foreachDiscard(streams)(
@@ -154,14 +154,14 @@ object StreamCoreExtensions:
         def fromIterator[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
             Tag[Emit[Chunk[V]]],
             Frame
-        ): Stream[V, IO] =
-            val stream: Stream[V, IO] < IO = IO:
+        ): Stream[V, Sync] =
+            val stream: Stream[V, Sync] < Sync = Sync:
                 val it      = v
                 val size    = chunkSize max 1
                 val builder = ChunkBuilder.init[V]
 
-                val pull: Chunk[V] < IO =
-                    IO:
+                val pull: Chunk[V] < Sync =
+                    Sync:
                         var count = 0
                         while count < size && it.hasNext do
                             builder.addOne(it.next())
@@ -175,7 +175,7 @@ object StreamCoreExtensions:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
                             case Result.Panic(throwable) =>
-                                IO:
+                                Sync:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.panic(throwable))
 
@@ -245,14 +245,14 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
             using
-            Isolate.Contextual[S, IO],
+            Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, S & Async] =
             Stream:
                 Channel.initWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
-                    IO.ensure(channel.close):
+                    Sync.ensure(channel.close):
                         for
                             _ <- Async.run(Abort.run(
                                 Async
@@ -281,7 +281,7 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
             using
-            Isolate.Contextual[S, IO],
+            Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
             SafeClassTag[E],
             Tag[Emit[Chunk[V]]],
@@ -303,7 +303,7 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
             using
-            Isolate.Contextual[S, IO],
+            Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
             SafeClassTag[E],
             Tag[Emit[Chunk[V]]],
@@ -325,7 +325,7 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
             using
-            Isolate.Contextual[S, IO],
+            Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
             SafeClassTag[E],
             Tag[Emit[Chunk[V]]],
@@ -333,7 +333,7 @@ object StreamCoreExtensions:
         ): Stream[V, Abort[E] & S & Async] =
             Stream:
                 Channel.initWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
-                    IO.ensure(channel.close):
+                    Sync.ensure(channel.close):
                         for
                             _ <- Async.run(
                                 Async.gather(
@@ -359,7 +359,7 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Abort[E] & Async],
             sct: SafeClassTag[E],
             t: Tag[Emit[Chunk[V]]],
@@ -381,7 +381,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -434,8 +434,8 @@ object StreamCoreExtensions:
                             )(Async.gather(handleEmit, handleStaging))
 
                         // Stream from output channel, running handlers in background
-                        IO.ensure(channelOut.close):
-                            IO.ensure(stagingChannel.close):
+                        Sync.ensure(channelOut.close):
+                            Sync.ensure(stagingChannel.close):
                                 background.map: backgroundFiber =>
                                     emitMaybeChunksFromChannel(channelOut).andThen:
                                         backgroundFiber.get.unit
@@ -451,7 +451,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -473,7 +473,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -517,8 +517,8 @@ object StreamCoreExtensions:
                                 onPanic = e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
                             )(Async.gather(handleEmit, handlePar))
 
-                        IO.ensure(channelOut.close):
-                            IO.ensure(parChannel.close):
+                        Sync.ensure(channelOut.close):
+                            Sync.ensure(parChannel.close):
                                 background.map: backgroundFiber =>
                                     emitMaybeElementsFromChannel(channelOut).andThen:
                                         backgroundFiber.get.unit
@@ -535,7 +535,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -559,7 +559,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -601,8 +601,8 @@ object StreamCoreExtensions:
                             )(Async.gather(handledStream, handleStaging))
 
                         // Stream from output channel with handlers running in background
-                        IO.ensure(outputChannel.close):
-                            IO.ensure(stagingChannel.close):
+                        Sync.ensure(outputChannel.close):
+                            Sync.ensure(stagingChannel.close):
                                 background.map: backgroundFiber =>
                                     emitMaybeChunksFromChannel(outputChannel).andThen:
                                         backgroundFiber.get.unit
@@ -618,7 +618,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -643,7 +643,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -686,8 +686,8 @@ object StreamCoreExtensions:
                             )(Async.gather(handleEmit, handlePar))
 
                         // Stream from output channel with handler running in background
-                        IO.ensure(channelOut.close):
-                            IO.ensure(parChannel.close):
+                        Sync.ensure(channelOut.close):
+                            Sync.ensure(parChannel.close):
                                 background.map: backgroundFiber =>
                                     emitMaybeChunksFromChannel(channelOut).andThen:
                                         backgroundFiber.get.unit
@@ -702,7 +702,7 @@ object StreamCoreExtensions:
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
-            i1: Isolate.Contextual[S & S2, IO],
+            i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
             ev: SafeClassTag[E | Closed],
             frame: Frame
@@ -719,7 +719,7 @@ object StreamCoreExtensions:
           */
         def broadcast2(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -738,7 +738,7 @@ object StreamCoreExtensions:
           */
         def broadcast3(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -762,7 +762,7 @@ object StreamCoreExtensions:
           */
         def broadcast4(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -788,7 +788,7 @@ object StreamCoreExtensions:
           */
         def broadcast5(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -823,7 +823,7 @@ object StreamCoreExtensions:
           */
         def broadcastN(numStreams: Int, bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -835,10 +835,10 @@ object StreamCoreExtensions:
                 val builder = Chunk.newBuilder[Stream[V, Abort[E] & Resource & Async]]
                 Loop(numStreams): remaining =>
                     if remaining <= 0 then
-                        IO(builder.result()).map(chunk => Loop.done(chunk))
+                        Sync(builder.result()).map(chunk => Loop.done(chunk))
                     else
                         streamHub.subscribe.map: stream =>
-                            IO(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
+                            Sync(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
             }(using i1, i2, t1, t2, t3, t4, fr)
 
         /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream
@@ -856,7 +856,7 @@ object StreamCoreExtensions:
           */
         def broadcasted(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -883,7 +883,7 @@ object StreamCoreExtensions:
           */
         def broadcastDynamic(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -910,7 +910,7 @@ object StreamCoreExtensions:
           */
         def broadcastDynamicWith[A, S1](bufferSize: Int)(fn: StreamHub[V, E] => A < S1)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -935,7 +935,7 @@ object StreamCoreExtensions:
           */
         def broadcastDynamicWith[A, S1](fn: StreamHub[V, E] => A < S1)(
             using
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Async],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
@@ -963,7 +963,7 @@ object StreamCoreExtensions:
         def groupedWithin(maxSize: Int, maxTime: Duration, bufferSize: Int = defaultAsyncStreamBufferSize)(using
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[Chunk[V]]]],
-            i1: Isolate.Contextual[S, IO],
+            i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Contextual[S, Abort[E] & Async],
             ct: SafeClassTag[Closed | E],
             fr: Frame
@@ -975,14 +975,14 @@ object StreamCoreExtensions:
             end Event
 
             Stream[Chunk[V], S & Abort[E] & Async]:
-                IO.Unsafe {
+                Sync.Unsafe {
                     val safeMax = 1 max maxSize
                     val channel = Channel.Unsafe.init[Event](1 max bufferSize).safe
 
                     // Handle loop collecting emitted values and flushing them until completion
-                    val push: Fiber[E | Closed, Unit] < (IO & S) =
+                    val push: Fiber[E | Closed, Unit] < (Sync & S) =
                         Async.run[E | Closed, Unit, S]:
-                            IO.ensure(Async.run[Closed, Unit, Any](channel.put(Flush))):
+                            Sync.ensure(Async.run[Closed, Unit, Any](channel.put(Flush))):
                                 ArrowEffect.handleLoop(t1, stream.emit)(
                                     handle = [C] =>
                                         (chunk, cont) =>
@@ -991,7 +991,7 @@ object StreamCoreExtensions:
                                 )
 
                     // Single fiber emitting a tick at constant interval
-                    val tick: Fiber[Closed, Unit] < (IO & Resource) =
+                    val tick: Fiber[Closed, Unit] < (Sync & Resource) =
                         if maxTime == Duration.Infinity then Fiber.unit
                         else
                             Resource.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)

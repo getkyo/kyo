@@ -39,7 +39,7 @@ import scala.util.control.NonFatal
   * @see
   *   [[Async.foreach]], [[Async.collect]], and their variants for concurrent collection processing with bounded concurrency
   */
-opaque type Async <: (IO & Async.Join) = Async.Join & IO
+opaque type Async <: (Sync & Async.Join) = Async.Join & Sync
 
 object Async extends AsyncPlatformSpecific:
 
@@ -67,7 +67,7 @@ object Async extends AsyncPlatformSpecific:
     val defaultConcurrency =
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
+        Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
     end defaultConcurrency
 
     /** Convenience method for suspending computations in an Async effect.
@@ -95,7 +95,7 @@ object Async extends AsyncPlatformSpecific:
       *   The suspended computation wrapped in an Async effect
       */
     inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
-        IO(v)
+        Sync(v)
 
     /** Runs an asynchronous computation and returns a Fiber.
       *
@@ -105,8 +105,8 @@ object Async extends AsyncPlatformSpecific:
       *   A Fiber representing the running computation
       */
     def run[E, A, S](
-        using isolate: Isolate.Contextual[S, IO]
-    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
+        using isolate: Isolate.Contextual[S, Sync]
+    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (Sync & S) =
         isolate.runInternal((trace, context) =>
             Fiber.fromTask(IOTask(v, trace, context))
         )
@@ -121,10 +121,10 @@ object Async extends AsyncPlatformSpecific:
       *   The result of the computation, or a Timeout error
       */
     def runAndBlock[E, A, S](
-        using isolate: Isolate.Contextual[S, IO]
+        using isolate: Isolate.Contextual[S, Sync]
     )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
-    ): A < (Abort[E | Timeout] & IO & S) =
+    ): A < (Abort[E | Timeout] & Sync & S) =
         run(v).map { fiber =>
             fiber.block(timeout).map(Abort.get(_))
         }
@@ -195,7 +195,7 @@ object Async extends AsyncPlatformSpecific:
             isolate.capture { state =>
                 Async.run(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
-                        IO.Unsafe {
+                        Sync.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
                             sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
@@ -769,8 +769,8 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   A nested computation that returns the memoized result
       */
-    def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < IO =
-        IO.Unsafe {
+    def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
+        Sync.Unsafe {
             val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Nothing, A]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
@@ -779,14 +779,14 @@ object Async extends AsyncPlatformSpecific:
                         val promise = Promise.Unsafe.init[Nothing, A]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
-                                IO.Unsafe {
+                                Sync.Unsafe {
                                     if !r.isSuccess then
                                         ref.set(Absent)
                                     promise.completeDiscard(r)
                                     Abort.get(r)
                                 }
-                            }.handle(IO.ensure {
-                                IO.Unsafe {
+                            }.handle(Sync.ensure {
+                                Sync.Unsafe {
                                     if !promise.done() then
                                         ref.set(Absent)
                                 }
@@ -794,7 +794,7 @@ object Async extends AsyncPlatformSpecific:
                         else
                             loop()
                         end if
-            Kyo.lift(IO(loop()))
+            Kyo.lift(Sync(loop()))
         }
 
     /** Converts a Future to an asynchronous computation.

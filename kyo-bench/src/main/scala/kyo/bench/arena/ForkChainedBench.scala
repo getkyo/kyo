@@ -22,7 +22,7 @@ class ForkChainedBench extends ArenaBench.ForkOnly(0):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def iterate(p: Promise[Nothing, Unit], n: Int): Unit < IO =
+        def iterate(p: Promise[Nothing, Unit], n: Int): Unit < Sync =
             if n <= 0 then p.complete(Result.unit).unit
             else Kyo.unit.flatMap(_ => Async.run(iterate(p, n - 1)).unit)
 

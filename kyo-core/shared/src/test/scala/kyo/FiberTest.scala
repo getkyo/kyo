@@ -132,8 +132,8 @@ class FiberTest extends Test:
             }
         }
         "n" in run {
-            def loop(i: Int, s: String): String < (Abort[String] & IO) =
-                IO {
+            def loop(i: Int, s: String): String < (Abort[String] & Sync) =
+                Sync {
                     if i == 80 && s == "a" then
                         Abort.fail("Loser")
                     else if i <= 0 then s
@@ -157,8 +157,8 @@ class FiberTest extends Test:
                 }
             }
             "n" in run {
-                def loop(i: Int, s: String): String < (Abort[String] & IO) =
-                    IO {
+                def loop(i: Int, s: String): String < (Abort[String] & Sync) =
+                    Sync {
                         if i == 80 && s == "a" then
                             Abort.fail("Winner")
                         else if i <= 0 then s
@@ -247,7 +247,7 @@ class FiberTest extends Test:
 
         "small collection + IO" in run {
             for
-                fiber  <- Fiber.foreachIndexed(Seq(1, 2, 3))((idx, v) => IO((idx, v)))
+                fiber  <- Fiber.foreachIndexed(Seq(1, 2, 3))((idx, v) => Sync((idx, v)))
                 result <- fiber.get
             yield assert(result == Seq((0, 1), (1, 2), (2, 3)))
         }
@@ -255,8 +255,8 @@ class FiberTest extends Test:
         "error propagation" in run {
             val error = new Exception("test error")
             for
-                fiber <- IO {
-                    def task(idx: Int, v: Int): Int < (IO & Async & Abort[Throwable]) =
+                fiber <- Sync {
+                    def task(idx: Int, v: Int): Int < (Sync & Async & Abort[Throwable]) =
                         if v == 3 then Abort.fail(error)
                         else v
 
@@ -424,7 +424,7 @@ class FiberTest extends Test:
             var completed = false
             val fiber     = Fiber.success(42)
             for
-                _ <- fiber.onComplete(_ => IO { completed = true })
+                _ <- fiber.onComplete(_ => Sync { completed = true })
             yield assert(completed)
             end for
         }
@@ -433,7 +433,7 @@ class FiberTest extends Test:
             var completed = Maybe.empty[Result[Any, Int]]
             for
                 fiber <- Promise.init[Nothing, Int]
-                _     <- fiber.onComplete(v => IO { completed = Maybe(v) })
+                _     <- fiber.onComplete(v => Sync { completed = Maybe(v) })
                 notCompletedYet = completed
                 _ <- fiber.complete(Result.succeed(42))
                 completedAfterWait = completed
@@ -449,7 +449,7 @@ class FiberTest extends Test:
             var interrupted = false
             for
                 fiber <- Promise.init[Nothing, Int]
-                _     <- fiber.onInterrupt(_ => IO { interrupted = true })
+                _     <- fiber.onInterrupt(_ => Sync { interrupted = true })
                 _     <- fiber.interrupt
             yield assert(interrupted)
             end for
@@ -459,7 +459,7 @@ class FiberTest extends Test:
             var interrupted = false
             for
                 fiber <- Promise.init[Nothing, Int]
-                _     <- fiber.onInterrupt(_ => IO { interrupted = true })
+                _     <- fiber.onInterrupt(_ => Sync { interrupted = true })
                 _     <- fiber.complete(Result.succeed(42))
                 _     <- fiber.get
             yield assert(!interrupted)
@@ -470,9 +470,9 @@ class FiberTest extends Test:
             var count = 0
             for
                 fiber <- Promise.init[Nothing, Int]
-                _     <- fiber.onInterrupt(_ => IO { count += 1 })
-                _     <- fiber.onInterrupt(_ => IO { count += 1 })
-                _     <- fiber.onInterrupt(_ => IO { count += 1 })
+                _     <- fiber.onInterrupt(_ => Sync { count += 1 })
+                _     <- fiber.onInterrupt(_ => Sync { count += 1 })
+                _     <- fiber.onInterrupt(_ => Sync { count += 1 })
                 _     <- fiber.interrupt
             yield assert(count == 3)
             end for
@@ -680,15 +680,15 @@ class FiberTest extends Test:
 
     "boundary inference with Abort" - {
         "same failures" in {
-            val v: Int < Abort[Int]          = 1
-            val _: Fiber[Int, Int] < IO      = Fiber.race(Seq(v))
-            val _: Fiber[Int, Seq[Int]] < IO = Fiber.foreachIndexed(Seq(v))((_, v) => v)
+            val v: Int < Abort[Int]            = 1
+            val _: Fiber[Int, Int] < Sync      = Fiber.race(Seq(v))
+            val _: Fiber[Int, Seq[Int]] < Sync = Fiber.foreachIndexed(Seq(v))((_, v) => v)
             succeed
         }
         "additional failure" in {
-            val v: Int < Abort[Int]                   = 1
-            val _: Fiber[Int | String, Int] < IO      = Fiber.race(Seq(v))
-            val _: Fiber[Int | String, Seq[Int]] < IO = Fiber.foreachIndexed(Seq(v))((_, v) => v)
+            val v: Int < Abort[Int]                     = 1
+            val _: Fiber[Int | String, Int] < Sync      = Fiber.race(Seq(v))
+            val _: Fiber[Int | String, Seq[Int]] < Sync = Fiber.foreachIndexed(Seq(v))((_, v) => v)
             succeed
         }
     }
@@ -707,7 +707,7 @@ class FiberTest extends Test:
         "collects all successful results" in run {
             Loop.repeat(repeats) {
                 for
-                    fiber  <- Fiber.gather(3)(Seq(IO(1), IO(2), IO(3)))
+                    fiber  <- Fiber.gather(3)(Seq(Sync(1), Sync(2), Sync(3)))
                     result <- fiber.get
                 yield
                     assert(result == Chunk(1, 2, 3))
@@ -718,7 +718,7 @@ class FiberTest extends Test:
         "with max limit" in run {
             val seq = Seq(1, 2, 3)
             for
-                fiber  <- Fiber.gather(2)(seq.map(IO(_)))
+                fiber  <- Fiber.gather(2)(seq.map(Sync(_)))
                 result <- fiber.get
             yield
                 assert(result.distinct.size == 2)
@@ -728,7 +728,7 @@ class FiberTest extends Test:
 
         "handles max=0" in run {
             for
-                fiber  <- Fiber.gather(0)(Seq(IO(1), IO(2), IO(3)))
+                fiber  <- Fiber.gather(0)(Seq(Sync(1), Sync(2), Sync(3)))
                 result <- fiber.get
             yield assert(result.isEmpty)
         }
@@ -739,7 +739,7 @@ class FiberTest extends Test:
                 fiber <- Fiber.gather(1)(Seq(
                     Abort.fail[Exception](error),
                     Abort.fail[Exception](error),
-                    IO(3)
+                    Sync(3)
                 ))
                 result <- fiber.get
             yield assert(result == Chunk(3))
@@ -748,7 +748,7 @@ class FiberTest extends Test:
 
         "handles negative max" in run {
             for
-                fiber  <- Fiber.gather(-1)(Seq(IO(1), IO(2), IO(3)))
+                fiber  <- Fiber.gather(-1)(Seq(Sync(1), Sync(2), Sync(3)))
                 result <- fiber.get
             yield assert(result.isEmpty)
         }
@@ -756,7 +756,7 @@ class FiberTest extends Test:
         "handles max > size" in run {
             val seq = Seq(1, 2, 3)
             for
-                fiber  <- Fiber.gather(10)(seq.map(IO(_)))
+                fiber  <- Fiber.gather(10)(seq.map(Sync(_)))
                 result <- fiber.get
             yield assert(result == Chunk(1, 2, 3))
             end for
@@ -766,9 +766,9 @@ class FiberTest extends Test:
             val error = new Exception("test error")
             for
                 fiber <- Fiber.gather(10)(Seq(
-                    IO(1),
+                    Sync(1),
                     Abort.fail[Exception](error),
-                    IO(3)
+                    Sync(3)
                 ))
                 result <- fiber.get
             yield assert(result == Chunk(1, 3))
@@ -811,9 +811,9 @@ class FiberTest extends Test:
         "filters out failures" in run {
             for
                 fiber <- Fiber.gather(3)(Seq(
-                    IO(1),
+                    Sync(1),
                     Abort.fail[Exception](error),
-                    IO(3)
+                    Sync(3)
                 ))
                 result <- fiber.get
             yield assert(result == Chunk(1, 3))
@@ -886,10 +886,10 @@ class FiberTest extends Test:
         "max limit with failures" in run {
             for
                 fiber <- Fiber.gather(2)(Seq(
-                    IO(1),
+                    Sync(1),
                     Abort.fail[Exception](error),
-                    IO(3),
-                    IO(4)
+                    Sync(3),
+                    Sync(4)
                 ))
                 result <- fiber.get
             yield

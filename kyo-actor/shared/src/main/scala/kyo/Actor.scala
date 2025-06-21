@@ -87,7 +87,7 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[Closed
       * @return
       *   A Maybe containing a sequence of any messages that were in the mailbox if the close is successful
       */
-    def close(using Frame): Maybe[Seq[A]] < IO
+    def close(using Frame): Maybe[Seq[A]] < Sync
 
 end Actor
 
@@ -101,7 +101,7 @@ object Actor:
     val defaultCapacity =
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.actor.capacity.default", 128))
+        Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.actor.capacity.default", 128))
     end defaultCapacity
 
     /** The execution context for actor behaviors, providing the essential capabilities for actor-based concurrency.
@@ -385,7 +385,7 @@ object Actor:
       *   A new Actor instance in an async effect
       */
     def run[E, A: Tag, B, S](
-        using Isolate.Contextual[S, IO]
+        using Isolate.Contextual[S, Sync]
     )(behavior: B < (Context[A] & Abort[E] & S))(
         using
         Tag[Poll[A]],
@@ -426,7 +426,7 @@ object Actor:
       *   A new Actor instance in an async effect
       */
     def run[E, A: Tag, B, S](
-        using Isolate.Contextual[S, IO]
+        using Isolate.Contextual[S, Sync]
     )(capacity: Int)(behavior: B < (Context[A] & Abort[E] & S))(
         using
         Tag[Poll[A]],
@@ -451,10 +451,10 @@ object Actor:
                             mailbox.take.map(v => Loop.continue(cont(Maybe(v))))
                     }
                 }.handle(
-                    IO.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
-                    Env.run(_subject),        // Provide the actor's Subject to the environment so it can be accessed via Actor.self
-                    Resource.run,             // Close used resources
-                    Async.run                 // Start the actor's processing loop in an async context
+                    Sync.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
+                    Env.run(_subject),          // Provide the actor's Subject to the environment so it can be accessed via Actor.self
+                    Resource.run,               // Close used resources
+                    Async.run                   // Start the actor's processing loop in an async context
                 )
             _ <- Resource.ensure(mailbox.close) // Registers a finalizer in the outer scope to provide the actor hierarchy behavior
         yield new Actor[E, A, B](_subject, _consumer):

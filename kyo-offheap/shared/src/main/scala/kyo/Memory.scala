@@ -59,7 +59,7 @@ object Memory:
       */
     def initWith[A: Layout as l](size: Int)[B, S](f: Memory[A] => B < S)(using Frame): B < (Arena & S) =
         Arena.use { arena =>
-            IO.Unsafe(f(arena.allocate(l.size * size)))
+            Sync.Unsafe(f(arena.allocate(l.size * size)))
         }
 
     extension [A: Layout as l](self: Memory[A])
@@ -72,7 +72,7 @@ object Memory:
           *   The element at the specified index
           */
         inline def get(index: Int)(using inline frame: Frame): A < Arena =
-            IO.Unsafe {
+            Sync.Unsafe {
                 // TODO inference issue without the val
                 val x = Unsafe.get(self)(index)
                 x
@@ -87,7 +87,7 @@ object Memory:
           *   The value to write
           */
         inline def set(index: Int, value: A)(using inline frame: Frame): Unit < Arena =
-            IO.Unsafe(Unsafe.set(self)(index, value))
+            Sync.Unsafe(Unsafe.set(self)(index, value))
 
         /** Fills the entire memory segment with the specified value.
           *
@@ -95,7 +95,7 @@ object Memory:
           *   The value to fill with
           */
         inline def fill(value: A)(using inline frame: Frame): Unit < Arena =
-            IO.Unsafe(Unsafe.fill(self)(value))
+            Sync.Unsafe(Unsafe.fill(self)(value))
 
         /** Folds over all elements in the memory segment.
           *
@@ -107,7 +107,7 @@ object Memory:
           *   The final accumulated value
           */
         inline def fold[B](zero: B)(f: (B, A) => B)(using inline frame: Frame): B < Arena =
-            IO.Unsafe(Unsafe.fold(self)(zero)(f))
+            Sync.Unsafe(Unsafe.fold(self)(zero)(f))
 
         /** Finds the index of the first element satisfying the predicate.
           *
@@ -117,7 +117,7 @@ object Memory:
           *   The index wrapped in Maybe, or Absent if not found
           */
         inline def findIndex(p: A => Boolean)(using inline frame: Frame): Maybe[Int] < Arena =
-            IO.Unsafe(Unsafe.findIndex(self)(p))
+            Sync.Unsafe(Unsafe.findIndex(self)(p))
 
         /** Checks if any element satisfies the predicate.
           *
@@ -127,7 +127,7 @@ object Memory:
           *   true if any element satisfies the predicate
           */
         inline def exists(p: A => Boolean)(using inline frame: Frame): Boolean < Arena =
-            IO.Unsafe(Unsafe.exists(self)(p))
+            Sync.Unsafe(Unsafe.exists(self)(p))
 
         /** Creates a view of a portion of this memory segment.
           *
@@ -139,7 +139,7 @@ object Memory:
           *   A new Memory instance viewing the specified range
           */
         def view(from: Int, len: Int)(using Frame): Memory[A] < Arena =
-            IO.Unsafe(Unsafe.view(self)(from, len))
+            Sync.Unsafe(Unsafe.view(self)(from, len))
 
         /** Creates a copy of a portion of this memory segment.
           *
@@ -151,7 +151,7 @@ object Memory:
           *   A new Memory instance containing the copied data
           */
         def copy(from: Int, len: Int)(using Frame): Memory[A] < Arena =
-            IO.Unsafe(Unsafe.copy(self)(from, len))
+            Sync.Unsafe(Unsafe.copy(self)(from, len))
 
         /** Copies elements from this memory segment to another.
           *
@@ -165,7 +165,7 @@ object Memory:
           *   Number of elements to copy
           */
         def copyTo(target: Memory[A], srcPos: Int, targetPos: Int, len: Int)(using Frame): Unit < Arena =
-            IO.Unsafe(Unsafe.copyTo(self)(target, srcPos, targetPos, len))
+            Sync.Unsafe(Unsafe.copyTo(self)(target, srcPos, targetPos, len))
 
         /** Returns the number of elements this memory segment can hold. */
         def size: Long = self.byteSize / l.size
@@ -175,7 +175,7 @@ object Memory:
     end extension
 
     /** Represents a memory arena that manages the lifecycle of allocated Memory segments. */
-    opaque type Arena <: (Env[Arena.State] & IO) = Env[Arena.State] & IO
+    opaque type Arena <: (Env[Arena.State] & Sync) = Env[Arena.State] & Sync
 
     object Arena:
         opaque type State = JArena
@@ -187,13 +187,13 @@ object Memory:
           * @return
           *   The result of the operation
           */
-        def run[A, S](f: A < (Arena & S))(using Frame): A < (IO & S) =
-            IO {
+        def run[A, S](f: A < (Arena & S))(using Frame): A < (Sync & S) =
+            Sync {
                 val arena = JArena.ofShared()
-                IO.ensure(IO(arena.close))(Env.run(arena)(f))
+                Sync.ensure(Sync(arena.close))(Env.run(arena)(f))
             }
 
-        given isolate: Isolate.Contextual[Arena, IO] = Isolate.Contextual.derive[Arena, IO]
+        given isolate: Isolate.Contextual[Arena, Sync] = Isolate.Contextual.derive[Arena, Sync]
 
         private[kyo] def use[A, S](f: JArena => A < S)(using Frame): A < (S & Arena) =
             Env.use[State](f)

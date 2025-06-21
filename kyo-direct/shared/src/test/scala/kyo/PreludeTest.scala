@@ -307,7 +307,7 @@ class PreludeTest extends Test:
         "poll with fold" in run {
             val effect = Poll.fold[Int](0) { (acc, v) =>
                 direct {
-                    IO(acc).now + v
+                    Sync(acc).now + v
                 }
             }
 

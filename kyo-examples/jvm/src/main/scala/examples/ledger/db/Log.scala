@@ -11,7 +11,7 @@ trait Log:
         account: Int,
         amount: Int,
         desc: String
-    ): Unit < IO
+    ): Unit < Sync
 
 end Log
 
@@ -19,10 +19,10 @@ object Log:
 
     case class Entry(balance: Int, account: Int, amount: Int, desc: String)
 
-    val init: Log < (Env[DB.Config] & IO) = direct {
+    val init: Log < (Env[DB.Config] & Sync) = direct {
         val cfg = Env.get[DB.Config].now
         val q   = Queue.Unbounded.init[Entry](Access.MultiProducerSingleConsumer).now
-        val log = IO(Live(cfg.workingDir + "/log.dat", q)).now
+        val log = Sync(Live(cfg.workingDir + "/log.dat", q)).now
         val _   = Async.run(log.flushLoop(cfg.flushInterval)).now
         log
     }
@@ -36,7 +36,7 @@ object Log:
             account: Int,
             amount: Int,
             desc: String
-        ): Unit < IO =
+        ): Unit < Sync =
             q.add(Entry(balance, account, amount, desc))
 
         private[Log] def flushLoop(interval: Duration): Unit < (Async & Abort[Closed]) = direct {
@@ -47,7 +47,7 @@ object Log:
         }
 
         private def append(entries: Seq[Entry]) =
-            IO {
+            Sync {
                 if entries.nonEmpty then
                     val str =
                         entries.map { e =>

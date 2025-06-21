@@ -34,8 +34,8 @@ class WhileTest extends Test:
 
         direct {
             while i < 3 do
-                IO(incrementA()).now
-                IO(incrementB()).now
+                Sync(incrementA()).now
+                Sync(incrementB()).now
                 ()
             end while
             assert(i == 4)
@@ -79,7 +79,7 @@ class WhileTest extends Test:
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 3 do
                     val current = counter.incrementAndGet.now
-                    IO(results += current).now
+                    Sync(results += current).now
                     ()
                 end while
                 val finalCount = counter.get.now
@@ -132,10 +132,10 @@ class WhileTest extends Test:
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 5 do
                     val current = counter.incrementAndGet.now
-                    if IO(current % 2 == 1).now then
+                    if Sync(current % 2 == 1).now then
                         () // Skip odd numbers
                     else
-                        IO { evens += current }.now
+                        Sync { evens += current }.now
                         ()
                     end if
                 end while
@@ -154,7 +154,7 @@ class WhileTest extends Test:
                     val counter = AtomicInt.init(0).now
                     while counter.get.now < 5 do
                         val op = s"op${counter.get.now}"
-                        IO { operations += op }.now
+                        Sync { operations += op }.now
                         val current = counter.incrementAndGet.now
                         if current == 2 then
                             Abort.fail(s"Error at $current").now

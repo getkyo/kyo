@@ -14,17 +14,17 @@ abstract class Counter extends Serializable:
       * @return
       *   The current count as a Long, wrapped in IO
       */
-    def get(using Frame): Long < IO
+    def get(using Frame): Long < Sync
 
     /** Increment the counter by 1.
       */
-    def inc(using Frame): Unit < IO
+    def inc(using Frame): Unit < Sync
 
     /** Add a specific value to the counter.
       * @param v
       *   The value to add
       */
-    def add(v: Long)(using Frame): Unit < IO
+    def add(v: Long)(using Frame): Unit < Sync
 end Counter
 
 /** A histogram for observing the distribution of values.
@@ -37,19 +37,19 @@ abstract class Histogram extends Serializable:
       * @param v
       *   The value to observe
       */
-    def observe(v: Long)(using Frame): Unit < IO
+    def observe(v: Long)(using Frame): Unit < Sync
 
     /** Record an observation of a double value.
       * @param v
       *   The value to observe
       */
-    def observe(v: Double)(using Frame): Unit < IO
+    def observe(v: Double)(using Frame): Unit < Sync
 
     /** Get the total count of observations.
       * @return
       *   The count as a Long, wrapped in IO
       */
-    def count(using Frame): Long < IO
+    def count(using Frame): Long < Sync
 
     /** Get the value at a specific percentile.
       * @param v
@@ -57,7 +57,7 @@ abstract class Histogram extends Serializable:
       * @return
       *   The value at the given percentile, wrapped in IO
       */
-    def valueAtPercentile(v: Double)(using Frame): Double < IO
+    def valueAtPercentile(v: Double)(using Frame): Double < Sync
 end Histogram
 
 /** A gauge for measuring a specific value that can go up and down.
@@ -70,7 +70,7 @@ abstract class Gauge extends Serializable:
       * @return
       *   The current value as a Double, wrapped in IO
       */
-    def collect(using Frame): Double < IO
+    def collect(using Frame): Double < Sync
 end Gauge
 
 /** A gauge that specifically measures counter-like values.
@@ -83,7 +83,7 @@ abstract class CounterGauge extends Serializable:
       * @return
       *   The current value as a Long, wrapped in IO
       */
-    def collect(using Frame): Long < IO
+    def collect(using Frame): Long < Sync
 end CounterGauge
 
 final class Stat(private val registryScope: StatsRegistry.Scope) extends Serializable:
@@ -111,9 +111,9 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     ): Counter =
         new Counter:
             val unsafe                    = registryScope.counter(name, description)
-            def get(using Frame)          = IO(unsafe.get())
-            def inc(using Frame)          = IO(unsafe.inc())
-            def add(v: Long)(using Frame) = IO(unsafe.add(v))
+            def get(using Frame)          = Sync(unsafe.get())
+            def inc(using Frame)          = Sync(unsafe.inc())
+            def add(v: Long)(using Frame) = Sync(unsafe.add(v))
 
     /** Initialize a new Histogram.
       * @param name
@@ -129,10 +129,10 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     ): Histogram =
         new Histogram:
             val unsafe                                    = registryScope.histogram(name, description)
-            def observe(v: Double)(using Frame)           = IO(unsafe.observe(v))
-            def observe(v: Long)(using Frame)             = IO(unsafe.observe(v))
-            def count(using Frame)                        = IO(unsafe.count())
-            def valueAtPercentile(v: Double)(using Frame) = IO(unsafe.valueAtPercentile(v))
+            def observe(v: Double)(using Frame)           = Sync(unsafe.observe(v))
+            def observe(v: Long)(using Frame)             = Sync(unsafe.observe(v))
+            def count(using Frame)                        = Sync(unsafe.count())
+            def valueAtPercentile(v: Double)(using Frame) = Sync(unsafe.valueAtPercentile(v))
 
     /** Initialize a new Gauge.
       * @param name
@@ -150,7 +150,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     )(f: => Double): Gauge =
         new Gauge:
             val unsafe               = registryScope.gauge(name, description)(f)
-            def collect(using Frame) = IO(unsafe.collect())
+            def collect(using Frame) = Sync(unsafe.collect())
 
     /** Initialize a new CounterGauge.
       * @param name
@@ -168,7 +168,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     )(f: => Long): CounterGauge =
         new CounterGauge:
             val unsafe               = registryScope.counterGauge(name, description)(f)
-            def collect(using Frame) = IO(f)
+            def collect(using Frame) = Sync(f)
 
     /** Trace a span of execution.
       * @param name
@@ -183,7 +183,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     def traceSpan[A, S](
         name: String,
         attributes: Attributes = Attributes.empty
-    )(v: => A < S)(using Frame): A < (IO & S) =
+    )(v: => A < S)(using Frame): A < (Sync & S) =
         Stat.traceReceiver.use(internal.Span.trace(_, registryScope.path, name, attributes)(v))
 end Stat
 
@@ -199,7 +199,7 @@ object Stat:
       * @return
       *   The result of the computation, wrapped in IO
       */
-    def traceListen[A, S](receiver: TraceReceiver)(v: A < S)(using Frame): A < (IO & S) =
+    def traceListen[A, S](receiver: TraceReceiver)(v: A < S)(using Frame): A < (Sync & S) =
         traceReceiver.use { curr =>
             traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
         }

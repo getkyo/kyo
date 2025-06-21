@@ -167,7 +167,7 @@ object TRef:
       * @return
       *   A new TRef containing the value, within the IO effect
       */
-    def init[A](value: A)(using Frame): TRef[A] < IO =
+    def init[A](value: A)(using Frame): TRef[A] < Sync =
         initWith(value)(identity)
 
     /** Creates a new TRef and immediately applies a function to it.
@@ -182,7 +182,7 @@ object TRef:
       * @return
       *   The result of applying the function to the new TRef, within combined IO and S effects
       */
-    inline def initWith[A, B, S](inline value: A)(inline f: TRef[A] => B < S)(using inline frame: Frame): B < (IO & S) =
+    inline def initWith[A, B, S](inline value: A)(inline f: TRef[A] => B < S)(using inline frame: Frame): B < (Sync & S) =
         TID.useIOUnsafe { tid =>
             f(TRef.Unsafe.init(tid, value))
         }

@@ -15,7 +15,7 @@ private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async 
             Async.timeout(timeout),
             Async.run,
             _.map(_.toFuture).map(_.flatten),
-            IO.Unsafe.evalOrThrow
+            Sync.Unsafe.evalOrThrow
         )
     end run
 
