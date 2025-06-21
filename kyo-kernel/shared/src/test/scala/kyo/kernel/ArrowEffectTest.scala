@@ -19,6 +19,48 @@ class ArrowEffectTest extends Test:
     def testEffect3(b: Boolean): Double < TestEffect3 =
         ArrowEffect.suspend[Any](Tag[TestEffect3], b)
 
+    "wireTap" - {
+        "input/output" in {
+            val effect = testEffect1(42)
+
+            val tx = ArrowEffect.wireTap(Tag[TestEffect1], effect)(
+                [C] => i => i + 1,
+                [C] => (i, o) => o + " from " + i
+            )
+
+            val handled = ArrowEffect.handle(Tag[TestEffect1], tx):
+                [C] => (input, cont) => cont(input.toString)
+
+            assert(handled.eval == "43 from 42")
+
+        }
+
+        "input" in {
+            val effect = testEffect1(42)
+
+            val tx = ArrowEffect.wireTapInput(Tag[TestEffect1], effect):
+                [C] => i => i + 1
+
+            val handled = ArrowEffect.handle(Tag[TestEffect1], tx):
+                [C] => (input, cont) => cont(input.toString)
+
+            assert(handled.eval == "43")
+        }
+
+        "output" in {
+            val effect = testEffect1(42)
+
+            val tx = ArrowEffect.wireTapOutput(Tag[TestEffect1], effect)(
+                [C] => (i, o) => o + " from " + i
+            )
+
+            val handled = ArrowEffect.handle(Tag[TestEffect1], tx):
+                [C] => (input, cont) => cont(input.toString)
+
+            assert(handled.eval == "42 from 42")
+        }
+    }
+
     "suspend" in {
         val effect = testEffect1(42)
         assert(effect.isInstanceOf[String < TestEffect1])

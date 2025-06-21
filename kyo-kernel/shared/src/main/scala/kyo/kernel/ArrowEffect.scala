@@ -100,6 +100,103 @@ object ArrowEffect:
                     continue = f(v)
                 )
 
+    /** WireTap into both the input and the output of an arrow effect as it is handled.
+      *
+      * This function allows you to intercept and modify both the input and the output of each effectful operation in a computation. The
+      * `mapInput` function is applied to each input before the effect is handled, and the `mapOutput` function is applied to the output
+      * value produced by the handler for the input, just before the continuation is invoked. Note that O[_] represents the output value
+      * produced by the handler for a given input, not the final result of the computation.
+      *
+      * This is useful for scenarios where you want to preprocess the input or postprocess the handler's output before resuming the
+      * computation.
+      *
+      * @note
+      *   The S2 type parameter allows you to introduce new effects during the transformation of input and output. Any effects introduced by
+      *   `mapInput` or `mapOutput` will be reflected in the resulting computation's effect type.
+      * @param effectTag
+      *   Identifies which arrow effect to tap into
+      * @param v
+      *   The computation requiring the function implementation
+      * @param mapInput
+      *   A function to transform the input before it is handled
+      * @param mapOutput
+      *   A function to transform the output value produced by the handler for the input before the continuation
+      * @return
+      *   The computation with transformed input and output for each effect occurrence
+      */
+    inline def wireTap[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline mapInput: [C] => I[C] => I[C] < S2,
+        inline mapOutput: [C] => (I[C], O[C]) => O[C] < S2
+    )(using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): A < (S & E & S2) =
+        handleLoop(effectTag, v):
+            [C] =>
+                (originalInput, cont) =>
+                    mapInput[C](originalInput).map: input =>
+                        suspendWith[C](effectTag, input): o =>
+                            mapOutput[C](originalInput, o).map: o =>
+                                Loop.continue:
+                                    cont(o)
+    end wireTap
+
+    /** WireTap only the output of an arrow effect as it is handled.
+      *
+      * This function allows you to modify the output value produced by the handler for the input for each effectful operation in a
+      * computation, leaving the input unchanged. The transformation is applied just before the continuation is invoked. O[_] here
+      * represents the output value produced by the handler for the input, not the final result.
+      *
+      * @note
+      *   The S2 type parameter allows you to introduce new effects during the transformation of the output. Any effects introduced by
+      *   `mapOutput` will be reflected in the resulting computation's effect type.
+      * @param effectTag
+      *   Identifies which arrow effect to transform
+      * @param v
+      *   The computation requiring the function implementation
+      * @param mapOutput
+      *   A function to transform the output value produced by the handler for the input before the continuation
+      * @return
+      *   The computation with transformed output for each effect occurrence
+      */
+    inline def wireTapOutput[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline mapOutput: [C] => (I[C], O[C]) => O[C] < S2
+    )(using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): A < (S & E & S2) = wireTap(effectTag, v)(mapInput = [C] => i => i, mapOutput = mapOutput)
+
+    /** wireTap only the input of an arrow effect as it is handled.
+      *
+      * This function allows you to modify the input of each effectful operation in a computation, leaving the output unchanged. O[_] is the
+      * output value produced by the handler for the input, not the final result.
+      *
+      * @note
+      *   The S2 type parameter allows you to introduce new effects during the transformation of the input. Any effects introduced by
+      *   `mapInput` will be reflected in the resulting computation's effect type.
+      * @param effectTag
+      *   Identifies which arrow effect to transform
+      * @param v
+      *   The computation requiring the function implementation
+      * @param mapInput
+      *   A function to transform the input before it is handled
+      * @return
+      *   The computation with transformed input for each effect occurrence
+      */
+    inline def wireTapInput[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(inline mapInput: [C] => I[C] => I[C] < S2)(using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): A < (S & E & S2) = wireTap(effectTag, v)(mapInput = mapInput, mapOutput = [C] => (_, o) => o)
+
     /** Handles an arrow effect by providing a handler function implementation.
       *
       * This is the basic form of effect handling where each effect occurrence is processed independently. Unlike handleLoop, handle does
