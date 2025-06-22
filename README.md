@@ -3386,7 +3386,7 @@ The `Cats` effect provides seamless integration between Kyo and the Cats Effect 
 
 ```scala
 import kyo.*
-import cats.effect.Sync as CatsIO
+import cats.effect.IO as CatsIO
 
 // Use the 'get' method to extract a 'Sync' effect from Cats Effect:
 val a: Int < (Abort[Throwable] & Async) =
@@ -3401,7 +3401,7 @@ Kyo and Cats effects can be seamlessly mixed and matched within computations, al
 
 ```scala
 import kyo.*
-import cats.effect.Sync as CatsIO
+import cats.effect.IO as CatsIO
 import cats.effect.kernel.Outcome.Succeeded
 
 // Note how Cats includes the Sync, Async, and Abort[Nothing] effects:
