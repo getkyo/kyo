@@ -15,7 +15,7 @@ extension (kyoObject: Kyo.type)
       * @param release
       *   The effect to release the resource
       * @return
-      *   An effect that manages the resource lifecycle using Resource and IO effects
+      *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < Async)(using Frame): A < (S & Resource & Sync) =
         Resource.acquireRelease(acquire)(release)
@@ -115,7 +115,7 @@ extension (kyoObject: Kyo.type)
       * @param closeable
       *   The AutoCloseable resource to create an effect from
       * @return
-      *   An effect that manages the resource lifecycle using Resource and IO effects
+      *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
     def fromAutoCloseable[A <: AutoCloseable, S](closeable: => A < S)(using Frame): A < (S & Resource & Sync) =
         acquireRelease(closeable)(c => Sync(c.close()))
@@ -339,7 +339,7 @@ extension (kyoObject: Kyo.type)
       * @param resource
       *   The resource to create a scoped effect from
       * @return
-      *   An effect that manages the resource lifecycle using Resource and IO effects
+      *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
     def scoped[A, S](resource: => A < (S & Resource))(using Frame): A < (Async & S) =
         Resource.run(resource)

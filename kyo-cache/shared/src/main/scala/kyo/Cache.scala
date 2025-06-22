@@ -222,7 +222,7 @@ object Cache:
       * @param f
       *   A function that configures the Cache using a Builder
       * @return
-      *   A new Cache instance wrapped in an IO effect
+      *   A new Cache instance wrapped in an Sync effect
       */
     def init(f: Builder => Builder)(using Frame): Cache < Sync =
         Sync {

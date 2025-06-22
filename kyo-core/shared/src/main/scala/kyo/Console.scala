@@ -132,7 +132,7 @@ object Console:
       * @tparam S
       *   The type of effects in the computation.
       * @return
-      *   The result of the computation with IO effects.
+      *   The result of the computation with Sync effects.
       */
     def withIn[A, S](lines: Iterable[String])(v: A < S)(using Frame): A < (Sync & S) =
         Sync.withLocal(local) { console =>

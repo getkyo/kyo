@@ -19,7 +19,7 @@ final case class Image private (data: Array[Byte]):
       * @param path
       *   The file path as a string
       * @return
-      *   Unit wrapped in IO effect
+      *   Unit wrapped in Sync effect
       */
     def writeFileBinary(path: String)(using Frame): Unit < Sync =
         writeFileBinary(Path(path))
@@ -29,7 +29,7 @@ final case class Image private (data: Array[Byte]):
       * @param path
       *   The file path as a Path object
       * @return
-      *   Unit wrapped in IO effect
+      *   Unit wrapped in Sync effect
       */
     def writeFileBinary(path: Path)(using Frame): Unit < Sync =
         path.writeBytes(binary.unsafeArray)
@@ -39,7 +39,7 @@ final case class Image private (data: Array[Byte]):
       * @param path
       *   The file path as a string
       * @return
-      *   Unit wrapped in IO effect
+      *   Unit wrapped in Sync effect
       */
     def writeFileBase64(path: String)(using Frame): Unit < Sync =
         writeFileBase64(Path(path))
@@ -49,7 +49,7 @@ final case class Image private (data: Array[Byte]):
       * @param path
       *   The file path as a Path object
       * @return
-      *   Unit wrapped in IO effect
+      *   Unit wrapped in Sync effect
       */
     def writeFileBase64(path: Path)(using Frame): Unit < Sync =
         path.write(base64)

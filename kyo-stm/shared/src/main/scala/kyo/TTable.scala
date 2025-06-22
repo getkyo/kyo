@@ -111,7 +111,7 @@ object TTable:
       * @tparam Fields
       *   The record structure for the table
       * @return
-      *   A new TTable instance within the IO effect
+      *   A new TTable instance within the Sync effect
       */
     def init[Fields: AsFields](using Frame): TTable[Fields] < Sync =
         for
@@ -284,7 +284,7 @@ object TTable:
           * @tparam Indexes
           *   The subset of fields that should be indexed
           * @return
-          *   A new Indexed table instance within the IO effect
+          *   A new Indexed table instance within the Sync effect
           */
         def init[Fields: AsFields as fields, Indexes >: Fields: AsFields as indexFields](using Frame): Indexed[Fields, Indexes] < Sync =
             for

@@ -185,7 +185,7 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
     inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.trace)(_.trace(msg))
@@ -197,7 +197,7 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
     inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.trace)(_.trace(msg, t))
@@ -207,7 +207,7 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
     inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.debug)(_.debug(msg))
@@ -219,7 +219,7 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
     inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.debug)(_.debug(msg, t))
@@ -229,7 +229,7 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
     inline def info(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.info)(_.info(msg))
@@ -241,7 +241,7 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
     inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.info)(_.info(msg, t))
@@ -251,7 +251,7 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
     inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.warn)(_.warn(msg))
@@ -263,7 +263,7 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
     inline def warn(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.warn)(_.warn(msg, t))
@@ -273,7 +273,7 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
     inline def error(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.error)(_.error(msg))
@@ -285,7 +285,7 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
     inline def error(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.error)(_.error(msg, t))

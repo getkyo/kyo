@@ -17,7 +17,7 @@ object TSchedule:
       * @param schedule
       *   The initial schedule to wrap
       * @return
-      *   A new TSchedule containing the schedule, within the IO effect
+      *   A new TSchedule containing the schedule, within the Sync effect
       */
     def init(schedule: Schedule)(using Frame): TSchedule < Sync =
         initWith(schedule)(identity)

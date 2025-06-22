@@ -640,7 +640,7 @@ val a: Int < IO =
 
 Users shouldn't typically handle the `IO` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `KyoApp` instead.
 
-In some specific cases where Kyo isn't used as the main effect system of an application, it might be necessary to handle the IO effect directly. However, this requires explicit acknowledgment of the unsafe nature of the operation using `AllowUnsafe.embrace.danger`. The `run` method can only be used if `IO` is the only pending effect.
+In some specific cases where Kyo isn't used as the main effect system of an application, it might be necessary to handle the Sync effect directly. However, this requires explicit acknowledgment of the unsafe nature of the operation using `AllowUnsafe.embrace.danger`. The `run` method can only be used if `IO` is the only pending effect.
 
 ```scala
 import kyo.*
@@ -1349,7 +1349,7 @@ import kyo.*
 
 case class Config(someConfig: String)
 
-// Stream with IO effect
+// Stream with Sync effect
 val a: Stream[String, IO] =
     Stream.init(Seq("file1.txt", "file2.txt"))
         .map(fileName => IO(scala.io.Source.fromFile(fileName).mkString))

@@ -45,7 +45,7 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   A unit value wrapped in Resource and IO effects.
+      *   A unit value wrapped in Resource and Sync effects.
       */
     inline def ensure(inline v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & Sync) =
         ContextEffect.suspendWith(Tag[Resource])(_.ensure(_ => v))
@@ -61,7 +61,7 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   A unit value wrapped in Resource and IO effects.
+      *   A unit value wrapped in Resource and Sync effects.
       */
     inline def ensure(inline f: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & Sync) =
         ContextEffect.suspendWith(Tag[Resource])(_.ensure(f))

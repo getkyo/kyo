@@ -22,7 +22,7 @@ object TMap:
     /** Creates a new empty TMap.
       *
       * @return
-      *   A new empty TMap within the IO effect
+      *   A new empty TMap within the Sync effect
       */
     def init[K, V](using Frame): TMap[K, V] < Sync =
         TRef.init(Map.empty)
@@ -32,7 +32,7 @@ object TMap:
       * @param entries
       *   The initial key-value pairs to store in the map
       * @return
-      *   A new TMap containing the entries, within the IO effect
+      *   A new TMap containing the entries, within the Sync effect
       */
     def init[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < Sync =
         initWith(entries*)(identity)
@@ -42,7 +42,7 @@ object TMap:
       * @param map
       *   The initial map to wrap
       * @return
-      *   A new TMap containing the map entries, within the IO effect
+      *   A new TMap containing the map entries, within the Sync effect
       */
     def init[K, V](map: Map[K, V])(using Frame): TMap[K, V] < Sync =
         init(map.toSeq*)

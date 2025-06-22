@@ -23,7 +23,7 @@ object TChunk:
       * @param values
       *   The initial values to store in the chunk
       * @return
-      *   A new TChunk containing the values, within the IO effect
+      *   A new TChunk containing the values, within the Sync effect
       */
     def init[A](values: A*)(using Frame): TChunk[A] < Sync =
         init(Chunk.from(values))
@@ -33,7 +33,7 @@ object TChunk:
       * @param chunk
       *   The initial chunk to wrap
       * @return
-      *   A new TChunk containing the chunk, within the IO effect
+      *   A new TChunk containing the chunk, within the Sync effect
       */
     def init[A](chunk: Chunk[A])(using Frame): TChunk[A] < Sync =
         initWith(chunk)(identity)

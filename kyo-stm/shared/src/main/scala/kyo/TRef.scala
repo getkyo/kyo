@@ -165,7 +165,7 @@ object TRef:
       * @param value
       *   The initial value to store in the reference
       * @return
-      *   A new TRef containing the value, within the IO effect
+      *   A new TRef containing the value, within the Sync effect
       */
     def init[A](value: A)(using Frame): TRef[A] < Sync =
         initWith(value)(identity)

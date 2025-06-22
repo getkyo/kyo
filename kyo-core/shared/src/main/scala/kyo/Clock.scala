@@ -28,7 +28,7 @@ import scala.collection.mutable.PriorityQueue
   * `Clock.withTimeControl` and `Clock.withTimeShift` for precise temporal control during tests.
   *
   * All time-related operations in Clock are effect-based, properly tracking side effects in the type system. Operations like `now` and
-  * `nowMonotonic` are wrapped in IO effects, while time-suspending operations like `sleep` are wrapped in Async effects.
+  * `nowMonotonic` are wrapped in Sync effects, while time-suspending operations like `sleep` are wrapped in Async effects.
   *
   * The scheduling methods offer different execution patterns: `repeatWithDelay` waits for a specified duration after each task completes
   * before executing again (ensuring a minimum gap between executions), while `repeatAtInterval` aims to execute tasks at fixed time

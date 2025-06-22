@@ -28,14 +28,14 @@ final case class Latch private (unsafe: Latch.Unsafe):
     /** Decrements the count of the latch, releasing it if the count reaches zero.
       *
       * @return
-      *   Unit wrapped in an IO effect
+      *   Unit wrapped in an Sync effect
       */
     def release(using Frame): Unit < Sync = Sync.Unsafe(unsafe.release())
 
     /** Returns the current count of the latch.
       *
       * @return
-      *   The current count wrapped in an IO effect
+      *   The current count wrapped in an Sync effect
       */
     def pending(using Frame): Int < Sync = Sync.Unsafe(unsafe.pending())
 
@@ -49,7 +49,7 @@ object Latch:
       * @param count
       *   The initial count for the latch
       * @return
-      *   A new Latch instance wrapped in an IO effect
+      *   A new Latch instance wrapped in an Sync effect
       */
     def init(count: Int)(using Frame): Latch < Sync =
         initWith(count)(identity)
