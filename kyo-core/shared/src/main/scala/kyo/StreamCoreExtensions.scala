@@ -202,14 +202,14 @@ object StreamCoreExtensions:
                     "\n       If you need this behaviour, use `fromIterator(iterator, chunkSize)` directly." +
                     "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions as `Failure`."
             ) notNothing: NotGiven[E =:= Nothing]
-        ): Stream[V, IO & Abort[E]] =
-            val stream: Stream[V, (IO & Abort[E])] < IO = IO:
+        ): Stream[V, Sync & Abort[E]] =
+            val stream: Stream[V, (Sync & Abort[E])] < Sync = Sync:
                 val it      = v
                 val size    = chunkSize max 1
                 val builder = ChunkBuilder.init[V]
 
-                val pull: Chunk[V] < (IO & Abort[E]) =
-                    IO:
+                val pull: Chunk[V] < (Sync & Abort[E]) =
+                    Sync:
                         Abort.catching[E]:
                             var count = 0
                             while count < size && it.hasNext do
@@ -224,7 +224,7 @@ object StreamCoreExtensions:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
                             case error: Result.Error[E] @unchecked =>
-                                IO:
+                                Sync:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.error(error))
 

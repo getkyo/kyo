@@ -511,7 +511,7 @@ class ChannelTest extends Test:
     }
 
     "Kyo computations" - {
-        "IO" in run {
+        "Sync" in run {
             for
                 channel <- Channel.init[Int < Sync](2)
                 _       <- channel.put(Sync(42))

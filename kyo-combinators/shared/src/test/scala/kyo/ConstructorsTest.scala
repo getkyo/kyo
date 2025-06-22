@@ -138,7 +138,7 @@ class ConstructorsTest extends Test:
         }
 
         "suspend" - {
-            "should suspend an effect using IO" in run {
+            "should suspend an effect using Sync" in run {
                 var executed = false
                 val effect = Kyo.suspend {
                     executed = true

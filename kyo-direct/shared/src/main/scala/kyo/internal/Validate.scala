@@ -157,7 +157,7 @@ private[kyo] object Validate:
                             |direct {
                             |    val value = counter.get.now    // OK - get value first
                             |    val incr = value + 1           // OK - pure operation
-                            |    IO(incr).now                   // OK - single .now
+                            |    Sync(incr).now                   // OK - single .now
                             |}""".stripMargin)}""".stripMargin
                         )
                 }
@@ -172,16 +172,16 @@ private[kyo] object Validate:
                        |${bold("1. Use .now when you need the effect's result immediately:")}
                        |${highlight("""
                        |direct {
-                       |  val x: Int = IO(1).now      // Get result here
-                       |  val y: Int = x + IO(2).now  // Use result in next computation
+                       |  val x: Int = Sync(1).now      // Get result here
+                       |  val y: Int = x + Sync(2).now  // Use result in next computation
                        |  y * 2                       // Use final result
                        |}""".stripMargin)}
                        |
                        |${bold("2. Use .later (advanced) when you want to preserve the effect:")}
                        |${highlight("""
                        |direct {
-                       |  val x: Int < IO = IO(1).later    // Keep effect for later
-                       |  val y: Int < IO = IO(2).later    // Keep another effect
+                       |  val x: Int < Sync = Sync(1).later    // Keep effect for later
+                       |  val y: Int < Sync = Sync(2).later    // Keep another effect
                        |  x.now + y.now                    // Sequence effects
                        |}""".stripMargin)}
                        |""".stripMargin
@@ -209,13 +209,13 @@ private[kyo] object Validate:
                     |${highlight("""
                     |// Instead of lazy declarations in direct:
                     |direct {
-                    |  lazy val x = IO(1).now  // NOT OK - lazy val
+                    |  lazy val x = Sync(1).now  // NOT OK - lazy val
                     |  object A               // NOT OK - object
                     |  x + 1
                     |}
                     |
                     |// Define outside direct:
-                    |lazy val x = IO(1)       // OK - outside
+                    |lazy val x = Sync(1)       // OK - outside
                     |object A                 // OK - outside
                     |
                     |// Use inside direct:
@@ -241,13 +241,13 @@ private[kyo] object Validate:
                        |${highlight("""
                        |// Instead of method in direct:
                        |direct {
-                       |  def process(x: Int) = IO(x).now  // NOT OK
+                       |  def process(x: Int) = Sync(x).now  // NOT OK
                        |  process(10)
                        |}
                        |
                        |// Define outside:
-                       |def process(x: Int): Int < IO = direct {
-                       |  IO(x).now
+                       |def process(x: Int): Int < Sync = direct {
+                       |  Sync(x).now
                        |}
                        |
                        |direct {
@@ -265,7 +265,7 @@ private[kyo] object Validate:
                        |// Instead of try/catch:
                        |direct {
                        |  try {
-                       |    IO(1).now    // NOT OK
+                       |    Sync(1).now    // NOT OK
                        |  } catch {
                        |    case e => handleError(e)
                        |  }
@@ -273,7 +273,7 @@ private[kyo] object Validate:
                        |
                        |// Define the effectful computation:
                        |def computation = direct {
-                       |  IO(1).now
+                       |  Sync(1).now
                        |}
                        |
                        |// Handle the effect direct block:
@@ -323,14 +323,14 @@ private[kyo] object Validate:
                     |direct {
                     |  if condition then
                     |    throw new Exception("error")  // NOT OK - throws exception
-                    |  IO(1).now
+                    |  Sync(1).now
                     |}
                     |
                     |// Use Abort effect:
                     |direct {
                     |  if condition then
                     |    Abort.fail("error").now       // OK - proper error handling
-                    |  else IO(1).now
+                    |  else Sync(1).now
                     |}""".stripMargin)}""".stripMargin
                 )
 

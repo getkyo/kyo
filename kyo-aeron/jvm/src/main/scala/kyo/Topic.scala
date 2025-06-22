@@ -53,7 +53,7 @@ object Topic:
 
     /** Handles Topic with an embedded Aeron MediaDriver.
       *
-      * Creates and manages the lifecycle of an embedded MediaDriver, ensuring proper cleanup through IO.ensure.
+      * Creates and manages the lifecycle of an embedded MediaDriver, ensuring proper cleanup through Sync.ensure.
       *
       * @param v
       *   The computation requiring Topic capabilities

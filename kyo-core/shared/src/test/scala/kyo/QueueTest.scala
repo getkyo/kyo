@@ -382,7 +382,7 @@ class QueueTest extends Test:
     end if
 
     "Kyo computations" - {
-        "IO" in run {
+        "Sync" in run {
             for
                 queue  <- Queue.init[Int < Sync](2)
                 _      <- queue.offer(Sync(42))

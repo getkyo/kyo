@@ -33,7 +33,7 @@ class AsyncTest extends Test:
             yield assert(t1 ne t2)
         }
 
-        "with IO-based effects" - {
+        "with Sync-based effects" - {
             "Resource" in run {
                 var closes = 0
                 val a      = Resource.ensure(closes += 1).andThen(42)
@@ -41,7 +41,7 @@ class AsyncTest extends Test:
                 Resource.run(b.map(_.get.map(v => assert(v == 42))))
             }
         }
-        "non IO-based effect" in run {
+        "non Sync-based effect" in run {
             typeCheckFailure("Async.run(Var.get[Int])")(
                 "This operation requires Contextual isolation for effects"
             )

@@ -11,7 +11,7 @@ import java.time.format.DateTimeParseException
   * System provides an effect-based API for interacting with the host environment, offering structured access to environment variables,
   * system properties, and platform-specific information.
   *
-  * The API follows Kyo's effect model with IO-wrapped operations and features strongly-typed parsing capabilities through the Parser type
+  * The API follows Kyo's effect model with Sync-wrapped operations and features strongly-typed parsing capabilities through the Parser type
   * class. This allows for safe, composable interactions with the system environment while maintaining proper effect tracking.
   *
   * Key features:

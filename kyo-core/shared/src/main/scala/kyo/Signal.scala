@@ -49,7 +49,7 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       * @param f
       *   The transformation function to apply to the current value
       * @return
-      *   The transformed value wrapped in combined effects S & IO
+      *   The transformed value wrapped in combined effects S & Sync
       */
     def currentWith[B, S](f: A => B < S)(using Frame): B < (S & Sync)
 
@@ -341,7 +341,7 @@ object Signal:
           * @param f
           *   The transformation function to apply to the current value
           * @return
-          *   The transformed value wrapped in combined effects S & IO
+          *   The transformed value wrapped in combined effects S & Sync
           */
         inline def use[B, S](inline f: A => B < S)(using Frame): B < (S & Sync) = Sync.Unsafe(f(_unsafe.get()))
 

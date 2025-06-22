@@ -12,7 +12,7 @@ abstract class Counter extends Serializable:
 
     /** Get the current value of the counter.
       * @return
-      *   The current count as a Long, wrapped in IO
+      *   The current count as a Long, wrapped in Sync
       */
     def get(using Frame): Long < Sync
 
@@ -47,7 +47,7 @@ abstract class Histogram extends Serializable:
 
     /** Get the total count of observations.
       * @return
-      *   The count as a Long, wrapped in IO
+      *   The count as a Long, wrapped in Sync
       */
     def count(using Frame): Long < Sync
 
@@ -55,7 +55,7 @@ abstract class Histogram extends Serializable:
       * @param v
       *   The percentile (0.0 to 100.0)
       * @return
-      *   The value at the given percentile, wrapped in IO
+      *   The value at the given percentile, wrapped in Sync
       */
     def valueAtPercentile(v: Double)(using Frame): Double < Sync
 end Histogram
@@ -68,7 +68,7 @@ abstract class Gauge extends Serializable:
 
     /** Collect the current value of the gauge.
       * @return
-      *   The current value as a Double, wrapped in IO
+      *   The current value as a Double, wrapped in Sync
       */
     def collect(using Frame): Double < Sync
 end Gauge
@@ -81,7 +81,7 @@ abstract class CounterGauge extends Serializable:
 
     /** Collect the current value of the counter gauge.
       * @return
-      *   The current value as a Long, wrapped in IO
+      *   The current value as a Long, wrapped in Sync
       */
     def collect(using Frame): Long < Sync
 end CounterGauge
@@ -178,7 +178,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
       * @param v
       *   The computation to trace
       * @return
-      *   The result of the computation, wrapped in IO
+      *   The result of the computation, wrapped in Sync
       */
     def traceSpan[A, S](
         name: String,
@@ -197,7 +197,7 @@ object Stat:
       * @param v
       *   The computation to trace
       * @return
-      *   The result of the computation, wrapped in IO
+      *   The result of the computation, wrapped in Sync
       */
     def traceListen[A, S](receiver: TraceReceiver)(v: A < S)(using Frame): A < (Sync & S) =
         traceReceiver.use { curr =>

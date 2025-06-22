@@ -32,7 +32,7 @@ object TSchedule:
       * @param f
       *   The function to apply to the newly created TSchedule
       * @return
-      *   The result of applying the function to the new TSchedule, within combined IO and S effects
+      *   The result of applying the function to the new TSchedule, within combined Sync and S effects
       */
     inline def initWith[A, S](schedule: Schedule)(inline f: TSchedule => A < S)(using Frame): A < (Sync & S) =
         Clock.now.map(now => TRef.initWith(schedule.next(now))(f))

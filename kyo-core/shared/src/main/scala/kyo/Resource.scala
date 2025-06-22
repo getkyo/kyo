@@ -75,7 +75,7 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   The acquired resource wrapped in Resource, IO, and S effects.
+      *   The acquired resource wrapped in Resource, Sync, and S effects.
       */
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Resource & Sync & S) =
         Sync {
@@ -91,7 +91,7 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   The acquired Closeable resource wrapped in Resource, IO, and S effects.
+      *   The acquired Closeable resource wrapped in Resource, Sync, and S effects.
       */
     def acquire[A <: java.io.Closeable, S](resource: => A < S)(using Frame): A < (Resource & Sync & S) =
         acquireRelease(resource)(_.close())

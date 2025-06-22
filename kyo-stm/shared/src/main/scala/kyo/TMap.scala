@@ -57,7 +57,7 @@ object TMap:
       * @param f
       *   The function to apply to the newly created TMap
       * @return
-      *   The result of applying the function to the new TMap, within combined IO and S effects
+      *   The result of applying the function to the new TMap, within combined Sync and S effects
       */
     inline def initWith[K, V](inline entries: (K, V)*)[A, S](inline f: TMap[K, V] => A < S)(
         using inline frame: Frame

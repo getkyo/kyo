@@ -12,13 +12,14 @@ import scala.util.control.NonFatal
 
 /** Asynchronous computation effect.
   *
-  * While IO handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
-  * and execution control. It includes IO in its effect set, making it a unified solution for both synchronous and asynchronous operations.
+  * While Sync handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
+  * and execution control. It includes Sync in its effect set, making it a unified solution for both synchronous and asynchronous
+  * operations.
   *
   * This separation, enabled by Kyo's algebraic effect system, is reflected in the codebase's design: the presence of Async in pending
-  * effects signals that a computation may park or involve fiber scheduling, contrasting with IO-only operations that run to completion.
+  * effects signals that a computation may park or involve fiber scheduling, contrasting with Sync-only operations that run to completion.
   *
-  * Most application code can work exclusively with Async, with the IO/Async distinction becoming relevant primarily in library code or
+  * Most application code can work exclusively with Async, with the Sync/Async distinction becoming relevant primarily in library code or
   * performance-critical sections where precise control over execution characteristics is needed.
   *
   * Note: For collection operations, Async provides concurrent execution variants of the `Kyo` companion object sequential operations. These
@@ -26,7 +27,7 @@ import scala.util.control.NonFatal
   * can be overridden per operation when needed. On platforms like the JVM, these operations may execute in parallel using multiple threads.
   * On single-threaded platforms like JavaScript, operations will be interleaved concurrently but not execute in parallel.
   *
-  * This effect includes IO in its effect set to handle both async and sync execution in a single effect.
+  * This effect includes Sync in its effect set to handle both async and sync execution in a single effect.
   *
   * @see
   *   [[Async.run]] for executing asynchronous computations and obtaining a Fiber
@@ -58,7 +59,7 @@ object Async extends AsyncPlatformSpecific:
       * ```
       *
       * Consider adjusting this based on:
-      *   - Nature of operations (CPU vs IO bound)
+      *   - Nature of operations (CPU vs Sync bound)
       *   - Available system resources
       *   - Specific performance requirements
       *
@@ -72,8 +73,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Convenience method for suspending computations in an Async effect.
       *
-      * While IO is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
-      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes IO in its effect set, this
+      * While Sync is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
+      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes Sync in its effect set, this
       * method allows users to work with a single unified effect that handles both concerns.
       *
       * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use

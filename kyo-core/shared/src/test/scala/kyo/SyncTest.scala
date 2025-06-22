@@ -176,7 +176,7 @@ class SyncTest extends Test:
     }
 
     "abort" - {
-        "IO includes Abort[Nothing]" in {
+        "Sync includes Abort[Nothing]" in {
             val a: Int < Abort[Nothing] = 1
             val b: Int < Sync           = a
             succeed
@@ -185,19 +185,19 @@ class SyncTest extends Test:
         "does not include wider Abort types" in {
             typeCheckFailure("""
                 val a: Int < Abort[String] = 1
-                val b: Int < IO            = a
+                val b: Int < Sync            = a
             """)(
-                "Required: Int < kyo.IO"
+                "Required: Int < kyo.Sync"
             )
         }
 
         "preserves Nothing as most specific error type" in {
             typeCheckFailure("""
-                val io: Int < IO = IO {
+                val io: Int < Sync = Sync {
                     Abort.fail[String]("error")
                 }
             """)(
-                "Required: Int < kyo.IO"
+                "Required: Int < kyo.Sync"
             )
         }
     }

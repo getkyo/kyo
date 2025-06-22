@@ -48,7 +48,7 @@ object TChunk:
       * @param f
       *   The function to apply to the newly created TChunk
       * @return
-      *   The result of applying the function to the new TChunk, within combined IO and S effects
+      *   The result of applying the function to the new TChunk, within combined Sync and S effects
       */
     inline def initWith[A, B, S](chunk: Chunk[A])(inline f: TChunk[A] => B < S)(using inline frame: Frame): B < (Sync & S) =
         TRef.initWith(chunk)(f)

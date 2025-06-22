@@ -165,7 +165,7 @@ object Fiber:
           * @param f
           *   The callback function to be executed on interruption
           * @return
-          *   A unit value wrapped in IO, representing the registration of the callback
+          *   A unit value wrapped in Sync, representing the registration of the callback
           */
         def onInterrupt(f: Result.Error[E] => Any < Sync)(using Frame): Unit < Sync =
             Sync.Unsafe(Unsafe.onInterrupt(self)(r => Sync.Unsafe.evalOrThrow(f(r).unit)))

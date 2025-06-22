@@ -50,7 +50,7 @@ class AbortCombinatorsTest extends Test:
                 assert(Abort.run[Throwable](effect1).eval.getOrElse(-1) == 1)
             }
 
-            "should construct from an IO" in {
+            "should construct from an Sync" in {
                 import AllowUnsafe.embrace.danger
                 val effect = Kyo.attempt(Sync(throw new Exception("failure")))
                 assert(Sync.Unsafe.evalOrThrow(

@@ -245,7 +245,7 @@ class FiberTest extends Test:
             yield assert(result == Seq())
         }
 
-        "small collection + IO" in run {
+        "small collection + Sync" in run {
             for
                 fiber  <- Fiber.foreachIndexed(Seq(1, 2, 3))((idx, v) => Sync((idx, v)))
                 result <- fiber.get

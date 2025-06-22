@@ -15,10 +15,10 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                 }
             ),
             suite("failing!")(
-                test("IO fail") {
+                test("Sync fail") {
                     Sync(throw new Exception("Fail!")).map(_ => assertCompletes)
                 },
-                test("IO Succeed") {
+                test("Sync Succeed") {
                     Abort.fail[Throwable](new RuntimeException("Abort!")).map(_ => assertCompletes)
                 },
                 test("Async.delay") {

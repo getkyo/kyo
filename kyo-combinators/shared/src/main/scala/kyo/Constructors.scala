@@ -375,7 +375,7 @@ extension (kyoObject: Kyo.type)
     def sleep(duration: Duration)(using Frame): Unit < Async =
         Async.sleep(duration)
 
-    /** Suspends an effect using IO.
+    /** Suspends an effect using Sync.
       *
       * @param effect
       *   The effect to suspend
@@ -385,7 +385,7 @@ extension (kyoObject: Kyo.type)
     def suspend[A, S](effect: => A < S)(using Frame): A < (S & Sync) =
         Sync(effect)
 
-    /** Suspends an effect using IO and handles any exceptions that occur to Abort[Throwable].
+    /** Suspends an effect using Sync and handles any exceptions that occur to Abort[Throwable].
       *
       * @param effect
       *   The effect to suspend
