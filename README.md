@@ -10,80 +10,93 @@
 [![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)](https://search.maven.org/search?q=g:io.getkyo)
 [![javadoc](https://javadoc.io/badge2/io.getkyo/kyo-core_3/javadoc.svg)](https://javadoc.io/doc/io.getkyo/kyo-core_3)
 
-Kyo is a toolkit for Scala development, spanning from browser-based apps in ScalaJS to high-performance backends on the JVM. It introduces a novel approach based on algebraic effects to deliver straightforward APIs in the pure Functional Programming paradigm. Unlike similar solutions, Kyo achieves this without inundating developers with concepts from Category Theory and avoiding the use of symbolic operators, resulting in a development experience that is both intuitive and robust.
+Kyo is a powerful toolkit for Scala development, providing a rich standard library for development across Native, JVM, and JavaScript platforms.
+Kyo introduces a novel approach based on algebraic effects to deliver straightforward APIs in the pure Functional Programming paradigm.
 
-Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement gives developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
+Kyo achieves this without requiring a pretext of concepts from category theory, and avoiding cryptic operators. This results in a development experience that is both intuitive and robust.
+
+Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo generalizes this concept with a more flexible approach to effect management. While ZIO's effect system centers around two primary channels (environment and error handling), Kyo's algebraic effects allow for composing arbitrary effect types as needed. This design enables developers to work with a specialized set of effects for the problem they are trying to solve. This approach provides more granular control over computational contexts.
+
+
+## [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4)
+
+> This podcast gives a well rounded overview of Kyo, including live coding!
+
+<a href="http://www.youtube.com/watch?v=uA2_TWP5WF4" title="Kyo: A New Approach to Functional Effects in Scala">
+    <img src="https://img.youtube.com/vi/uA2_TWP5WF4/maxresdefault.jpg" alt="Kyo: A New Approach to Functional Effects in Scala" width="500" height="300">
+</a>
 
 ### Getting Started
 
-Kyo is available on Maven Central in multiple modules:
+Kyo is structured as a monorepo, published to Maven Central:
 
-| Module                | Scala 2 | Scala 3 |    JS    |  Native  | Standalone | Description                         |
-|-----------------------| ------- | ------- | -------- | -------- | ---------- |-------------------------------------|
-| kyo-prelude           |         | ✅      | ✅       | ✅       |            | Effects without `IO`                |
-| kyo-core              |         | ✅      | ✅       | ✅       |            | `Async` and `IO`-based effects      |
-| kyo-direct            |         | ✅      | ✅       | ✅       |            | Direct syntax support               |
-| kyo-combinators       |         | ✅      | ✅       |          |            | ZIO-like effect composition         |
-| kyo-sttp              |         | ✅      | ✅       |          |            | Sttp HTTP Client                    |
-| kyo-tapir             |         | ✅      |          |          |            | Tapir HTTP Server                   |
-| kyo-zio               |         | ✅      |          |          |            | ZIO integration                     |
-| kyo-caliban           |         | ✅      |          |          |            | Caliban GraphQL Server              |
-| kyo-cache             |         | ✅      |          |          |            | Caffeine caching                    |
-| kyo-stats-otel        | ✅      | ✅      |          |          |            | Stats exporter for OpenTelemetry    |
-| kyo-data              |         | ✅      | ✅       | ✅       | ✅         | Low-allocation data types           |
-| kyo-scheduler         | ✅      | ✅      |          | ✅       | ✅         | Reusable adaptive scheduler         |
-| kyo-scheduler-cats    | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for Cats apps    |
-| kyo-scheduler-finagle | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for Finagle apps |
-| kyo-scheduler-pekko   | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for Pekko apps   |
-| kyo-scheduler-zio     | ✅      | ✅      |          |          | ✅         | Adaptive scheduler for ZIO apps     |
+#### Core Libraries
 
-> Scala JS and Scala Native artifacts are available only in Scala 3.
+| Module          | JVM | JS | Native | Description                         |
+|-----------------|-----|----| ------ |-------------------------------------|
+| kyo-data        | ✅  | ✅ | ✅     | Efficient `Maybe`, `Result`, `Duration`, and other data types |
+| kyo-kernel      | ✅  | ✅ | ✅     | Core algebraic effects engine and type-level effect tracking |
+| kyo-prelude     | ✅  | ✅ | ✅     | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc. |
+| kyo-core        | ✅  | ✅ | ✅     | Side-effectful computations: `IO`, `Async`, `Resource`, etc. |
+| kyo-direct      | ✅  | ✅ | ✅     | Direct-style syntax using `.await` and control flow |
+| kyo-combinators | ✅  | ✅ | ✅     | ZIO-like effect combinators and utility methods |
+| kyo-actor       | ✅  | ✅ | ✅     | Type-safe actor system with supervision and messaging |
+| kyo-stm         | ✅  | ✅ | ✅     | Software transactional memory for managing state |
+| kyo-offheap     | ✅  | ❌ | ✅     | Direct memory allocation and off-heap data structures |
 
-The modules marked as `Standalone` are designed to be used independently, without requiring the full Kyo effect system. These modules provide specific functionalities that can be integrated into any Scala project, regardless of whether it uses Kyo's effect system or not. 
+#### Integrations
 
-Example sbt configurations:
+| Module               | JVM | JS | Native | Description                         |
+|----------------------|-----|----| ------ |-------------------------------------|
+| kyo-sttp             | ✅  | ✅ | ✅     | HTTP client using Sttp with automatic effect management |
+| kyo-tapir            | ✅  | ❌ | ❌     | HTTP server endpoints using Tapir with Netty backend |
+| kyo-caliban          | ✅  | ❌ | ❌     | GraphQL server using Caliban with schema derivation |
+| kyo-zio              | ✅  | ✅ | ❌     | Bidirectional ZIO interop with fiber and effect conversion |
+| kyo-zio-test         | ✅  | ✅ | ❌     | ZIO Test framework integration for testing Kyo effects |
+| kyo-cats             | ✅  | ✅ | ❌     | Cats Effect interop with `IO` and fiber conversion |
+| kyo-cache            | ✅  | ❌ | ❌     | High-performance caching using Caffeine with memoization |
+| kyo-stats-registry   | ✅  | ✅ | ✅     | Metrics collection with counters, histograms, and gauges |
+| kyo-stats-otel       | ✅  | ❌ | ❌     | OpenTelemetry integration for metrics and tracing export |
+| kyo-playwright       | ✅  | ❌ | ❌     | Browser automation testing using Microsoft Playwright |
+| kyo-reactive-streams | ✅  | ❌ | ❌     | Reactive Streams interop implementation |
+| kyo-aeron            | ✅  | ❌ | ❌     | High-performance messaging using Aeron transport |
 
-```scala 
-libraryDependencies += "io.getkyo" %% "kyo-prelude"           % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-core"              % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-direct"            % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-combinators"       % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-sttp"              % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-tapir"             % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-zio"               % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-caliban"           % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-cache"             % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-stats-otel"        % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-data"              % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-scheduler"         % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-scheduler-cats"    % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-scheduler-finagle" % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-scheduler-pekko"   % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-scheduler-zio"     % "<version>"
+#### Scheduler
+
+> These modules are designed to be used independently, without requiring the Kyo effect system. These modules provide specific functionalities that can be integrated into any Scala project, regardless of whether it uses Kyo's effect system or not. They are also compiled with support for Scala 2, enabling adoption without needing to update to Scala 3.
+
+| Module                | JVM | JS | Native | Description                         |
+|-----------------------|-----|----| ------ |-------------------------------------|
+| kyo-scheduler         | ✅  | ✅ | ✅     | Adaptive work-stealing scheduler with automatic parallelism |
+| kyo-scheduler-cats    | ✅  | ❌ | ❌     | Drop-in Cats Effect `ExecutionContext` replacement |
+| kyo-scheduler-finagle | ✅  | ❌ | ❌     | Twitter Finagle integration for improved performance |
+| kyo-scheduler-pekko   | ✅  | ❌ | ❌     | Apache Pekko actor system integration |
+| kyo-scheduler-zio     | ✅  | ❌ | ❌     | ZIO `Executor` implementation for better ZIO performance |
+
+Add Kyo modules to your `build.sbt`:
+
+```sbt
+libraryDependencies += "io.getkyo" %% "kyo-prelude" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-core"    % "<version>"
 ```
 
-For ScalaJS (applicable only to specific modules):
+Use `%%` for JVM/Scala Native, or `%%%` for ScalaJS cross-compilation. See the module tables above for platform support. Replace `<version>` with: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)
 
-```scala 
-libraryDependencies += "io.getkyo" %%% "kyo-prelude"     % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-core"        % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-direct"      % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-combinators" % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-sttp"        % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-data"        % "<version>"
-```
 
-For Scala Native (applicable only to specific modules):
+## Talks
+> These talks are listed in reverse chronological order, as Kyo has grown and transformed significantly in preparation for 1.0.
 
-```scala 
-libraryDependencies += "io.getkyo" %%% "kyo-prelude"   % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-core"      % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-direct"    % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-data"      % "<version>"
-libraryDependencies += "io.getkyo" %%% "kyo-scheduler" % "<version>"
-```
+| Title | Speaker(s) | Host | Date |
+|-------|------------|------|------|
+| [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY) | Flavio Brasil | Func Prog Sweden | May, 2025 |
+| [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0) | Adam Hearn | LambdaConf | May, 2025 |
+| [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4) | Flavio Brasil & Adam Hearn | Scala for Fun & Profit | February, 2025 |
+| [The Actor Model Beyond Akka With Kyo](https://www.youtube.com/watch?v=VU31k3lQ8yU) | Damian Reeves | Functional Scala | December, 2024 |
+| [Building Robust Applications with Kyo: A Hands on Introduction](https://www.youtube.com/watch?v=QW8mAJr0Wso) | Adam Hearn | ScalaIO | November, 2024 |
+| [Comparing Approaches to Structured Concurrency](https://www.youtube.com/watch?v=g6dyLhAublQ) | James Ward & Adam Hearn | LambdaConf | May, 2024 |
+| [ Algebraic Effects from Scratch](https://www.youtube.com/watch?v=qPvPdRbTF-E) | Kit Langton | Func Prog Sweden | April, 2024 |
+| [Releasing Kyo: When Performance Meets Elegance In Scala](https://www.youtube.com/watch?v=FXkYKQRC9LI) | Flavio Brasil | Functional Scala | December, 2023 |
 
-Replace `<version>` with the latest version: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
 
 ## IDE Support
 
@@ -137,7 +150,7 @@ Int < Abort[Absent]
 String < (Abort[Absent] & IO)
 ```
 
-Any type `T` is automatically considered to be of type `T < Any`, where `Any` denotes an absence of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to handle. 
+Any type `T` is automatically considered to be of type `T < Any`, where `Any` denotes an empty set of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to explicitly handle.
 
 This design choice streamlines your code by removing the necessity to differentiate between pure values and computations that may have effects. So, when you're dealing with a value of type `T < Any`, you can safely `eval` the pure value directly, without worrying about handling any effects.
 
