@@ -24,6 +24,7 @@ case class Process(private val process: JProcess):
     def destroy(using Frame): Unit < Sync                                   = Sync(process.destroy())
     def destroyForcibly(using Frame): JProcess < Sync                       = Sync(process.destroyForcibly())
     def isAlive(using Frame): Boolean < Sync                                = Sync(process.isAlive())
+    def pid(using Frame): Long < Sync                                       = Sync(process.pid())
 end Process
 
 object Process:
