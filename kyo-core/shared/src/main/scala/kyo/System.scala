@@ -11,7 +11,7 @@ import java.time.format.DateTimeParseException
   * System provides an effect-based API for interacting with the host environment, offering structured access to environment variables,
   * system properties, and platform-specific information.
   *
-  * The API follows Kyo's effect model with IO-wrapped operations and features strongly-typed parsing capabilities through the Parser type
+  * The API follows Kyo's effect model with Sync-wrapped operations and features strongly-typed parsing capabilities through the Parser type
   * class. This allows for safe, composable interactions with the system environment while maintaining proper effect tracking.
   *
   * Key features:
@@ -37,11 +37,11 @@ import java.time.format.DateTimeParseException
   */
 abstract class System extends Serializable:
     def unsafe: System.Unsafe
-    def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
-    def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
-    def lineSeparator(using Frame): String < IO
-    def userName(using Frame): String < IO
-    def operatingSystem(using Frame): System.OS < IO
+    def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync)
+    def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync)
+    def lineSeparator(using Frame): String < Sync
+    def userName(using Frame): String < Sync
+    def operatingSystem(using Frame): System.OS < Sync
 end System
 
 /** Companion object for System, containing utility methods and type classes. */
@@ -63,22 +63,22 @@ object System:
 
     def apply(u: Unsafe): System =
         new System:
-            def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                IO.Unsafe {
+            def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & Sync) =
+                Sync.Unsafe {
                     u.env(name) match
                         case Absent     => Absent
                         case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
-            def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                IO.Unsafe {
+            def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & Sync) =
+                Sync.Unsafe {
                     u.property(name) match
                         case Absent     => Absent
                         case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
-            def lineSeparator(using Frame): String < IO = IO.Unsafe(u.lineSeparator())
-            def userName(using Frame): String < IO      = IO.Unsafe(u.userName())
-            def operatingSystem(using Frame): OS < IO   = IO.Unsafe(u.operatingSystem())
-            def unsafe: Unsafe                          = u
+            def lineSeparator(using Frame): String < Sync = Sync.Unsafe(u.lineSeparator())
+            def userName(using Frame): String < Sync      = Sync.Unsafe(u.userName())
+            def operatingSystem(using Frame): OS < Sync   = Sync.Unsafe(u.operatingSystem())
+            def unsafe: Unsafe                            = u
 
     private val local = Local.init(live)
 
@@ -132,7 +132,7 @@ object System:
       * @return
       *   A `Maybe` containing the parsed value if it exists, or `Maybe.empty` otherwise.
       */
-    def env[A](using Frame)[E](name: String)(using parser: Parser[E, A], reduce: Reducible[Abort[E]]): Maybe[A] < (reduce.SReduced & IO) =
+    def env[A](using Frame)[E](name: String)(using parser: Parser[E, A], reduce: Reducible[Abort[E]]): Maybe[A] < (reduce.SReduced & Sync) =
         reduce(local.use(_.env[E, A](name)))
 
     /** Retrieves an environment variable with a default value.
@@ -152,7 +152,7 @@ object System:
         using
         parser: Parser[E, A],
         reduce: Reducible[Abort[E]]
-    ): A < (reduce.SReduced & IO) =
+    ): A < (reduce.SReduced & Sync) =
         reduce(local.use(_.env[E, A](name).map(_.getOrElse(default))))
 
     /** Retrieves a system property.
@@ -170,7 +170,7 @@ object System:
         using
         parser: Parser[E, A],
         reduce: Reducible[Abort[E]]
-    ): Maybe[A] < (reduce.SReduced & IO) =
+    ): Maybe[A] < (reduce.SReduced & Sync) =
         reduce(local.use(_.property[E, A](name)))
 
     /** Retrieves a system property with a default value.
@@ -190,17 +190,17 @@ object System:
         using
         parser: Parser[E, A],
         reduce: Reducible[Abort[E]]
-    ): A < (reduce.SReduced & IO) =
+    ): A < (reduce.SReduced & Sync) =
         reduce(local.use(_.property[E, A](name).map(_.getOrElse(default))))
 
     /** Retrieves the system-dependent line separator string. */
-    def lineSeparator(using Frame): String < IO = local.use(_.lineSeparator)
+    def lineSeparator(using Frame): String < Sync = local.use(_.lineSeparator)
 
     /** Retrieves the user name of the current user. */
-    def userName(using Frame): String < IO = local.use(_.userName)
+    def userName(using Frame): String < Sync = local.use(_.userName)
 
     /** Retrieves the current operating system. */
-    def operatingSystem(using Frame): OS < IO = local.use(_.operatingSystem)
+    def operatingSystem(using Frame): OS < Sync = local.use(_.operatingSystem)
 
     /** Abstract class for parsing string values into specific types. */
     sealed abstract class Parser[E, A] extends Serializable:

@@ -12,13 +12,14 @@ import scala.util.control.NonFatal
 
 /** Asynchronous computation effect.
   *
-  * While IO handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
-  * and execution control. It includes IO in its effect set, making it a unified solution for both synchronous and asynchronous operations.
+  * While Sync handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
+  * and execution control. It includes Sync in its effect set, making it a unified solution for both synchronous and asynchronous
+  * operations.
   *
   * This separation, enabled by Kyo's algebraic effect system, is reflected in the codebase's design: the presence of Async in pending
-  * effects signals that a computation may park or involve fiber scheduling, contrasting with IO-only operations that run to completion.
+  * effects signals that a computation may park or involve fiber scheduling, contrasting with Sync-only operations that run to completion.
   *
-  * Most application code can work exclusively with Async, with the IO/Async distinction becoming relevant primarily in library code or
+  * Most application code can work exclusively with Async, with the Sync/Async distinction becoming relevant primarily in library code or
   * performance-critical sections where precise control over execution characteristics is needed.
   *
   * Note: For collection operations, Async provides concurrent execution variants of the `Kyo` companion object sequential operations. These
@@ -26,7 +27,7 @@ import scala.util.control.NonFatal
   * can be overridden per operation when needed. On platforms like the JVM, these operations may execute in parallel using multiple threads.
   * On single-threaded platforms like JavaScript, operations will be interleaved concurrently but not execute in parallel.
   *
-  * This effect includes IO in its effect set to handle both async and sync execution in a single effect.
+  * This effect includes Sync in its effect set to handle both async and sync execution in a single effect.
   *
   * @see
   *   [[Async.run]] for executing asynchronous computations and obtaining a Fiber
@@ -39,7 +40,7 @@ import scala.util.control.NonFatal
   * @see
   *   [[Async.foreach]], [[Async.collect]], and their variants for concurrent collection processing with bounded concurrency
   */
-opaque type Async <: (IO & Async.Join) = Async.Join & IO
+opaque type Async <: (Sync & Async.Join) = Async.Join & Sync
 
 object Async extends AsyncPlatformSpecific:
 
@@ -58,7 +59,7 @@ object Async extends AsyncPlatformSpecific:
       * ```
       *
       * Consider adjusting this based on:
-      *   - Nature of operations (CPU vs IO bound)
+      *   - Nature of operations (CPU vs Sync bound)
       *   - Available system resources
       *   - Specific performance requirements
       *
@@ -67,13 +68,13 @@ object Async extends AsyncPlatformSpecific:
     val defaultConcurrency =
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
+        Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
     end defaultConcurrency
 
     /** Convenience method for suspending computations in an Async effect.
       *
-      * While IO is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
-      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes IO in its effect set, this
+      * While Sync is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
+      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes Sync in its effect set, this
       * method allows users to work with a single unified effect that handles both concerns.
       *
       * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use
@@ -95,7 +96,7 @@ object Async extends AsyncPlatformSpecific:
       *   The suspended computation wrapped in an Async effect
       */
     inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
-        IO(v)
+        Sync(v)
 
     /** Runs an asynchronous computation and returns a Fiber.
       *
@@ -105,8 +106,8 @@ object Async extends AsyncPlatformSpecific:
       *   A Fiber representing the running computation
       */
     def run[E, A, S](
-        using isolate: Isolate.Contextual[S, IO]
-    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
+        using isolate: Isolate.Contextual[S, Sync]
+    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (Sync & S) =
         isolate.runInternal((trace, context) =>
             Fiber.fromTask(IOTask(v, trace, context))
         )
@@ -121,10 +122,10 @@ object Async extends AsyncPlatformSpecific:
       *   The result of the computation, or a Timeout error
       */
     def runAndBlock[E, A, S](
-        using isolate: Isolate.Contextual[S, IO]
+        using isolate: Isolate.Contextual[S, Sync]
     )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
-    ): A < (Abort[E | Timeout] & IO & S) =
+    ): A < (Abort[E | Timeout] & Sync & S) =
         run(v).map { fiber =>
             fiber.block(timeout).map(Abort.get(_))
         }
@@ -195,7 +196,7 @@ object Async extends AsyncPlatformSpecific:
             isolate.capture { state =>
                 Async.run(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
-                        IO.Unsafe {
+                        Sync.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
                             sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
@@ -769,8 +770,8 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   A nested computation that returns the memoized result
       */
-    def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < IO =
-        IO.Unsafe {
+    def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
+        Sync.Unsafe {
             val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Nothing, A]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
@@ -779,14 +780,14 @@ object Async extends AsyncPlatformSpecific:
                         val promise = Promise.Unsafe.init[Nothing, A]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
-                                IO.Unsafe {
+                                Sync.Unsafe {
                                     if !r.isSuccess then
                                         ref.set(Absent)
                                     promise.completeDiscard(r)
                                     Abort.get(r)
                                 }
-                            }.handle(IO.ensure {
-                                IO.Unsafe {
+                            }.handle(Sync.ensure {
+                                Sync.Unsafe {
                                     if !promise.done() then
                                         ref.set(Absent)
                                 }
@@ -794,7 +795,7 @@ object Async extends AsyncPlatformSpecific:
                         else
                             loop()
                         end if
-            Kyo.lift(IO(loop()))
+            Kyo.lift(Sync(loop()))
         }
 
     /** Converts a Future to an asynchronous computation.

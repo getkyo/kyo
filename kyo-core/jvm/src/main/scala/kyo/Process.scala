@@ -15,15 +15,15 @@ import kyo.*
 import scala.jdk.CollectionConverters.*
 
 case class Process(private val process: JProcess):
-    def stdin: OutputStream                                               = process.getOutputStream
-    def stdout: InputStream                                               = process.getInputStream
-    def stderr: InputStream                                               = process.getErrorStream
-    def waitFor(using Frame): Int < IO                                    = IO(process.waitFor())
-    def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < IO = IO(process.waitFor(timeout, unit))
-    def exitValue(using Frame): Int < IO                                  = IO(process.exitValue())
-    def destroy(using Frame): Unit < IO                                   = IO(process.destroy())
-    def destroyForcibly(using Frame): JProcess < IO                       = IO(process.destroyForcibly())
-    def isAlive(using Frame): Boolean < IO                                = IO(process.isAlive())
+    def stdin: OutputStream                                                 = process.getOutputStream
+    def stdout: InputStream                                                 = process.getInputStream
+    def stderr: InputStream                                                 = process.getErrorStream
+    def waitFor(using Frame): Int < Sync                                    = Sync(process.waitFor())
+    def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < Sync = Sync(process.waitFor(timeout, unit))
+    def exitValue(using Frame): Int < Sync                                  = Sync(process.exitValue())
+    def destroy(using Frame): Unit < Sync                                   = Sync(process.destroy())
+    def destroyForcibly(using Frame): JProcess < Sync                       = Sync(process.destroyForcibly())
+    def isAlive(using Frame): Boolean < Sync                                = Sync(process.isAlive())
 end Process
 
 object Process:
@@ -31,14 +31,14 @@ object Process:
     object jvm:
         /** Executes a class with given args for the JVM.
           */
-        def spawn(clazz: Class[?], args: List[String] = Nil)(using Frame): Process < IO =
+        def spawn(clazz: Class[?], args: List[String] = Nil)(using Frame): Process < Sync =
             command(clazz, args).map(_.spawn)
 
         /** Returns a `Process.Command` representing the execution of the `clazz` Class in a new JVM process. To finally execute the
           * command, use `spawn` or use directly `jvm.spawn`.
           */
-        def command(clazz: Class[?], args: List[String] = Nil)(using Frame): Process.Command < IO =
-            IO {
+        def command(clazz: Class[?], args: List[String] = Nil)(using Frame): Process.Command < Sync =
+            Sync {
                 val javaHome  = JSystem.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
                 val classPath = JSystem.getProperty("java.class.path")
                 val command   = javaHome :: "-cp" :: classPath :: clazz.getName().init :: args
@@ -81,27 +81,27 @@ object Process:
 
         /** Spawns a new process executing this command
           */
-        def spawn(using Frame): Process < IO
+        def spawn(using Frame): Process < Sync
 
         /** Spawns a new process and returns its output as a String
           */
-        def text(using Frame): String < IO =
+        def text(using Frame): String < Sync =
             stream.map { inputStream =>
                 new String(inputStream.readAllBytes())
             }
 
         /** Spawns a new process and returns its output as a Stream
           */
-        def stream(using Frame): InputStream < IO =
+        def stream(using Frame): InputStream < Sync =
             spawn.map(_.stdout)
 
-        def exitValue(using Frame): Int < IO =
+        def exitValue(using Frame): Int < Sync =
             spawn.map(_.exitValue)
 
-        def waitFor(using Frame): Int < IO =
+        def waitFor(using Frame): Int < Sync =
             spawn.map(_.waitFor)
 
-        def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < IO =
+        def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < Sync =
             spawn.map(_.waitFor(timeout, unit))
 
         def pipe(that: Command): Command =
@@ -164,9 +164,9 @@ object Process:
             redirectErrorStream: Boolean = false
         ) extends Command:
             self =>
-            override def spawn(using Frame): Process < IO =
+            override def spawn(using Frame): Process < Sync =
                 for
-                    process <- IO {
+                    process <- Sync {
                         val builder = new ProcessBuilder(command*)
 
                         builder.redirectErrorStream(redirectErrorStream)
@@ -212,8 +212,8 @@ object Process:
 
         case class Piped(commands: List[Simple]) extends Command:
             self =>
-            def spawnAll(using Frame): List[Process] < IO =
-                if commands.isEmpty then IO(List.empty)
+            def spawnAll(using Frame): List[Process] < Sync =
+                if commands.isEmpty then Sync(List.empty)
                 else
                     commands.tail.foldLeft(commands.head.spawn.map(p => (p :: Nil, p.stdout))) { case (acc, nextCommand) =>
                         for
@@ -222,7 +222,7 @@ object Process:
                             nextProcess <- nextCommand.stdin(Input.Stream(lastStdout)).spawn
                         yield (processes ++ List(nextProcess), nextProcess.stdout)
                     }.map(_._1)
-            override def spawn(using Frame): Process < IO =
+            override def spawn(using Frame): Process < Sync =
                 spawnAll.map(_.last)
 
             override def cwd(newCwd: Path)                   = self.map(_.copy(cwd = Some(newCwd)))

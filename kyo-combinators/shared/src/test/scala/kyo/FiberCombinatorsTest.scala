@@ -47,7 +47,7 @@ class FiberCombinatorsTest extends Test:
             }
 
             "should construct from traversePar" in run {
-                val effect = Kyo.traversePar(Seq(IO(1), IO(2), IO(3)))
+                val effect = Kyo.traversePar(Seq(Sync(1), Sync(2), Sync(3)))
                 Async.run(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v => assert(v == Seq(1, 2, 3)))
                 }
@@ -95,8 +95,8 @@ class FiberCombinatorsTest extends Test:
 
         "zip par" - {
             "should zip right par" in run {
-                val e1     = IO(1)
-                val e2     = IO(2)
+                val e1     = Sync(1)
+                val e2     = Sync(2)
                 val effect = e1 &> e2
                 Async.run(effect).map(_.toFuture).map { handled =>
                     handled.map(v =>
@@ -106,8 +106,8 @@ class FiberCombinatorsTest extends Test:
             }
 
             "should zip left par" in run {
-                val e1     = IO(1)
-                val e2     = IO(2)
+                val e1     = Sync(1)
+                val e2     = Sync(2)
                 val effect = e1 <& e2
                 Async.run(effect).map(_.toFuture).map { handled =>
                     handled.map(v =>
@@ -117,8 +117,8 @@ class FiberCombinatorsTest extends Test:
             }
 
             "should zip par" in run {
-                val e1     = IO(1)
-                val e2     = IO(2)
+                val e1     = Sync(1)
+                val e2     = Sync(2)
                 val effect = e1 <&> e2
                 Async.run(effect).map(_.toFuture).map { handled =>
                     handled.map(v =>

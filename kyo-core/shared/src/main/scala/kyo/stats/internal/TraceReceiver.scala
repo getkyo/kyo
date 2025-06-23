@@ -13,7 +13,7 @@ trait TraceReceiver extends Serializable:
         name: String,
         parent: Maybe[Span] = Maybe.empty,
         attributes: Attributes = Attributes.empty
-    )(using Frame): Span < IO
+    )(using Frame): Span < Sync
 end TraceReceiver
 
 object TraceReceiver:

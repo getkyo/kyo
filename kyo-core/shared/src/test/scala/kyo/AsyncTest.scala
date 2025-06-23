@@ -29,11 +29,11 @@ class AsyncTest extends Test:
         "nested" in runNotJS {
             val t1 = Thread.currentThread()
             for
-                t2 <- Async.run(IO(Async.run(Thread.currentThread()).map(_.get))).map(_.get)
+                t2 <- Async.run(Sync(Async.run(Thread.currentThread()).map(_.get))).map(_.get)
             yield assert(t1 ne t2)
         }
 
-        "with IO-based effects" - {
+        "with Sync-based effects" - {
             "Resource" in run {
                 var closes = 0
                 val a      = Resource.ensure(closes += 1).andThen(42)
@@ -41,7 +41,7 @@ class AsyncTest extends Test:
                 Resource.run(b.map(_.get.map(v => assert(v == 42))))
             }
         }
-        "non IO-based effect" in run {
+        "non Sync-based effect" in run {
             typeCheckFailure("Async.run(Var.get[Int])")(
                 "This operation requires Contextual isolation for effects"
             )
@@ -50,17 +50,17 @@ class AsyncTest extends Test:
 
     "sleep" in run {
         for
-            start <- IO(java.lang.System.currentTimeMillis())
+            start <- Sync(java.lang.System.currentTimeMillis())
             _     <- Async.sleep(10.millis)
-            end   <- IO(java.lang.System.currentTimeMillis())
+            end   <- Sync(java.lang.System.currentTimeMillis())
         yield assert(end - start >= 8)
     }
 
     "delay" in run {
         for
-            start <- IO(java.lang.System.currentTimeMillis())
+            start <- Sync(java.lang.System.currentTimeMillis())
             res   <- Async.delay(5.millis)(42)
-            end   <- IO(java.lang.System.currentTimeMillis())
+            end   <- Sync(java.lang.System.currentTimeMillis())
         yield
             assert(end - start >= 4)
             assert(res == 42)
@@ -107,7 +107,7 @@ class AsyncTest extends Test:
 
     "interrupt" - {
 
-        def loop(ref: AtomicInt): Unit < IO =
+        def loop(ref: AtomicInt): Unit < Sync =
             ref.incrementAndGet.map(_ => loop(ref))
 
         def runLoop(started: Latch, done: Latch) =
@@ -157,8 +157,8 @@ class AsyncTest extends Test:
         "multiple" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < IO =
-                IO {
+            def loop(i: Int, s: String): String < Sync =
+                Sync {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -214,8 +214,8 @@ class AsyncTest extends Test:
         "n" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < IO =
-                IO {
+            def loop(i: Int, s: String): String < Sync =
+                Sync {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -231,12 +231,12 @@ class AsyncTest extends Test:
         }
         "three arguments" in run {
             for
-                (v1, v2, v3) <- Async.zip(IO(1), IO(2), IO(3))
+                (v1, v2, v3) <- Async.zip(Sync(1), Sync(2), Sync(3))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3)
         }
         "four arguments" in run {
             for
-                (v1, v2, v3, v4) <- Async.zip(IO(1), IO(2), IO(3), IO(4))
+                (v1, v2, v3, v4) <- Async.zip(Sync(1), Sync(2), Sync(3), Sync(4))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3 && v4 == 4)
         }
     }
@@ -280,7 +280,7 @@ class AsyncTest extends Test:
             val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resource & Async) =
                 for
                     r  <- Resource.acquire(resource1)
-                    v1 <- IO(r.incrementAndGet())
+                    v1 <- Sync(r.incrementAndGet())
                     v2 <- Async.run(r.incrementAndGet()).map(_.get)
                 yield (r, Set(v1, v2))
             Resource.run(io1).map {
@@ -315,7 +315,7 @@ class AsyncTest extends Test:
             val io1: Set[Int] < (Resource & Async) =
                 for
                     r  <- Resource.acquire(resource1)
-                    v1 <- IO(r.incrementAndGet())
+                    v1 <- Sync(r.incrementAndGet())
                     v2 <- Async.run(r.incrementAndGet()).map(_.get)
                     v3 <- Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
                 yield Set(v1, v2, v3)
@@ -413,8 +413,8 @@ class AsyncTest extends Test:
     "boundary inference with Abort" - {
         "same failures" in {
             val v: Int < Abort[Int]                            = 1
-            val _: Fiber[Int, Int] < IO                        = Async.run(v)
-            val _: Int < (Abort[Int | Timeout] & IO)           = Async.runAndBlock(1.second)(v)
+            val _: Fiber[Int, Int] < Sync                      = Async.run(v)
+            val _: Int < (Abort[Int | Timeout] & Sync)         = Async.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.race(Seq(v))
@@ -427,8 +427,8 @@ class AsyncTest extends Test:
         }
         "additional failure" in {
             val v: Int < Abort[Int]                                     = 1
-            val _: Fiber[Int | String, Int] < IO                        = Async.run(v)
-            val _: Int < (Abort[Int | Timeout | String] & IO)           = Async.runAndBlock(1.second)(v)
+            val _: Fiber[Int | String, Int] < Sync                      = Async.run(v)
+            val _: Int < (Abort[Int | Timeout | String] & Sync)         = Async.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(Seq(v))
@@ -443,16 +443,16 @@ class AsyncTest extends Test:
             "run" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Nothing, Fiber[Int, Int]] < IO  = Async.run(Async.run(v))
-                val _: Fiber[Int | Timeout, Int] < IO        = Async.run(Async.runAndBlock(1.second)(v))
-                val _: Fiber[Int, Int] < IO                  = Async.run(Async.mask(v))
-                val _: Fiber[Int | Timeout, Int] < IO        = Async.run(Async.timeout(1.second)(v))
-                val _: Fiber[Int, Int] < IO                  = Async.run(Async.race(Seq(v)))
-                val _: Fiber[Int, Int] < IO                  = Async.run(Async.race(v, v))
-                val x: Fiber[Int, Seq[Int]] < IO             = Async.run(Async.collectAll(Seq(v)))
-                val _: Fiber[Int, (Int, Int)] < IO           = Async.run(Async.zip(v, v))
-                val _: Fiber[Int, (Int, Int, Int)] < IO      = Async.run(Async.zip(v, v, v))
-                val _: Fiber[Int, (Int, Int, Int, Int)] < IO = Async.run(Async.zip(v, v, v, v))
+                val _: Fiber[Nothing, Fiber[Int, Int]] < Sync  = Async.run(Async.run(v))
+                val _: Fiber[Int | Timeout, Int] < Sync        = Async.run(Async.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Int] < Sync                  = Async.run(Async.mask(v))
+                val _: Fiber[Int | Timeout, Int] < Sync        = Async.run(Async.timeout(1.second)(v))
+                val _: Fiber[Int, Int] < Sync                  = Async.run(Async.race(Seq(v)))
+                val _: Fiber[Int, Int] < Sync                  = Async.run(Async.race(v, v))
+                val x: Fiber[Int, Seq[Int]] < Sync             = Async.run(Async.collectAll(Seq(v)))
+                val _: Fiber[Int, (Int, Int)] < Sync           = Async.run(Async.zip(v, v))
+                val _: Fiber[Int, (Int, Int, Int)] < Sync      = Async.run(Async.zip(v, v, v))
+                val _: Fiber[Int, (Int, Int, Int, Int)] < Sync = Async.run(Async.zip(v, v, v, v))
                 succeed
             }
 
@@ -508,12 +508,12 @@ class AsyncTest extends Test:
             "runAndBlock" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < (Abort[Timeout] & IO)  = Async.runAndBlock(1.second)(Async.run(v))
-                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.mask(v))
-                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & IO) = Async.runAndBlock(1.second)(Async.zip(v, v))
+                val _: Fiber[Int, Int] < (Abort[Timeout] & Sync)  = Async.runAndBlock(1.second)(Async.run(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Sync) = Async.runAndBlock(1.second)(Async.zip(v, v))
                 succeed
             }
         }
@@ -641,7 +641,7 @@ class AsyncTest extends Test:
 
         "sequence larger than parallelism" in run {
             AtomicInt.init.map { counter =>
-                def task(i: Int): Int < (IO & Async) =
+                def task(i: Int): Int < (Sync & Async) =
                     for
                         current <- counter.getAndIncrement
                         _       <- Async.sleep(1.millis)
@@ -661,7 +661,7 @@ class AsyncTest extends Test:
 
         "parallelism of 1 executes sequentially" in run {
             AtomicInt.init.map { counter =>
-                def task(i: Int): Int < (IO & Async) =
+                def task(i: Int): Int < (Sync & Async) =
                     for
                         current <- counter.getAndIncrement
                         _       <- Async.sleep(1.millis)
@@ -858,13 +858,13 @@ class AsyncTest extends Test:
         "sequence" - {
             "delegates to Fiber.gather" in run {
                 for
-                    result <- Async.gather(Seq(IO(1), IO(2), IO(3)))
+                    result <- Async.gather(Seq(Sync(1), Sync(2), Sync(3)))
                 yield assert(result == Chunk(1, 2, 3))
             }
 
             "with max limit delegates to Fiber.gather" in run {
                 for
-                    result <- Async.gather(2)(Seq(IO(1), IO(2), IO(3)))
+                    result <- Async.gather(2)(Seq(Sync(1), Sync(2), Sync(3)))
                 yield
                     assert(result.size == 2)
                     assert(result.forall(Seq(1, 2, 3).contains))
@@ -874,13 +874,13 @@ class AsyncTest extends Test:
         "varargs" - {
             "delegates to sequence-based gather" in run {
                 for
-                    result <- Async.gather(IO(1), IO(2), IO(3))
+                    result <- Async.gather(Sync(1), Sync(2), Sync(3))
                 yield assert(result == Chunk(1, 2, 3))
             }
 
             "with max limit delegates to sequence-based gather" in run {
                 for
-                    result <- Async.gather(2)(IO(1), IO(2), IO(3))
+                    result <- Async.gather(2)(Sync(1), Sync(2), Sync(3))
                 yield
                     assert(result.size == 2)
                     assert(result.forall(Seq(1, 2, 3).contains))
@@ -1104,16 +1104,16 @@ class AsyncTest extends Test:
         }
         "with nested eval" in run {
             import AllowUnsafe.embrace.danger
-            val task = IO.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(42)))
+            val task = Sync.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(42)))
             Async.run(task).map(_.get).map(_.get).map { result =>
                 assert(result == 42)
             }
         }
         "with multiple nested evals" in run {
             import AllowUnsafe.embrace.danger
-            val innerTask  = IO.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(42)))
-            val middleTask = IO.Unsafe.evalOrThrow(Async.run(innerTask))
-            val outerTask  = IO.Unsafe.evalOrThrow(Async.run(middleTask))
+            val innerTask  = Sync.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(42)))
+            val middleTask = Sync.Unsafe.evalOrThrow(Async.run(innerTask))
+            val outerTask  = Sync.Unsafe.evalOrThrow(Async.run(middleTask))
             Async.run(outerTask).map(_.get).map(_.get).map(_.get).map(_.get).map { result =>
                 assert(result == 42)
             }
@@ -1122,7 +1122,7 @@ class AsyncTest extends Test:
             import AllowUnsafe.embrace.danger
             Async.run {
                 Async.delay(100.millis) {
-                    IO.Unsafe.evalOrThrow(Async.run(42)).get
+                    Sync.Unsafe.evalOrThrow(Async.run(42)).get
                 }
             }.map(_.get).map { result =>
                 assert(result == 42)
@@ -1130,11 +1130,11 @@ class AsyncTest extends Test:
         }
         "with interleaved evals and delays" in run {
             import AllowUnsafe.embrace.danger
-            val task1 = IO.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(1)))
+            val task1 = Sync.Unsafe.evalOrThrow(Async.run(Async.delay(100.millis)(1)))
             val task2 = Async.delay(100.millis) {
-                IO.Unsafe.evalOrThrow(Async.run(task1)).get
+                Sync.Unsafe.evalOrThrow(Async.run(task1)).get
             }
-            val task3 = IO.Unsafe.evalOrThrow(Async.run(task2))
+            val task3 = Sync.Unsafe.evalOrThrow(Async.run(task2))
             Async.run(task3).map(_.get).map(_.get).map(_.get).map { result =>
                 assert(result == 1)
             }
@@ -1258,7 +1258,7 @@ class AsyncTest extends Test:
                 sleeping <- Latch.init(1)
                 done     <- Latch.init(1)
                 memoized <- Async.memoize {
-                    IO.ensure(done.release) {
+                    Sync.ensure(done.release) {
                         for
                             _     <- started.release
                             _     <- Async.sleep(50.millis)
@@ -1320,15 +1320,15 @@ class AsyncTest extends Test:
         "executes nine computations in parallel" in run {
             for
                 result <- Async.zip(
-                    IO(1),
-                    IO(2),
-                    IO(3),
-                    IO(4),
-                    IO(5),
-                    IO(6),
-                    IO(7),
-                    IO(8),
-                    IO(9)
+                    Sync(1),
+                    Sync(2),
+                    Sync(3),
+                    Sync(4),
+                    Sync(5),
+                    Sync(6),
+                    Sync(7),
+                    Sync(8),
+                    Sync(9)
                 )
             yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9))
         }
@@ -1336,16 +1336,16 @@ class AsyncTest extends Test:
         "executes ten computations in parallel" in run {
             for
                 result <- Async.zip(
-                    IO(1),
-                    IO(2),
-                    IO(3),
-                    IO(4),
-                    IO(5),
-                    IO(6),
-                    IO(7),
-                    IO(8),
-                    IO(9),
-                    IO(10)
+                    Sync(1),
+                    Sync(2),
+                    Sync(3),
+                    Sync(4),
+                    Sync(5),
+                    Sync(6),
+                    Sync(7),
+                    Sync(8),
+                    Sync(9),
+                    Sync(10)
                 )
             yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
         }

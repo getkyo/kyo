@@ -15,7 +15,7 @@ class RandomBench extends ArenaBench.SyncAndFork(()):
                 _ <- Random.nextFloat
             yield ()
 
-        def loop(i: Int): Unit < IO =
+        def loop(i: Int): Unit < Sync =
             if i > depth then
                 ()
             else

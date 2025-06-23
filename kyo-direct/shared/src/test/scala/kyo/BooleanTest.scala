@@ -19,51 +19,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && IO(True).now
+                    True && Sync(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    True && IO(False).now
+                    True && Sync(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    False && IO(NotExpected).now
+                    False && Sync(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    IO(True).now && True
+                    Sync(True).now && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    IO(True).now && False
+                    Sync(True).now && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    IO(False).now && NotExpected
+                    Sync(False).now && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    IO(True).now && IO(True).now
+                    Sync(True).now && Sync(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    IO(True).now && IO(False).now
+                    Sync(True).now && Sync(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    IO(False).now && IO(NotExpected).now
+                    Sync(False).now && Sync(NotExpected).now
                 }
             }
         }
@@ -77,51 +77,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || IO(False).now
+                    False || Sync(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || IO(True).now
+                    False || Sync(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || IO(NotExpected).now
+                    True || Sync(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    IO(False).now || False
+                    Sync(False).now || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    IO(False).now || True
+                    Sync(False).now || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    IO(True).now || NotExpected
+                    Sync(True).now || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    IO(False).now || IO(False).now
+                    Sync(False).now || Sync(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    IO(False).now || IO(True).now
+                    Sync(False).now || Sync(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    IO(True).now || IO(NotExpected).now
+                    Sync(True).now || Sync(NotExpected).now
                 }
             }
         }

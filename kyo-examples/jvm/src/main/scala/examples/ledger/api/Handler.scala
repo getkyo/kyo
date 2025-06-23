@@ -14,7 +14,7 @@ trait Handler:
 
     def statement(
         account: Int
-    ): Statement < (Abort[StatusCode] & IO)
+    ): Statement < (Abort[StatusCode] & Sync)
 
 end Handler
 

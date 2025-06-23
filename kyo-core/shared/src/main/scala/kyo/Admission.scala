@@ -45,8 +45,8 @@ object Admission:
       * @return
       *   The computation result if admitted, or Rejected if the task is rejected
       */
-    def run[A, S](key: String)(v: A < S)(using frame: Frame): A < (IO & S & Abort[Rejected]) =
-        IO {
+    def run[A, S](key: String)(v: A < S)(using frame: Frame): A < (Sync & S & Abort[Rejected]) =
+        Sync {
             if Scheduler.get.reject(key) then Abort.fail(Rejected())
             else v
         }
@@ -70,8 +70,8 @@ object Admission:
       * @return
       *   The computation result if admitted, or Rejected if the task is rejected
       */
-    def run[A, S](key: Int)(v: A < S)(using frame: Frame): A < (IO & S & Abort[Rejected]) =
-        IO {
+    def run[A, S](key: Int)(v: A < S)(using frame: Frame): A < (Sync & S & Abort[Rejected]) =
+        Sync {
             if Scheduler.get.reject(key) then Abort.fail(Rejected())
             else v
         }
@@ -93,8 +93,8 @@ object Admission:
       * @return
       *   The computation result if admitted, or Rejected if the task is rejected
       */
-    def run[A, S](v: A < S)(using frame: Frame): A < (IO & S & Abort[Rejected]) =
-        IO {
+    def run[A, S](v: A < S)(using frame: Frame): A < (Sync & S & Abort[Rejected]) =
+        Sync {
             if Scheduler.get.reject() then Abort.fail(Rejected())
             else v
         }
@@ -117,8 +117,8 @@ object Admission:
       * @return
       *   true if the task should be rejected, false if it can be accepted
       */
-    def reject()(using Frame): Boolean < IO =
-        IO(Scheduler.get.reject())
+    def reject()(using Frame): Boolean < Sync =
+        Sync(Scheduler.get.reject())
 
     /** Tests if a task with the given string key should be rejected based on current system conditions.
       *
@@ -143,8 +143,8 @@ object Admission:
       * @return
       *   true if the task should be rejected, false if it can be accepted
       */
-    def reject(key: String)(using Frame): Boolean < IO =
-        IO(Scheduler.get.reject(key))
+    def reject(key: String)(using Frame): Boolean < Sync =
+        Sync(Scheduler.get.reject(key))
 
     /** Tests if a task with the given integer key should be rejected based on current system conditions.
       *
@@ -169,7 +169,7 @@ object Admission:
       * @return
       *   true if the task should be rejected, false if it can be accepted
       */
-    def reject(key: Int)(using Frame): Boolean < IO =
-        IO(Scheduler.get.reject(key))
+    def reject(key: Int)(using Frame): Boolean < Sync =
+        Sync(Scheduler.get.reject(key))
 
 end Admission

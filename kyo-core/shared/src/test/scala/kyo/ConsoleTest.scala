@@ -44,7 +44,7 @@ class ConsoleTest extends Test:
         scala.Console.withOut(buffer) {
             import AllowUnsafe.embrace.danger
             val (r1, r2) =
-                IO.Unsafe.evalOrThrow {
+                Sync.Unsafe.evalOrThrow {
                     for
                         r1 <- Abort.run(Console.print("test"))
                         r2 <- Abort.run(Console.checkErrors)
@@ -61,7 +61,7 @@ class ConsoleTest extends Test:
         scala.Console.withErr(buffer) {
             import AllowUnsafe.embrace.danger
             val (r1, r2) =
-                IO.Unsafe.evalOrThrow {
+                Sync.Unsafe.evalOrThrow {
                     for
                         r1 <- Abort.run(Console.printErr("test"))
                         r2 <- Abort.run(Console.checkErrors)
@@ -81,7 +81,7 @@ class ConsoleTest extends Test:
                 override def write(b: Int): Unit = error.append(b.toChar))) {
                 import AllowUnsafe.embrace.danger
                 val (r1, r2, r3, r4) =
-                    IO.Unsafe.evalOrThrow {
+                    Sync.Unsafe.evalOrThrow {
                         for
                             r1 <- Abort.run(Console.print("test"))
                             r2 <- Abort.run(Console.printLine(" message"))

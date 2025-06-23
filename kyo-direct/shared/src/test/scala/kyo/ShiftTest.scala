@@ -51,7 +51,7 @@ class ShiftTest extends AnyFreeSpec with Assertions:
 
         val forReference = direct:
             def innerF(i: Int) = i + 1
-            IO(innerF(1)).now
+            Sync(innerF(1)).now
 
     }
 

@@ -43,7 +43,7 @@ class LogTest extends Test:
             override def write(b: Int): Unit = output.append(b.toChar))) {
             import AllowUnsafe.embrace.danger
             val text: Text = "info message - hidden"
-            IO.Unsafe.evalOrThrow {
+            Sync.Unsafe.evalOrThrow {
                 for
                     _ <- Log.withConsoleLogger("test.logger", Log.Level.debug) {
                         for

@@ -7,8 +7,8 @@ import kyo.interop.flow.StreamSubscription.StreamComplete
 import scala.annotation.nowarn
 
 abstract private[kyo] class StreamPublisher[V, S](
-    stream: Stream[V, S & IO]
-)(using Isolate.Contextual[S, IO]) extends Publisher[V]:
+    stream: Stream[V, S & Sync]
+)(using Isolate.Contextual[S, Sync]) extends Publisher[V]:
 
     protected def bind(subscriber: Subscriber[? >: V]): Unit
 
@@ -19,8 +19,8 @@ abstract private[kyo] class StreamPublisher[V, S](
             bind(subscriber)
     end subscribe
 
-    private[StreamPublisher] def getSubscription(subscriber: Subscriber[? >: V])(using Frame): StreamSubscription[V, S] < IO =
-        IO.Unsafe(new StreamSubscription[V, S](stream, subscriber))
+    private[StreamPublisher] def getSubscription(subscriber: Subscriber[? >: V])(using Frame): StreamSubscription[V, S] < Sync =
+        Sync.Unsafe(new StreamSubscription[V, S](stream, subscriber))
     end getSubscription
 
 end StreamPublisher
@@ -28,16 +28,16 @@ end StreamPublisher
 object StreamPublisher:
 
     def apply[V, S](
-        using Isolate.Contextual[S, IO]
+        using Isolate.Contextual[S, Sync]
     )(
-        stream: Stream[V, S & IO],
+        stream: Stream[V, S & Sync],
         capacity: Int = Int.MaxValue
     )(
         using
         Frame,
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
-    ): StreamPublisher[V, S] < (Resource & IO & S) =
+    ): StreamPublisher[V, S] < (Resource & Sync & S) =
         def discardSubscriber(subscriber: Subscriber[? >: V]): Unit =
             subscriber.onSubscribe(new Subscription:
                 override def request(n: Long): Unit = ()
@@ -64,7 +64,7 @@ object StreamPublisher:
                 Resource.acquireRelease(Channel.init[Subscriber[? >: V]](capacity))(
                     _.close.map(_.foreach(_.foreach(discardSubscriber(_))))
                 )
-            publisher <- IO.Unsafe {
+            publisher <- Sync.Unsafe {
                 new StreamPublisher[V, S](stream):
                     override protected def bind(
                         subscriber: Subscriber[? >: V]
@@ -82,10 +82,10 @@ object StreamPublisher:
     object Unsafe:
         @nowarn("msg=anonymous")
         def apply[V, S](
-            using Isolate.Contextual[S, IO]
+            using Isolate.Contextual[S, Sync]
         )(
-            stream: Stream[V, S & IO],
-            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (IO & S)) => Unit
+            stream: Stream[V, S & Sync],
+            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (Sync & S)) => Unit
         )(
             using
             AllowUnsafe,

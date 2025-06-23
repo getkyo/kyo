@@ -36,7 +36,7 @@ object Routes:
       */
     def run[A, S](server: NettyKyoServer)(v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
         Emit.run[Route][Unit, Nothing, Async & S](v).map { (routes, _) =>
-            IO(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & S)
+            Sync(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & S)
         }
     end run
 

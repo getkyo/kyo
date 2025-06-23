@@ -511,17 +511,17 @@ class ChannelTest extends Test:
     }
 
     "Kyo computations" - {
-        "IO" in run {
+        "Sync" in run {
             for
-                channel <- Channel.init[Int < IO](2)
-                _       <- channel.put(IO(42))
+                channel <- Channel.init[Int < Sync](2)
+                _       <- channel.put(Sync(42))
                 result  <- channel.take.flatten
             yield assert(result == 42)
         }
         "AtomicBoolean" in run {
             for
                 flag    <- AtomicBoolean.init(false)
-                channel <- Channel.init[Int < IO](2)
+                channel <- Channel.init[Int < Sync](2)
                 _       <- channel.put(flag.set(true).andThen(42))
                 before  <- flag.get
                 result  <- channel.take.flatten
@@ -1167,7 +1167,7 @@ class ChannelTest extends Test:
 
     private def verifyRaceDrainWithClose(
         capacity: Int,
-        drain: Channel[Int] => Any < (Abort[Closed] & IO),
+        drain: Channel[Int] => Any < (Abort[Closed] & Sync),
         close: Channel[Int] => (Any < Async)
     ) =
         for

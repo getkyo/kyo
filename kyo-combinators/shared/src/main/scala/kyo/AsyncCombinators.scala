@@ -15,7 +15,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       */
     inline def fork(
         using frame: Frame
-    ): Fiber[E, A] < (IO & Ctx) =
+    ): Fiber[E, A] < (Sync & Ctx) =
         Async.run(effect)
 
     /** Forks this computation using the Async effect and returns its result as a `Fiber[E, A]`, managed by the Resource effect. Unlike
@@ -27,7 +27,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       */
     inline def forkScoped(
         using frame: Frame
-    ): Fiber[E, A] < (IO & Ctx & Resource) =
+    ): Fiber[E, A] < (Sync & Ctx & Resource) =
         Kyo.acquireRelease(Async.run(effect))(_.interrupt.unit)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.
@@ -40,8 +40,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     @targetName("zipRightPar")
     def &>[A1, E1, Ctx1](
         using
-        s: Isolate.Contextual[Ctx, IO],
-        s2: Isolate.Contextual[Ctx1, IO]
+        s: Isolate.Contextual[Ctx, Sync],
+        s2: Isolate.Contextual[Ctx1, Sync]
     )(next: A1 < (Abort[E1] & Async & Ctx1))(
         using
         r: Reducible[Abort[E]],
@@ -65,8 +65,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     @targetName("zipLeftPar")
     def <&[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        s: Isolate.Contextual[Ctx, IO],
-        s2: Isolate.Contextual[Ctx1, IO]
+        s: Isolate.Contextual[Ctx, Sync],
+        s2: Isolate.Contextual[Ctx1, Sync]
     )(
         using
         r: Reducible[Abort[E]],
@@ -90,8 +90,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     @targetName("zipPar")
     def <&>[A1, E1, Ctx1](
         using
-        s: Isolate.Contextual[Ctx, IO],
-        s2: Isolate.Contextual[Ctx1, IO]
+        s: Isolate.Contextual[Ctx, Sync],
+        s2: Isolate.Contextual[Ctx1, Sync]
     )(next: A1 < (Abort[E1] & Async & Ctx1))(
         using
         r: Reducible[Abort[E]],

@@ -10,7 +10,7 @@ abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abo
     final override protected def run[A](v: => A < (Async & Resource & Abort[Throwable]))(using Frame, Render[A]): Unit =
         import AllowUnsafe.embrace.danger
         val currentAsync: Unit < (Async & Abort[Throwable]) =
-            Abort.run(handle(v)).map(result => IO(onResult(result)).andThen(Abort.get(result)).unit)
+            Abort.run(handle(v)).map(result => Sync(onResult(result)).andThen(Abort.get(result)).unit)
         maybePreviousAsync = maybePreviousAsync match
             case Absent                 => Present(currentAsync)
             case Present(previousAsync) => Present(previousAsync.map(_ => currentAsync))
@@ -19,7 +19,7 @@ abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abo
                 val race = Async.race(fiber.get, previousAsync)
                 Async.timeout(timeout)(race)
             }
-            val _ = IO.Unsafe.evalOrThrow(Async.run(racedAsyncIO))
+            val _ = Sync.Unsafe.evalOrThrow(Async.run(racedAsyncIO))
         }.toList
     end run
 

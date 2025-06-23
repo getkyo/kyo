@@ -18,8 +18,8 @@ class OTelTraceReceiver extends TraceReceiver {
         name: String,
         parent: Maybe[Span],
         attributes: Attributes
-    )(implicit frame: Frame): Span < IO =
-        IO {
+    )(implicit frame: Frame): Span < Sync =
+        Sync {
             val b =
                 otel.getTracer(scope.mkString("_"))
                     .spanBuilder(name)

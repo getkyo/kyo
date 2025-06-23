@@ -17,9 +17,9 @@ object TSchedule:
       * @param schedule
       *   The initial schedule to wrap
       * @return
-      *   A new TSchedule containing the schedule, within the IO effect
+      *   A new TSchedule containing the schedule, within the Sync effect
       */
-    def init(schedule: Schedule)(using Frame): TSchedule < IO =
+    def init(schedule: Schedule)(using Frame): TSchedule < Sync =
         initWith(schedule)(identity)
 
     /** Creates a new TSchedule and immediately applies a function to it.
@@ -32,9 +32,9 @@ object TSchedule:
       * @param f
       *   The function to apply to the newly created TSchedule
       * @return
-      *   The result of applying the function to the new TSchedule, within combined IO and S effects
+      *   The result of applying the function to the new TSchedule, within combined Sync and S effects
       */
-    inline def initWith[A, S](schedule: Schedule)(inline f: TSchedule => A < S)(using Frame): A < (IO & S) =
+    inline def initWith[A, S](schedule: Schedule)(inline f: TSchedule => A < S)(using Frame): A < (Sync & S) =
         Clock.now.map(now => TRef.initWith(schedule.next(now))(f))
 
     extension (self: TSchedule)

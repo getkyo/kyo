@@ -25,19 +25,19 @@ import scala.annotation.tailrec
   *   [[kyo.Random.withSeed]] For creating reproducible random sequences
   */
 abstract class Random extends Serializable:
-    def nextInt(using Frame): Int < IO
-    def nextInt(exclusiveBound: Int)(using Frame): Int < IO
-    def nextLong(using Frame): Long < IO
-    def nextDouble(using Frame): Double < IO
-    def nextBoolean(using Frame): Boolean < IO
-    def nextFloat(using Frame): Float < IO
-    def nextGaussian(using Frame): Double < IO
-    def nextValue[A](seq: Seq[A])(using Frame): A < IO
-    def nextValues[A](length: Int, seq: Seq[A])(using Frame): Seq[A] < IO
-    def nextStringAlphanumeric(length: Int)(using Frame): String < IO
-    def nextString(length: Int, chars: Seq[Char])(using Frame): String < IO
-    def nextBytes(length: Int)(using Frame): Seq[Byte] < IO
-    def shuffle[A](seq: Seq[A])(using Frame): Seq[A] < IO
+    def nextInt(using Frame): Int < Sync
+    def nextInt(exclusiveBound: Int)(using Frame): Int < Sync
+    def nextLong(using Frame): Long < Sync
+    def nextDouble(using Frame): Double < Sync
+    def nextBoolean(using Frame): Boolean < Sync
+    def nextFloat(using Frame): Float < Sync
+    def nextGaussian(using Frame): Double < Sync
+    def nextValue[A](seq: Seq[A])(using Frame): A < Sync
+    def nextValues[A](length: Int, seq: Seq[A])(using Frame): Seq[A] < Sync
+    def nextStringAlphanumeric(length: Int)(using Frame): String < Sync
+    def nextString(length: Int, chars: Seq[Char])(using Frame): String < Sync
+    def nextBytes(length: Int)(using Frame): Seq[Byte] < Sync
+    def shuffle[A](seq: Seq[A])(using Frame): Seq[A] < Sync
     def unsafe: Random.Unsafe
 end Random
 
@@ -118,24 +118,24 @@ object Random:
       */
     def apply(u: Unsafe): Random =
         new Random:
-            def nextInt(using Frame)                      = IO.Unsafe(u.nextInt())
-            def nextInt(exclusiveBound: Int)(using Frame) = IO.Unsafe(u.nextInt(exclusiveBound))
-            def nextLong(using Frame)                     = IO.Unsafe(u.nextLong())
-            def nextDouble(using Frame)                   = IO.Unsafe(u.nextDouble())
-            def nextBoolean(using Frame)                  = IO.Unsafe(u.nextBoolean())
-            def nextFloat(using Frame)                    = IO.Unsafe(u.nextFloat())
-            def nextGaussian(using Frame)                 = IO.Unsafe(u.nextGaussian())
-            def nextValue[A](seq: Seq[A])(using Frame)    = IO.Unsafe(u.nextValue[A](seq))
+            def nextInt(using Frame)                      = Sync.Unsafe(u.nextInt())
+            def nextInt(exclusiveBound: Int)(using Frame) = Sync.Unsafe(u.nextInt(exclusiveBound))
+            def nextLong(using Frame)                     = Sync.Unsafe(u.nextLong())
+            def nextDouble(using Frame)                   = Sync.Unsafe(u.nextDouble())
+            def nextBoolean(using Frame)                  = Sync.Unsafe(u.nextBoolean())
+            def nextFloat(using Frame)                    = Sync.Unsafe(u.nextFloat())
+            def nextGaussian(using Frame)                 = Sync.Unsafe(u.nextGaussian())
+            def nextValue[A](seq: Seq[A])(using Frame)    = Sync.Unsafe(u.nextValue[A](seq))
             def nextValues[A](length: Int, seq: Seq[A])(using Frame) =
-                IO.Unsafe(u.nextValues(length, seq))
+                Sync.Unsafe(u.nextValues(length, seq))
             def nextStringAlphanumeric(length: Int)(using Frame) =
-                IO.Unsafe(u.nextStringAlphanumeric(length))
+                Sync.Unsafe(u.nextStringAlphanumeric(length))
             def nextString(length: Int, chars: Seq[Char])(using Frame) =
-                IO.Unsafe(u.nextString(length, chars))
+                Sync.Unsafe(u.nextString(length, chars))
             def nextBytes(length: Int)(using Frame) =
-                IO.Unsafe(u.nextBytes(length))
+                Sync.Unsafe(u.nextBytes(length))
             def shuffle[A](seq: Seq[A])(using Frame) =
-                IO.Unsafe(u.shuffle(seq))
+                Sync.Unsafe(u.shuffle(seq))
             def unsafe: Unsafe = u
 
     /** A live instance of Random using the default java.util.Random. */
@@ -156,7 +156,7 @@ object Random:
       * @return
       *   The result of the effect execution.
       */
-    def let[A, S](r: Random)(v: A < S)(using Frame): A < (S & IO) =
+    def let[A, S](r: Random)(v: A < S)(using Frame): A < (S & Sync) =
         local.let(r)(v)
 
     /** Executes the given effect with a new Random instance initialized with the specified seed.
@@ -172,8 +172,8 @@ object Random:
       * @return
       *   The result of the effect execution with the seeded Random instance.
       */
-    def withSeed[A, S](seed: Int)(v: A < S)(using Frame): A < (S & IO) =
-        IO(Random(Random.Unsafe(new java.util.Random(seed)))).map(let(_)(v))
+    def withSeed[A, S](seed: Int)(v: A < S)(using Frame): A < (S & Sync) =
+        Sync(Random(Random.Unsafe(new java.util.Random(seed)))).map(let(_)(v))
 
     /** Gets the current Random instance from the local context.
       *
@@ -193,7 +193,7 @@ object Random:
       * @return
       *   The result of executing the function with the current Random instance.
       */
-    def use[A, S](f: Random => A < S)(using Frame): A < (S & IO) =
+    def use[A, S](f: Random => A < S)(using Frame): A < (S & Sync) =
         local.use(f)
 
     /** Generates a random integer.
@@ -201,8 +201,8 @@ object Random:
       * @return
       *   A random Int value.
       */
-    def nextInt(using Frame): Int < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextInt())
+    def nextInt(using Frame): Int < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextInt())
 
     /** Generates a random integer between 0 (inclusive) and the specified bound (exclusive).
       *
@@ -211,48 +211,48 @@ object Random:
       * @return
       *   A random Int value within the specified range.
       */
-    def nextInt(exclusiveBound: Int)(using Frame): Int < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextInt(exclusiveBound))
+    def nextInt(exclusiveBound: Int)(using Frame): Int < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextInt(exclusiveBound))
 
     /** Generates a random long integer.
       *
       * @return
       *   A random Long value.
       */
-    def nextLong(using Frame): Long < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextLong())
+    def nextLong(using Frame): Long < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextLong())
 
     /** Generates a random double between 0.0 (inclusive) and 1.0 (exclusive).
       *
       * @return
       *   A random Double value between 0.0 and 1.0.
       */
-    def nextDouble(using Frame): Double < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextDouble())
+    def nextDouble(using Frame): Double < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextDouble())
 
     /** Generates a random boolean value.
       *
       * @return
       *   A random Boolean value.
       */
-    def nextBoolean(using Frame): Boolean < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextBoolean())
+    def nextBoolean(using Frame): Boolean < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextBoolean())
 
     /** Generates a random float between 0.0 (inclusive) and 1.0 (exclusive).
       *
       * @return
       *   A random Float value between 0.0 and 1.0.
       */
-    def nextFloat(using Frame): Float < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextFloat())
+    def nextFloat(using Frame): Float < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextFloat())
 
     /** Generates a random double from a Gaussian distribution with mean 0.0 and standard deviation 1.0.
       *
       * @return
       *   A random Double value from a Gaussian distribution.
       */
-    def nextGaussian(using Frame): Double < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextGaussian())
+    def nextGaussian(using Frame): Double < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextGaussian())
 
     /** Selects a random element from the given sequence.
       *
@@ -263,8 +263,8 @@ object Random:
       * @return
       *   A randomly selected element from the sequence.
       */
-    def nextValue[A](seq: Seq[A])(using Frame): A < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextValue(seq): A)
+    def nextValue[A](seq: Seq[A])(using Frame): A < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextValue(seq): A)
 
     /** Generates a sequence of random elements from the given sequence.
       *
@@ -277,8 +277,8 @@ object Random:
       * @return
       *   A new sequence of randomly selected elements.
       */
-    def nextValues[A](length: Int, seq: Seq[A])(using Frame): Seq[A] < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextValues(length, seq))
+    def nextValues[A](length: Int, seq: Seq[A])(using Frame): Seq[A] < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextValues(length, seq))
 
     /** Generates a random alphanumeric string of the specified length.
       *
@@ -287,8 +287,8 @@ object Random:
       * @return
       *   A random alphanumeric String of the specified length.
       */
-    def nextStringAlphanumeric(length: Int)(using Frame): String < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextStringAlphanumeric(length))
+    def nextStringAlphanumeric(length: Int)(using Frame): String < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextStringAlphanumeric(length))
 
     /** Generates a random string of the specified length using the given character sequence and the current Random instance.
       *
@@ -299,8 +299,8 @@ object Random:
       * @return
       *   A random String of the specified length.
       */
-    def nextString(length: Int, chars: Seq[Char])(using Frame): String < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextString(length, chars))
+    def nextString(length: Int, chars: Seq[Char])(using Frame): String < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextString(length, chars))
 
     /** Generates a sequence of random bytes.
       *
@@ -309,8 +309,8 @@ object Random:
       * @return
       *   A Seq[Byte] of random bytes.
       */
-    def nextBytes(length: Int)(using Frame): Seq[Byte] < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nextBytes(length))
+    def nextBytes(length: Int)(using Frame): Seq[Byte] < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nextBytes(length))
 
     /** Shuffles the elements of the given sequence randomly.
       *
@@ -321,7 +321,7 @@ object Random:
       * @return
       *   A new sequence with the elements shuffled randomly.
       */
-    def shuffle[A](seq: Seq[A])(using Frame): Seq[A] < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.shuffle(seq))
+    def shuffle[A](seq: Seq[A])(using Frame): Seq[A] < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.shuffle(seq))
 
 end Random

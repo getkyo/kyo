@@ -382,17 +382,17 @@ class QueueTest extends Test:
     end if
 
     "Kyo computations" - {
-        "IO" in run {
+        "Sync" in run {
             for
-                queue  <- Queue.init[Int < IO](2)
-                _      <- queue.offer(IO(42))
+                queue  <- Queue.init[Int < Sync](2)
+                _      <- queue.offer(Sync(42))
                 result <- queue.poll.map(_.get)
             yield assert(result == 42)
         }
         "AtomicBoolean" in run {
             for
                 flag   <- AtomicBoolean.init(false)
-                queue  <- Queue.init[Int < IO](2)
+                queue  <- Queue.init[Int < Sync](2)
                 _      <- queue.offer(flag.set(true).andThen(42))
                 before <- flag.get
                 result <- queue.poll.map(_.get)

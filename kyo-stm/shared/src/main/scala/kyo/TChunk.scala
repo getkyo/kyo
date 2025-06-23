@@ -15,7 +15,7 @@ object TChunk:
       * @return
       *   a new empty transactional chunk
       */
-    def init[A](using Frame): TChunk[A] < IO =
+    def init[A](using Frame): TChunk[A] < Sync =
         init(Chunk.empty[A])
 
     /** Creates a new TChunk containing the provided values.
@@ -23,9 +23,9 @@ object TChunk:
       * @param values
       *   The initial values to store in the chunk
       * @return
-      *   A new TChunk containing the values, within the IO effect
+      *   A new TChunk containing the values, within the Sync effect
       */
-    def init[A](values: A*)(using Frame): TChunk[A] < IO =
+    def init[A](values: A*)(using Frame): TChunk[A] < Sync =
         init(Chunk.from(values))
 
     /** Creates a new TChunk from an existing Chunk.
@@ -33,9 +33,9 @@ object TChunk:
       * @param chunk
       *   The initial chunk to wrap
       * @return
-      *   A new TChunk containing the chunk, within the IO effect
+      *   A new TChunk containing the chunk, within the Sync effect
       */
-    def init[A](chunk: Chunk[A])(using Frame): TChunk[A] < IO =
+    def init[A](chunk: Chunk[A])(using Frame): TChunk[A] < Sync =
         initWith(chunk)(identity)
 
     /** Creates a new TChunk and immediately applies a function to it.
@@ -48,9 +48,9 @@ object TChunk:
       * @param f
       *   The function to apply to the newly created TChunk
       * @return
-      *   The result of applying the function to the new TChunk, within combined IO and S effects
+      *   The result of applying the function to the new TChunk, within combined Sync and S effects
       */
-    inline def initWith[A, B, S](chunk: Chunk[A])(inline f: TChunk[A] => B < S)(using inline frame: Frame): B < (IO & S) =
+    inline def initWith[A, B, S](chunk: Chunk[A])(inline f: TChunk[A] => B < S)(using inline frame: Frame): B < (Sync & S) =
         TRef.initWith(chunk)(f)
 
     private def useRef[A, B, S](ref: TRef[A], f: A => B < S)(using Frame) = ref.use(f(_))

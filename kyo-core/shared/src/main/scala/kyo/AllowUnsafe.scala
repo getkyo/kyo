@@ -10,8 +10,8 @@ Options (in order of preference):
 1. Receive an implicit AllowUnsafe parameter
    def myFunction(implicit allow: AllowUnsafe) = // unsafe code here
 
-2. Suspend the operation with IO
-   IO.Unsafe { // unsafe code here }
+2. Suspend the operation with Sync
+   Sync.Unsafe { // unsafe code here }
 
 3. Import implicit evidence (last resort)
    import AllowUnsafe.embrace.danger

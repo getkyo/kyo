@@ -45,9 +45,9 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   A unit value wrapped in Resource and IO effects.
+      *   A unit value wrapped in Resource and Sync effects.
       */
-    inline def ensure(inline v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
+    inline def ensure(inline v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & Sync) =
         ContextEffect.suspendWith(Tag[Resource])(_.ensure(_ => v))
 
     /** Ensures that the given effect is executed when the resource is released, with information about the computation's outcome.
@@ -61,9 +61,9 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   A unit value wrapped in Resource and IO effects.
+      *   A unit value wrapped in Resource and Sync effects.
       */
-    inline def ensure(inline f: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
+    inline def ensure(inline f: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & Sync) =
         ContextEffect.suspendWith(Tag[Resource])(_.ensure(f))
 
     /** Acquires a resource and provides a release function.
@@ -75,10 +75,10 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   The acquired resource wrapped in Resource, IO, and S effects.
+      *   The acquired resource wrapped in Resource, Sync, and S effects.
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Resource & IO & S) =
-        IO {
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Resource & Sync & S) =
+        Sync {
             acquire.map { resource =>
                 ensure(release(resource)).andThen(resource)
             }
@@ -91,9 +91,9 @@ object Resource:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   The acquired Closeable resource wrapped in Resource, IO, and S effects.
+      *   The acquired Closeable resource wrapped in Resource, Sync, and S effects.
       */
-    def acquire[A <: java.io.Closeable, S](resource: => A < S)(using Frame): A < (Resource & IO & S) =
+    def acquire[A <: java.io.Closeable, S](resource: => A < S)(using Frame): A < (Resource & Sync & S) =
         acquireRelease(resource)(_.close())
 
     /** Runs a resource-managed effect with default parallelism of 1.
@@ -127,11 +127,11 @@ object Resource:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
-        IO.Unsafe {
+        Sync.Unsafe {
             val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
             ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
                 .handle(
-                    IO.ensure(finalizer.close),
+                    Sync.ensure(finalizer.close),
                     Abort.run[Any]
                 ).map { result =>
                     finalizer
@@ -145,11 +145,11 @@ object Resource:
 
     /** Represents a finalizer for a resource. */
     sealed abstract class Finalizer:
-        def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO
+        def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
 
     object Finalizer:
         sealed abstract class Awaitable extends Finalizer:
-            def close(ex: Maybe[Error[Any]])(using Frame): Unit < IO
+            def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync
             def await(using Frame): Unit < Async
 
         object Awaitable:
@@ -161,8 +161,8 @@ object Resource:
                         )
                         val promise = Promise.Unsafe.init[Nothing, Unit]().safe
 
-                        def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < IO =
-                            IO.Unsafe {
+                        def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
+                            Sync.Unsafe {
                                 if !queue.offer(v).contains(true) then
                                     Abort.panic(new Closed(
                                         "Finalizer",
@@ -173,8 +173,8 @@ object Resource:
                             }
                         end ensure
 
-                        def close(ex: Maybe[Error[Any]])(using Frame): Unit < IO =
-                            IO.Unsafe {
+                        def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
+                            Sync.Unsafe {
                                 queue.close() match
                                     case Absent => ()
                                     case Present(tasks) =>

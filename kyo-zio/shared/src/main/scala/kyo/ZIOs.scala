@@ -17,7 +17,7 @@ object ZIOs:
       *   A Kyo effect that, when run, will execute the zio.ZIO
       */
     def get[E, A](v: => ZIO[Any, E, A])(using f: Frame, t: zio.Trace): A < (Abort[E] & Async) =
-        IO.Unsafe {
+        Sync.Unsafe {
             Unsafe.unsafely {
                 given ce: CanEqual[E, E] = CanEqual.derived
                 val p                    = Promise.Unsafe.init[E, A]()
@@ -67,7 +67,7 @@ object ZIOs:
                         fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))
                     })
                 }
-            }.handle(IO.Unsafe.evalOrThrow)
+            }.handle(Sync.Unsafe.evalOrThrow)
         }
     end run
 

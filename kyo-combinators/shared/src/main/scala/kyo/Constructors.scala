@@ -15,9 +15,9 @@ extension (kyoObject: Kyo.type)
       * @param release
       *   The effect to release the resource
       * @return
-      *   An effect that manages the resource lifecycle using Resource and IO effects
+      *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < Async)(using Frame): A < (S & Resource & IO) =
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < Async)(using Frame): A < (S & Resource & Sync) =
         Resource.acquireRelease(acquire)(release)
 
     /** Adds a finalizer to the current effect using Resource.
@@ -27,7 +27,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that ensures the finalizer is executed when the effect is completed
       */
-    def addFinalizer(finalizer: => Any < Async)(using Frame): Unit < (Resource & IO) =
+    def addFinalizer(finalizer: => Any < Async)(using Frame): Unit < (Resource & Sync) =
         Resource.ensure(finalizer)
 
     /** Creates an asynchronous effect that can be completed by the given register function.
@@ -46,7 +46,7 @@ extension (kyoObject: Kyo.type)
                     effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
                 val updatePromiseIO = Async.run(updatePromise).unit
                 import AllowUnsafe.embrace.danger
-                IO.Unsafe.evalOrThrow(updatePromiseIO)
+                Sync.Unsafe.evalOrThrow(updatePromiseIO)
             _ <- register(registerFn)
             a <- promise.get
         yield a
@@ -115,10 +115,10 @@ extension (kyoObject: Kyo.type)
       * @param closeable
       *   The AutoCloseable resource to create an effect from
       * @return
-      *   An effect that manages the resource lifecycle using Resource and IO effects
+      *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
-    def fromAutoCloseable[A <: AutoCloseable, S](closeable: => A < S)(using Frame): A < (S & Resource & IO) =
-        acquireRelease(closeable)(c => IO(c.close()))
+    def fromAutoCloseable[A <: AutoCloseable, S](closeable: => A < S)(using Frame): A < (S & Resource & Sync) =
+        acquireRelease(closeable)(c => Sync(c.close()))
 
     /** Creates an effect from an Either[E, A] and handles Left[E] to Abort[E].
       *
@@ -207,7 +207,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logInfo(inline message: => String): Unit < IO =
+    inline def logInfo(inline message: => String): Unit < Sync =
         Log.info(message)
 
     /** Logs an informational message to the console with an error.
@@ -219,7 +219,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logInfo(inline message: => String, inline err: => Throwable): Unit < IO =
+    inline def logInfo(inline message: => String, inline err: => Throwable): Unit < Sync =
         Log.info(message, err)
 
     /** Logs a warning message to the console.
@@ -229,7 +229,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logWarn(inline message: => String): Unit < IO =
+    inline def logWarn(inline message: => String): Unit < Sync =
         Log.warn(message)
 
     /** Logs a warning message to the console with an error.
@@ -241,7 +241,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logWarn[S, S1](inline message: => String, inline err: => Throwable): Unit < IO =
+    inline def logWarn[S, S1](inline message: => String, inline err: => Throwable): Unit < Sync =
         Log.warn(message, err)
 
     /** Logs a debug message to the console.
@@ -251,7 +251,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logDebug(inline message: => String): Unit < IO =
+    inline def logDebug(inline message: => String): Unit < Sync =
         Log.debug(message)
 
     /** Logs a debug message to the console with an error.
@@ -263,7 +263,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logDebug(inline message: => String, inline err: => Throwable): Unit < IO =
+    inline def logDebug(inline message: => String, inline err: => Throwable): Unit < Sync =
         Log.debug(message, err)
 
     /** Logs an error message to the console.
@@ -273,7 +273,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logError(inline message: => String): Unit < IO =
+    inline def logError(inline message: => String): Unit < Sync =
         Log.error(message)
 
     /** Logs an error message to the console with an error.
@@ -285,7 +285,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logError(inline message: => String, inline err: => Throwable): Unit < IO =
+    inline def logError(inline message: => String, inline err: => Throwable): Unit < Sync =
         Log.error(message, err)
 
     /** Logs a trace message to the console.
@@ -295,7 +295,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logTrace(inline message: => String): Unit < IO =
+    inline def logTrace(inline message: => String): Unit < Sync =
         Log.trace(message)
 
     /** Logs a trace message to the console with an error.
@@ -307,7 +307,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logTrace(inline message: => String, inline err: Throwable): Unit < IO =
+    inline def logTrace(inline message: => String, inline err: Throwable): Unit < Sync =
         Log.trace(message, err)
 
     /** Creates an effect that never completes using Async.
@@ -339,7 +339,7 @@ extension (kyoObject: Kyo.type)
       * @param resource
       *   The resource to create a scoped effect from
       * @return
-      *   An effect that manages the resource lifecycle using Resource and IO effects
+      *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
     def scoped[A, S](resource: => A < (S & Resource))(using Frame): A < (Async & S) =
         Resource.run(resource)
@@ -375,25 +375,25 @@ extension (kyoObject: Kyo.type)
     def sleep(duration: Duration)(using Frame): Unit < Async =
         Async.sleep(duration)
 
-    /** Suspends an effect using IO.
+    /** Suspends an effect using Sync.
       *
       * @param effect
       *   The effect to suspend
       * @return
       *   An effect that suspends the given effect
       */
-    def suspend[A, S](effect: => A < S)(using Frame): A < (S & IO) =
-        IO(effect)
+    def suspend[A, S](effect: => A < S)(using Frame): A < (S & Sync) =
+        Sync(effect)
 
-    /** Suspends an effect using IO and handles any exceptions that occur to Abort[Throwable].
+    /** Suspends an effect using Sync and handles any exceptions that occur to Abort[Throwable].
       *
       * @param effect
       *   The effect to suspend
       * @return
       *   An effect that suspends the given effect and handles any exceptions that occur to Abort[Throwable]
       */
-    def suspendAttempt[A, S](effect: => A < S)(using Frame): A < (S & IO & Abort[Throwable]) =
-        IO(Abort.catching[Throwable](effect))
+    def suspendAttempt[A, S](effect: => A < S)(using Frame): A < (S & Sync & Abort[Throwable]) =
+        Sync(Abort.catching[Throwable](effect))
 
     /** Traverses a sequence of effects and collects the results.
       *
