@@ -166,6 +166,42 @@ class PipeTest extends Test:
             }
         }
 
+        "takeWhilePure" - {
+            "take none" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.takeWhilePure[Int](_ < 0)).run.eval == Seq.empty
+                )
+            }
+
+            "take some" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3, 4, 5)).into(Pipe.takeWhilePure[Int](_ < 4)).run.eval ==
+                        Seq(1, 2, 3)
+                )
+            }
+
+            "take all" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.takeWhilePure[Int](_ < 10)).run.eval ==
+                        Seq(1, 2, 3)
+                )
+            }
+
+            "empty stream" in {
+                assert(
+                    Stream.init(Seq.empty[Int]).into(Pipe.takeWhilePure[Int](_ => true)).run.eval ==
+                        Seq.empty
+                )
+            }
+
+            "stack safety" in {
+                assert(
+                    Stream.init(Seq.fill(n)(1)).into(Pipe.takeWhilePure[Int](_ == 1)).run.eval ==
+                        Seq.fill(n)(1)
+                )
+            }
+        }
+
         "dropWhile" - {
             "drop none" in {
                 assert(
@@ -211,6 +247,43 @@ class PipeTest extends Test:
             }
         }
 
+        "dropWhilePure" - {
+            "drop none" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.dropWhilePure[Int](_ < 0)).run.eval ==
+                        Seq(1, 2, 3)
+                )
+            }
+
+            "drop some" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3, 4, 5)).into(Pipe.dropWhilePure[Int](_ < 4)).run.eval ==
+                        Seq(4, 5)
+                )
+            }
+
+            "drop all" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.dropWhilePure[Int](_ < 10)).run.eval ==
+                        Seq.empty
+                )
+            }
+
+            "empty stream" in {
+                assert(
+                    Stream.init(Seq.empty[Int]).into(Pipe.dropWhilePure[Int](_ => false)).run.eval ==
+                        Seq.empty
+                )
+            }
+
+            "stack safety" in {
+                assert(
+                    Stream.init(Seq.fill(n)(1) ++ Seq(2)).into(Pipe.dropWhilePure[Int](_ == 1)).run.eval ==
+                        Seq(2)
+                )
+            }
+        }
+
         "filter" - {
             "non-empty" in {
                 assert(
@@ -245,6 +318,36 @@ class PipeTest extends Test:
                 val result            = Var.run(false)(Stream.init(1 to n).into(Pipe.filter(predicate)).run).eval
                 assert(
                     result.size > 0 && result.forall(_ % 2 == 0) && result.forall(i => !(i % 3 == 0))
+                )
+            }
+        }
+
+        "filterPure" - {
+            "non-empty" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.filterPure[Int](_ % 2 == 0)).run.eval ==
+                        Seq(2)
+                )
+            }
+
+            "all in" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.filterPure[Int](_ => true)).run.eval ==
+                        Seq(1, 2, 3)
+                )
+            }
+
+            "all out" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.filterPure[Int](_ => false)).run.eval ==
+                        Seq.empty
+                )
+            }
+
+            "stack safety" in {
+                assert(
+                    Stream.init(1 to n).into(Pipe.filterPure[Int](_ % 2 == 0)).run.eval.size ==
+                        n / 2
                 )
             }
         }
@@ -284,6 +387,36 @@ class PipeTest extends Test:
                 val result = Var.run(false)(Stream.init(1 to 10).into(Pipe.collect(predicate)).run).eval
                 assert(
                     result == (1 to 10 by 2)
+                )
+            }
+        }
+
+        "collectPure" - {
+            "non-empty" in {
+                assert(
+                    Stream.init(Seq(None, Some(2), None)).into(Pipe.collectPure[Option[Int]](Maybe.fromOption(_))).run.eval ==
+                        Seq(2)
+                )
+            }
+
+            "all in" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.collectPure[Int](Present(_))).run.eval ==
+                        Seq(1, 2, 3)
+                )
+            }
+
+            "all out" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).collectPure(_ => Absent).run.eval ==
+                        Seq.empty
+                )
+            }
+
+            "stack safety" in {
+                assert(
+                    Stream.init(1 to n).into(Pipe.collectPure[Int](v => if v % 2 == 0 then Present(v) else Absent)).run.eval.size ==
+                        n / 2
                 )
             }
         }
@@ -336,6 +469,57 @@ class PipeTest extends Test:
             "stack safety" in {
                 assert(
                     Stream.init(Seq.fill(n)(1)).into(Pipe.collectWhile[Int](i => Present(i))).run.eval ==
+                        Seq.fill(n)(1)
+                )
+            }
+        }
+
+        "collectWhilePure" - {
+            "take none" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.collectWhilePure[Int](i =>
+                        if i < 0 then Present(i + 1) else Absent
+                    )).run.eval == Seq.empty
+                )
+            }
+
+            "take some" in {
+                assert(
+                    Stream.init(Seq(
+                        1, 2, 3, 4, 5
+                    )).into(Pipe.collectWhilePure[Int](i => if i < 4 then Present(i + 1) else Absent)).run.eval ==
+                        Seq(2, 3, 4)
+                )
+            }
+
+            "take some even if subsequent elements pass predicate" in {
+                assert(
+                    Stream.init(Seq(
+                        1, 2, 3, 4, 5
+                    )).into(Pipe.collectWhilePure[Int](i => if i != 4 then Present(i + 1) else Absent)).run.eval ==
+                        Seq(2, 3, 4)
+                )
+            }
+
+            "take all" in {
+                assert(
+                    Stream.init(Seq(
+                        1, 2, 3, 4, 5
+                    )).into(Pipe.collectWhilePure[Int](i => if i < 10 then Present(i + 1) else Absent)).run.eval ==
+                        Seq(2, 3, 4, 5, 6)
+                )
+            }
+
+            "empty stream" in {
+                assert(
+                    Stream.init(Seq.empty[Int]).into(Pipe.collectWhilePure[Int](i => Present(i + 1))).run.eval ==
+                        Seq.empty
+                )
+            }
+
+            "stack safety" in {
+                assert(
+                    Stream.init(Seq.fill(n)(1)).into(Pipe.collectWhilePure[Int](i => Present(i))).run.eval ==
                         Seq.fill(n)(1)
                 )
             }
@@ -424,6 +608,40 @@ class PipeTest extends Test:
             }
         }
 
+        "mapPure" - {
+            "double" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.mapPure[Int](_ * 2)).run.eval == Seq(2, 4, 6)
+                )
+            }
+
+            "to string" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.mapPure[Int](_.toString)).run.eval ==
+                        Seq("1", "2", "3")
+                )
+            }
+
+            "stack safety" in {
+                assert(
+                    Stream.init(Seq.fill(n)(1)).into(Pipe.mapPure[Int](_ + 1)).run.eval ==
+                        Seq.fill(n)(2)
+                )
+            }
+            "produce until" in {
+                var counter = 0
+                val result =
+                    Stream
+                        .init(0 until 100)
+                        .into(Pipe.mapPure[Int](_ => counter += 1))
+                        .take(0)
+                        .run
+                        .eval
+                assert(counter == 0)
+                assert(result.isEmpty)
+            }
+        }
+
         "mapChunk" - {
             "double" in {
                 assert(
@@ -470,6 +688,40 @@ class PipeTest extends Test:
             }
         }
 
+        "mapChunkPure" - {
+            "double" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.mapChunkPure[Int](_.take(2).map(_ * 2))).run.eval == Seq(2, 4)
+                )
+            }
+
+            "to string" in {
+                assert(
+                    Stream.init(Seq(1, 2, 3)).into(Pipe.mapChunkPure[Int](_.append(4).map(_.toString))).run.eval ==
+                        Seq("1", "2", "3", "4")
+                )
+            }
+
+            "stack safety" in {
+                assert(
+                    Stream.init(Seq.fill(n)(1)).into(Pipe.mapChunkPure[Int](_.map(_ + 1))).run.eval ==
+                        Seq.fill(n)(2)
+                )
+            }
+            "produce until" in {
+                var counter = 0
+                val result =
+                    Stream
+                        .init(0 until 100)
+                        .into(Pipe.mapChunkPure[Int](_.map(_ => counter += 1)))
+                        .take(0)
+                        .run
+                        .eval
+                assert(counter == 0)
+                assert(result.isEmpty)
+            }
+        }
+
         "tap" - {
             "non-empty stream" in {
                 val stream = Stream
@@ -479,7 +731,7 @@ class PipeTest extends Test:
             }
             "empty stream" in {
                 val stream = Stream
-                    .empty[Int]
+                    .empty
                     .into(Pipe.tap[Int](i => Var.update[Int](_ + i).unit))
                 assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
             }
@@ -494,7 +746,7 @@ class PipeTest extends Test:
             }
             "empty stream" in {
                 val stream = Stream
-                    .empty[Int]
+                    .empty
                     .into(Pipe.tapChunk[Int](c => Var.update[Int](_ + c.sum).unit))
                 assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
             }
@@ -643,6 +895,13 @@ class PipeTest extends Test:
         }
     }
 
+    "contramapPure" in run {
+        val pipe   = Pipe.identity[Int].contramapPure((str: String) => str.length)
+        val stream = Stream.init(Seq("a", "be", "see"))
+        val result = stream.into(pipe).run.eval
+        assert(result == Seq(1, 2, 3))
+    }
+
     "contramapChunk" - {
         "pure" in run {
             val pipe   = Pipe.identity[Int].contramapChunk((chunk: Chunk[String]) => Chunk(chunk.size))
@@ -661,6 +920,13 @@ class PipeTest extends Test:
         }
     }
 
+    "contramapChunkPure" in run {
+        val pipe   = Pipe.identity[Int].contramapChunkPure((chunk: Chunk[String]) => Chunk(chunk.size))
+        val stream = Stream.init(Seq("a", "be", "see"))
+        val result = stream.into(pipe).run.eval
+        assert(result == Seq(3))
+    }
+
     "map" - {
         "pure" in run {
             val pipe   = Pipe.identity[String].map((str: String) => str.length)
@@ -675,6 +941,13 @@ class PipeTest extends Test:
             val result = Var.runTuple("")(stream.into(pipe).run).eval
             assert(result == ("abesee", Seq(1, 2, 3)))
         }
+    }
+
+    "mapPure" in run {
+        val pipe   = Pipe.identity[String].mapPure((str: String) => str.length)
+        val stream = Stream.init(Seq("a", "be", "see"))
+        val result = stream.into(pipe).run.eval
+        assert(result == Seq(1, 2, 3))
     }
 
     "mapChunk" - {
@@ -693,6 +966,13 @@ class PipeTest extends Test:
             val result = Var.runTuple("")(stream.into(pipe).run).eval
             assert(result == ("abesee", Seq(3)))
         }
+    }
+
+    "mapChunkPure" in run {
+        val pipe   = Pipe.identity[String].mapChunkPure((chunk: Chunk[String]) => Chunk(chunk.size))
+        val stream = Stream.init(Seq("a", "be", "see"))
+        val result = stream.into(pipe).run.eval
+        assert(result == Seq(3))
     }
 
     "join" - {
