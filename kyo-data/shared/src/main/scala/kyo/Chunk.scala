@@ -708,10 +708,18 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       * @return
       *   a new Chunk.Indexed containing the single element
       */
-    def from[A](source: Maybe[A]): Chunk[A] =
-        source match
-            case Present(value) => Chunk.single(value)
-            case Absent         => cachedEmpty.asInstanceOf[Chunk[A]]
+    def from[A](source: Maybe[A]): Chunk[A] = Indexed.from(source)
+
+    /** Creates a Chunk from an Option.
+      *
+      * @tparam A
+      *   the type of the element
+      * @param source
+      *   the Option to create the Chunk from
+      * @return
+      *   a new Chunk.Indexed containing the single element
+      */
+    def from[A](source: Option[A]): Chunk[A] = Indexed.from(source)
 
     /** Creates a new **mutable** builder for constructing Chunks.
       *
