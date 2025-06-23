@@ -678,6 +678,18 @@ class StreamCoreExtensionsTest extends Test:
                     yield assert(result.flatten == (1 to 10))
                 }.andThen(succeed)
             }
+
+            "resource" in run {
+                pending
+                class TestResource(var closes: Int = 0) extends java.io.Closeable:
+                    def close() = closes += 1
+
+                val stream        = Stream(Resource.acquire(TestResource()).map(r => Emit.value(Chunk(r))))
+                val groupedWithin = stream.groupedWithin(3, Duration.Infinity)
+                groupedWithin.run.map: grouped =>
+                    stream.run.map: streamResult =>
+                        assert(grouped.flatten.head.closes == streamResult.head.closes)
+            }
         }
     }
 
