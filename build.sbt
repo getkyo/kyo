@@ -550,15 +550,33 @@ lazy val `kyo-test` =
         )
         .jvmSettings(mimaCheck(false))
 
-lazy val `kyo-scalatest` =
+lazy val `kyo-test-scalatest` =
     crossProject(JVMPlatform, JSPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-scalatest"))
+        .in(file("kyo-test-scalatest"))
         .dependsOn(`kyo-test`)
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion,
+        )
+        .jsSettings(
+            `js-settings`
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-test-zio` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-test-zio"))
+        .dependsOn(`kyo-test`)
+        .dependsOn(`kyo-zio`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio-test"     % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
         )
         .jsSettings(
             `js-settings`

@@ -5,6 +5,7 @@ import kyo.*
 trait KyoTestApiBase:
     type Assert
     inline def assertKyo(inline assertion: Boolean)(using Frame): Unit < Assert
+end KyoTestApiBase
 
 trait KyoTestApiSpecialAssertion[Assertion]:
     self: KyoTestApiBase =>
