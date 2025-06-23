@@ -216,7 +216,7 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
         Pipe:
             Poll.runEmit[Chunk[BB]](pollEmit)(pipe.pollEmit).unit
 
-    /** Join to a sink producing a new sink that transforms the stream prior to processing it.
+    /** Join to a sink producing a new sink that transforms a stream prior to processing it.
       *
       * @param sink
       *   Sink to prepend pipe to
@@ -237,7 +237,8 @@ sealed abstract class Pipe[-A, +B, -S] extends Serializable:
       * @return
       *   A new transformed stream
       */
-    def transform[AA <: A, S1](stream: Stream[AA, S1])(using
+    def transform[AA <: A, S1](stream: Stream[AA, S1])(
+        using
         emitTag: Tag[Emit[Chunk[AA]]],
         pollTag: Tag[Poll[Chunk[AA]]],
         fr: Frame
@@ -267,7 +268,8 @@ object Pipe:
 
     private val _empty = Pipe(())
 
-    def empty[A]: Pipe[A, A, Any] = _empty.asInstanceOf[Pipe[A, A, Any]]
+    /** A pipe that ignores the original stream and emits nothing * */
+    def empty[A, B]: Pipe[A, B, Any] = _empty
 
     /** A pipe that passes through the original stream without transforming it */
     def identity[A](using Tag[Emit[Chunk[A]]], Tag[Poll[Chunk[A]]], Frame): Pipe[A, A, Any] =

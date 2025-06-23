@@ -217,6 +217,11 @@ object Sink:
         new Sink[V, A, S]:
             def poll: A < (Poll[Chunk[V]] & S) = v
 
+    private val _empty = Sink(())
+
+    /** A sink that does nothing: returns an empty (Unit) value without ever running the input stream * */
+    def empty[V]: Sink[V, Unit, Any] = _empty
+
     /** Construct a sink that runs a stream of element type `V` without producing any value.
       *
       * @return

@@ -9,7 +9,7 @@ class StreamTest extends Test:
 
     "empty" in {
         assert(
-            Stream.empty[Int].run.eval == Seq.empty
+            Stream.empty.run.eval == Seq.empty
         )
     }
 
@@ -941,8 +941,8 @@ class StreamTest extends Test:
         }
         "empty stream" in {
             val stream = Stream
-                .empty[Int]
-                .tap(i => Var.update[Int](_ + i).unit)
+                .empty
+                .tap((i: Int) => Var.update[Int](_ + i).unit)
             assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
         }
     }
@@ -956,8 +956,8 @@ class StreamTest extends Test:
         }
         "empty stream" in {
             val stream = Stream
-                .empty[Int]
-                .tapChunk(c => Var.update[Int](_ + c.sum).unit)
+                .empty
+                .tapChunk((c: Chunk[Int]) => Var.update[Int](_ + c.sum).unit)
             assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
         }
     }

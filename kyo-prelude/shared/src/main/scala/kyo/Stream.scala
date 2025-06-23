@@ -832,8 +832,10 @@ object Stream:
         new Stream[V, S]:
             def emit: Unit < (Emit[Chunk[V]] & S) = v
 
-    private val _empty           = Stream(())
-    def empty[V]: Stream[V, Any] = _empty.asInstanceOf[Stream[V, Any]]
+    private val _empty = Stream(())
+
+    /** A stream that emits no elements and does nothing * */
+    def empty[V]: Stream[V, Any] = _empty
 
     /** The default chunk size for streams. */
     inline def DefaultChunkSize: Int = 4096

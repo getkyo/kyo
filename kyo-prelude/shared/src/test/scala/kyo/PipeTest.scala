@@ -731,7 +731,7 @@ class PipeTest extends Test:
             }
             "empty stream" in {
                 val stream = Stream
-                    .empty[Int]
+                    .empty
                     .into(Pipe.tap[Int](i => Var.update[Int](_ + i).unit))
                 assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
             }
@@ -746,7 +746,7 @@ class PipeTest extends Test:
             }
             "empty stream" in {
                 val stream = Stream
-                    .empty[Int]
+                    .empty
                     .into(Pipe.tapChunk[Int](c => Var.update[Int](_ + c.sum).unit))
                 assert(Var.runTuple(0)(stream.run).eval == (0, Seq()))
             }
