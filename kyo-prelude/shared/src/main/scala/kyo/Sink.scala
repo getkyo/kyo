@@ -81,7 +81,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
       * @return
       *   A sink that processes streams of the new element type
       */
-    final def contramap[VV <: V, V2](f: V2 => VV)(using
+    final def contramapPure[VV <: V, V2](f: V2 => VV)(using
         t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
         fr: Frame
@@ -105,7 +105,6 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
     final def contramap[VV <: V, V2, S2](f: V2 => VV < S2)(using
         t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
-        d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
@@ -130,7 +129,7 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
       * @return
       *   A new sink that processes streams of the new element type
       */
-    final def contramapChunk[VV <: V, V2](f: Chunk[V2] => Chunk[VV])(using
+    final def contramapChunkPure[VV <: V, V2](f: Chunk[V2] => Chunk[VV])(using
         t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
         fr: Frame
@@ -155,7 +154,6 @@ sealed abstract class Sink[-V, +A, -S] extends Serializable:
     final def contramapChunk[VV <: V, V2, S2](f: Chunk[V2] => Chunk[VV] < S2)(using
         t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
-        d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:

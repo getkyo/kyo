@@ -79,6 +79,14 @@ class SinkTest extends Test:
         }
     }
 
+    "contramapPure" in run {
+        val s1     = Sink.fold[Int, Int](0)(_ + _)
+        val s2     = s1.contramapPure((_: String).length)
+        val stream = Stream.init(Seq("a", "be", "see"))
+        val result = s2.drain(stream).eval
+        assert(result == 6)
+    }
+
     "contramapChunk" - {
         "pure" in run {
             val s1     = Sink.fold[Int, Int](0)(_ + _)
@@ -96,6 +104,14 @@ class SinkTest extends Test:
             val result = Var.runTuple(0)(s2.drain(stream)).eval
             assert(result == (1, 6))
         }
+    }
+
+    "contramapChunkPure" in run {
+        val s1     = Sink.fold[Int, Int](0)(_ + _)
+        val s2     = s1.contramapChunkPure((_: Chunk[String]).map(_.length))
+        val stream = Stream.init(Seq("a", "be", "see"))
+        val result = s2.drain(stream).eval
+        assert(result == 6)
     }
 
     "map" - {
