@@ -377,60 +377,60 @@ class KyoForeachTest extends Test:
         }
     }
 
-    "Vector specialized" - {
+    "Seq specialized" - {
         "collectAll" in {
-            assert(Kyo.collectAll(Vector.empty).eval == Vector.empty)
-            assert(TestEffect1.run(Kyo.collectAll(Vector(TestEffect1(1))).map(_.head)).eval == 2)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Vector(TestEffect1(1), TestEffect1(2))).map(c =>
+            assert(Kyo.collectAll(Seq.empty).eval == Seq.empty)
+            assert(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1))).map(_.head)).eval == 2)
+            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1), TestEffect1(2))).map(c =>
                 (c(0), c(1))
             ))).eval == (
                 2,
                 3
             ))
-            assert(TestEffect1.run(Kyo.collectAll(Vector.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
+            assert(TestEffect1.run(Kyo.collectAll(Seq.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
         }
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)
-            TestEffect1.run(Kyo.collectAllDiscard(Vector.empty)).eval
+            TestEffect1.run(Kyo.collectAllDiscard(Seq.empty)).eval
             assert(count == 0)
-            TestEffect1.run(Kyo.collectAllDiscard(Vector(io))).eval
+            TestEffect1.run(Kyo.collectAllDiscard(Seq(io))).eval
             assert(count == 1)
-            TestEffect1.run(Kyo.collectAllDiscard(Vector.fill(42)(io))).eval
+            TestEffect1.run(Kyo.collectAllDiscard(Seq.fill(42)(io))).eval
             assert(count == 43)
-            TestEffect1.run(Kyo.collectAllDiscard(Vector.fill(10)(io))).eval
+            TestEffect1.run(Kyo.collectAllDiscard(Seq.fill(10)(io))).eval
             assert(count == 53)
         }
         "foreach" in {
-            assert(TestEffect1.run(Kyo.foreach(Vector.empty)(i => TestEffect1(i))).eval == Vector.empty)
-            assert(TestEffect1.run(Kyo.foreach(Vector(1))(i => TestEffect1(i))).map(_.head).eval == 2)
-            assert(TestEffect1.run(Kyo.foreach(Vector(1, 2))(i => TestEffect1(i))).map(c => (c(0), c(1))).eval == (2, 3))
-            assert(TestEffect1.run(Kyo.foreach(Vector.fill(100)(1))(i => TestEffect1(i))).map(_.size).eval == 100)
+            assert(TestEffect1.run(Kyo.foreach(Seq.empty)(i => TestEffect1(i))).eval == Seq.empty)
+            assert(TestEffect1.run(Kyo.foreach(Seq(1))(i => TestEffect1(i))).map(_.head).eval == 2)
+            assert(TestEffect1.run(Kyo.foreach(Seq(1, 2))(i => TestEffect1(i))).map(c => (c(0), c(1))).eval == (2, 3))
+            assert(TestEffect1.run(Kyo.foreach(Seq.fill(100)(1))(i => TestEffect1(i))).map(_.size).eval == 100)
         }
         "foreachIndexed" in {
-            assert(Kyo.foreachIndexed(Vector.empty[Int])((idx, v) => (idx, v)).eval == Vector.empty)
-            assert(Kyo.foreachIndexed(Vector(1))((idx, v) => (idx, v)).eval == Vector((0, 1)))
-            assert(Kyo.foreachIndexed(Vector(1, 2))((idx, v) => (idx, v)).eval == Vector((0, 1), (1, 2)))
-            assert(Kyo.foreachIndexed(Vector(1, 2, 3))((idx, v) => (idx, v)).eval == Vector((0, 1), (1, 2), (2, 3)))
+            assert(Kyo.foreachIndexed(Seq.empty[Int])((idx, v) => (idx, v)).eval == Seq.empty)
+            assert(Kyo.foreachIndexed(Seq(1))((idx, v) => (idx, v)).eval == Seq((0, 1)))
+            assert(Kyo.foreachIndexed(Seq(1, 2))((idx, v) => (idx, v)).eval == Seq((0, 1), (1, 2)))
+            assert(Kyo.foreachIndexed(Seq(1, 2, 3))((idx, v) => (idx, v)).eval == Seq((0, 1), (1, 2), (2, 3)))
             // Test with a larger sequence
-            assert(Kyo.foreachIndexed(Vector.tabulate(100)(identity))((idx, v) => idx == v).eval == Vector.fill(100)(true))
+            assert(Kyo.foreachIndexed(Seq.tabulate(100)(identity))((idx, v) => idx == v).eval == Seq.fill(100)(true))
         }
         "foreachDiscard" in {
-            var acc: Vector[Int] = Vector.empty
-            TestEffect1.run(Kyo.foreachDiscard(Vector.empty[Int])(v => TestEffect1(v).map(i => acc :+= i))).eval
-            assert(acc == Vector.empty[Int])
-            acc = Vector.empty
-            TestEffect1.run(Kyo.foreachDiscard(Vector(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
-            assert(acc == Vector(2))
-            acc = Vector.empty
-            TestEffect1.run(Kyo.foreachDiscard(Vector(1, 2))(v => TestEffect1(v).map(i => acc :+= i))).eval
-            assert(acc == Vector(2, 3))
+            var acc: Seq[Int] = Seq.empty
+            TestEffect1.run(Kyo.foreachDiscard(Seq.empty[Int])(v => TestEffect1(v).map(i => acc :+= i))).eval
+            assert(acc == Seq.empty[Int])
+            acc = Seq.empty
+            TestEffect1.run(Kyo.foreachDiscard(Seq(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
+            assert(acc == Seq(2))
+            acc = Seq.empty
+            TestEffect1.run(Kyo.foreachDiscard(Seq(1, 2))(v => TestEffect1(v).map(i => acc :+= i))).eval
+            assert(acc == Seq(2, 3))
         }
         "foldLeft" in {
-            assert(TestEffect1.run(Kyo.foldLeft(Vector.empty[Int])(0)((acc, i) => TestEffect1(acc + i))).eval == 0)
-            assert(TestEffect1.run(Kyo.foldLeft(Vector(1))(0)((acc, i) => TestEffect1(acc + i))).eval == 2)
-            assert(TestEffect1.run(Kyo.foldLeft(Vector(1, 2, 3))(0)((acc, i) => TestEffect1(acc + i))).eval == 9)
-            assert(TestEffect1.run(Kyo.foldLeft(Vector.fill(100)(1))(0)((acc, i) => TestEffect1(acc + i))).eval == 200)
+            assert(TestEffect1.run(Kyo.foldLeft(Seq.empty[Int])(0)((acc, i) => TestEffect1(acc + i))).eval == 0)
+            assert(TestEffect1.run(Kyo.foldLeft(Seq(1))(0)((acc, i) => TestEffect1(acc + i))).eval == 2)
+            assert(TestEffect1.run(Kyo.foldLeft(Seq(1, 2, 3))(0)((acc, i) => TestEffect1(acc + i))).eval == 9)
+            assert(TestEffect1.run(Kyo.foldLeft(Seq.fill(100)(1))(0)((acc, i) => TestEffect1(acc + i))).eval == 200)
         }
         "dropWhile" in {
             def f(i: Int): Boolean < Any = true
@@ -439,15 +439,15 @@ class KyoForeachTest extends Test:
 
             def lessThanThree(i: Int): Boolean < Any = i < 3
 
-            assert(Kyo.dropWhile(Vector.empty[Int])(a => f(a)).eval == Vector.empty[Int])
+            assert(Kyo.dropWhile(Seq.empty[Int])(a => f(a)).eval == Seq.empty[Int])
 
-            assert(Kyo.dropWhile(Vector(1, 2, 3, 4))(x => x < 3).eval == Vector(3, 4))
-            assert(Kyo.dropWhile(Vector(1, 2, 3))(x => f(x)).eval == Vector.empty[Int])
-            assert(Kyo.dropWhile(Vector(2, 4, 5, 6))(x => isEven(x)).eval == Vector(5, 6))
-            assert(Kyo.dropWhile(Vector(1, 2, 3, 4))(x => lessThanThree(x)).eval == Vector(3, 4))
-            assert(Kyo.dropWhile(Vector(2, 4, 5))(x => isEven(x)).eval == Vector(5))
-            assert(Kyo.dropWhile(Vector(1, 2, -1, 3))(x => lessThanThree(x)).eval == Vector(3))
-            assert(Kyo.dropWhile(Vector(4, 1, 2))(x => lessThanThree(x)).eval == Vector(4, 1, 2))
+            assert(Kyo.dropWhile(Seq(1, 2, 3, 4))(x => x < 3).eval == Seq(3, 4))
+            assert(Kyo.dropWhile(Seq(1, 2, 3))(x => f(x)).eval == Seq.empty[Int])
+            assert(Kyo.dropWhile(Seq(2, 4, 5, 6))(x => isEven(x)).eval == Seq(5, 6))
+            assert(Kyo.dropWhile(Seq(1, 2, 3, 4))(x => lessThanThree(x)).eval == Seq(3, 4))
+            assert(Kyo.dropWhile(Seq(2, 4, 5))(x => isEven(x)).eval == Seq(5))
+            assert(Kyo.dropWhile(Seq(1, 2, -1, 3))(x => lessThanThree(x)).eval == Seq(3))
+            assert(Kyo.dropWhile(Seq(4, 1, 2))(x => lessThanThree(x)).eval == Seq(4, 1, 2))
         }
 
         "takeWhile" in {
@@ -455,13 +455,13 @@ class KyoForeachTest extends Test:
             def isEven(i: Int): Boolean < Any        = i % 2 == 0
             def lessThanThree(i: Int): Boolean < Any = i < 3
 
-            assert(Kyo.takeWhile(Vector.empty[Int])(x => f(x)).eval == Vector.empty[Int])
-            assert(Kyo.takeWhile(Vector(1, 2, 3))(x => f(x)).eval == Vector(1, 2, 3))
-            assert(Kyo.takeWhile(Vector(2, 4, 5, 6))(x => isEven(x)).eval == Vector(2, 4))
-            assert(Kyo.takeWhile(Vector(1, 2, 3, 4))(x => lessThanThree(x)).eval == Vector(1, 2))
-            assert(Kyo.takeWhile(Vector(2, 4, 5))(x => isEven(x)).eval == Vector(2, 4))
-            assert(Kyo.takeWhile(Vector(1, 2, -1, 3))(x => lessThanThree(x)).eval == Vector(1, 2, -1))
-            assert(Kyo.takeWhile(Vector(4, 1, 2))(x => lessThanThree(x)).eval == Vector.empty[Int])
+            assert(Kyo.takeWhile(Seq.empty[Int])(x => f(x)).eval == Seq.empty[Int])
+            assert(Kyo.takeWhile(Seq(1, 2, 3))(x => f(x)).eval == Seq(1, 2, 3))
+            assert(Kyo.takeWhile(Seq(2, 4, 5, 6))(x => isEven(x)).eval == Seq(2, 4))
+            assert(Kyo.takeWhile(Seq(1, 2, 3, 4))(x => lessThanThree(x)).eval == Seq(1, 2))
+            assert(Kyo.takeWhile(Seq(2, 4, 5))(x => isEven(x)).eval == Seq(2, 4))
+            assert(Kyo.takeWhile(Seq(1, 2, -1, 3))(x => lessThanThree(x)).eval == Seq(1, 2, -1))
+            assert(Kyo.takeWhile(Seq(4, 1, 2))(x => lessThanThree(x)).eval == Seq.empty[Int])
         }
 
         "shiftedWhile" in {
@@ -469,7 +469,7 @@ class KyoForeachTest extends Test:
 
             def lessThanThree(i: Int): Boolean < Any = i < 3
 
-            val countWhile = Kyo.shiftedWhile(Vector(1, 2, 3, 4, 5))(
+            val countWhile = Kyo.shiftedWhile(Seq(1, 2, 3, 4, 5))(
                 prolog = 0,
                 f = lessThanThree,
                 acc = (count, include, _) => count + 1,
@@ -477,7 +477,7 @@ class KyoForeachTest extends Test:
             )
             assert(countWhile.eval == 3)
 
-            val sumWithMessage = Kyo.shiftedWhile(Vector(1, 2, -1, 3, 4))(
+            val sumWithMessage = Kyo.shiftedWhile(Seq(1, 2, -1, 3, 4))(
                 prolog = 0,
                 f = lessThanThree,
                 acc = (sum, include, curr) => if include then sum + curr else sum,
@@ -485,15 +485,15 @@ class KyoForeachTest extends Test:
             )
             assert(sumWithMessage.eval == "Sum: 2") // 1 + 2 + (-1) = 2
 
-            val collectUntilOdd = Kyo.shiftedWhile(Vector(2, 4, 6, 7, 8))(
-                prolog = Vector.empty,
+            val collectUntilOdd = Kyo.shiftedWhile(Seq(2, 4, 6, 7, 8))(
+                prolog = Seq.empty,
                 f = isEven,
                 acc = (list, include, curr) => if include then curr +: list else list,
                 epilog = _.reverse // Maintain original order
             )
-            assert(collectUntilOdd.eval == Vector(2, 4, 6))
+            assert(collectUntilOdd.eval == Seq(2, 4, 6))
 
-            val emptyTest = Kyo.shiftedWhile(Vector.empty[Int])(
+            val emptyTest = Kyo.shiftedWhile(Seq.empty[Int])(
                 prolog = "Default",
                 f = _ => true,
                 acc = (str, _, curr) => str + curr.toString,
@@ -504,219 +504,219 @@ class KyoForeachTest extends Test:
 
         "span" - {
             "empty sequence" in {
-                val result = Kyo.span(Vector.empty[Int])(x => x < 3).eval
-                assert(result == (Vector.empty[Int], Vector.empty[Int]))
+                val result = Kyo.span(Seq.empty[Int])(x => x < 3).eval
+                assert(result == (Seq.empty[Int], Seq.empty[Int]))
             }
 
             "all elements satisfy predicate" in {
-                val result = Kyo.span(Vector(1, 2))(x => x < 3).eval
-                assert(result == (Vector(1, 2), Vector.empty[Int]))
+                val result = Kyo.span(Seq(1, 2))(x => x < 3).eval
+                assert(result == (Seq(1, 2), Seq.empty[Int]))
             }
 
             "no elements satisfy predicate" in {
-                val result = Kyo.span(Vector(3, 4))(x => x < 3).eval
-                assert(result == (Vector.empty[Int], Vector(3, 4)))
+                val result = Kyo.span(Seq(3, 4))(x => x < 3).eval
+                assert(result == (Seq.empty[Int], Seq(3, 4)))
             }
 
             "split in middle" in {
-                val result = Kyo.span(Vector(1, 2, 3, 4))(x => x < 3).eval
-                assert(result == (Vector(1, 2), Vector(3, 4)))
+                val result = Kyo.span(Seq(1, 2, 3, 4))(x => x < 3).eval
+                assert(result == (Seq(1, 2), Seq(3, 4)))
             }
 
             "works with effects" in {
                 val result = TestEffect1.run(
-                    Kyo.span(Vector(1, 2, 3, 4))(x => TestEffect1(x).map(_ < 3))
+                    Kyo.span(Seq(1, 2, 3, 4))(x => TestEffect1(x).map(_ < 3))
                 ).eval
-                assert(result == (Vector(1), Vector(2, 3, 4)))
+                assert(result == (Seq(1), Seq(2, 3, 4)))
             }
         }
 
         "partition" - {
             "empty sequence" in {
-                val result = Kyo.partition(Vector.empty[Int])(x => x % 2 == 0).eval
-                assert(result == (Vector.empty[Int], Vector.empty[Int]))
+                val result = Kyo.partition(Seq.empty[Int])(x => x % 2 == 0).eval
+                assert(result == (Seq.empty[Int], Seq.empty[Int]))
             }
 
             "all elements satisfy predicate" in {
-                val result = Kyo.partition(Vector(2, 4, 6))(x => x % 2 == 0).eval
-                assert(result == (Vector(2, 4, 6), Vector.empty[Int]))
+                val result = Kyo.partition(Seq(2, 4, 6))(x => x % 2 == 0).eval
+                assert(result == (Seq(2, 4, 6), Seq.empty[Int]))
             }
 
             "no elements satisfy predicate" in {
-                val result = Kyo.partition(Vector(1, 3, 5))(x => x % 2 == 0).eval
-                assert(result == (Vector.empty[Int], Vector(1, 3, 5)))
+                val result = Kyo.partition(Seq(1, 3, 5))(x => x % 2 == 0).eval
+                assert(result == (Seq.empty[Int], Seq(1, 3, 5)))
             }
 
             "mixed elements" in {
-                val result = Kyo.partition(Vector(1, 2, 3, 4))(x => x % 2 == 0).eval
-                assert(result == (Vector(2, 4), Vector(1, 3)))
+                val result = Kyo.partition(Seq(1, 2, 3, 4))(x => x % 2 == 0).eval
+                assert(result == (Seq(2, 4), Seq(1, 3)))
             }
 
             "works with effects" in {
                 val result = TestEffect1.run(
-                    Kyo.partition(Vector(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2 == 0))
+                    Kyo.partition(Seq(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2 == 0))
                 ).eval
-                assert(result == (Vector(1, 3), Vector(2, 4)))
+                assert(result == (Seq(1, 3), Seq(2, 4)))
             }
         }
 
         "partitionMap" - {
             "empty sequence" in {
-                val result = Kyo.partitionMap(Vector.empty[Int])(x => Left(x.toString)).eval
-                assert(result == (Vector.empty[String], Vector.empty[Int]))
+                val result = Kyo.partitionMap(Seq.empty[Int])(x => Left(x.toString)).eval
+                assert(result == (Seq.empty[String], Seq.empty[Int]))
             }
 
             "all Left" in {
-                val result = Kyo.partitionMap(Vector(1, 2, 3))(x => Left(x.toString)).eval
-                assert(result == (Vector("1", "2", "3"), Vector.empty[Int]))
+                val result = Kyo.partitionMap(Seq(1, 2, 3))(x => Left(x.toString)).eval
+                assert(result == (Seq("1", "2", "3"), Seq.empty[Int]))
             }
 
             "all Right" in {
-                val result = Kyo.partitionMap(Vector(1, 2, 3))(x => Right(x * 2)).eval
-                assert(result == (Vector.empty[Int], Vector(2, 4, 6)))
+                val result = Kyo.partitionMap(Seq(1, 2, 3))(x => Right(x * 2)).eval
+                assert(result == (Seq.empty[Int], Seq(2, 4, 6)))
             }
 
             "mixed Left and Right" in {
-                val result = Kyo.partitionMap(Vector(1, 2, 3, 4))(x =>
+                val result = Kyo.partitionMap(Seq(1, 2, 3, 4))(x =>
                     if x % 2 == 0 then Right(x * 2) else Left(x.toString)
                 ).eval
-                assert(result == (Vector("1", "3"), Vector(4, 8)))
+                assert(result == (Seq("1", "3"), Seq(4, 8)))
             }
 
             "works with effects" in {
                 val result = TestEffect1.run(
-                    Kyo.partitionMap(Vector(1, 2, 3, 4))(x =>
+                    Kyo.partitionMap(Seq(1, 2, 3, 4))(x =>
                         TestEffect1(x).map(v => if v % 2 == 0 then Right(v * 2) else Left(v.toString))
                     )
                 ).eval
-                assert(result == (Vector("3", "5"), Vector(4, 8)))
+                assert(result == (Seq("3", "5"), Seq(4, 8)))
             }
         }
 
         "scanLeft" - {
             "empty sequence" in {
-                val result = Kyo.scanLeft(Vector.empty[Int])(0)((acc, x) => acc + x).eval
-                assert(result == Vector(0))
+                val result = Kyo.scanLeft(Seq.empty[Int])(0)((acc, x) => acc + x).eval
+                assert(result == Seq(0))
             }
 
             "single element" in {
-                val result = Kyo.scanLeft(Vector(1))(0)((acc, x) => acc + x).eval
-                assert(result == Vector(0, 1))
+                val result = Kyo.scanLeft(Seq(1))(0)((acc, x) => acc + x).eval
+                assert(result == Seq(0, 1))
             }
 
             "multiple elements" in {
-                val result = Kyo.scanLeft(Vector(1, 2, 3))(0)((acc, x) => acc + x).eval
-                assert(result == Vector(0, 1, 3, 6))
+                val result = Kyo.scanLeft(Seq(1, 2, 3))(0)((acc, x) => acc + x).eval
+                assert(result == Seq(0, 1, 3, 6))
             }
 
             "works with effects" in {
                 val result = TestEffect1.run(
-                    Kyo.scanLeft(Vector(1, 2, 3))(0)((acc, x) => TestEffect1(acc + x))
+                    Kyo.scanLeft(Seq(1, 2, 3))(0)((acc, x) => TestEffect1(acc + x))
                 ).eval
-                assert(result == Vector(0, 2, 5, 9))
+                assert(result == Seq(0, 2, 5, 9))
             }
         }
 
         "groupBy" - {
             "empty sequence" in {
-                val result = Kyo.groupBy(Vector.empty[Int])(x => x % 2).eval
+                val result = Kyo.groupBy(Seq.empty[Int])(x => x % 2).eval
                 assert(result == Map.empty)
             }
 
             "single group" in {
-                val result = Kyo.groupBy(Vector(2, 4, 6))(x => x % 2).eval
-                assert(result == Map(0 -> Vector(2, 4, 6)))
+                val result = Kyo.groupBy(Seq(2, 4, 6))(x => x % 2).eval
+                assert(result == Map(0 -> Seq(2, 4, 6)))
             }
 
             "multiple groups" in {
-                val result = Kyo.groupBy(Vector(1, 2, 3, 4))(x => x % 2).eval
+                val result = Kyo.groupBy(Seq(1, 2, 3, 4))(x => x % 2).eval
                 assert(result == Map(
-                    1 -> Vector(1, 3),
-                    0 -> Vector(2, 4)
+                    1 -> Seq(1, 3),
+                    0 -> Seq(2, 4)
                 ))
             }
 
             "works with effects" in {
                 val result = TestEffect1.run(
-                    Kyo.groupBy(Vector(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2))
+                    Kyo.groupBy(Seq(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2))
                 ).eval
                 assert(result == Map(
-                    0 -> Vector(1, 3),
-                    1 -> Vector(2, 4)
+                    0 -> Seq(1, 3),
+                    1 -> Seq(2, 4)
                 ))
             }
         }
 
         "groupMap" - {
             "empty sequence" in {
-                val result = Kyo.groupMap(Vector.empty[Int])(x => x % 2)(x => x * 2).eval
+                val result = Kyo.groupMap(Seq.empty[Int])(x => x % 2)(x => x * 2).eval
                 assert(result == Map.empty)
             }
 
             "single group" in {
-                val result = Kyo.groupMap(Vector(2, 4, 6))(x => x % 2)(x => x * 2).eval
-                assert(result == Map(0 -> Vector(4, 8, 12)))
+                val result = Kyo.groupMap(Seq(2, 4, 6))(x => x % 2)(x => x * 2).eval
+                assert(result == Map(0 -> Seq(4, 8, 12)))
             }
 
             "multiple groups" in {
-                val result = Kyo.groupMap(Vector(1, 2, 3, 4))(x => x % 2)(x => x * 2).eval
+                val result = Kyo.groupMap(Seq(1, 2, 3, 4))(x => x % 2)(x => x * 2).eval
                 assert(result == Map(
-                    1 -> Vector(2, 6),
-                    0 -> Vector(4, 8)
+                    1 -> Seq(2, 6),
+                    0 -> Seq(4, 8)
                 ))
             }
 
             "works with effects" in {
                 val result = TestEffect1.run(
-                    Kyo.groupMap(Vector(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2))(x => TestEffect1(x * 2))
+                    Kyo.groupMap(Seq(1, 2, 3, 4))(x => TestEffect1(x).map(_ % 2))(x => TestEffect1(x * 2))
                 ).eval
                 assert(result == Map(
-                    0 -> Vector(3, 7),
-                    1 -> Vector(5, 9)
+                    0 -> Seq(3, 7),
+                    1 -> Seq(5, 9)
                 ))
             }
         }
 
         "collect" - {
             "empty sequence" in {
-                val result = Kyo.collect(Vector.empty[Int])(v => Maybe(v)).eval
-                assert(result == Vector.empty[Int])
+                val result = Kyo.collect(Seq.empty[Int])(v => Maybe(v)).eval
+                assert(result == Seq.empty[Int])
             }
 
             "single element - present" in {
-                val result = Kyo.collect(Vector(1))(v => Maybe(v)).eval
-                assert(result == Vector(1))
+                val result = Kyo.collect(Seq(1))(v => Maybe(v)).eval
+                assert(result == Seq(1))
             }
 
             "single element - absent" in {
-                val result = Kyo.collect(Vector(1))(v => Maybe.empty).eval
-                assert(result == Vector.empty[Int])
+                val result = Kyo.collect(Seq(1))(v => Maybe.empty).eval
+                assert(result == Seq.empty[Int])
             }
 
             "multiple elements - all present" in {
-                val result = Kyo.collect(Vector(1, 2, 3))(v => Maybe(v)).eval
-                assert(result == Vector(1, 2, 3))
+                val result = Kyo.collect(Seq(1, 2, 3))(v => Maybe(v)).eval
+                assert(result == Seq(1, 2, 3))
             }
 
             "multiple elements - some absent" in {
-                val result = Kyo.collect(Vector(1, 2, 3))(v => if v % 2 == 0 then Maybe(v) else Maybe.empty).eval
-                assert(result == Vector(2))
+                val result = Kyo.collect(Seq(1, 2, 3))(v => if v % 2 == 0 then Maybe(v) else Maybe.empty).eval
+                assert(result == Seq(2))
             }
 
             "works with effects" in {
                 val result = TestEffect1.run(
-                    Kyo.collect(Vector(1, 2, 3)) { v =>
+                    Kyo.collect(Seq(1, 2, 3)) { v =>
                         TestEffect1(v).map(r => Maybe.when(r % 2 == 0)(r))
                     }
                 ).eval
-                assert(result == Vector(2, 4))
+                assert(result == Seq(2, 4))
             }
 
             "stack safety" in {
                 val n      = 1000
-                val result = Kyo.collect(Vector.from(0 until n))(v => Maybe(v)).eval
+                val result = Kyo.collect(Seq.from(0 until n))(v => Maybe(v)).eval
                 assert(result.size == n)
-                assert(result == Vector.from(0 until n))
+                assert(result == Seq.from(0 until n))
             }
         }
 
@@ -724,23 +724,23 @@ class KyoForeachTest extends Test:
             val n = 1000
 
             "collect" in {
-                assert(TestEffect1.run(Kyo.collectAll(Vector.fill(n)(TestEffect1(1)))).map(_.size).eval == n)
+                assert(TestEffect1.run(Kyo.collectAll(Seq.fill(n)(TestEffect1(1)))).map(_.size).eval == n)
             }
 
             "collectDiscard" in {
                 var count = 0
                 val io    = TestEffect1(1).map(_ => count += 1)
-                TestEffect1.run(Kyo.collectAllDiscard(Vector.fill(n)(io))).eval
+                TestEffect1.run(Kyo.collectAllDiscard(Seq.fill(n)(io))).eval
                 assert(count == n)
             }
 
             "foreach" in {
-                assert(TestEffect1.run(Kyo.foreach(Vector.fill(n)(1))(i => TestEffect1(i))).map(_.size).eval == n)
+                assert(TestEffect1.run(Kyo.foreach(Seq.fill(n)(1))(i => TestEffect1(i))).map(_.size).eval == n)
             }
 
             "foreachDiscard" in {
-                var acc = Vector.empty[Int]
-                TestEffect1.run(Kyo.foreachDiscard(Vector.fill(n)(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
+                var acc = Seq.empty[Int]
+                TestEffect1.run(Kyo.foreachDiscard(Seq.fill(n)(1))(v => TestEffect1(v).map(i => acc :+= i))).eval
                 assert(acc.size == n)
             }
         }

@@ -616,19 +616,8 @@ class KyoTest extends Test:
         collectionTests[Vector]("Vector", [X] => seq => Vector.from(seq))
         collectionTests[Chunk]("Chunk", [X] => seq => Chunk.from(seq))
         collectionTests[List]("List", [X] => seq => List.from(seq))
-
-        // // Test with fake Iterable that throws an exception if it's used more than once
-        // def oneShot[A](a: A*): Iterable[A] =
-        //     val used = new java.util.concurrent.atomic.AtomicBoolean(false)
-        //     new Iterable[A]:
-        //         def iterator: Iterator[A] =
-        //             if !used.compareAndSet(false, true) then
-        //                 throw new IllegalStateException("Already consumed!")
-        //             else Iterator(a*)
-        //     end new
-        // end oneShot
-
-        // collectionTests[Iterable]("IterableOnce", [X] => seq => oneShot(seq*))
+        collectionTests[Set]("Set", [X] => seq => Set.from(seq))
+        collectionTests[Seq]("Seq", [X] => seq => Seq.from(seq))
     }
 
     "lift" - {

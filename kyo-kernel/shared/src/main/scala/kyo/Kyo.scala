@@ -162,7 +162,7 @@ object Kyo:
         Frame,
         Safepoint
     ): CC[B] < S =
-        foreach(Chunk.from(source))(f).map: resultChunk =>
+        Kyo.foreach(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end foreach
 
@@ -936,122 +936,81 @@ object Kyo:
     end shiftedWhile
 
     // -----------------------------------------------------------------------------------------------------------------
-    // Vector
+    // Seq
     // -----------------------------------------------------------------------------------------------------------------
 
-    /** Applies an effect-producing function to each element of a `Vector`.
+    /** Applies an effect-producing function to each element of a `Seq`.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing function to apply to each element
       * @return
-      *   A new effect that produces a Vector of results
+      *   A new effect that produces a Seq of results
       */
-    def foreach[A, B, S](source: Vector[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Vector[B] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop(source, Vector.empty[B]): (curVec, accVec) =>
-                if curVec.isEmpty then
-                    Loop.done(accVec)
-                else
-                    f(curVec.head).map: b =>
-                        Loop.continue(curVec.tail, accVec.appended(b))
-        end if
+    inline def foreach[A, B, S](source: Seq[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Seq[B] < S =
+        foreach(Chunk.from(source))(f)
     end foreach
 
-    /** Applies an effect-producing function to each element of a `Vector`, and concatenates the resulting collections.
+    /** Applies an effect-producing function to each element of a `Seq`, and concatenates the resulting collections.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing function that returns a collection of results per element
       * @return
-      *   A new effect that produces a flattened Vector of all results
+      *   A new effect that produces a flattened Seq of all results
       */
-    def foreachConcat[A, B, S](source: Vector[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using
+    inline def foreachConcat[A, B, S](source: Seq[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using
         Frame,
         Safepoint
-    ): Vector[B] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop(source, Vector.empty[Vector[B]]): (curVec, accVec) =>
-                if curVec.isEmpty then
-                    Loop.done(accVec.flatten)
-                else
-                    f(curVec.head).map: iterOnce =>
-                        Loop.continue(curVec.tail, accVec.appended(Vector.from(iterOnce)))
+    ): Seq[B] < S =
+        foreachConcat(Chunk.from(source))(f)
     end foreachConcat
 
     /** Applies an effect-producing function to each element of a sequence along with its index.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing function to apply to each element and its index
       * @return
-      *   A new effect that produces a Vector of results
+      *   A new effect that produces a Seq of results
       */
-    def foreachIndexed[A, B, S](source: Vector[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Vector[B] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop.indexed(source, Vector.empty[B]): (index, curVec, accVec) =>
-                if curVec.isEmpty then
-                    Loop.done(accVec)
-                else
-                    f(index, curVec.head).map: b =>
-                        Loop.continue(curVec.tail, accVec.appended(b))
+    inline def foreachIndexed[A, B, S](source: Seq[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Seq[B] < S =
+        foreachIndexed(Chunk.from(source))(f)
     end foreachIndexed
 
-    /** Applies an effect-producing function to each element of a `Vector`, discarding the results.
+    /** Applies an effect-producing function to each element of a `Seq`, discarding the results.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing function to apply to each element
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[A, B, S](source: Vector[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
-        if source.isEmpty then
-            ()
-        else
-            Loop(source): curVec =>
-                if curVec.isEmpty then
-                    Loop.done
-                else
-                    f(curVec.head).andThen(Loop.continue(curVec.tail))
+    inline def foreachDiscard[A, B, S](source: Seq[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
+        foreachDiscard(Chunk.from(source))(f)
     end foreachDiscard
 
-    /** Filters elements of a `Vector` based on an effect-producing predicate.
+    /** Filters elements of a `Seq` based on an effect-producing predicate.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing predicate function
       * @return
       *   A new effect that produces a Vector of filtered elements
       */
-    def filter[A, S](source: Vector[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Vector[A] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop(source, Vector.empty[A]): (curVec, accVec) =>
-                if curVec.isEmpty then
-                    Loop.done(accVec)
-                else
-                    f(curVec.head).map:
-                        case true  => Loop.continue(curVec.tail, accVec.appended(curVec.head))
-                        case false => Loop.continue(curVec.tail, accVec)
+    inline def filter[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Seq[A] < S =
+        filter(Chunk.from(source))(f)
     end filter
 
-    /** Folds over a `Vector` with an effect-producing function.
+    /** Folds over a `Seq` with an effect-producing function.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param acc
       *   The initial accumulator value
       * @param f
@@ -1059,120 +1018,72 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[A, B, S](source: Vector[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
-        if source.isEmpty then
-            acc
-        else
-            Loop(source, acc): (curVec, acc) =>
-                if curVec.isEmpty then
-                    Loop.done(acc)
-                else
-                    f(acc, curVec.head).map(Loop.continue(curVec.tail, _))
+    inline def foldLeft[A, B, S](source: Seq[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
+        foldLeft(Chunk.from(source))(acc)(f)
     end foldLeft
 
-    /** Collects and transforms elements from a `Vector` using an effect-producing function that returns Maybe values.
+    /** Collects and transforms elements from a `Seq` using an effect-producing function that returns Maybe values.
       *
-      * This method applies the given function to each element in the `Vector` and collects only the Present values into a Vector. It's
-      * similar to a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
+      * This method applies the given function to each element in the `Seq` and collects only the Present values into a Seq. It's similar to
+      * a combination of flatMap and filter, where elements are both transformed and filtered in a single pass.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing function that returns Maybe values
       * @return
       *   A new effect that produces a Vector containing only the Present values after transformation
       */
-    def collect[A, B, S](source: Vector[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Vector[B] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop(source, Vector.empty[B]): (curVec, accVec) =>
-                if curVec.isEmpty then
-                    Loop.done(accVec)
-                else
-                    f(curVec.head).map:
-                        case Absent     => Loop.continue(curVec.tail, accVec)
-                        case Present(v) => Loop.continue(curVec.tail, accVec.appended(v))
+    inline def collect[A, B, S](source: Seq[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Seq[B] < S =
+        collect(Chunk.from(source))(f)
     end collect
 
-    /** Collects the results of a `Vector` of effects into a single effect.
+    /** Collects the results of a `Seq` of effects into a single effect.
       *
       * @param source
-      *   The `Vector` of effects
+      *   The `Seq` of effects
       * @return
-      *   A new effect that produces a Vector of results
+      *   A new effect that produces a Seq of results
       */
-    def collectAll[A, S](source: Vector[A < S])(using Frame, Safepoint): Vector[A] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop(source, Vector.empty[A]): (curVec, accVec) =>
-                if curVec.isEmpty then
-                    Loop.done(accVec)
-                else
-                    curVec.head.map(u => Loop.continue(curVec.tail, accVec.appended(u)))
+    inline def collectAll[A, S](source: Seq[A < S])(using Frame, Safepoint): Seq[A] < S =
+        collectAll(Chunk.from(source))
     end collectAll
 
-    /** Collects the results of a `Vector` of effects, discarding the results.
+    /** Collects the results of a `Seq` of effects, discarding the results.
       *
       * @param source
-      *   The `Vector` of effects
+      *   The `Seq` of effects
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[A, S](source: Vector[A < S])(using Frame, Safepoint): Unit < S =
-        if source.isEmpty then
-            ()
-        else
-            Loop(source): curVec =>
-                if curVec.isEmpty then
-                    Loop.done
-                else
-                    curVec.head.andThen(Loop.continue(curVec.tail))
+    inline def collectAllDiscard[A, S](source: Seq[A < S])(using Frame, Safepoint): Unit < S =
+        collectAllDiscard(Chunk.from(source))
     end collectAllDiscard
 
-    /** Finds the first element in a `Vector` that satisfies a predicate.
+    /** Finds the first element in a `Seq` that satisfies a predicate.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing predicate function
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[A, B, S](source: Vector[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
-        if source.isEmpty then
-            Absent
-        else
-            Loop(source): curVec =>
-                if curVec.isEmpty then
-                    Loop.done(Absent)
-                else
-                    f(curVec.head).map:
-                        case Absent         => Loop.continue(curVec.tail)
-                        case p @ Present(_) => Loop.done(p)
+    inline def findFirst[A, B, S](source: Seq[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+        findFirst(Chunk.from(source))(f)
     end findFirst
 
-    /** Takes elements from a `Vector` while a predicate holds true.
+    /** Takes elements from a `Seq` while a predicate holds true.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing predicate function
       * @return
       *   A new effect that produces a Vector of taken elements
       */
-    def takeWhile[A, S](source: Vector[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Vector[A] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop(source, Vector.empty[A]): (curVec, accVec) =>
-                if curVec.isEmpty then
-                    Loop.done(accVec)
-                else
-                    f(curVec.head).map:
-                        case true  => Loop.continue(curVec.tail, accVec.appended(curVec.head))
-                        case false => Loop.done(accVec)
+    inline def takeWhile[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Seq[A] < S =
+        takeWhile(Chunk.from(source))(f)
     end takeWhile
 
     /** Splits the collection into prefix/suffix pair where all elements in the prefix satisfy `f`.
@@ -1184,45 +1095,27 @@ object Kyo:
       *   - `prefix`: All elements before first failure of `f`
       *   - `suffix`: First failing element and all remaining elements
       */
-    def span[A, S](source: Vector[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Vector[A], Vector[A]) < S =
-        if source.isEmpty then
-            (Vector.empty, Vector.empty)
-        else
-            Loop(Vector.empty[A], source): (accVec, curVec) =>
-                if curVec.isEmpty then
-                    Loop.done((accVec, Vector.empty))
-                else
-                    f(curVec.head).map:
-                        case true  => Loop.continue(accVec.appended(curVec.head), curVec.tail)
-                        case false => Loop.done((accVec, curVec))
+    inline def span[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Seq[A], Seq[A]) < S =
+        span(Chunk.from(source))(f)
     end span
 
-    /** Drops elements from a `Vector` while a predicate holds true.
+    /** Drops elements from a `Seq` while a predicate holds true.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing predicate function
       * @return
-      *   A new effect that produces a Vector of remaining elements
+      *   A new effect that produces a Seq of remaining elements
       */
-    def dropWhile[A, S](source: Vector[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Vector[A] < S =
-        if source.isEmpty then
-            Vector.empty
-        else
-            Loop(source): curVec =>
-                if curVec.isEmpty then
-                    Loop.done(Vector.empty)
-                else
-                    f(curVec.head).map:
-                        case true  => Loop.continue(curVec.tail)
-                        case false => Loop.done(curVec)
+    inline def dropWhile[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Seq[A] < S =
+        dropWhile(Chunk.from(source))(f)
     end dropWhile
 
     /** Splits the collection into two vectors, depending on the result of the predicate.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing predicate function
       * @return
@@ -1230,26 +1123,17 @@ object Kyo:
       *   - `lefts`: All elements that satisfy the predicate
       *   - `rights`: All elements that do not satisfy the predicate
       */
-    def partition[S, A](source: Vector[A])(f: Safepoint ?=> A => Boolean < S)(using
+    inline def partition[S, A](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using
         Frame,
         Safepoint
-    ): (Vector[A], Vector[A]) < S =
-        if source.isEmpty then
-            (Vector.empty, Vector.empty)
-        else
-            Loop(source, Vector.empty[A], Vector.empty[A]): (curVec, trues, falses) =>
-                if curVec.isEmpty then
-                    Loop.done((trues, falses))
-                else
-                    f(curVec.head).map:
-                        case true  => Loop.continue(curVec.tail, trues.appended(curVec.head), falses)
-                        case false => Loop.continue(curVec.tail, trues, falses.appended(curVec.head))
+    ): (Seq[A], Seq[A]) < S =
+        partition(Chunk.from(source))(f)
     end partition
 
     /** Splits the collection into two vectors, depending on the result of the effect-producing function.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing function that returns an Either
       * @return
@@ -1257,20 +1141,11 @@ object Kyo:
       *   - `lefts`: All elements that are Left
       *   - `rights`: All elements that are Right
       */
-    def partitionMap[S, A, A1, A2](source: Vector[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
+    inline def partitionMap[S, A, A1, A2](source: Seq[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
         Frame,
         Safepoint
-    ): (Vector[A1], Vector[A2]) < S =
-        if source.isEmpty then
-            (Vector.empty, Vector.empty)
-        else
-            Loop(source, Vector.empty[A1], Vector.empty[A2]): (curVec, lefts, rights) =>
-                if curVec.isEmpty then
-                    Loop.done((lefts, rights))
-                else
-                    f(curVec.head).map:
-                        case Left(a1)  => Loop.continue(curVec.tail, lefts.appended(a1), rights)
-                        case Right(a2) => Loop.continue(curVec.tail, lefts, rights.appended(a2))
+    ): (Seq[A1], Seq[A2]) < S =
+        partitionMap(Chunk.from(source))(f)
     end partitionMap
 
     /** Computes a prefix scan of the collection.
@@ -1280,57 +1155,35 @@ object Kyo:
       * @param op
       *   Effectful operation that combines accumulator with each element
       * @return
-      *   Vector containing all intermediate accumulator states
+      *   Seq containing all intermediate accumulator states
       */
-    def scanLeft[S, A, B](source: Vector[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
+    inline def scanLeft[S, A, B](source: Seq[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
         Frame,
         Safepoint
-    ): Vector[B] < S =
-        if source.isEmpty then
-            Vector(z)
-        else
-            Loop(source, Vector(z), z): (curVec, acc, current) =>
-                if curVec.isEmpty then
-                    Loop.done(acc)
-                else
-                    op(current, curVec.head).map: next =>
-                        Loop.continue(curVec.tail, acc.appended(next), next)
+    ): Seq[B] < S =
+        scanLeft(Chunk.from(source))(z)(op)
     end scanLeft
 
     /** Groups elements of the collection by the result of the function.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param f
       *   The effect-producing function that returns the key for each element
       * @return
       *   A Map where keys are the results of the function and values are vectors of elements
       */
-    def groupBy[S, A, K](source: Vector[A])(f: Safepoint ?=> A => K < S)(using
+    inline def groupBy[S, A, K](source: Seq[A])(f: Safepoint ?=> A => K < S)(using
         Frame,
         Safepoint
-    ): Map[K, Vector[A]] < S =
-        if source.isEmpty then
-            Map.empty[K, Vector[A]]
-        else
-            Loop(source, Map.empty[K, Vector[A]]): (curVec, acc) =>
-                if curVec.isEmpty then
-                    Loop.done(acc)
-                else
-                    f(curVec.head).map: k =>
-                        Loop.continue(
-                            curVec.tail,
-                            acc.updatedWith(k) {
-                                case Some(current) => Some(current.appended(curVec.head))
-                                case None          => Some(Vector(curVec.head))
-                            }
-                        )
+    ): Map[K, Seq[A]] < S =
+        groupBy(Chunk.from(source))(f)
     end groupBy
 
     /** Groups elements of the collection by the result of the function and applies a transformation to each element.
       *
       * @param source
-      *   The input `Vector`
+      *   The input `Seq`
       * @param key
       *   The effect-producing function that returns the key for each element
       * @param f
@@ -1338,38 +1191,21 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are vectors of transformed elements
       */
-    def groupMap[S, A, K, B](source: Vector[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
+    inline def groupMap[S, A, K, B](source: Seq[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
         Frame,
         Safepoint
-    ): Map[K, Vector[B]] < S =
-        if source.isEmpty then
-            Map.empty[K, Vector[B]]
-        else
-            Loop(source, Map.empty[K, Vector[B]]): (curVec, acc) =>
-                if curVec.isEmpty then
-                    Loop.done(acc)
-                else
-                    for
-                        k <- key(curVec.head)
-                        b <- f(curVec.head)
-                    yield Loop.continue(
-                        curVec.tail,
-                        acc.updatedWith(k) {
-                            case Some(current) => Some(current.appended(b))
-                            case None          => Some(Vector(b))
-                        }
-                    )
-                    end for
+    ): Map[K, Seq[B]] < S =
+        groupMap(Chunk.from(source))(key)(f)
     end groupMap
 
-    /** Processes elements of a `Vector` while a predicate holds true, maintaining an accumulator state. This function implements a stateful
+    /** Processes elements of a `Seq` while a predicate holds true, maintaining an accumulator state. This function implements a stateful
       * iteration pattern where:
       *   1. The predicate function `f` determines whether to continue processing
       *   2. The accumulator function `acc` updates state based on the predicate result
       *   3. The epilog function transforms the final accumulator state into the result
       *
       * @param source
-      *   The input `Vector` to process
+      *   The input `Seq` to process
       * @param prolog
       *   Initial state value for the accumulator
       * @param f
@@ -1381,22 +1217,13 @@ object Kyo:
       * @return
       *   A new effect that produces the final transformed result
       */
-    private[kyo] def shiftedWhile[A, S, B, C](source: Vector[A])(
+    private[kyo] inline def shiftedWhile[A, S, B, C](source: Seq[A])(
         prolog: B,
         f: Safepoint ?=> A => Boolean < S,
         acc: (B, Boolean, A) => B,
         epilog: B => C
     )(using Frame, Safepoint): C < S =
-        if source.isEmpty then
-            epilog(prolog)
-        else
-            Loop(source, prolog): (curVec, b) =>
-                if curVec.isEmpty then
-                    Loop.done(epilog(b))
-                else
-                    f(curVec.head).map:
-                        case true  => Loop.continue(curVec.tail, acc(b, true, curVec.head))
-                        case false => Loop.done(epilog(acc(b, false, curVec.head)))
+        shiftedWhile(Chunk.from(source))(prolog, f, acc, epilog)
     end shiftedWhile
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -1413,16 +1240,17 @@ object Kyo:
       *   A new effect that produces a Chunk of results
       */
     def foreach[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Chunk[B] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
-            case 1 => f(source.head).map(Chunk.Indexed.single(_))
+            case 1 => f(chunk.head).map(Chunk.Indexed.single(_))
             case _ =>
                 Loop.indexed(Chunk.empty[B]): (index, acc) =>
                     if index == len then
-                        Loop.done(acc)
+                        Loop.done(acc.toIndexed)
                     else
-                        f(source(index)).map: u =>
+                        f(chunk(index)).map: u =>
                             Loop.continue(acc.appended(u))
         end match
     end foreach
@@ -1440,13 +1268,14 @@ object Kyo:
         Frame,
         Safepoint
     ): Chunk[B] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
             case _ =>
                 Loop.indexed(Chunk.empty[Chunk[B]]): (idx, acc) =>
                     if idx == len then Loop.done(acc.flattenChunk)
-                    else f(source(idx)).map(iterOnce => Loop.continue(acc.appended(Chunk.from(iterOnce))))
+                    else f(chunk(idx)).map(iterOnce => Loop.continue(acc.appended(Chunk.from(iterOnce))))
         end match
     end foreachConcat
 
@@ -1460,16 +1289,17 @@ object Kyo:
       *   A new effect that produces a Chunk of results
       */
     def foreachIndexed[A, B, S](source: Chunk[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Chunk[B] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
-            case 1 => f(0, source.head).map(Chunk.Indexed.single(_))
+            case 1 => f(0, chunk.head).map(Chunk.Indexed.single(_))
             case _ =>
                 Loop.indexed(Chunk.empty[B]): (index, acc) =>
                     if index == len then
-                        Loop.done(acc)
+                        Loop.done(acc.toIndexed)
                     else
-                        f(index, source(index)).map: u =>
+                        f(index, chunk(index)).map: u =>
                             Loop.continue(acc.appended(u))
         end match
     end foreachIndexed
@@ -1484,14 +1314,15 @@ object Kyo:
       *   A new effect that produces Unit
       */
     def foreachDiscard[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => ()
-            case 1 => f(source.head).unit
+            case 1 => f(chunk.head).unit
             case _ =>
                 Loop.indexed: index =>
                     if index == len then Loop.done
-                    else f(source(index)).andThen(Loop.continue)
+                    else f(chunk(index)).andThen(Loop.continue)
         end match
     end foreachDiscard
 
@@ -1505,18 +1336,19 @@ object Kyo:
       *   A new effect that produces a Chunk of filtered elements
       */
     def filter[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
             case 1 =>
-                f(source.head).map:
-                    case true  => Chunk.Indexed.single(source.head)
+                f(chunk.head).map:
+                    case true  => Chunk.Indexed.single(chunk.head)
                     case false => Chunk.empty
             case _ =>
                 Loop.indexed(Chunk.empty[A]): (idx, acc) =>
-                    if idx == len then Loop.done(acc)
+                    if idx == len then Loop.done(acc.toIndexed)
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map:
                             case true  => Loop.continue(acc.appended(current))
                             case false => Loop.continue(acc)
@@ -1535,14 +1367,15 @@ object Kyo:
       *   A new effect that produces the final accumulated value
       */
     def foldLeft[A, B, S](source: Chunk[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => acc
-            case 1 => f(acc, source.head)
+            case 1 => f(acc, chunk.head)
             case _ =>
                 Loop.indexed(acc): (idx, acc) =>
                     if idx == len then Loop.done(acc)
-                    else f(acc, source(idx)).map(Loop.continue(_))
+                    else f(acc, chunk(idx)).map(Loop.continue(_))
         end match
     end foldLeft
 
@@ -1559,18 +1392,19 @@ object Kyo:
       *   A new effect that produces a Chunk containing only the Present values after transformation
       */
     def collect[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Chunk[B] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
             case 1 =>
-                f(source.head).map:
+                f(chunk.head).map:
                     case Absent     => Chunk.empty
                     case Present(v) => Chunk.Indexed.single(v)
             case _ =>
                 Loop.indexed(Chunk.empty[B]): (idx, acc) =>
-                    if idx == len then Loop.done(acc)
+                    if idx == len then Loop.done(acc.toIndexed)
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map:
                             case Absent     => Loop.continue(acc)
                             case Present(v) => Loop.continue(acc.appended(v))
@@ -1585,15 +1419,16 @@ object Kyo:
       *   A new effect that produces a Chunk of results
       */
     def collectAll[A, S](source: Chunk[A < S])(using Frame, Safepoint): Chunk[A] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
-            case 1 => source.head.map(Chunk.Indexed.single(_))
+            case 1 => chunk.head.map(Chunk.Indexed.single(_))
             case _ =>
                 Loop.indexed(Chunk.empty[A]): (idx, acc) =>
-                    if idx == len then Loop.done(acc)
+                    if idx == len then Loop.done(acc.toIndexed)
                     else
-                        source(idx).map: v =>
+                        chunk(idx).map: v =>
                             Loop.continue(acc.appended(v))
         end match
     end collectAll
@@ -1606,14 +1441,15 @@ object Kyo:
       *   A new effect that produces Unit
       */
     def collectAllDiscard[A, S](source: Chunk[A < S])(using Frame, Safepoint): Unit < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => ()
-            case 1 => source.head.unit
+            case 1 => chunk.head.unit
             case _ =>
                 Loop.indexed: idx =>
                     if idx == len then Loop.done
-                    else source(idx).andThen(Loop.continue)
+                    else chunk(idx).andThen(Loop.continue)
         end match
     end collectAllDiscard
 
@@ -1627,15 +1463,16 @@ object Kyo:
       *   A new effect that produces Maybe of the first matching element
       */
     def findFirst[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Absent
-            case 1 => f(source.head)
+            case 1 => f(chunk.head)
             case _ =>
                 Loop.indexed: idx =>
                     if idx == len then Loop.done(Absent)
                     else
-                        f(source(idx)).map:
+                        f(chunk(idx)).map:
                             case Absent         => Loop.continue
                             case p @ Present(_) => Loop.done(p)
         end match
@@ -1651,21 +1488,22 @@ object Kyo:
       *   A new effect that produces a Chunk of taken elements
       */
     def takeWhile[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
             case 1 =>
-                f(source.head).map:
-                    case true  => Chunk.Indexed.single(source.head)
+                f(chunk.head).map:
+                    case true  => Chunk.Indexed.single(chunk.head)
                     case false => Chunk.empty[A]
             case _ =>
                 Loop.indexed(Chunk.empty[A]): (idx, acc) =>
-                    if idx == len then Loop.done(acc)
+                    if idx == len then Loop.done(acc.toIndexed)
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map:
                             case true  => Loop.continue(acc.appended(current))
-                            case false => Loop.done(acc)
+                            case false => Loop.done(acc.toIndexed)
         end match
     end takeWhile
 
@@ -1679,21 +1517,22 @@ object Kyo:
       *   - `suffix`: First failing element and all remaining elements
       */
     def span[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Chunk[A], Chunk[A]) < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => (Chunk.empty, Chunk.empty)
             case 1 =>
-                f(source.head).map:
-                    case true  => (Chunk.Indexed.single(source.head), Chunk.empty)
-                    case false => (Chunk.empty, Chunk.Indexed.single(source.head))
+                f(chunk.head).map:
+                    case true  => (Chunk.Indexed.single(chunk.head), Chunk.empty)
+                    case false => (Chunk.empty, Chunk.Indexed.single(chunk.head))
             case _ =>
                 Loop.indexed(Chunk.empty[A]): (idx, acc) =>
-                    if idx == len then Loop.done((acc, Chunk.empty))
+                    if idx == len then Loop.done((acc.toIndexed, Chunk.empty))
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map:
                             case true  => Loop.continue(acc.appended(current))
-                            case false => Loop.done((acc, source.drop(idx)))
+                            case false => Loop.done((acc.toIndexed, chunk.drop(idx).toIndexed))
         end match
     end span
 
@@ -1707,20 +1546,21 @@ object Kyo:
       *   A new effect that produces a Chunk of remaining elements
       */
     def dropWhile[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.empty
             case 1 =>
-                f(source.head).map:
+                f(chunk.head).map:
                     case true  => Chunk.empty
-                    case false => Chunk.Indexed.single(source.head)
+                    case false => Chunk.Indexed.single(chunk.head)
             case _ =>
                 Loop.indexed: idx =>
                     if idx == len then Loop.done(Chunk.empty)
                     else
-                        f(source(idx)).map:
+                        f(chunk(idx)).map:
                             case true  => Loop.continue
-                            case false => Loop.done(source.drop(idx))
+                            case false => Loop.done(chunk.drop(idx).toIndexed)
         end match
     end dropWhile
 
@@ -1739,18 +1579,19 @@ object Kyo:
         Frame,
         Safepoint
     ): (Chunk[A], Chunk[A]) < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => (Chunk.empty, Chunk.empty)
             case 1 =>
-                f(source.head).map:
-                    case true  => (Chunk.Indexed.single(source.head), Chunk.empty)
-                    case false => (Chunk.empty, Chunk.Indexed.single(source.head))
+                f(chunk.head).map:
+                    case true  => (Chunk.Indexed.single(chunk.head), Chunk.empty)
+                    case false => (Chunk.empty, Chunk.Indexed.single(chunk.head))
             case _ =>
                 Loop.indexed(Chunk.empty[A], Chunk.empty[A]): (idx, trues, falses) =>
-                    if idx == len then Loop.done((trues, falses))
+                    if idx == len then Loop.done((trues.toIndexed, falses.toIndexed))
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map:
                             case true  => Loop.continue(trues.appended(current), falses)
                             case false => Loop.continue(trues, falses.appended(current))
@@ -1772,18 +1613,19 @@ object Kyo:
         Frame,
         Safepoint
     ): (Chunk[A1], Chunk[A2]) < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => (Chunk.empty, Chunk.empty)
             case 1 =>
-                f(source.head).map:
+                f(chunk.head).map:
                     case Left(a1)  => (Chunk.Indexed.single(a1), Chunk.empty)
                     case Right(a2) => (Chunk.empty, Chunk.Indexed.single(a2))
             case _ =>
                 Loop.indexed(Chunk.empty[A1], Chunk.empty[A2]): (idx, lefts, rights) =>
-                    if idx == len then Loop.done((lefts, rights))
+                    if idx == len then Loop.done((lefts.toIndexed, rights.toIndexed))
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map:
                             case Left(a1)  => Loop.continue(lefts.appended(a1), rights)
                             case Right(a2) => Loop.continue(lefts, rights.appended(a2))
@@ -1803,14 +1645,15 @@ object Kyo:
         Frame,
         Safepoint
     ): Chunk[B] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Chunk.Indexed.single(z)
             case _ =>
                 Loop.indexed[Chunk[B], B, Chunk[B], S](Chunk.Indexed.single(z), z): (idx, acc, current) =>
-                    if idx == len then Loop.done(acc)
+                    if idx == len then Loop.done(acc.toIndexed)
                     else
-                        op(current, source(idx)).map: next =>
+                        op(current, chunk(idx)).map: next =>
                             Loop.continue(acc.appended(next), next)
         end match
     end scanLeft
@@ -1828,20 +1671,21 @@ object Kyo:
         Frame,
         Safepoint
     ): Map[K, Chunk[A]] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Map.empty[K, Chunk[A]]
-            case 1 => f(source.head).map(k => Map(k -> Chunk.Indexed.single(source.head)))
+            case 1 => f(chunk.head).map(k => Map(k -> Chunk.Indexed.single(chunk.head)))
             case _ =>
                 Loop.indexed(Map.empty[K, Chunk[A]]): (idx, acc) =>
-                    if idx == len then Loop.done(acc)
+                    if idx == len then Loop.done(acc.view.mapValues(_.toIndexed).toMap)
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map: k =>
                             Loop.continue(
                                 acc.updatedWith(k) {
-                                    case Some(current) => Some(current.appended(source(idx)))
-                                    case None          => Some(Chunk.Indexed.single(source(idx)))
+                                    case Some(current) => Some(current.appended(chunk(idx)))
+                                    case None          => Some(Chunk.Indexed.single(chunk(idx)))
                                 }
                             )
         end match
@@ -1862,21 +1706,22 @@ object Kyo:
         Frame,
         Safepoint
     ): Map[K, Chunk[B]] < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => Map.empty[K, Chunk[B]]
             case 1 =>
                 for
-                    k <- key(source.head)
-                    b <- f(source.head)
+                    k <- key(chunk.head)
+                    b <- f(chunk.head)
                 yield Map(k -> Chunk.Indexed.single(b))
             case _ =>
                 Loop.indexed(Map.empty[K, Chunk[B]]): (idx, acc) =>
-                    if idx == len then Loop.done(acc)
+                    if idx == len then Loop.done(acc.view.mapValues(_.toIndexed).toMap)
                     else
                         for
-                            k <- key(source(idx))
-                            b <- f(source(idx))
+                            k <- key(chunk(idx))
+                            b <- f(chunk(idx))
                         yield Loop.continue(
                             acc.updatedWith(k) {
                                 case Some(current) => Some(current.appended(b))
@@ -1911,15 +1756,16 @@ object Kyo:
         acc: (B, Boolean, A) => B,
         epilog: B => C
     )(using Frame, Safepoint): C < S =
-        val len = source.length
+        val chunk = source.toIndexed
+        val len   = chunk.length
         len match
             case 0 => epilog(prolog)
-            case 1 => f(source.head).map(b => epilog(acc(prolog, b, source.head)))
+            case 1 => f(chunk.head).map(b => epilog(acc(prolog, b, chunk.head)))
             case _ =>
                 Loop.indexed(prolog): (idx, b) =>
                     if idx == len then Loop.done(epilog(b))
                     else
-                        val current = source(idx)
+                        val current = chunk(idx)
                         f(current).map:
                             case true  => Loop.continue(acc(b, true, current))
                             case false => Loop.done(epilog(acc(b, false, current)))
