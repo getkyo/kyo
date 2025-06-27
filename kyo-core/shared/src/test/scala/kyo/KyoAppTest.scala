@@ -2,7 +2,6 @@ package kyo
 
 import Tagged.*
 import org.scalatest.compatible.Assertion
-import scala.annotation.meta.companionObject
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
