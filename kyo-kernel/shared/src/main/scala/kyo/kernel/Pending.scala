@@ -5,9 +5,6 @@ import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions
-import scala.quoted.Expr
-import scala.quoted.Quotes
-import scala.quoted.Type
 
 /** Represents a computation that may perform effects before producing a value.
   *
@@ -412,23 +409,11 @@ object `<`:
       * @return
       *   A computation in the effect context
       */
-    implicit def lift[A: WeakFlat, S](v: A): A < S =
-        v match
-            case kyo: Kyo[?, ?] => Nested(kyo)
-            case _              => v.asInstanceOf[A < S]
+    implicit inline def lift[A: WeakFlat, S](inline v: A): A < S = Lift.lift(v)
 
-    implicit inline def liftUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ liftUnitImpl[S1, S2]('v) }
-
-    private def liftUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
-        import quotes.reflect.*
-        val source = TypeRepr.of[S1].show
-        report.errorAndAbort(
-            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
-               |This may be due to an effect type mismatch.
-               |Consider removing or adjusting the type constraint on the left-hand side.
-               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
-        )
-    end liftUnitImpl
+    /** guard to avoid silent discard of provided Unit < S1, over a required Unit < S2
+      */
+    implicit inline def liftUnit[S1, S2](inline v: Unit < S1): Unit < S2 = Lift.liftUnit(v)
 
     /** Converts a pure single-argument function to an effectful computation. */
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
