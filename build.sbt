@@ -450,9 +450,9 @@ lazy val `kyo-aeron` =
         .settings(
             `kyo-settings`,
             libraryDependencies ++= Seq(
-                "io.aeron"     % "aeron-driver" % "1.48.2",
-                "io.aeron"     % "aeron-client" % "1.48.2",
-                "com.lihaoyi" %% "upickle"      % "4.2.1"
+                "io.aeron"     % "aeron-driver" % "1.46.7",
+                "io.aeron"     % "aeron-client" % "1.46.7",
+                "com.lihaoyi" %% "upickle"      % "4.1.0"
             )
         )
         .jvmSettings(mimaCheck(false))
