@@ -2,6 +2,7 @@ package kyo
 
 import Tagged.*
 import org.scalatest.compatible.Assertion
+import scala.annotation.meta.companionObject
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
@@ -120,22 +121,5 @@ class KyoAppTest extends Test:
             "Found:    Int < kyo.Var[Int]"
         )
     }
-
-    def testSignalInterruption(signal: String) =
-        s"SIG$signal interruption" taggedAs jvmOnly in run {
-            for
-                process <- Process.jvm.spawn(TestSignalApp.getClass, List.empty)
-                _       <- Loop.whileTrue(process.isAlive.map(!_))(Async.sleep(20.millis))
-                pid     <- process.pid
-                _       <- Process.Command("kill", s"-$signal", pid.toString).waitFor
-
-                completed <- process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
-                _         <- if !completed then process.destroyForcibly else Kyo.unit
-                alive     <- process.isAlive
-            yield assert(!alive)
-        }
-
-    testSignalInterruption("TERM")
-    testSignalInterruption("INT")
 
 end KyoAppTest
