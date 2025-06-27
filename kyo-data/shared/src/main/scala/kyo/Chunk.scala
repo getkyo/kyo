@@ -699,6 +699,28 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       */
     def from[A](source: IterableOnce[A]): Chunk[A] = Indexed.from(source)
 
+    /** Creates a Chunk from a Maybe.
+      *
+      * @tparam A
+      *   the type of the element
+      * @param source
+      *   the Maybe to create the Chunk from
+      * @return
+      *   a new Chunk.Indexed containing the single element
+      */
+    def from[A](source: Maybe[A]): Chunk[A] = Indexed.from(source)
+
+    /** Creates a Chunk from an Option.
+      *
+      * @tparam A
+      *   the type of the element
+      * @param source
+      *   the Option to create the Chunk from
+      * @return
+      *   a new Chunk.Indexed containing the single element
+      */
+    def from[A](source: Option[A]): Chunk[A] = Indexed.from(source)
+
     /** Creates a new **mutable** builder for constructing Chunks.
       *
       * @tparam A
