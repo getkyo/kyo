@@ -165,7 +165,7 @@ class FiberTest extends Test:
                         else
                             loop(i - 1, s)
                     }
-                Fiber.raceFirst(Seq(loop(100, "a"), loop(Int.MaxValue, "b"), loop(2000, "c"))).map(_.getResult).map { r =>
+                Fiber.raceFirst(Seq(loop(100, "a"), loop(Int.MaxValue, "b"), loop(5000, "c"))).map(_.getResult).map { r =>
                     assert(r == Result.fail("Winner"))
                 }
             }

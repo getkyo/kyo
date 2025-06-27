@@ -279,11 +279,8 @@ object Fiber:
 
     end extension
 
-    case class Interrupted(at: Frame)
-        extends RuntimeException("Fiber interrupted at " + at.position.show)
-        with NoStackTrace:
-        override def getCause() = null
-    end Interrupted
+    final case class Interrupted(at: Frame, message: Text = "")
+        extends KyoException(message + " Fiber interrupted at " + at.position.show)(using at)
 
     /** Races multiple Fibers and returns a Fiber that completes with the result of the first to complete. When one Fiber completes, all
       * other Fibers are interrupted.
