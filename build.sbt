@@ -40,7 +40,9 @@ inThisBuild(List(
             "fwbrasil@gmail.com",
             url("https://github.com/fwbrasil/")
         )
-    )
+    ),
+    resolvers += Resolver.sonatypeCentralSnapshots,
+    resolvers += Resolver.sonatypeCentralRepo("staging")
 ))
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
