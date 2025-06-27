@@ -44,7 +44,6 @@ object Abort:
     import internal.*
 
     given eliminateAbort: Reducible.Eliminable[Abort[Nothing]] with {}
-    private inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     /** Fails the computation with the given value.
       *
@@ -53,7 +52,7 @@ object Abort:
       * @return
       *   A computation that immediately fails with the given value
       */
-    inline def fail[E](inline value: E)(using inline frame: Frame): Nothing < Abort[E] =
+    inline def fail[E](inline value: E)(using inline frame: Frame, inline tag: Tag[Abort[E]]): Nothing < Abort[E] =
         error(Failure(value))
 
     /** Fails the computation with a panic value (unchecked exception).
@@ -63,11 +62,11 @@ object Abort:
       * @return
       *   A computation that immediately fails with the given exception
       */
-    inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] =
+    inline def panic[E](inline ex: Throwable)(using inline frame: Frame, inline tag: Tag[Abort[E]]): Nothing < Abort[E] =
         error(Panic(ex))
 
-    inline def error[E](inline error: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
-        ArrowEffect.suspendWith[Any](erasedTag[E], error)(_ => ???)
+    inline def error[E](inline error: Error[E])(using inline frame: Frame, inline tag: Tag[Abort[E]]): Nothing < Abort[E] =
+        ArrowEffect.suspendWith[Any](tag, error)(_ => ???)
 
     /** Fails the computation if the condition is true.
       *
@@ -78,7 +77,10 @@ object Abort:
       * @return
       *   A unit computation that may fail if the condition is true
       */
-    inline def when[E, S](b: Boolean < S)(inline value: => E < S)(using inline frame: Frame): Unit < (Abort[E] & S) =
+    inline def when[E, S](b: Boolean < S)(inline value: => E < S)(using
+        inline frame: Frame,
+        inline tag: Tag[Abort[E]]
+    ): Unit < (Abort[E] & S) =
         ensuring(b.map(!_), ())(value)
 
     /** Fails the computation if the condition is false.
@@ -90,7 +92,10 @@ object Abort:
       * @return
       *   A unit computation that may fail if the condition is false
       */
-    inline def unless[E, S](b: Boolean < S)(inline value: => E < S)(using inline frame: Frame): Unit < (Abort[E] & S) =
+    inline def unless[E, S](b: Boolean < S)(inline value: => E < S)(using
+        inline frame: Frame,
+        inline tag: Tag[Abort[E]]
+    ): Unit < (Abort[E] & S) =
         ensuring(b, ())(value)
 
     /** Ensures a condition is met before returning the provided result.
@@ -109,7 +114,8 @@ object Abort:
       *   A computation that succeeds with the result if the condition is true, or fails with the given value if it's false
       */
     inline def ensuring[E, A, S](cond: Boolean < S, result: => A < S)(inline value: => E < S)(using
-        inline frame: Frame
+        inline frame: Frame,
+        inline tag: Tag[Abort[E]]
     ): A < (Abort[E] & S) =
         cond.map {
             case true  => result
@@ -123,7 +129,7 @@ object Abort:
       * @return
       *   A computation that succeeds with the Right value or fails with the Left value
       */
-    inline def get[E](using inline frame: Frame)[A](either: Either[E, A]): A < Abort[E] =
+    inline def get[E](using inline frame: Frame, inline tag: Tag[Abort[E]])[A](either: Either[E, A]): A < Abort[E] =
         either match
             case Right(value) => value
             case Left(value)  => fail(value)
@@ -135,7 +141,7 @@ object Abort:
       * @return
       *   A computation that succeeds with the Some value or fails with Absent
       */
-    inline def get[A](opt: Option[A])(using inline frame: Frame): A < Abort[Absent] =
+    inline def get[A](opt: Option[A])(using inline frame: Frame, inline tag: Tag[Abort[Absent]]): A < Abort[Absent] =
         opt match
             case None    => fail(Absent)
             case Some(v) => v
@@ -147,7 +153,7 @@ object Abort:
       * @return
       *   A computation that succeeds with the Success value or fails with the Failure exception
       */
-    inline def get[A](e: scala.util.Try[A])(using inline frame: Frame): A < Abort[Throwable] =
+    inline def get[A](e: scala.util.Try[A])(using inline frame: Frame, inline tag: Tag[Abort[Throwable]]): A < Abort[Throwable] =
         e match
             case scala.util.Success(t) => t
             case scala.util.Failure(v) => fail(v)
@@ -159,8 +165,8 @@ object Abort:
       * @return
       *   A computation that succeeds with the Success value or fails with the Failure value
       */
-    inline def get[E](using inline frame: Frame)[A](r: Result[E, A]): A < Abort[E] =
-        r.foldError(identity, Abort.error)
+    inline def get[E](using inline frame: Frame, inline tag: Tag[Abort[E]])[A](r: Result[E, A]): A < Abort[E] =
+        r.foldError(identity, Abort.error[E])
 
     /** Lifts a Maybe into the Abort effect.
       *
@@ -170,7 +176,7 @@ object Abort:
       *   A computation that succeeds with the Present value or fails with Absent
       */
     @targetName("maybe")
-    inline def get[A](m: Maybe[A])(using inline frame: Frame): A < Abort[Absent] =
+    inline def get[A](m: Maybe[A])(using inline frame: Frame, inline tag: Tag[Abort[Absent]]): A < Abort[Absent] =
         m.fold(fail(Absent))(identity)
 
     /** Runs an Abort effect, converting it to a Result.
@@ -195,7 +201,8 @@ object Abort:
     )(
         using
         ct: SafeClassTag[E],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        tag: Tag[Abort[E]]
     ): B < (S & reduce.SReduced & S2) =
         reduce {
             ArrowEffect.handleCatching[
@@ -208,7 +215,7 @@ object Abort:
                 Abort[ER] & S,
                 S2
             ](
-                erasedTag[E],
+                tag,
                 v.map(Result.succeed[E, A](_))
             )(
                 accept = [C] =>
@@ -243,7 +250,8 @@ object Abort:
     )[A, S, ER](v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        tag: Tag[Abort[E]]
     ): Result[E, A] < (S & reduce.SReduced) =
         runWith[E](v)(identity)
 
@@ -263,10 +271,13 @@ object Abort:
     def runPartial[E](
         using Frame
     )[A, S, ER](v: => A < (Abort[E | ER] & S))(
-        using ct: SafeClassTag[E]
+        using
+        ct: SafeClassTag[E],
+        tag: Tag[Abort[E]],
+        tagER: Tag[Abort[ER]]
     ): Result.Partial[E, A] < (S & Abort[ER]) =
         Abort.runWith[E](v):
-            case panic: Panic                    => Abort.error(panic)
+            case panic: Panic                    => Abort.error[ER](panic)
             case other: Partial[E, A] @unchecked => other
 
     /** Completely handles an Abort effect, converting it to a partial Result and throwing any Panic exceptions.
@@ -285,7 +296,8 @@ object Abort:
     def runPartialOrThrow[E, A, S](v: => A < (Abort[E] & S))(
         using
         ct: SafeClassTag[E],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E]]
     ): Result.Partial[E, A] < S =
         Abort.runWith[E](v):
             case Panic(thr)                      => throw thr
@@ -308,12 +320,14 @@ object Abort:
     )[A, B, S, ER](onFail: E => B < S)(v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        tag: Tag[Abort[E]],
+        tagNothing: Tag[Abort[Nothing]]
     ): (A | B) < (S & reduce.SReduced & Abort[Nothing]) =
         runWith[E](v):
             case Success(a)   => a
             case Failure(e)   => onFail(e)
-            case panic: Panic => Abort.error(panic)
+            case panic: Panic => Abort.error(panic)(using summon[Frame], tagNothing)
 
     /** Recovers from an Abort failure or panic by applying the provided functions.
       *
@@ -334,7 +348,8 @@ object Abort:
     )[A, B, S, ER](onFail: E => B < S, onPanic: Throwable => B < S)(v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        tag: Tag[Abort[E]]
     ): (A | B) < (S & reduce.SReduced) =
         runWith[E](v):
             case Success(a) => a
@@ -354,7 +369,8 @@ object Abort:
     def recoverOrThrow[A, E, B, S](onFail: E => B < S)(v: => A < (Abort[E] & S))(
         using
         frame: Frame,
-        ct: SafeClassTag[E]
+        ct: SafeClassTag[E],
+        tag: Tag[Abort[E]]
     ): (A | B) < S =
         runWith[E](v):
             case Success(a) => a
@@ -378,7 +394,8 @@ object Abort:
     )[A, B, S, ER](onError: Error[E] => B < S)(v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        tag: Tag[Abort[E]]
     ): (A | B) < (S & reduce.SReduced & Abort[Nothing]) =
         runWith[E](v)(_.foldError(identity, onError))
 
@@ -401,7 +418,7 @@ object Abort:
     )[A, B, S, ER](
         onSuccess: A => B < S,
         onFail: E => B < S
-    )(v: => A < (Abort[E | ER] & S))(using ct: SafeClassTag[E]): B < (S & Abort[ER]) =
+    )(v: => A < (Abort[E | ER] & S))(using ct: SafeClassTag[E], tag: Tag[Abort[E]], tagER: Tag[Abort[ER]]): B < (S & Abort[ER]) =
         runWith[E](v):
             case Success(a)   => onSuccess(a)
             case Failure(e)   => onFail(e)
@@ -431,7 +448,8 @@ object Abort:
     )(v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        tag: Tag[Abort[E]]
     ): B < (S & reduce.SReduced) =
         runWith[E](v):
             case Success(a) => onSuccess(a)
@@ -455,7 +473,8 @@ object Abort:
     def foldOrThrow[A, B, E, S](onSuccess: A => B < S, onFail: E => B < S)(v: => A < (Abort[E] & S))(
         using
         frame: Frame,
-        ct: SafeClassTag[E]
+        ct: SafeClassTag[E],
+        tag: Tag[Abort[E]]
     ): B < S =
         runWith[E](v):
             case Success(a) => onSuccess(a)
@@ -484,7 +503,8 @@ object Abort:
     )(v: => A < (Abort[E | ER] & S))(
         using
         ct: SafeClassTag[E],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        tag: Tag[Abort[E]]
     ): B < (S & reduce.SReduced) =
         runWith[E](v)(_.foldError(onSuccess, onError))
 
@@ -501,7 +521,7 @@ object Abort:
       */
     def catching[E](
         using Frame
-    )[A, S](v: => A < S)(using ct: SafeClassTag[E]): A < (Abort[E] & S) =
+    )[A, S](v: => A < S)(using ct: SafeClassTag[E], tag: Tag[Abort[E]]): A < (Abort[E] & S) =
         Effect.catching(v) {
             case ct(ex) => Abort.fail(ex)
             case ex     => Abort.panic(ex)
@@ -521,7 +541,9 @@ object Abort:
     def catching[E](
         using Frame
     )[A, S, E1](f: E => E1)(v: => A < S)(
-        using ct: SafeClassTag[E]
+        using
+        ct: SafeClassTag[E],
+        tag: Tag[Abort[E1]]
     ): A < (Abort[E1] & S) =
         Effect.catching(v) {
             case ct(ex) => Abort.fail(f(ex))
@@ -549,7 +571,7 @@ object Abort:
           * @return
           *   A computation that immediately fails with the given literal value, preserving its exact type
           */
-        inline def fail[V <: Singleton](inline value: V)(using inline frame: Frame): Nothing < Abort[V] =
+        inline def fail[V <: Singleton](inline value: V)(using inline frame: Frame, inline tag: Tag[Abort[V]]): Nothing < Abort[V] =
             Abort.fail(value)
 
         /** Fails the computation if the condition is true, using a literal failure value.
@@ -561,7 +583,10 @@ object Abort:
           * @return
           *   A unit computation that may fail with the literal value if the condition is true
           */
-        inline def when[V <: Singleton, S](b: Boolean < S)(inline value: V)(using inline frame: Frame): Unit < (Abort[V] & S) =
+        inline def when[V <: Singleton, S](b: Boolean < S)(inline value: V)(using
+            inline frame: Frame,
+            inline tag: Tag[Abort[V]]
+        ): Unit < (Abort[V] & S) =
             Abort.when(b)(value)
 
         /** Fails the computation if the condition is false, using a literal failure value.
@@ -573,7 +598,10 @@ object Abort:
           * @return
           *   A unit computation that may fail with the literal value if the condition is false
           */
-        inline def unless[V <: Singleton, S](b: Boolean < S)(inline value: V)(using inline frame: Frame): Unit < (Abort[V] & S) =
+        inline def unless[V <: Singleton, S](b: Boolean < S)(inline value: V)(using
+            inline frame: Frame,
+            inline tag: Tag[Abort[V]]
+        ): Unit < (Abort[V] & S) =
             Abort.unless(b)(value)
 
         /** Ensures a condition is met before returning the provided result, using a literal failure value.
@@ -590,7 +618,8 @@ object Abort:
           *   A computation that succeeds with the result if the condition is true, or fails with the literal value if it's false
           */
         inline def ensuring[V <: Singleton, A, S](cond: Boolean < S, result: => A < S)(inline value: V)(using
-            inline frame: Frame
+            inline frame: Frame,
+            inline tag: Tag[Abort[V]]
         ): A < (Abort[V] & S) =
             Abort.ensuring(cond, result)(value)
 
@@ -598,7 +627,7 @@ object Abort:
           */
         inline def run[V <: Singleton](
             using Frame
-        )[A, S](v: => A < (Abort[V] & S)): Result[V, A] < S =
+        )[A, S](v: => A < (Abort[V] & S))(using tag: Tag[Abort[V]]): Result[V, A] < S =
             Abort.run(v)
 
     end literal
