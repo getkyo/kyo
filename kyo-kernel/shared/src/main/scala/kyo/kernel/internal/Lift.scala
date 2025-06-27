@@ -7,7 +7,7 @@ import scala.quoted.*
 
 object Lift:
 
-    inline def liftUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ liftUnitImpl[S1, S2]('v) }
+    inline def liftUnitCompileError[S1, S2](inline v: Unit < S1): Unit < S2 = ${ liftUnitImpl[S1, S2]('v) }
 
     def liftUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
         import quotes.reflect.*
@@ -29,8 +29,7 @@ object Lift:
         val sym = tpe.typeSymbol
 
         def isTrivialType: Boolean =
-            tpe <:< TypeRepr.of[AnyVal] ||
-                (tpe.typeSymbol eq Symbol.requiredModule("kyo.Maybe.Absent"))
+            tpe <:< TypeRepr.of[AnyVal] || sym.fullName == "kyo.Maybe$package$.Maybe$.Absent$"
 
         if isTrivialType then
             '{ $v.asInstanceOf[A < S] }

@@ -415,7 +415,7 @@ object `<`:
 
     /** guard to avoid silent discard of provided Unit < S1, over a required Unit < S2
       */
-    implicit inline def liftUnit[S1, S2](inline v: Unit < S1): Unit < S2 = Lift.liftUnit(v)
+    implicit inline def liftUnitCompileError[S1, S2](inline v: Unit < S1): Unit < S2 = Lift.liftUnitCompileError(v)
 
     /** Converts a pure single-argument function to an effectful computation. */
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
