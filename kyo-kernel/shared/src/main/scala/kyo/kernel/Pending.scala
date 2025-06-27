@@ -411,6 +411,8 @@ object `<`:
       */
     implicit inline def lift[A: WeakFlat, S](inline v: A): A < S = Lift.lift(v)
 
+    implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
+
     /** guard to avoid silent discard of provided Unit < S1, over a required Unit < S2
       */
     implicit inline def liftUnit[S1, S2](inline v: Unit < S1): Unit < S2 = Lift.liftUnit(v)

@@ -29,20 +29,14 @@ object Lift:
         val sym = tpe.typeSymbol
 
         def isTrivialType: Boolean =
-            tpe match
-                case _: ConstantType => true
-                case _ =>
-                    sym.fullName match
-                        case "scala.Unit" => true
-                        case "scala.Int" | "scala.Long" | "scala.Double"
-                            | "scala.Float" | "scala.Short" | "scala.Byte"
-                            | "scala.Char" | "scala.Boolean" => true
-                        case _ => false
+            tpe.isInstanceOf[ConstantType] ||
+                tpe <:< TypeRepr.of[AnyVal] ||
+                (tpe.typeSymbol eq Symbol.requiredModule("kyo.Maybe.Absent"))
 
         if isTrivialType then
             '{ $v.asInstanceOf[A < S] }
         else if sym.flags.is(Flags.Module) && sym.fullName.startsWith("kyo.") then
-            report.error(s"Cannot lift object of type `${sym.fullName}.type` into `${sym.name}.type < S`")
+            report.error(s"Cannot lift object of type `${sym.fullName}` into `${sym.name} < S`")
             '{ ??? }
         else
             '{
