@@ -41,10 +41,6 @@ ThisBuild / developers := List(
     )
 )
 
-ThisBuild / sonatypeCredentialHost := "central.sonatype.com"
-ThisBuild / sonatypeRepository     := "https://central.sonatype.com/api/v1/publisher/upload"
-ThisBuild / sonatypeProfileName    := "io.getkyo"
-
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 Global / commands += Repeat.command
