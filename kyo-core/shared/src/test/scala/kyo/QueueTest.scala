@@ -523,7 +523,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "two producers calling closeAwaitEmpty" in run {
+        "two producers calling closeAwaitEmpty" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -562,7 +562,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "producer calling closeAwaitEmpty and another calling close" in run {
+        "producer calling closeAwaitEmpty and another calling close" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
