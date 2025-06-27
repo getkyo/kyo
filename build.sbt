@@ -45,11 +45,6 @@ ThisBuild / sonatypeCredentialHost := "central.sonatype.com"
 ThisBuild / sonatypeRepository     := "https://central.sonatype.com/api/v1/publisher/upload"
 ThisBuild / sonatypeProfileName    := "io.getkyo"
 
-ThisBuild / publishTo := {
-    val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
-    if (isSnapshot.value) Some("central-snapshots" at centralSnapshots) else localStaging.value
-}
-
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 Global / commands += Repeat.command
