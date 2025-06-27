@@ -14,7 +14,10 @@ object StreamCoreExtensions:
                 case Absent =>
                     Loop.done
                 case Present(c) =>
-                    Emit.valueWith(c)(Loop.continue)
+                    if c.nonEmpty then
+                        Emit.valueWith(c)(Loop.continue)
+                    else
+                        Loop.continue
         Abort.run(emit).unit
     end emitMaybeChunksFromChannel
 
