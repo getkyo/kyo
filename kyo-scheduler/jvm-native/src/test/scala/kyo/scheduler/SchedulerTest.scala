@@ -6,6 +6,7 @@ import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually.*
 import org.scalatest.freespec.AnyFreeSpec
+import scala.util.control.NoStackTrace
 
 class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
 
@@ -30,7 +31,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "handles task that throws exception" in withScheduler { scheduler =>
-            val task = TestTask(_run = () => throw new RuntimeException("Test exception."))
+            val task = TestTask(_run = () => throw new RuntimeException("Test exception.") with NoStackTrace)
             scheduler.schedule(task)
             eventually(assert(task.executions == 1))
         }

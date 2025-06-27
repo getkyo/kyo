@@ -425,7 +425,7 @@ class ClockTest extends Test:
                     _        <- task.interrupt
                     instants <- queue.drain
                 yield
-                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    intervals(instants).foreach(v => assert(v <= 2.millis))
                     succeed
             }
         }

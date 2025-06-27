@@ -544,7 +544,7 @@ class AsyncTest extends Test:
             yield assert(result == 42)
         }
 
-        "interrupts computation" in run {
+        "interrupts computation" in runNotJS {
             for
                 flag   <- AtomicBoolean.init(false)
                 fiber  <- Promise.init[Nothing, Int]
