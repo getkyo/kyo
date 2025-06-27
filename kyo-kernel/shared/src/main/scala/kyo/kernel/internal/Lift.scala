@@ -29,8 +29,7 @@ object Lift:
         val sym = tpe.typeSymbol
 
         def isTrivialType: Boolean =
-            tpe.isInstanceOf[ConstantType] ||
-                tpe <:< TypeRepr.of[AnyVal] ||
+            tpe <:< TypeRepr.of[AnyVal] ||
                 (tpe.typeSymbol eq Symbol.requiredModule("kyo.Maybe.Absent"))
 
         if isTrivialType then
