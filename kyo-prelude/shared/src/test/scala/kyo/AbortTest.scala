@@ -1272,7 +1272,7 @@ class AbortTest extends Test:
         }
 
         "generic" in {
-            def test[A](a: A): Nothing < Abort[A] =
+            def test[A](a: A)(using Tag[Abort[a.type]]): Nothing < Abort[A] =
                 Abort.literal.fail(a)
 
             val result                  = test(1)
