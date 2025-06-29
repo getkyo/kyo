@@ -92,6 +92,40 @@ sealed abstract class Stream[+V, -S] extends Serializable:
     def map[VV >: V, V2, S2](f: VV => V2 < S2)(using Tag[Emit[Chunk[VV]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
         mapChunk[VV, V2, S2](c => Kyo.foreach(c)(f))
 
+    /** Transforms each value in the stream using the given effectful function.
+      *
+      * @param f
+      *   The function to apply to each value
+      * @return
+      *   A new stream with transformed values
+      */
+    def mapAbstract[VV >: V, V2, S2](f: VV => V2 < S2)(using
+        t1: Tag[Emit[Chunk[VV]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        fr: Frame
+    ): Stream[V2, S & S2] =
+        Stream(
+            ArrowEffect.handleLoop(t1, emit)(
+                [C] =>
+                    (input, cont) =>
+                        StreamTransformations.handleMap(input, Loop.continue(cont(())))(f)
+            )
+        )
+    end mapAbstract
+
+    def mapAbstractPure[VV >: V, V2](f: VV => V2)(using
+        t1: Tag[Emit[Chunk[VV]]],
+        t2: Tag[Emit[Chunk[V2]]],
+        fr: Frame
+    ): Stream[V2, S] =
+        Stream(
+            ArrowEffect.handleLoop(t1, emit)(
+                [C] =>
+                    (input, cont) =>
+                        StreamTransformations.handleMapPure(input, Loop.continue(cont(())))(f)
+            )
+        )
+
     /** Transforms each chunk in the stream using the given pure function.
       *
       * @param f
@@ -383,6 +417,24 @@ sealed abstract class Stream[+V, -S] extends Serializable:
                             if c.isEmpty then Loop.continue(cont(()))
                             else Emit.valueWith(c)(Loop.continue(cont(())))
                     }
+            )
+        )
+
+    def filterAbstract[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
+        Stream(
+            ArrowEffect.handleLoop(tag, emit)(
+                [C] =>
+                    (input, cont) =>
+                        StreamTransformations.handleFilter(input, Loop.continue(cont(())))(f)
+            )
+        )
+
+    def filterAbstractPure[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
+        Stream(
+            ArrowEffect.handleLoop(tag, emit)(
+                [C] =>
+                    (input, cont) =>
+                        StreamTransformations.handleFilterPure(input, Loop.continue(cont(())))(f)
             )
         )
 
