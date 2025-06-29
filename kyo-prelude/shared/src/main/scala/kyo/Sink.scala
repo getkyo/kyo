@@ -2,9 +2,7 @@ package kyo
 
 import kyo.Tag
 import kyo.kernel.ArrowEffect
-import kyo.kernel.internal.WeakFlat
 import scala.annotation.nowarn
-import scala.annotation.targetName
 
 /** Processes a stream of type `V`, producing a value of type `A`.
   *

@@ -8,7 +8,7 @@ class AbortCombinatorsTest extends Test:
 
     "Abort module" - {
         "shoud not compile" in {
-            typeCheckFailure("Abort.foldAbort(identity, identity)")("value foldAbort is not a member of object kyo.Abort")
+            typeCheckFailure("Abort.foldAbort(identity, identity)")("Cannot lift 'kyo.Abort$' to a 'Abort$ < S")
         }
     }
 
