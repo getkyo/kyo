@@ -327,6 +327,34 @@ object Pipe:
                         Kyo.foreach(c)(f).map: c1 =>
                             Emit.valueWith(c1)(Loop.continue)
 
+    def mapAbstract[A](using
+        Tag[A]
+    )[B, S](f: A => B < S)(
+        using
+        Tag[Poll[Chunk[A]]],
+        Tag[Emit[Chunk[B]]],
+        Frame
+    ): Pipe[A, B, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent     => Loop.done
+                    case Present(c) => StreamTransformations.handleMap(c, Loop.continue)(f)
+
+    def mapAbstractPure[A](using
+        Tag[A]
+    )[B](f: A => B)(
+        using
+        Tag[Poll[Chunk[A]]],
+        Tag[Emit[Chunk[B]]],
+        Frame
+    ): Pipe[A, B, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent     => Loop.done
+                    case Present(c) => StreamTransformations.handleMapPure(c, Loop.continue)(f)
+
     /** A pipe that transforms each chunk of a stream with a pure function.
       *
       * @see
@@ -503,6 +531,13 @@ object Pipe:
                         if c1.isEmpty then Loop.continue
                         else Emit.valueWith(c1)(Loop.continue)
 
+    def filterAbstractPure[A](using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]])(f: A => Boolean)(using Frame): Pipe[A, A, Any] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent     => Loop.done
+                    case Present(c) => StreamTransformations.handleFilterPure(c, Loop.continue)(f)
+
     /** A pipe whose output skips input elements that do not satisfy the provided effectful predicate.
       *
       * @see
@@ -520,6 +555,14 @@ object Pipe:
                         Kyo.filter(c)(f).map: c1 =>
                             if c1.isEmpty then Loop.continue
                             else Emit.valueWith(c1)(Loop.continue)
+
+    def filterAbstract[A](using Tag[Poll[Chunk[A]]], Tag[Emit[Chunk[A]]])[S](f: A => Boolean < S)(using Frame): Pipe[A, A, S] =
+        Pipe:
+            Loop.foreach:
+                Poll.andMap[Chunk[A]]:
+                    case Absent => Loop.done
+                    case Present(c) =>
+                        StreamTransformations.handleFilter(c, Loop.continue)(f)
 
     /** A pipe that filters and transforms an input stream using a pure function.
       *
