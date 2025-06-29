@@ -9,8 +9,8 @@ import scala.util.NotGiven
   * kyo (like Abort.type).
   *
   * This constraint helps:
-  *  - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
-  *  - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
+  *   - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
+  *   - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
   *
   * @tparam A
   *   The type to check for nested effects
