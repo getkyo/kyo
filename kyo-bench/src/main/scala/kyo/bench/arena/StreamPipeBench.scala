@@ -19,14 +19,14 @@ class StreamPipeBench extends BaseBench:
             .eval
     end mapPureStreamBench
 
-    // @Benchmark
-    // def mapPureStreamAbstractBench() =
-    //     import kyo.*
-    //     Stream.init(seq)
-    //         .mapAbstractPure(_ + 1)
-    //         .fold(0)(_ + _)
-    //         .eval
-    // end mapPureStreamAbstractBench
+    @Benchmark
+    def mapPureStreamAbstractBench() =
+        import kyo.*
+        Stream.init(seq)
+            .mapAbstractPure(_ + 1)
+            .fold(0)(_ + _)
+            .eval
+    end mapPureStreamAbstractBench
 
     @Benchmark
     def mapPurePipeBench() =
