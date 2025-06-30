@@ -36,16 +36,16 @@ class KyoSttpMonad extends MonadAsyncError[M]:
         }
 
     def error[A](t: Throwable) =
-        Sync(throw t)
+        Sync.io(throw t)
 
     def unit[A](t: A) =
         t
 
     override def eval[A](t: => A) =
-        Sync(t)
+        Sync.io(t)
 
     override def suspend[A](t: => M[A]) =
-        Sync(t)
+        Sync.io(t)
 
     def async[A](register: (Either[Throwable, A] => Unit) => Canceler): M[A] =
         Sync.Unsafe {

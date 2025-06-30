@@ -118,7 +118,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
     def fromAutoCloseable[A <: AutoCloseable, S](closeable: => A < S)(using Frame): A < (S & Resource & Sync) =
-        acquireRelease(closeable)(c => Sync(c.close()))
+        acquireRelease(closeable)(c => Sync.io(c.close()))
 
     /** Creates an effect from an Either[E, A] and handles Left[E] to Abort[E].
       *
@@ -383,7 +383,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that suspends the given effect
       */
     def suspend[A, S](effect: => A < S)(using Frame): A < (S & Sync) =
-        Sync(effect)
+        Sync.io(effect)
 
     /** Suspends an effect using Sync and handles any exceptions that occur to Abort[Throwable].
       *
@@ -393,7 +393,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that suspends the given effect and handles any exceptions that occur to Abort[Throwable]
       */
     def suspendAttempt[A, S](effect: => A < S)(using Frame): A < (S & Sync & Abort[Throwable]) =
-        Sync(Abort.catching[Throwable](effect))
+        Sync.io(Abort.catching[Throwable](effect))
 
     /** Traverses a sequence of effects and collects the results.
       *

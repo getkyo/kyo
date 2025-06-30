@@ -158,13 +158,13 @@ object StreamCoreExtensions:
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Sync] =
-            val stream: Stream[V, Sync] < Sync = Sync:
+            val stream: Stream[V, Sync] < Sync = Sync.io:
                 val it      = v
                 val size    = chunkSize max 1
                 val builder = ChunkBuilder.init[V]
 
                 val pull: Chunk[V] < Sync =
-                    Sync:
+                    Sync.io:
                         var count = 0
                         while count < size && it.hasNext do
                             builder.addOne(it.next())
@@ -178,7 +178,7 @@ object StreamCoreExtensions:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
                             case Result.Panic(throwable) =>
-                                Sync:
+                                Sync.io:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.panic(throwable))
 
@@ -206,13 +206,13 @@ object StreamCoreExtensions:
                     "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions as `Failure`."
             ) notNothing: NotGiven[E =:= Nothing]
         ): Stream[V, Sync & Abort[E]] =
-            val stream: Stream[V, (Sync & Abort[E])] < Sync = Sync:
+            val stream: Stream[V, (Sync & Abort[E])] < Sync = Sync.io:
                 val it      = v
                 val size    = chunkSize max 1
                 val builder = ChunkBuilder.init[V]
 
                 val pull: Chunk[V] < (Sync & Abort[E]) =
-                    Sync:
+                    Sync.io:
                         Abort.catching[E]:
                             var count = 0
                             while count < size && it.hasNext do
@@ -227,7 +227,7 @@ object StreamCoreExtensions:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
                             case error: Result.Error[E] @unchecked =>
-                                Sync:
+                                Sync.io:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.error(error))
 
@@ -838,10 +838,10 @@ object StreamCoreExtensions:
                 val builder = Chunk.newBuilder[Stream[V, Abort[E] & Resource & Async]]
                 Loop(numStreams): remaining =>
                     if remaining <= 0 then
-                        Sync(builder.result()).map(chunk => Loop.done(chunk))
+                        Sync.io(builder.result()).map(chunk => Loop.done(chunk))
                     else
                         streamHub.subscribe.map: stream =>
-                            Sync(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
+                            Sync.io(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
             }(using i1, i2, t1, t2, t3, t4, fr)
 
         /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream

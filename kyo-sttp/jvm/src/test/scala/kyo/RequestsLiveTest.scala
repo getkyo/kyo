@@ -35,7 +35,7 @@ class RequestsLiveTest extends Test:
         response: Try[String],
         port: Int = 8000
     ): Int < (Sync & Resource) =
-        Sync {
+        Sync.io {
 
             import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
             import java.io.OutputStream
@@ -64,6 +64,6 @@ class RequestsLiveTest extends Test:
             server.setExecutor(null)
             server.start()
             Resource.ensure(server.stop(0))
-                .andThen(Sync(server.getAddress.getPort()))
+                .andThen(Sync.io(server.getAddress.getPort()))
         }
 end RequestsLiveTest

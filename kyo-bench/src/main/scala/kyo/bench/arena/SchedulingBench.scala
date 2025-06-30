@@ -31,10 +31,10 @@ class SchedulingBench extends ArenaBench.ForkOnly(1001000):
 
         def fiber(i: Int): Int < Sync =
             Kyo.unit.flatMap { _ =>
-                Sync(i).flatMap { j =>
+                Sync.io(i).flatMap { j =>
                     Kyo.unit.flatMap { _ =>
                         if j > depth then
-                            Kyo.unit.flatMap(_ => Sync(j))
+                            Kyo.unit.flatMap(_ => Sync.io(j))
                         else
                             Kyo.unit.flatMap(_ => fiber(j + 1))
                     }

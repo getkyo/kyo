@@ -29,10 +29,10 @@ final class Path private (val path: List[String]) extends Serializable derives C
     /** Methods to read files completely
       */
     def read(using Frame): String < Sync =
-        Sync(JFiles.readString(toJava))
+        Sync.io(JFiles.readString(toJava))
 
     def read(charset: Charset)(using Frame): String < Sync =
-        Sync(JFiles.readString(toJava, charset))
+        Sync.io(JFiles.readString(toJava, charset))
 
     def readAll(extension: String)(using Frame): Seq[(String, String)] < Sync =
         list(extension).map { paths =>
@@ -45,21 +45,21 @@ final class Path private (val path: List[String]) extends Serializable derives C
         }
 
     def readBytes(using Frame): Array[Byte] < Sync =
-        Sync(JFiles.readAllBytes(toJava))
+        Sync.io(JFiles.readAllBytes(toJava))
 
     def readLines(using Frame): List[String] < Sync =
-        Sync(JFiles.readAllLines(toJava).asScala.toList)
+        Sync.io(JFiles.readAllLines(toJava).asScala.toList)
 
     def readLines(
         charSet: Charset = java.nio.charset.StandardCharsets.UTF_8
     )(using Frame): List[String] < Sync =
-        Sync(JFiles.readAllLines(toJava, charSet).asScala.toList)
+        Sync.io(JFiles.readAllLines(toJava, charSet).asScala.toList)
 
     /** Methods to append and write to files
       */
 
     private inline def append(createFolders: Boolean)(inline f: (JPath, Seq[OpenOption]) => JPath)(using Frame): Unit < Sync =
-        Sync {
+        Sync.io {
             if createFolders then
                 discard(f(toJava, Seq(StandardOpenOption.APPEND, StandardOpenOption.CREATE)))
             else if javaExists(toJava.getParent()) then
@@ -82,7 +82,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
         append(createFolders)((path, options) => Files.write(toJava, value.asJava, options*))
 
     private inline def write(createFolders: Boolean)(inline f: (JPath, Seq[OpenOption]) => JPath)(using Frame): Unit < Sync =
-        Sync {
+        Sync.io {
             if createFolders then
                 discard(f(toJava, Seq(StandardOpenOption.WRITE, StandardOpenOption.CREATE)))
             else if javaExists(toJava.getParent()) then
@@ -112,7 +112,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
     def readStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Stream[String, Resource & Sync] =
         readLoop[String, Array[Byte], (FileChannel, ByteBuffer)](
             (FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
-            ch => Sync(ch._1.close()),
+            ch => Sync.io(ch._1.close()),
             readOnceBytes,
             arr => Chunk(new String(arr, charset))
         )
@@ -121,7 +121,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
       */
     def readLinesStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Stream[String, Resource & Sync] =
         readLoop[String, String, BufferedReader](
-            Sync(JFiles.newBufferedReader(toJava, Charset.defaultCharset())),
+            Sync.io(JFiles.newBufferedReader(toJava, Charset.defaultCharset())),
             reader => reader.close(),
             readOnceLines,
             line => Chunk(line)
@@ -131,20 +131,20 @@ final class Path private (val path: List[String]) extends Serializable derives C
       */
     def readBytesStream(using Frame): Stream[Byte, Resource & Sync] =
         readLoop[Byte, Array[Byte], (FileChannel, ByteBuffer)](
-            Sync(FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
+            Sync.io(FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
             ch => ch._1.close(),
             readOnceBytes,
             arr => Chunk.from(arr.toSeq)
         )
 
     private def readOnceLines(reader: BufferedReader)(using Frame) =
-        Sync {
+        Sync.io {
             val line = reader.readLine()
             if line == null then Maybe.empty else Maybe(line)
         }
 
     private def readOnceBytes(res: (FileChannel, ByteBuffer))(using Frame) =
-        Sync {
+        Sync.io {
             val (fileChannel, buf) = res
             val bytesRead          = fileChannel.read(buf)
             if bytesRead < 1 then Maybe.empty
@@ -192,12 +192,12 @@ final class Path private (val path: List[String]) extends Serializable derives C
     /** List contents of path
       */
     def list(using Frame): IndexedSeq[Path] < Sync =
-        Sync(JFiles.list(toJava).toScala(LazyList).toIndexedSeq).map(_.map(path => Path(path.toString)))
+        Sync.io(JFiles.list(toJava).toScala(LazyList).toIndexedSeq).map(_.map(path => Path(path.toString)))
 
     /** List contents of path with given extension
       */
     def list(extension: String)(using Frame): IndexedSeq[Path] < Sync =
-        Sync(JFiles.list(toJava).toScala(LazyList).filter(path =>
+        Sync.io(JFiles.list(toJava).toScala(LazyList).filter(path =>
             path.getFileName().toString().split('.').toList.lastOption.getOrElse("") == extension
         ).toIndexedSeq.map(path => Path(path.toString)))
 
@@ -210,9 +210,9 @@ final class Path private (val path: List[String]) extends Serializable derives C
       */
     def exists(followLinks: Boolean)(using Frame): Boolean < Sync =
         val path = toJava
-        if path == null then Sync(false)
-        else if followLinks then Sync(JFiles.exists(path))
-        else Sync(JFiles.exists(path, LinkOption.NOFOLLOW_LINKS))
+        if path == null then Sync.io(false)
+        else if followLinks then Sync.io(JFiles.exists(path))
+        else Sync.io(JFiles.exists(path, LinkOption.NOFOLLOW_LINKS))
     end exists
 
     private def javaExists(jPath: JPath): Boolean =
@@ -222,32 +222,32 @@ final class Path private (val path: List[String]) extends Serializable derives C
     /** Returns if the path represents a directory
       */
     def isDir(using Frame): Boolean < Sync =
-        Sync(JFiles.isDirectory(toJava))
+        Sync.io(JFiles.isDirectory(toJava))
 
     /** Returns if the path represents a file
       */
     def isFile(using Frame): Boolean < Sync =
-        Sync(JFiles.isRegularFile(toJava))
+        Sync.io(JFiles.isRegularFile(toJava))
 
     /** Returns if the path represents a symbolic link
       */
     def isLink(using Frame): Boolean < Sync =
-        Sync(JFiles.isSymbolicLink(toJava))
+        Sync.io(JFiles.isSymbolicLink(toJava))
 
     /** Creates a directory in this path
       */
     def mkDir(using Frame): Unit < Sync =
-        Sync(javaExists(toJava.getParent())).map { parentsExist =>
-            if parentsExist == true then Sync(JFiles.createDirectory(toJava))
-            else Sync(JFiles.createDirectories(toJava))
+        Sync.io(javaExists(toJava.getParent())).map { parentsExist =>
+            if parentsExist == true then Sync.io(JFiles.createDirectory(toJava))
+            else Sync.io(JFiles.createDirectories(toJava))
         }.unit
 
     /** Creates a directory in this path
       */
     def mkFile(using Frame): Unit < Sync =
-        Sync(javaExists(toJava.getParent())).map { parentsExist =>
-            if parentsExist == true then Sync(JFiles.createDirectory(toJava))
-            else Sync(JFiles.createDirectories(toJava))
+        Sync.io(javaExists(toJava.getParent())).map { parentsExist =>
+            if parentsExist == true then Sync.io(JFiles.createDirectory(toJava))
+            else Sync.io(JFiles.createDirectories(toJava))
         }.unit
     end mkFile
 
@@ -262,10 +262,10 @@ final class Path private (val path: List[String]) extends Serializable derives C
         val opts = (if atomicMove then List(StandardCopyOption.ATOMIC_MOVE) else Nil) ++ (if replaceExisting then
                                                                                               List(StandardCopyOption.REPLACE_EXISTING)
                                                                                           else Nil)
-        Sync(javaExists(toJava.getParent())).map { parentExists =>
+        Sync.io(javaExists(toJava.getParent())).map { parentExists =>
             (parentExists, createFolders) match
-                case (true, _)     => Sync(JFiles.move(toJava, to.toJava, opts*)).unit
-                case (false, true) => Path(toJava.getParent().toString).mkDir.andThen(Sync(JFiles.move(toJava, to.toJava, opts*)).unit)
+                case (true, _)     => Sync.io(JFiles.move(toJava, to.toJava, opts*)).unit
+                case (false, true) => Path(toJava.getParent().toString).mkDir.andThen(Sync.io(JFiles.move(toJava, to.toJava, opts*)).unit)
                 case _             => ()
         }
     end move
@@ -283,10 +283,10 @@ final class Path private (val path: List[String]) extends Serializable derives C
         val opts = (if followLinks then List.empty[CopyOption] else List[CopyOption](LinkOption.NOFOLLOW_LINKS)) ++
             (if copyAttributes then List[CopyOption](StandardCopyOption.COPY_ATTRIBUTES) else List.empty[CopyOption]) ++
             (if replaceExisting then List[CopyOption](StandardCopyOption.REPLACE_EXISTING) else List.empty[CopyOption])
-        Sync(javaExists(toJava.getParent())).map { parentExists =>
+        Sync.io(javaExists(toJava.getParent())).map { parentExists =>
             (parentExists, createFolders) match
-                case (true, _)     => Sync(JFiles.copy(toJava, to.toJava, opts*)).unit
-                case (false, true) => Path(toJava.getParent().toString).mkDir.andThen(Sync(JFiles.copy(toJava, to.toJava, opts*)).unit)
+                case (true, _)     => Sync.io(JFiles.copy(toJava, to.toJava, opts*)).unit
+                case (false, true) => Path(toJava.getParent().toString).mkDir.andThen(Sync.io(JFiles.copy(toJava, to.toJava, opts*)).unit)
                 case _             => ()
         }
     end copy
@@ -299,7 +299,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
     /** Removes this path if it is empty
       */
     def remove(checkExists: Boolean)(using Frame): Boolean < Sync =
-        Sync {
+        Sync.io {
             if checkExists then
                 JFiles.delete(toJava)
                 true
@@ -310,7 +310,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
     /** Removes this path and all its contents
       */
     def removeAll(using Frame): Unit < Sync =
-        Sync {
+        Sync.io {
             val path = toJava
             if javaExists(path) then
                 val visitor = new SimpleFileVisitor[JPath]:
@@ -334,7 +334,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
     /** Creates a stream of the contents of this path with given depth
       */
     def walk(maxDepth: Int)(using Frame): Stream[Path, Sync] =
-        Stream.init(Sync(JFiles.walk(toJava).toScala(LazyList).map(path => Path(path.toString))))
+        Stream.init(Sync.io(JFiles.walk(toJava).toScala(LazyList).map(path => Path(path.toString))))
 
     override def hashCode(): Int =
         val prime  = 31
@@ -382,7 +382,7 @@ object Path:
     )
 
     def basePaths(using Frame): BasePaths < Sync =
-        Sync {
+        Sync.io {
             val dirs = BaseDirectories.get()
             BasePaths(
                 Path(dirs.cacheDir),
@@ -409,7 +409,7 @@ object Path:
     )
 
     def userPaths(using Frame): UserPaths < Sync =
-        Sync {
+        Sync.io {
             val dirs = UserDirectories.get()
             UserPaths(
                 Path(dirs.homeDir),
@@ -436,7 +436,7 @@ object Path:
     )
 
     def projectPaths(qualifier: String, organization: String, application: String)(using Frame): ProjectPaths < Sync =
-        Sync {
+        Sync.io {
             val dirs = ProjectDirectories.from(qualifier, organization, application)
             ProjectPaths(
                 Path(dirs.projectPath),
@@ -453,9 +453,9 @@ end Path
 
 extension [S](stream: Stream[Byte, S])
     def sink(path: Path)(using Frame): Unit < (Resource & Sync & S) =
-        Resource.acquireRelease(Sync(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
+        Resource.acquireRelease(Sync.io(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
             stream.foreachChunk(bytes =>
-                Sync {
+                Sync.io {
                     fileCh.write(ByteBuffer.wrap(bytes.toArray))
                     ()
                 }
@@ -466,9 +466,9 @@ end extension
 extension [S](stream: Stream[String, S])
     @scala.annotation.targetName("stringSink")
     def sink(path: Path, charset: Codec = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Unit < (Resource & Sync & S) =
-        Resource.acquireRelease(Sync(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
+        Resource.acquireRelease(Sync.io(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
             stream.foreach(s =>
-                Sync {
+                Sync.io {
                     fileCh.write(ByteBuffer.wrap(s.getBytes))
                     ()
                 }
@@ -481,7 +481,7 @@ extension [S](stream: Stream[String, S])
     )(using Frame): Unit < (Resource & Sync & S) =
         Resource.acquireRelease(FileChannel.open(path.toJava, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
             stream.foreach(line =>
-                Sync {
+                Sync.io {
                     fileCh.write(ByteBuffer.wrap(line.getBytes))
                     fileCh.write(ByteBuffer.wrap(JSystem.lineSeparator().getBytes))
                     ()

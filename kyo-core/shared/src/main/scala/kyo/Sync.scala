@@ -47,7 +47,7 @@ object Sync:
       * @return
       *   The suspended computation wrapped in an Sync effect.
       */
-    inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
+    inline def io[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
         Effect.deferInline(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
@@ -94,10 +94,10 @@ object Sync:
       * This is the preferred way to access a local value when you need to perform side effects with it. Common use cases include accessing
       * loggers, configuration, or request-scoped values that you need to use in computations that produce side effects.
       *
-      * While `local.get.map(v => Sync(f(v)))` would also work, this method is more direct since both Sync and Local use the same underlying
-      * mechanism to handle effects. Under the hood, accessing a local value and performing Sync operations both use the same type of
-      * suspension, the kernel's internal `Defer` effect. This means we can safely combine them without creating unnecessary layers of
-      * suspension.
+      * While `local.get.map(v => Sync.io(f(v)))` would also work, this method is more direct since both Sync and Local use the same
+      * underlying mechanism to handle effects. Under the hood, accessing a local value and performing Sync operations both use the same
+      * type of suspension, the kernel's internal `Defer` effect. This means we can safely combine them without creating unnecessary layers
+      * of suspension.
       *
       * @param local
       *   The local value to access

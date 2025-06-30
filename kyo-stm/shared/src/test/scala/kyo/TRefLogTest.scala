@@ -13,7 +13,7 @@ class TTRefLogTest extends Test:
         }
 
         "put" in run {
-            Sync {
+            Sync.io {
                 val ref   = new TRefImpl[Int](Write(0, 0))
                 val entry = Write(1, 42)
                 val log   = TRefLog.empty.put(ref, entry)
@@ -24,7 +24,7 @@ class TTRefLogTest extends Test:
         }
 
         "get" in run {
-            Sync {
+            Sync.io {
                 val ref   = new TRefImpl[Int](Write(0, 0))
                 val entry = Write(1, 42)
                 val log   = TRefLog.empty.put(ref, entry)
@@ -34,7 +34,7 @@ class TTRefLogTest extends Test:
         }
 
         "toSeq" in run {
-            Sync {
+            Sync.io {
                 val ref1   = new TRefImpl[Int](Write(0, 0))
                 val ref2   = new TRefImpl[Int](Write(0, 0))
                 val entry1 = Write(1, 42)

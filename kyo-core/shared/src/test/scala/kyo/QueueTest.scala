@@ -385,7 +385,7 @@ class QueueTest extends Test:
         "Sync" in runNotNative {
             for
                 queue  <- Queue.init[Int < Sync](2)
-                _      <- queue.offer(Sync(42))
+                _      <- queue.offer(Sync.io(42))
                 result <- queue.poll.map(_.get)
             yield assert(result == 42)
         }

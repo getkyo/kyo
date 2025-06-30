@@ -18,7 +18,7 @@ package object flow:
     ): Stream[T, Async] < (Resource & Sync) =
         for
             subscriber <- StreamSubscriber[T](bufferSize, emitStrategy)
-            _          <- Sync(publisher.subscribe(subscriber))
+            _          <- Sync.io(publisher.subscribe(subscriber))
             stream     <- subscriber.stream
         yield stream
 

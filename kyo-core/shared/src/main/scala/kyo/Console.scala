@@ -184,7 +184,7 @@ object Console:
                         stdErr.append(s + "\n")
                         ()
             let(Console(proxy))(v)
-                .map(r => Sync((Out(stdOut.toString(), stdErr.toString()), r)))
+                .map(r => Sync.io((Out(stdOut.toString(), stdErr.toString()), r)))
         }
 
     /** Reads a line from the console.

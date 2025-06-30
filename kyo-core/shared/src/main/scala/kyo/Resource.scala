@@ -78,7 +78,7 @@ object Resource:
       *   The acquired resource wrapped in Resource, Sync, and S effects.
       */
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Resource & Sync & S) =
-        Sync {
+        Sync.io {
             acquire.map { resource =>
                 ensure(release(resource)).andThen(resource)
             }

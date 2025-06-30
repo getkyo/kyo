@@ -19,51 +19,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && Sync(True).now
+                    True && Sync.io(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    True && Sync(False).now
+                    True && Sync.io(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    False && Sync(NotExpected).now
+                    False && Sync.io(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    Sync(True).now && True
+                    Sync.io(True).now && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    Sync(True).now && False
+                    Sync.io(True).now && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    Sync(False).now && NotExpected
+                    Sync.io(False).now && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    Sync(True).now && Sync(True).now
+                    Sync.io(True).now && Sync.io(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    Sync(True).now && Sync(False).now
+                    Sync.io(True).now && Sync.io(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    Sync(False).now && Sync(NotExpected).now
+                    Sync.io(False).now && Sync.io(NotExpected).now
                 }
             }
         }
@@ -77,51 +77,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || Sync(False).now
+                    False || Sync.io(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || Sync(True).now
+                    False || Sync.io(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || Sync(NotExpected).now
+                    True || Sync.io(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    Sync(False).now || False
+                    Sync.io(False).now || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    Sync(False).now || True
+                    Sync.io(False).now || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    Sync(True).now || NotExpected
+                    Sync.io(True).now || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    Sync(False).now || Sync(False).now
+                    Sync.io(False).now || Sync.io(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    Sync(False).now || Sync(True).now
+                    Sync.io(False).now || Sync.io(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    Sync(True).now || Sync(NotExpected).now
+                    Sync.io(True).now || Sync.io(NotExpected).now
                 }
             }
         }

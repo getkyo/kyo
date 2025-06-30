@@ -69,7 +69,7 @@ object Async extends AsyncPlatformSpecific:
         Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
     end defaultConcurrency
 
-    /** Convenience method for suspending computations in an Async effect.
+    /** Convenience method for suspending side effects in an Async effect.
       *
       * While Sync is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
       * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes Sync in its effect set, this
@@ -93,8 +93,8 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   The suspended computation wrapped in an Async effect
       */
-    inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
-        Sync(v)
+    inline def io[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
+        Sync.io(v)
 
     /** Runs an asynchronous computation with interrupt masking.
       *
@@ -761,7 +761,7 @@ object Async extends AsyncPlatformSpecific:
                         else
                             loop()
                         end if
-            Kyo.lift(Sync(loop()))
+            Kyo.lift(Sync.io(loop()))
         }
 
     /** Converts a Future to an asynchronous computation.

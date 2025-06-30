@@ -334,7 +334,7 @@ object Clock:
                     def set(now: Instant) = set(now, 100.millis)
 
                     def set(now: Instant, wallClockDelay: Duration) =
-                        Sync {
+                        Sync.io {
                             current = now
                             tick()
                             Clock.live.unsafe.sleep(wallClockDelay).safe.get
@@ -343,7 +343,7 @@ object Clock:
                     def advance(duration: Duration) = advance(duration, duration.min(100.millis))
 
                     def advance(duration: Duration, wallClockDelay: Duration) =
-                        Sync {
+                        Sync.io {
                             current = current + duration
                             tick()
                             Clock.live.unsafe.sleep(wallClockDelay).safe.get

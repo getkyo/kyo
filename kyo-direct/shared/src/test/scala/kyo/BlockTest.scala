@@ -8,29 +8,29 @@ class BlockTest extends AnyFreeSpec with Assertions:
 
     "assigned run" - {
         "only" in {
-            val i = Sync(1)
+            val i = Sync.io(1)
             runLiftTest(1) {
                 val v = i.now
                 v
             }
         }
         "followed by pure expression" in {
-            val i = Sync(1)
+            val i = Sync.io(1)
             runLiftTest(2) {
                 val v = i.now
                 v + 1
             }
         }
         "followed by impure expression" in {
-            val i = Sync(1)
-            val j = Sync(2)
+            val i = Sync.io(1)
+            val j = Sync.io(2)
             runLiftTest(3) {
                 val v = i.now
                 v + j.now
             }
         }
         "nested" in {
-            val i = Sync(1)
+            val i = Sync.io(1)
             runLiftTest(3) {
                 val v =
                     val r = i.now
@@ -41,21 +41,21 @@ class BlockTest extends AnyFreeSpec with Assertions:
     }
     "unassigned run" - {
         "only" in {
-            val i = Sync(1)
+            val i = Sync.io(1)
             runLiftTest(1) {
                 i.now
             }
         }
         "followed by pure expression" in {
-            val i = Sync(1)
+            val i = Sync.io(1)
             runLiftTest(2) {
                 i.now
                 2
             }
         }
         "followed by impure expression" in {
-            val i = Sync(1)
-            val j = Sync(2)
+            val i = Sync.io(1)
+            val j = Sync.io(2)
             runLiftTest(2) {
                 i.now
                 j.now
@@ -76,7 +76,7 @@ class BlockTest extends AnyFreeSpec with Assertions:
             }
         }
         "followed by impure expression" in {
-            val i = Sync(1)
+            val i = Sync.io(1)
             def a = 2
             runLiftTest(1) {
                 a
@@ -84,8 +84,8 @@ class BlockTest extends AnyFreeSpec with Assertions:
             }
         }
         "using previous defers" in {
-            val i = Sync(1)
-            val j = Sync(2)
+            val i = Sync.io(1)
+            val j = Sync.io(2)
             runLiftTest(3) {
                 val v = i.now
                 v + j.now
@@ -94,14 +94,14 @@ class BlockTest extends AnyFreeSpec with Assertions:
         "using external function" in {
             def a(i: Int, s: String) = i + s.toInt
             runLiftTest(4) {
-                Sync(a(1, "2")).now + a(0, "1")
+                Sync.io(a(1, "2")).now + a(0, "1")
             }
         }
     }
     "complex" - {
         "tuple val pattern" in {
             runLiftTest(3) {
-                val (a, b) = (Sync(1).now, Sync(2).now)
+                val (a, b) = (Sync.io(1).now, Sync.io(2).now)
                 a + b
             }
         }
@@ -109,11 +109,11 @@ class BlockTest extends AnyFreeSpec with Assertions:
             runLiftTest((1, 2, 3)) {
                 val x = 1
                 (
-                    Sync(x).now, {
-                        val a = Sync(2).now
+                    Sync.io(x).now, {
+                        val a = Sync.io(2).now
                         a
                     },
-                    Sync(3).now
+                    Sync.io(3).now
                 )
             }
         }
