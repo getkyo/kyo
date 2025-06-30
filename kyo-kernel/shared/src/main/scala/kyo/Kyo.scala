@@ -44,6 +44,20 @@ object Kyo:
       */
     inline def unit[S]: Unit < S = ()
 
+    /** Branch effects off of an effectful condition.
+      *
+      * @param condition
+      *   Effectful boolean condition
+      * @param ifTrue
+      *   Effect to run if condition is true
+      * @param ifFalse
+      *   Effect to run if condition is false
+      * @return
+      *   An effect that runs ifTrue when the condition is evaluated to true, otherwise ifFalse
+      */
+    def when[S](condition: Boolean < S)[A, S1](ifTrue: A < S1, ifFalse: A < S1)(using Frame): A < (S & S1) =
+        condition.map(if _ then ifTrue else ifFalse)
+
     /** Zips two effects into a tuple.
       */
     def zip[A1, A2, S](v1: A1 < S, v2: A2 < S)(using Frame): (A1, A2) < S =

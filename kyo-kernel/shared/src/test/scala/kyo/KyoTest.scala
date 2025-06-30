@@ -186,6 +186,25 @@ class KyoTest extends Test:
         }
     }
 
+    "when" - {
+        "true" in {
+            val trueEffect = Kyo.when(Kyo.lift(true))(Kyo.lift(1), Kyo.lift(2))
+            assert(trueEffect.eval == 1)
+        }
+        "false" in {
+            val falseEffect = Kyo.when(Kyo.lift(false))(Kyo.lift(1), Kyo.lift(2))
+            assert(falseEffect.eval == 2)
+        }
+        "effectful true" in {
+            val trueEffect = Kyo.when(TestEffect1(1).andThen(true))(TestEffect1(2), TestEffect1(10))
+            assert(TestEffect1.run(trueEffect).eval == 3)
+        }
+        "effectful false" in {
+            val falseEffect = Kyo.when(TestEffect1(1).andThen(false))(TestEffect1(2), TestEffect1(10))
+            assert(TestEffect1.run(falseEffect).eval == 11)
+        }
+    }
+
     "seq" - {
         "collect" in {
             assert(Kyo.collectAll(Seq.empty).eval == Chunk.empty)
