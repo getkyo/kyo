@@ -44,7 +44,7 @@ object Kyo:
       */
     inline def unit[S]: Unit < S = ()
 
-    /** Branch effects off of an effectful condition.
+    /** Run one of two effects based on the result of an effectful condition. An effectful if/then/else expression.
       *
       * @param condition
       *   Effectful boolean condition
