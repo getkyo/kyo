@@ -1194,4 +1194,26 @@ class ChunkTest extends Test:
             assert(chunk.toString == "Chunk(1, 2, 3, 4)")
         }
     }
+
+    "show" - {
+        "prints the elements of a Chunk.Compact" in {
+            val chunk = Chunk.empty[Int].append(1).append(2).append(3).toIndexed
+            assert(chunk.show == "123")
+        }
+
+        "prints the elements of a Chunk.FromSeq" in {
+            val chunk = Chunk.from(IndexedSeq(1, 2, 3))
+            assert(chunk.show == "123")
+        }
+
+        "prints the elements of a Chunk.Drop" in {
+            val chunk = Chunk(1, 2, 3, 4, 5).dropLeft(2)
+            assert(chunk.show == "345")
+        }
+
+        "prints the elements of a Chunk.Append" in {
+            val chunk = Chunk(1, 2, 3).append(4)
+            assert(chunk.show == "1234")
+        }
+    }
 end ChunkTest

@@ -507,6 +507,19 @@ sealed abstract class Chunk[+A]
             case c: Compact[B] @unchecked => c.array
             case c                        => c.toArray
 
+    /** Converts this [[Chunk]] to a [[String]]. This operation is a more performant version of [[mkString]].
+      *
+      * @return
+      *   a [[String]] of all elements concatenated without any separator
+      */
+    def show: String =
+        val it = iterator
+        val sb = StringBuilder()
+        while it.hasNext do
+            sb.append(it.next())
+        sb.toString
+    end show
+
 end Chunk
 object Chunk extends StrictOptimizedSeqFactory[Chunk]:
     import internal.*
