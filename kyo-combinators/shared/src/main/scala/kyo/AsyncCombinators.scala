@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.debug.Debug
+import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -96,14 +97,15 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         using
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
-        fr: Frame
-    ): (A, A1) < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+        fr: Frame,
+        zippable: Zippable[A, A1]
+    ): zippable.Out < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
             fiberA  <- Fiber.run(using s)(effect)
             fiberA1 <- Fiber.run(using s2)(next)
             a       <- fiberA.join
             a1      <- fiberA1.join
-        yield (a, a1)
+        yield zippable.zip(a, a1)
 
 end extension
 

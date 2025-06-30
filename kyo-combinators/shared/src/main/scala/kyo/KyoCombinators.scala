@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Result.Error
 import kyo.debug.Debug
+import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -42,8 +43,8 @@ extension [A, S](effect: A < S)
       *   A computation that produces a tuple of both results
       */
     @targetName("zip")
-    def <*>[A1, S1](next: => A1 < S1)(using Frame): (A, A1) < (S & S1) =
-        effect.map(e => next.map(n => (e, n)))
+    def <*>[A1, S1](next: => A1 < S1)(using frame: Frame, zippable: Zippable[A, A1]): zippable.Out < (S & S1) =
+        effect.map(e => next.map(n => zippable.zip(e, n)))
 
     /** Performs this computation and prints its result to the console.
       *
