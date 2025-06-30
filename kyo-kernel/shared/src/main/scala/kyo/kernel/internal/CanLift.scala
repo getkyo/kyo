@@ -40,9 +40,6 @@ object CanLiftMacro:
         val sym = tpe.typeSymbol
         if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
-            return '{ ??? }
-
-        // Passed checks
         '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
     end liftImpl
 end CanLiftMacro
