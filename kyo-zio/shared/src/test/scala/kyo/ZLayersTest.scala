@@ -18,7 +18,7 @@ class ZLayersTest extends Test:
 
     def runZIO[T](v: zio.Task[T]): Future[T] =
         zio.Unsafe.unsafe(implicit u =>
-            Future(zio.Runtime.default.unsafe.run(v).getOrThrow())
+            zio.Runtime.default.unsafe.runToFuture(v)
         )
 
     def runKyo(v: => Assertion < (Abort[Throwable] & Async)): Future[Assertion] =
