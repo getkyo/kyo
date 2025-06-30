@@ -551,6 +551,21 @@ object Text:
             val idx = self.indexWhere(!p(_))
             if idx == -1 then Text.empty else self.drop(idx)
 
+        /** Convert this text to a [[Chunk]] in O(n) time.
+          *
+          * @return
+          *   a [[Chunk]] containing each character of this text.
+          */
+        def toChunk: Chunk[Char] =
+            @tailrec def loop(i: Int, builder: ChunkBuilder[Char]): Chunk[Char] =
+                if i >= self.length then builder.result()
+                else
+                    builder.addOne(self.charAt(i))
+                    loop(i + 1, builder)
+
+            loop(0, ChunkBuilder.init)
+        end toChunk
+
     end extension
 
     private[kyo] object internal:

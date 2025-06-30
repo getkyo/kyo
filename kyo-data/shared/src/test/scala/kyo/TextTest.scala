@@ -667,4 +667,9 @@ class TextTest extends Test:
         }
     }
 
+    "toChunk" in {
+        assert(Text("").toChunk == Chunk.empty)
+        assert(Text("123").toChunk == Chunk('1', '2', '3'))
+    }
+
 end TextTest
