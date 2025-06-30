@@ -146,13 +146,13 @@ class StreamPipeBench extends BaseBench:
     end filterKyoPipeBench
 
     @Benchmark
-    def filterKyoPipAbstractBench() =
+    def filterKyoPipeAbstractBench() =
         import kyo.*
         Stream.init(seq)
             .into(Pipe.filterAbstract((v: Int) => Sync(v % 2 == 0)))
             .fold(0)(_ + _)
             .handle(Sync.Unsafe.evalOrThrow)
-    end filterKyoPipAbstractBench
+    end filterKyoPipeAbstractBench
 
     @Benchmark
     def filterMapVarStreamBench() =
