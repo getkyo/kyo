@@ -727,7 +727,7 @@ object Parse:
       *   Parsed result if successful
       */
     def run[A, S](input: Text)(v: A < (Parse[Char] & S))(using Frame): A < (S & Abort[ParseFailed]) =
-        run(Chunk.from(input.toString))(v)
+        run(input.toChunk)(v)
 
     /** Runs a parser on a stream of text input, emitting parsed results as they become available. This streaming parser accumulates text
       * chunks and continuously attempts to parse complete results, handling partial inputs and backtracking as needed.
@@ -762,7 +762,7 @@ object Parse:
                             // If no text to parse, request more input
                             text
                         else
-                            Choice.run(Var.runTuple(State(Chunk.from(text.toString), 0))(v)).map {
+                            Choice.run(Var.runTuple(State(text.toChunk, 0))(v)).map {
                                 case Seq() =>
                                     // No valid parse found yet - keep current text and continue
                                     // collecting more input as the parse might succeed with additional text
