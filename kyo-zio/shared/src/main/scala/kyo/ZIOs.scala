@@ -1,10 +1,15 @@
 package kyo
 
-import kyo.kernel.*
+import kyo.Result.*
+import zio.Cause
+import zio.Chunk
 import zio.Exit
 import zio.FiberId
 import zio.Runtime
+import zio.StackTrace
+import zio.Trace
 import zio.Unsafe
+import zio.ZEnvironment
 import zio.ZIO
 
 object ZIOs:
@@ -16,17 +21,17 @@ object ZIOs:
       * @return
       *   A Kyo effect that, when run, will execute the zio.ZIO
       */
-    def get[E, A](v: => ZIO[Any, E, A])(using f: Frame, t: zio.Trace): A < (Abort[E] & Async) =
+    def get[E, A](v: => ZIO[Any, E, A])(using f: Frame, t: Trace): A < (Abort[E] & Async) =
         Sync.Unsafe {
             Unsafe.unsafely {
                 given ce: CanEqual[E, E] = CanEqual.derived
                 val p                    = Promise.Unsafe.init[E, A]()
                 val f                    = Runtime.default.unsafe.fork(v)
-                f.unsafe.addObserver { (exit: zio.Exit[E, A]) =>
+                f.unsafe.addObserver { (exit: Exit[E, A]) =>
                     p.completeDiscard(exit.toResult)
                 }
                 p.onInterrupt(_ =>
-                    discard(f.unsafe.interrupt(zio.Cause.interrupt(FiberId.None, zio.StackTrace(FiberId.None, zio.Chunk(t)))))
+                    discard(f.unsafe.interrupt(Cause.interrupt(FiberId.None, StackTrace(FiberId.None, Chunk(t)))))
                 )
                 p.safe.get
             }
@@ -71,7 +76,7 @@ object ZIOs:
         }
     end run
 
-    extension [E, A](exit: zio.Exit[E, A])
+    extension [E, A](exit: Exit[E, A])
         /** Converts a zio.Exit to a kyo.Result.
           *
           * @return
@@ -83,7 +88,7 @@ object ZIOs:
                 case Exit.Failure(cause) => cause.toError
     end extension
 
-    extension [E](cause: zio.Cause[E])
+    extension [E](cause: Cause[E])
         /** Converts a zio.Cause to a kyo.Result.Error.
           *
           * This method recursively traverses the zio.Cause structure and converts it to the appropriate kyo.Result.Error type.
@@ -92,8 +97,8 @@ object ZIOs:
           *   A kyo.Result.Error
           */
         def toError(using frame: Frame, ce: CanEqual[E, E]): Result.Error[E] =
-            import zio.Cause.*
-            def loop(cause: zio.Cause[E]): Maybe[Result.Error[E]] =
+            import Cause.*
+            def loop(cause: Cause[E]): Maybe[Result.Error[E]] =
                 cause match
                     case Fail(e, trace)            => Maybe(Result.Failure(e))
                     case Die(e, trace)             => Maybe(Result.Panic(e))
@@ -104,6 +109,21 @@ object ZIOs:
                     case _: Empty.type             => Maybe.empty
             loop(cause).getOrElse(Result.Panic(new Exception("Unexpected zio.Cause.Empty at " + frame.position.show)))
         end toError
+    end extension
+
+    extension [E](ex: Result.Error[E])
+        def toCause: Cause[E] =
+            ex match
+                case Result.Failure[E](e) => Cause.fail(e)
+                case Result.Panic(e)      => Cause.die(e)
+    end extension
+
+    extension [E, A](result: Result[E, A])
+        def toExit: Exit[E, A] =
+            result match
+                case Result.Success(a) => Exit.succeed(a)
+                case Result.Failure(e) => Exit.fail(e)
+                case Result.Panic(e)   => Exit.die(e)
     end extension
 
 end ZIOs
