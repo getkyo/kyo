@@ -17,16 +17,24 @@ import scala.util.NotGiven
   */
 @implicitNotFound("""
 Type '${A}' may contain a nested effect computation.
+This usually means you have a value of type `X < S1 < S2` (i.e. `(X < S1) < S2`) where a plain value `X < S` is expected.
 
-This usually means you have a value of type 'X < S' where you need a plain value.
+This often happens due to *type inference*: some effect computations are nested when chaining operations, and Scala infers a value with nested effects instead of merging them.
+
 To fix this, you can:
 
-1. Call .flatten to combine the nested effects:
-     (x: (Int < S1) < S2).flatten  // Result: Int < (S1 & S2)
+1. Call `.flatten` to merge the nested effects:
+    val x: (Int < S1) < S2 = ...
+    val y: Int < (S1 & S2) = x.flatten
+
+
+   This collapses the nested effect layers into a single computation with a combined effect set.
 
 2. Split the computation into multiple statements:
-     val x: Int < S1 = computeFirst()
-     val y: Int < S2 = useResult(x)
+   Breaking the code into smaller expressions helps Scala infer the correct types incrementally, avoiding nested effects.
+    val x: Int < S1 = computeFirst()
+    val y: Int < S2 = useResult(x)
+
 """)
 opaque type CanLift[A] = Null
 
