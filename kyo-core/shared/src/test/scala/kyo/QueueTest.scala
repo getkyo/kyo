@@ -232,7 +232,7 @@ class QueueTest extends Test:
 
         val repeats = 100
 
-        "offer and close" in run {
+        "offer and close" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -258,7 +258,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer and poll" in run {
+        "offer and poll" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -278,7 +278,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer to full queue during close" in run {
+        "offer to full queue during close" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -301,7 +301,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent close attempts" in run {
+        "concurrent close attempts" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -325,7 +325,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer, poll and close" in run {
+        "offer, poll and close" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
