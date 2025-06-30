@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Ansi.*
 import kyo.kernel.*
+import scala.util.matching.Regex
 
 /** Parser combinator effect for compositional text parsing.
   *
@@ -947,15 +948,24 @@ object Parse:
     /** Matches text using regex pattern
       *
       * @param pattern
+      *   Regex pattern
+      * @return
+      *   Matched text
+      */
+    def regex(pattern: Regex)(using Frame): Text < Parse[Char] =
+        Parse.read { s =>
+            Maybe.fromOption(pattern.findPrefixOf(s.mkString).map(m => (s.drop(m.length), Text(m))))
+        }
+
+    /** Matches text using regex pattern
+      *
+      * @param pattern
       *   Regex pattern string
       * @return
       *   Matched text
       */
     def regex(pattern: String)(using Frame): Text < Parse[Char] =
-        Parse.read { s =>
-            val regex = pattern.r
-            Maybe.fromOption(regex.findPrefixOf(s.mkString).map(m => (s.drop(m.length), Text(m))))
-        }
+        regex(pattern.r)
 
     /** Parses an identifier (letter/underscore followed by letters/digits/underscores)
       *
