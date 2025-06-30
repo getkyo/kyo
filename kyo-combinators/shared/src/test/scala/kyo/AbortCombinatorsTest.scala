@@ -6,6 +6,12 @@ class AbortCombinatorsTest extends Test:
 
     given ce[A, B]: CanEqual[A, B] = CanEqual.canEqualAny
 
+    "Abort module" - {
+        "shoud not compile" in {
+            typeCheckFailure("Abort.foldAbort(identity, identity)")("Cannot lift 'kyo.Abort$' to a 'Abort$ < S")
+        }
+    }
+
     "abort" - {
         "construct" - {
             "should construct from Result" in {
