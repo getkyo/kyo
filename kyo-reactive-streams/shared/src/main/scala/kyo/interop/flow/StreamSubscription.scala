@@ -65,7 +65,7 @@ final private[kyo] class StreamSubscription[V, S](
         Tag[Poll[Chunk[V]]],
         Frame
     ): Fiber[StreamCanceled, StreamComplete] < (Sync & S) =
-        Async.run[StreamCanceled, StreamComplete, S](Poll.runEmit(stream.emit)(poll).map(_._2))
+        Fiber.run[StreamCanceled, StreamComplete, S](Poll.runEmit(stream.emit)(poll).map(_._2))
             .map { fiber =>
                 fiber.onComplete {
                     case Result.Success(StreamComplete) => Sync(subscriber.onComplete())

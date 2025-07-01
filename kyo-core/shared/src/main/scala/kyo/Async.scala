@@ -30,8 +30,6 @@ import scala.util.control.NonFatal
   * This effect includes Sync in its effect set to handle both async and sync execution in a single effect.
   *
   * @see
-  *   [[Async.run]] for executing asynchronous computations and obtaining a Fiber
-  * @see
   *   [[Fiber]] for the low-level primitive that powers async execution (primarily for library authors)
   * @see
   *   [[Async.race]] for racing multiple computations and getting the first result
@@ -78,7 +76,7 @@ object Async extends AsyncPlatformSpecific:
       * method allows users to work with a single unified effect that handles both concerns.
       *
       * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use
-      * Async.run or combinators like Async.parallel instead.
+      * Fiber.run or combinators like Async.parallel instead.
       *
       * This is particularly useful in application code where the distinction between pure side effects and asynchronous execution is less
       * important than having a simple, consistent way to handle effects. The underlying effects are typically managed together at the
@@ -98,38 +96,6 @@ object Async extends AsyncPlatformSpecific:
     inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
         Sync(v)
 
-    /** Runs an asynchronous computation and returns a Fiber.
-      *
-      * @param v
-      *   The computation to run
-      * @return
-      *   A Fiber representing the running computation
-      */
-    def run[E, A, S](
-        using isolate: Isolate.Contextual[S, Sync]
-    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (Sync & S) =
-        isolate.runInternal((trace, context) =>
-            Fiber.fromTask(IOTask(v, trace, context))
-        )
-
-    /** Runs an asynchronous computation and blocks until completion or timeout.
-      *
-      * @param timeout
-      *   The maximum duration to wait
-      * @param v
-      *   The computation to run
-      * @return
-      *   The result of the computation, or a Timeout error
-      */
-    def runAndBlock[E, A, S](
-        using isolate: Isolate.Contextual[S, Sync]
-    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & Sync & S) =
-        run(v).map { fiber =>
-            fiber.block(timeout).map(Abort.get(_))
-        }
-
     /** Runs an asynchronous computation with interrupt masking.
       *
       * This method executes the given computation in a context where interrupts are not propagated to previous "steps" of the computation.
@@ -147,7 +113,7 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         isolate.capture { state =>
-            Async.run(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
+            Fiber.run(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
         }
 
     /** Creates a computation that never completes.
@@ -194,7 +160,7 @@ object Async extends AsyncPlatformSpecific:
         else if !after.isFinite then v
         else
             isolate.capture { state =>
-                Async.run(isolate.isolate(state, v)).map { task =>
+                Fiber.run(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
                         Sync.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)

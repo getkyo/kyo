@@ -16,11 +16,11 @@ import scala.util.control.NoStackTrace
 
 /** A low-level primitive for asynchronous computation control.
   *
-  * Fiber is the underlying mechanism that powers Kyo's concurrent execution model. It provides fine-grained control over asynchronous
-  * computations, including lifecycle management, interruption handling, and completion callbacks.
-  *
   * WARNING: This is a low-level API primarily intended for library authors and system integrations. For application-level concurrent
   * programming, use the [[Async]] effect instead, which provides a safer, more structured interface.
+  *
+  * Fiber is the underlying mechanism that powers Kyo's concurrent execution model. It provides fine-grained control over asynchronous
+  * computations, including lifecycle management, interruption handling, and completion callbacks.
   *
   * Key capabilities:
   *   - Lifecycle control (completion, interruption)
@@ -101,6 +101,38 @@ object Fiber:
       */
     def fromFuture[A](future: => Future[A])(using frame: Frame): Fiber[Throwable, A] < Sync =
         Sync.Unsafe(Unsafe.fromFuture(future))
+
+    /** Runs an asynchronous computation in a new Fiber.
+      *
+      * @param v
+      *   The computation to run
+      * @return
+      *   A Fiber representing the running computation
+      */
+    def run[E, A, S](
+        using isolate: Isolate.Contextual[S, Sync]
+    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (Sync & S) =
+        isolate.runInternal((trace, context) =>
+            Fiber.fromTask(IOTask(v, trace, context))
+        )
+
+    /** Runs an asynchronous computation in a new fiber and blocks until completion or timeout.
+      *
+      * @param timeout
+      *   The maximum duration to wait
+      * @param v
+      *   The computation to run
+      * @return
+      *   The result of the computation, or a Timeout error
+      */
+    def runAndBlock[E, A, S](
+        using isolate: Isolate.Contextual[S, Sync]
+    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
+        using frame: Frame
+    ): A < (Abort[E | Timeout] & Sync & S) =
+        run(v).map { fiber =>
+            fiber.block(timeout).map(Abort.get(_))
+        }
 
     private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 
