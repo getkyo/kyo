@@ -136,16 +136,15 @@ object StreamCoreExtensions:
             Frame
         ): Stream[V, S & Async] =
             Stream:
-                Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
-                    Sync.ensure(channel.close):
-                        for
-                            _ <- Fiber.run[E, Unit, S](Abort.run {
-                                Async.foreachDiscard(streams)(
-                                    _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
-                                )
-                            }.andThen(Abort.run(channel.put(Absent)).unit))
-                            _ <- emitMaybeChunksFromChannel(channel)
-                        yield ()
+                Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
+                    for
+                        _ <- Fiber.run[E, Unit, S](Abort.run {
+                            Async.foreachDiscard(streams)(
+                                _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
+                            )
+                        }.andThen(Abort.run(channel.put(Absent)).unit))
+                        _ <- emitMaybeChunksFromChannel(channel)
+                    yield ()
 
         /** Creates a stream from an iterator.
           *
@@ -254,18 +253,17 @@ object StreamCoreExtensions:
             Frame
         ): Stream[V, S & Async] =
             Stream:
-                Channel.initWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
-                    Sync.ensure(channel.close):
-                        for
-                            _ <- Fiber.run(Abort.run(
-                                Async
-                                    .foreachDiscard(streams)(
-                                        _.foreachChunk(c => Abort.run(channel.put(Present(c))))
-                                            .andThen(Abort.run(channel.put(Absent)))
-                                    )
-                            ))
-                            _ <- emitMaybeChunksFromChannel(channel)
-                        yield ()
+                Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
+                    for
+                        _ <- Fiber.run(Abort.run(
+                            Async
+                                .foreachDiscard(streams)(
+                                    _.foreachChunk(c => Abort.run(channel.put(Present(c))))
+                                        .andThen(Abort.run(channel.put(Absent)))
+                                )
+                        ))
+                        _ <- emitMaybeChunksFromChannel(channel)
+                    yield ()
 
     end extension
 
@@ -335,18 +333,17 @@ object StreamCoreExtensions:
             Frame
         ): Stream[V, Abort[E] & S & Async] =
             Stream:
-                Channel.initWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
-                    Sync.ensure(channel.close):
-                        for
-                            _ <- Fiber.run(
-                                Async.gather(
-                                    stream.foreachChunk(c => channel.put(Present(c)))
-                                        .andThen(channel.put(Absent)),
-                                    other.foreachChunk(c => channel.put(Present(c)))
-                                ).andThen(channel.put(Absent))
-                            )
-                            _ <- emitMaybeChunksFromChannel(channel)
-                        yield ()
+                Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
+                    for
+                        _ <- Fiber.run(
+                            Async.gather(
+                                stream.foreachChunk(c => channel.put(Present(c)))
+                                    .andThen(channel.put(Absent)),
+                                other.foreachChunk(c => channel.put(Present(c)))
+                            ).andThen(channel.put(Absent))
+                        )
+                        _ <- emitMaybeChunksFromChannel(channel)
+                    yield ()
 
         /** Merges with another stream. Stream stops when other stream has completed or when both streams have completed.
           *
@@ -391,10 +388,10 @@ object StreamCoreExtensions:
         ): Stream[V2, Abort[E] & Async & S & S2] =
             given CanEqual[Boolean | Chunk[V2], Boolean | Chunk[V2]] = CanEqual.derived
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initWith[Maybe[Chunk[V2]]](bufferSize): channelOut =>
+                Channel.initLocalWith[Maybe[Chunk[V2]]](bufferSize): channelOut =>
                     // Staging channel acts as concurrency limiter: contains fibers that either contain a
                     // chunk to be published, or a signal to continue or end
-                    Channel.initWith[Fiber[E | Closed, Boolean | Chunk[V2]]](parallel - 1): stagingChannel =>
+                    Channel.initLocalWith[Fiber[E | Closed, Boolean | Chunk[V2]]](parallel - 1): stagingChannel =>
                         // Handle original stream by running transformations in parallel, limiting concurrency by
                         // using staging channel as a limiter
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
@@ -437,11 +434,9 @@ object StreamCoreExtensions:
                             )(Async.gather(handleEmit, handleStaging))
 
                         // Stream from output channel, running handlers in background
-                        Sync.ensure(channelOut.close):
-                            Sync.ensure(stagingChannel.close):
-                                background.map: backgroundFiber =>
-                                    emitMaybeChunksFromChannel(channelOut).andThen:
-                                        backgroundFiber.get.unit
+                        background.map: backgroundFiber =>
+                            emitMaybeChunksFromChannel(channelOut).andThen:
+                                backgroundFiber.get.unit
         end mapPar
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Preserves chunk boundaries.
@@ -482,10 +477,10 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initWith[Maybe[V2]](bufferSize): channelOut =>
+                Channel.initLocalWith[Maybe[V2]](bufferSize): channelOut =>
                     // Since we don't have to worry about order, the "staging channel" now just holds a signal
                     // determining whether to continue streaming or not
-                    Channel.initWith[Fiber[E | Closed, Boolean]](parallel): parChannel =>
+                    Channel.initLocalWith[Fiber[E | Closed, Boolean]](parallel): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork(effect: Any < (Async & Abort[Closed | E] & S2)) =
                             Fiber.run(effect).map: effectFiber =>
@@ -520,11 +515,9 @@ object StreamCoreExtensions:
                                 onPanic = e => Abort.run(channelOut.put(Absent)).andThen(Abort.panic(e))
                             )(Async.gather(handleEmit, handlePar))
 
-                        Sync.ensure(channelOut.close):
-                            Sync.ensure(parChannel.close):
-                                background.map: backgroundFiber =>
-                                    emitMaybeElementsFromChannel(channelOut).andThen:
-                                        backgroundFiber.get.unit
+                        background.map: backgroundFiber =>
+                            emitMaybeElementsFromChannel(channelOut).andThen:
+                                backgroundFiber.get.unit
         end mapParUnordered
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Does not preserve chunk
@@ -568,10 +561,10 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initWith[Maybe[Chunk[V2]]](bufferSize): outputChannel =>
+                Channel.initLocalWith[Maybe[Chunk[V2]]](bufferSize): outputChannel =>
                     // Staging channel size is one less than parallel because the `handleStaging` loop
                     // will always pull one value out and wait for it to complete
-                    Channel.initWith[Fiber[E | Closed, Maybe[Chunk[V2]]]](parallel - 1): stagingChannel =>
+                    Channel.initLocalWith[Fiber[E | Closed, Maybe[Chunk[V2]]]](parallel - 1): stagingChannel =>
 
                         // Handle original stream by running transformation asynchronously and publishing resulting *fiber*
                         // to the staging channel. Throttling is enforced by the size of the staging channel. Publish final
@@ -604,11 +597,9 @@ object StreamCoreExtensions:
                             )(Async.gather(handledStream, handleStaging))
 
                         // Stream from output channel with handlers running in background
-                        Sync.ensure(outputChannel.close):
-                            Sync.ensure(stagingChannel.close):
-                                background.map: backgroundFiber =>
-                                    emitMaybeChunksFromChannel(outputChannel).andThen:
-                                        backgroundFiber.get.unit
+                        background.map: backgroundFiber =>
+                            emitMaybeChunksFromChannel(outputChannel).andThen:
+                                backgroundFiber.get.unit
         end mapChunkPar
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Preserves chunk boundaries.
@@ -652,10 +643,10 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initWith[Maybe[Chunk[V2]]](bufferSize): channelOut =>
+                Channel.initLocalWith[Maybe[Chunk[V2]]](bufferSize): channelOut =>
                     // Since we don't have to worry about order, the "staging channel" now just holds a signal
                     // determining whether to continue streaming or not
-                    Channel.initWith[Fiber[E | Closed, Boolean]](parallel - 1): parChannel =>
+                    Channel.initLocalWith[Fiber[E | Closed, Boolean]](parallel - 1): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork[A](task: Any < (Async & Abort[Closed | E] & S2)) =
                             Fiber.run(task).map: fiber =>
@@ -689,11 +680,9 @@ object StreamCoreExtensions:
                             )(Async.gather(handleEmit, handlePar))
 
                         // Stream from output channel with handler running in background
-                        Sync.ensure(channelOut.close):
-                            Sync.ensure(parChannel.close):
-                                background.map: backgroundFiber =>
-                                    emitMaybeChunksFromChannel(channelOut).andThen:
-                                        backgroundFiber.get.unit
+                        background.map: backgroundFiber =>
+                            emitMaybeChunksFromChannel(channelOut).andThen:
+                                backgroundFiber.get.unit
 
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunk in parallel. Does not preserve chunk boundaries.
           *
