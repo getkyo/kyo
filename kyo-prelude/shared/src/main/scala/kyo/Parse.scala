@@ -539,7 +539,7 @@ object Parse:
       * @return
       *   Result when parser succeeds
       */
-    def skipUntil[A, In, S](v: A < (Parse[In] & S))(using Frame, StateTag[In]): A < (Parse[In] & S) =
+    def skipUntil[A](using Frame)[In, S](v: A < (Parse[In] & S))(using StateTag[In]): A < (Parse[In] & S) =
         attempt(v).map {
             case Absent =>
                 Var.use[State[In]] { state =>
@@ -558,7 +558,7 @@ object Parse:
       * @return
       *   Maybe containing the result if successful, Absent if parser failed
       */
-    def attempt[A, In, S](v: A < (Parse[In] & S))(using Frame, StateTag[In]): Maybe[A] < (Parse[In] & S) =
+    def attempt[A](using Frame)[In, S](v: A < (Parse[In] & S))(using StateTag[In]): Maybe[A] < (Parse[In] & S) =
         Var.use[State[In]] { start =>
             Choice.run(v).map { r =>
                 result(r).map {
@@ -580,7 +580,7 @@ object Parse:
       * @return
       *   Parser result, fails if parser fails with no possibility of backtracking
       */
-    def require[A, In, S](v: A < (Parse[In] & S))(using Frame, StateTag[In]): A < (Parse[In] & S) =
+    def require[A](using Frame)[In, S](v: A < (Parse[In] & S))(using StateTag[In]): A < (Parse[In] & S) =
         attempt(v).map {
             case Present(a) => a
             case Absent => Parse.fail(
@@ -596,7 +596,7 @@ object Parse:
       * @return
       *   Maybe containing the result if successful
       */
-    def peek[A, In, S](v: A < (Parse[In] & S))(using Frame, StateTag[In]): Maybe[A] < (Parse[In] & S) =
+    def peek[A](using Frame)[In, S](v: A < (Parse[In] & S))(using StateTag[In]): Maybe[A] < (Parse[In] & S) =
         Var.use[State[In]] { start =>
             Choice.run(v).map { r =>
                 Var.set(start).andThen(result(r))
@@ -610,7 +610,7 @@ object Parse:
       * @return
       *   Chunk of all successful results
       */
-    def repeat[A, In, S](p: A < (Parse[In] & S))(using Frame, StateTag[In]): Chunk[A] < (Parse[In] & S) =
+    def repeat[A](using Frame)[In, S](p: A < (Parse[In] & S))(using StateTag[In]): Chunk[A] < (Parse[In] & S) =
         Loop(Chunk.empty[A]) { acc =>
             attempt(p).map {
                 case Present(a) => Loop.continue(acc.append(a))
@@ -627,7 +627,7 @@ object Parse:
       * @return
       *   Chunk of n results, fails if can't get n results
       */
-    def repeat[A, In, S](n: Int)(p: A < (Parse[In] & S))(using Frame, StateTag[In]): Chunk[A] < (Parse[In] & S) =
+    def repeat[A](using Frame)[In, S](n: Int)(p: A < (Parse[In] & S))(using StateTag[In]): Chunk[A] < (Parse[In] & S) =
         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
             if idx == n then Loop.done(acc)
             else
@@ -649,11 +649,13 @@ object Parse:
       * @return
       *   Chunk of successfully parsed elements
       */
-    def separatedBy[A, B, In, S](
+    def separatedBy[A, B](using
+        Frame
+    )[In, S](
         element: => A < (Parse[In] & S),
         separator: => B < (Parse[In] & S),
         allowTrailing: Boolean = false
-    )(using Frame, StateTag[In]): Chunk[A] < (Parse[In] & S) =
+    )(using StateTag[In]): Chunk[A] < (Parse[In] & S) =
         attempt(element).map {
             case Absent => Chunk.empty
             case Present(first) =>
@@ -683,11 +685,13 @@ object Parse:
       * @return
       *   The parsed content
       */
-    def between[A, In, S](
+    def between[A](using
+        Frame
+    )[In, S](
         left: => Any < (Parse[In] & S),
         content: => A < (Parse[In] & S),
         right: => Any < (Parse[In] & S)
-    )(using Frame): A < (Parse[In] & S) =
+    ): A < (Parse[In] & S) =
         for
             _      <- left
             result <- content
@@ -942,7 +946,7 @@ object Parse:
     def anyIf[In](p: In => Boolean)(using Frame, StateTag[In]): In < Parse[In] =
         Parse.read(s => s.headMaybe.filter(p).map(c => (s.drop(1), c)))
 
-    def anyMatch[A, In](pf: PartialFunction[In, A])(using Frame, StateTag[In]): A < Parse[In] =
+    def anyMatch[A](using Frame)[In](pf: PartialFunction[In, A])(using StateTag[In]): A < Parse[In] =
         Parse.read(s => Maybe.fromOption(s.headOption.flatMap(pf.lift)).map(c => (s.drop(1), c)))
 
     /** Matches text using regex pattern
