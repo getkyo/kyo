@@ -1,6 +1,7 @@
 package kyo
 
 import Tagged.*
+import scala.annotation.nowarn
 
 class ChoiceTest extends Test:
 
@@ -145,6 +146,7 @@ class ChoiceTest extends Test:
         }
 
         "foreach - array" in {
+            @nowarn("msg=deprecated")
             val result = Choice.run(
                 Kyo.foreach(Array("x", "y")) { str =>
                     Choice.eval(true, false).map(b =>
@@ -167,6 +169,7 @@ class ChoiceTest extends Test:
                         if b then str.toUpperCase else str
                     )
                 }
+            @nowarn("msg=deprecated")
             val result = Choice.run(Kyo.collectAll(effects)).eval
 
             assert(result.contains(Chunk("X", "Y")))
@@ -177,6 +180,7 @@ class ChoiceTest extends Test:
         }
 
         "foldLeft - array" in {
+            @nowarn("msg=deprecated")
             val result = Choice.run(
                 Kyo.foldLeft(Array(1, 1))(0) { (acc, _) =>
                     Choice.eval(0, 1).map(n => acc + n)
