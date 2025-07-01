@@ -1,15 +1,15 @@
 package kyo
 
 import kyo.Result.*
+import scala.reflect.ClassTag
 import zio.Cause
 import zio.Chunk
-import scala.reflect.ClassTag
 import zio.Exit
 import zio.FiberId
 import zio.Runtime
+import zio.Scope
 import zio.StackTrace
 import zio.Trace
-import zio.Scope
 import zio.Unsafe
 import zio.ZEnvironment
 import zio.ZIO
@@ -54,34 +54,6 @@ object ZIOs:
     inline def get[R: zio.Tag, E, A](v: ZIO[R, E, A])(using Tag[Env[R]], Frame, zio.Trace): A < (Env[R] & Abort[E] & Async) =
         compiletime.error("ZIO environments are not supported yet. Please handle them before calling this method.")
 
-    /** Lifts a zio.stream.ZStream into a Kyo's Stream.
-      *
-      * @param stream
-      *   The zio.stream.ZStream to lift
-      * @return
-      *   A Kyo's Stream that, when run, will execute the zio.stream.ZStream
-      */
-    def get[E, A](stream: => ZStream[Any, E, A])(using
-        frame: Frame,
-        trace: zio.Trace,
-        tag: kyo.Tag[kyo.Emit[kyo.Chunk.Indexed[A]]],
-        classTag: ClassTag[A]
-    ): Stream[A, Abort[E] & Async] =
-        zio.Unsafe.unsafely { unsafe ?=>
-            val emit = Resource
-                .acquireRelease(Scope.unsafe.make(using unsafe))(_.close(Exit.unit))
-                .map: scope =>
-                    get(stream.channel.toPullIn(scope))
-                        .map: pullIn =>
-                            Loop.foreach:
-                                get(pullIn).map {
-                                    case Right(zioChunk) => Emit.valueWith(Chunk.from(zioChunk.toArray))(Loop.continue)
-                                    case _               => Loop.done
-                                }
-            Stream(Resource.run(emit))
-        }
-    end get
-
     /** Interprets a Kyo computation to ZIO. Note that this method only accepts Abort[E] and Async pending effects. Plase handle any other
       * effects before calling this method.
       *
@@ -106,52 +78,6 @@ object ZIOs:
                 }
             }.handle(Sync.Unsafe.evalOrThrow)
         }
-    end run
-
-    def run[A, E](stream: => Stream[A, Abort[E] & Async])(using
-        frame: Frame,
-        trace: zio.Trace,
-        tag: Tag[kyo.Emit[kyo.Chunk[A]]],
-        classTag: ClassTag[A]
-    ): ZStream[Any, E, A] =
-        import AllowUnsafe.embrace.danger
-        val channel = ZChannel.suspend {
-            def loop(emit: Unit < (Emit[Chunk[A]] & Abort[E] & Async)): ZChannel[Any, Any, Any, Any, E, zio.Chunk[A], Any] =
-                ZChannel
-                    .fromZIO(run(Emit.runFirst(emit)))
-                    .flatMap: (chunkMaybe, cont) =>
-                        chunkMaybe match
-                            case Present(chunk) =>
-                                ZChannel.write(zio.Chunk.fromArray(chunk.toArray)) *> loop(cont())
-                            case Absent => ZChannel.unit
-            end loop
-
-            loop(stream.emit)
-        }
-        ZStream.fromChannel(channel)
-    end run
-
-    def run[A, E](stream: => Stream[A, Abort[E] & Async])(using
-        frame: Frame,
-        trace: zio.Trace,
-        tag: Tag[kyo.Emit[kyo.Chunk[A]]],
-        classTag: ClassTag[A]
-    ): ZStream[Any, E, A] =
-        import AllowUnsafe.embrace.danger
-        val channel = ZChannel.suspend {
-            def loop(emit: Unit < (Emit[Chunk[A]] & Abort[E] & Async)): ZChannel[Any, Any, Any, Any, E, zio.Chunk[A], Any] =
-                ZChannel
-                    .fromZIO(run(Emit.runFirst(emit)))
-                    .flatMap: (chunkMaybe, cont) =>
-                        chunkMaybe match
-                            case Present(chunk) =>
-                                ZChannel.write(zio.Chunk.fromArray(chunk.toArray)) *> loop(cont())
-                            case Absent => ZChannel.unit
-            end loop
-
-            loop(stream.emit)
-        }
-        ZStream.fromChannel(channel)
     end run
 
     extension [E, A](exit: zio.Exit[E, A])
