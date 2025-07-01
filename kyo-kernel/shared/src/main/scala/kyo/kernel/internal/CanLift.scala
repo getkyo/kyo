@@ -76,26 +76,58 @@ object LiftMacro:
 
     def liftMacro[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
+
         val sourceTpe = TypeRepr.of[A]
         val tpe       = sourceTpe.dealias
         val sym       = tpe.typeSymbol
 
-        if tpe =:= TypeRepr.of[Nothing] then
-            println(s"Nothing to instanceOf")
+        inline def isNothing = tpe =:= TypeRepr.of[Nothing]
+        inline def isAnyVal  = tpe <:< TypeRepr.of[AnyVal]
+        inline def isTuple   = tpe <:< TypeRepr.of[Tuple]
+
+        inline def isPending = tpe <:< TypeRepr.of[Any < Nothing]
+
+        inline def isOpaque   = sym.flags.is(Flags.Opaque)
+        inline def isConcrete = tpe.typeSymbol.isClassDef
+
+        /*
+        val tags =
+            if isNothing then List("isNothing")
+            else
+                List(
+                    if isKyo then "isKyo" else "",
+                    if isAnyVal then "isAnyVal" else "",
+                    if isOpaque then "isOpaque" else ""
+                ).filter(_.nonEmpty).mkString(" ")
+
+        val pos =
+            val p     = v.asTerm.pos
+            val file  = p.sourceFile.jpath.toString
+            val start = p.startLine + 1
+            val end   = p.endLine + 1
+            if start == end then s"$file:$start" else s"$file:$start-$end"
+        end pos
+
+        //val code = v.show.replaceAll("\n", "\\\\n").replaceAll("\"", "'")
+
+        //println(s"lift,$pos,${sourceTpe.show},${tpe.show},$tags,$code")
+         */
+
+        if isNothing || isAnyVal || isTuple then
             '{ $v.asInstanceOf[A < S] }
-        else if tpe <:< TypeRepr.of[Kyo[Any, Nothing]] then
-            println(s"wrapped ${sourceTpe.show}")
+        else if isPending then
             '{ Nested($v) }
-        else if tpe <:< TypeRepr.of[AnyVal] then
+        else if isOpaque || isConcrete then
             '{ $v.asInstanceOf[A < S] }
         else
-            '{
-                val wrapped: Any = $v
-                wrapped match
-                    case kyo: Kyo[?, ?] => Nested(kyo).asInstanceOf[A < S]
-                    case _              => wrapped.asInstanceOf[A < S]
-            }
-
+            '{ defaultLift($v) }
         end if
+
     end liftMacro
+
+    final def defaultLift[A, S](v: A): A < S =
+        v match
+            case kyo: Kyo[?, ?] => Nested(kyo)
+            case _              => v.asInstanceOf[A < S]
+
 end LiftMacro
