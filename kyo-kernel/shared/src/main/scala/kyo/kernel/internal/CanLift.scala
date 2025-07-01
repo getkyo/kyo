@@ -77,52 +77,27 @@ object LiftMacro:
     def liftMacro[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
         import quotes.reflect.*
 
-        val sourceTpe = TypeRepr.of[A]
-        val tpe       = sourceTpe.dealias
-        val sym       = tpe.typeSymbol
+        enum Mode derives CanEqual:
+            case Cast, Nested, DefaultLift
 
-        inline def isNothing = tpe =:= TypeRepr.of[Nothing]
-        inline def isAnyVal  = tpe <:< TypeRepr.of[AnyVal]
-        inline def isTuple   = tpe <:< TypeRepr.of[Tuple]
+        val tpe        = TypeRepr.of[A].dealias
+        inline def sym = tpe.typeSymbol
 
-        inline def isPending = tpe <:< TypeRepr.of[Any < Nothing]
-
+        inline def isPending  = tpe <:< TypeRepr.of[Any < Nothing]
+        inline def isNothing  = tpe =:= TypeRepr.of[Nothing]
         inline def isOpaque   = sym.flags.is(Flags.Opaque)
         inline def isConcrete = tpe.typeSymbol.isClassDef
 
-        /*
-        val tags =
-            if isNothing then List("isNothing")
-            else
-                List(
-                    if isKyo then "isKyo" else "",
-                    if isAnyVal then "isAnyVal" else "",
-                    if isOpaque then "isOpaque" else ""
-                ).filter(_.nonEmpty).mkString(" ")
+        val mode =
+            if isPending then Mode.Nested // pending is opaque
+            else if isNothing || isConcrete || isOpaque then Mode.Cast
+            else Mode.DefaultLift
 
-        val pos =
-            val p     = v.asTerm.pos
-            val file  = p.sourceFile.jpath.toString
-            val start = p.startLine + 1
-            val end   = p.endLine + 1
-            if start == end then s"$file:$start" else s"$file:$start-$end"
-        end pos
-
-        //val code = v.show.replaceAll("\n", "\\\\n").replaceAll("\"", "'")
-
-        //println(s"lift,$pos,${sourceTpe.show},${tpe.show},$tags,$code")
-         */
-
-        if isNothing || isAnyVal || isTuple then
-            '{ $v.asInstanceOf[A < S] }
-        else if isPending then
-            '{ Nested($v) }
-        else if isOpaque || isConcrete then
-            '{ $v.asInstanceOf[A < S] }
-        else
-            '{ defaultLift($v) }
-        end if
-
+        mode match
+            case Mode.Cast        => '{ $v.asInstanceOf[A < S] }
+            case Mode.Nested      => '{ Nested($v) }
+            case Mode.DefaultLift => '{ defaultLift($v) }
+        end match
     end liftMacro
 
     final def defaultLift[A, S](v: A): A < S =
