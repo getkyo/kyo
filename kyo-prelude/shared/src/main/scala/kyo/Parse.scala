@@ -780,7 +780,7 @@ object Parse:
                                     else
                                         // Successfully parsed a value with remaining text.
                                         // Emit the parsed value and continue with unconsumed text
-                                        Emit.valueWith(Chunk(value))(Text(state.remaining.show))
+                                        Emit.valueWith(Chunk(value))(Text(state.remaining.mkString))
                                 case seq =>
                                     Parse.fail(seq.map(_._1), "Ambiguous parse - multiple results found")
                             }
@@ -837,7 +837,7 @@ object Parse:
       *   Unit after consuming whitespace
       */
     def whitespaces(using Frame): Text < Parse[Char] =
-        Parse.readWhile[Char](_.isWhitespace).map(c => Text(c.show))
+        Parse.readWhile[Char](_.isWhitespace).map(c => Text(c.mkString))
 
     /** Parses an integer
       *
@@ -847,7 +847,7 @@ object Parse:
     def int(using Frame): Int < Parse[Char] =
         Parse.read { s =>
             val (num, rest) = s.span(c => c.isDigit || c == '-')
-            Maybe.fromOption(num.show.toIntOption).map((rest, _))
+            Maybe.fromOption(num.mkString.toIntOption).map((rest, _))
         }
 
     /** Parses a decimal number
@@ -858,7 +858,7 @@ object Parse:
     def decimal(using Frame): Double < Parse[Char] =
         Parse.read { s =>
             val (num, rest) = s.span(c => c.isDigit || c == '.' || c == '-')
-            Maybe.fromOption(num.show.toDoubleOption).map((rest, _))
+            Maybe.fromOption(num.mkString.toDoubleOption).map((rest, _))
         }
 
     /** Parses a boolean ("true" or "false")
@@ -958,7 +958,7 @@ object Parse:
       */
     def regex(pattern: Regex)(using Frame): Text < Parse[Char] =
         Parse.read { s =>
-            Maybe.fromOption(pattern.findPrefixOf(s.show).map(m => (s.drop(m.length), Text(m))))
+            Maybe.fromOption(pattern.findPrefixOf(s.mkString).map(m => (s.drop(m.length), Text(m))))
         }
 
     /** Matches text using regex pattern
@@ -980,7 +980,7 @@ object Parse:
         Parse.read { s =>
             s.headMaybe.filter(c => c.isLetter || c == '_').map { _ =>
                 val (id, rest) = s.span(c => c.isLetterOrDigit || c == '_')
-                (rest, Text(id.show))
+                (rest, Text(id.mkString))
             }
         }
 
