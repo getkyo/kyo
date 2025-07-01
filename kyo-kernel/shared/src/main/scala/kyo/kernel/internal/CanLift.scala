@@ -43,13 +43,17 @@ object CanLiftMacro:
 
     private[internal] def liftImpl[A: Type](using Quotes): Expr[CanLift[A]] =
         import quotes.reflect.*
-        val tpe = TypeRepr.of[A].dealias
-
+        val tpe = TypeRepr.of[A]
         val sym = tpe.typeSymbol
+
+        // if tpe <:< TypeRepr.of[Any < Nothing] && !(tpe =:= TypeRepr.of[Nothing]) then
+        //     report.errorAndAbort(s"cannot lift ${sym.name} to ${sym.name} < S : ${tpe.show}")
+
         if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
         '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
     end liftImpl
+
 end CanLiftMacro
 
 object CanLift:
@@ -67,3 +71,31 @@ object CanLift:
         inline given bypass[A]: CanLift[A] = null
     end unsafe
 end CanLift
+
+object LiftMacro:
+
+    def liftMacro[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
+        import quotes.reflect.*
+        val sourceTpe = TypeRepr.of[A]
+        val tpe       = sourceTpe.dealias
+        val sym       = tpe.typeSymbol
+
+        if tpe =:= TypeRepr.of[Nothing] then
+            println(s"Nothing to instanceOf")
+            '{ $v.asInstanceOf[A < S] }
+        else if tpe <:< TypeRepr.of[Kyo[Any, Nothing]] then
+            println(s"wrapped ${sourceTpe.show}")
+            '{ Nested($v) }
+        else if tpe <:< TypeRepr.of[AnyVal] then
+            '{ $v.asInstanceOf[A < S] }
+        else
+            '{
+                val wrapped: Any = $v
+                wrapped match
+                    case kyo: Kyo[?, ?] => Nested(kyo).asInstanceOf[A < S]
+                    case _              => wrapped.asInstanceOf[A < S]
+            }
+
+        end if
+    end liftMacro
+end LiftMacro
