@@ -55,7 +55,7 @@ object Kyo:
       * @return
       *   An effect that runs ifTrue when the condition is evaluated to true, otherwise ifFalse
       */
-    def when[S](condition: => Boolean < S)[A, S1](ifTrue: => A < S1, ifFalse: => A < S1)(using Frame): A < (S & S1) =
+    def when[S](condition: Boolean < S)[A, S1](ifTrue: => A < S1, ifFalse: => A < S1)(using Frame): A < (S & S1) =
         condition.map(if _ then ifTrue else ifFalse)
 
     /** Run an effect if an effectful condition evaluates to true. Returns a [[Maybe]] which is [[Present]] if the conditional effect is run
@@ -68,7 +68,7 @@ object Kyo:
       * @return
       *   An effect that runs [[ifTrue]] if [[condition]] evaluates to true
       */
-    def when[S](condition: => Boolean < S)[A, S1](ifTrue: => A < S1)(using Frame): Maybe[A] < (S & S1) =
+    def when[S](condition: Boolean < S)[A, S1](ifTrue: => A < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(if _ then ifTrue.map(Present(_)) else Absent)
 
     /** Run an effect if an effectful condition evaluates to false. Returns a [[Maybe]] which is [[Present]] if the conditional effect is
@@ -81,7 +81,7 @@ object Kyo:
       * @return
       *   An effect that runs [[ifFalse]] if [[condition]] evaluates to false
       */
-    def unless[S](condition: => Boolean < S)[A, S1](ifFalse: => A < S1)(using Frame): Maybe[A] < (S & S1) =
+    def unless[S](condition: Boolean < S)[A, S1](ifFalse: => A < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(if _ then Absent else ifFalse.map(Present(_)))
 
     /** Zips two effects into a tuple.
