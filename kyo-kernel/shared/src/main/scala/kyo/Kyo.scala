@@ -42,7 +42,7 @@ object Kyo:
       * @return
       *   A computation that directly produces Unit without suspension
       */
-    inline def unit[S]: Unit < S = ()
+    inline def unit: Unit < Any = ()
 
     /** Run one of two effects based on the result of an effectful condition. An effectful if/then/else expression.
       *

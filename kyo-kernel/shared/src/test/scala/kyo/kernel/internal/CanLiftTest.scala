@@ -2,55 +2,55 @@ package kyo.kernel.internal
 
 import kyo.*
 
-class WeakFlatTest extends Test:
+class CanLiftTest extends Test:
 
     "compile for non-Kyo types" in {
-        implicitly[WeakFlat[Int]]
-        implicitly[WeakFlat[String]]
-        implicitly[WeakFlat[List[Int]]]
+        implicitly[CanLift[Int]]
+        implicitly[CanLift[String]]
+        implicitly[CanLift[List[Int]]]
         succeed
     }
 
     "compile for Kyo types in generic contexts" in {
-        def genericContext[A]: WeakFlat[A] = implicitly[WeakFlat[A]]
+        def genericContext[A]: CanLift[A] = implicitly[CanLift[A]]
         genericContext[Int < Any]
         succeed
     }
 
     "not compile for known Kyo types" in {
         val error = "may contain a nested effect computation"
-        typeCheckFailure("implicitly[WeakFlat[Int < Any]]")(error)
-        typeCheckFailure("implicitly[WeakFlat[String < Env[Int]]]")(error)
+        typeCheckFailure("implicitly[CanLift[Int < Any]]")(error)
+        typeCheckFailure("implicitly[CanLift[String < Env[Int]]]")(error)
     }
 
     "compile for Unit and Nothing" in {
-        implicitly[WeakFlat[Unit]]
-        implicitly[WeakFlat[Nothing]]
+        implicitly[CanLift[Unit]]
+        implicitly[CanLift[Nothing]]
         succeed
     }
 
     "work with type aliases" in {
         type MyAlias[A] = A
-        implicitly[WeakFlat[MyAlias[Int]]]
-        typeCheckFailure("implicitly[WeakFlat[MyAlias[Int < Any]]]")("may contain a nested effect computation")
+        implicitly[CanLift[MyAlias[Int]]]
+        typeCheckFailure("implicitly[CanLift[MyAlias[Int < Any]]]")("may contain a nested effect computation")
         succeed
     }
 
     "work with higher-kinded types" in {
         trait HigherKinded[F[_]]
-        implicitly[WeakFlat[HigherKinded[List]]]
-        implicitly[WeakFlat[HigherKinded[λ[A => A < Any]]]]
+        implicitly[CanLift[HigherKinded[List]]]
+        implicitly[CanLift[HigherKinded[λ[A => A < Any]]]]
         succeed
     }
 
     "work in complex type scenarios" in {
         trait Complex[A, B, C[_]]
-        implicitly[WeakFlat[Complex[Int, String, List]]]
+        implicitly[CanLift[Complex[Int, String, List]]]
         succeed
     }
 
     "be usable in extension methods" in {
-        extension [A](a: A)(using WeakFlat[A])
+        extension [A](a: A)(using CanLift[A])
             def weakMethod: String = "Weak method called"
 
         42.weakMethod
@@ -60,7 +60,7 @@ class WeakFlatTest extends Test:
     }
 
     "work with type bounds" in {
-        def boundedMethod[A <: AnyVal: WeakFlat](a: A): String =
+        def boundedMethod[A <: AnyVal: CanLift](a: A): String =
             discard(a)
             "Bounded method called"
         boundedMethod(42)
@@ -70,8 +70,8 @@ class WeakFlatTest extends Test:
 
     "work with union types" in {
         type Union = Int | String
-        implicitly[WeakFlat[Union]]
-        implicitly[WeakFlat[Int | (String < Any)]]
+        implicitly[CanLift[Union]]
+        implicitly[CanLift[Int | (String < Any)]]
         succeed
     }
 
@@ -79,8 +79,8 @@ class WeakFlatTest extends Test:
         trait A
         trait B
         type Intersection = A & B
-        implicitly[WeakFlat[Intersection]]
-        typeCheckFailure("implicitly[WeakFlat[A & (B < Any)]]")("may contain a nested effect computation.")
+        implicitly[CanLift[Intersection]]
+        typeCheckFailure("implicitly[CanLift[A & (B < Any)]]")("may contain a nested effect computation.")
         succeed
     }
-end WeakFlatTest
+end CanLiftTest

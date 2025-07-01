@@ -607,7 +607,7 @@ class StreamCoreExtensionsTest extends Test:
 
             "group by time" in run {
                 Clock.withTimeControl { tc =>
-                    stream(tc).groupedWithin(Int.MaxValue, 20.millis).run.map: result =>
+                    stream(tc).groupedWithin(Int.MaxValue, 30.millis).run.map: result =>
                         assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
                 }
             }
