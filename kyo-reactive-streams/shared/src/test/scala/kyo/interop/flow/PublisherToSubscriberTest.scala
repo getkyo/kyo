@@ -137,10 +137,10 @@ abstract private class PublisherToSubscriberTest extends Test:
                 _ = publisher.subscribe(subscriber2)
                 _ = publisher.subscribe(subscriber3)
                 _ = publisher.subscribe(subscriber4)
-                fiber1 <- Async.run(modify(subStream1, shouldFail = false))
-                fiber2 <- Async.run(modify(subStream2, shouldFail = true))
-                fiber3 <- Async.run(modify(subStream3, shouldFail = false))
-                fiber4 <- Async.run(modify(subStream4, shouldFail = true))
+                fiber1 <- Fiber.run(modify(subStream1, shouldFail = false))
+                fiber2 <- Fiber.run(modify(subStream2, shouldFail = true))
+                fiber3 <- Fiber.run(modify(subStream3, shouldFail = false))
+                fiber4 <- Fiber.run(modify(subStream4, shouldFail = true))
                 value1 <- fiber1.get
                 value2 <- fiber2.getResult
                 value3 <- fiber3.get
@@ -179,12 +179,12 @@ abstract private class PublisherToSubscriberTest extends Test:
                 subscriber4 <- streamSubscriber
                 subStream4  <- subscriber4.stream
                 latch       <- Latch.init(4)
-                fiber1      <- Async.run(latch.release.andThen(subStream1.run.unit))
-                fiber2      <- Async.run(latch.release.andThen(subStream2.run.unit))
-                fiber3      <- Async.run(latch.release.andThen(subStream3.run.unit))
-                fiber4      <- Async.run(latch.release.andThen(subStream4.run.unit))
+                fiber1      <- Fiber.run(latch.release.andThen(subStream1.run.unit))
+                fiber2      <- Fiber.run(latch.release.andThen(subStream2.run.unit))
+                fiber3      <- Fiber.run(latch.release.andThen(subStream3.run.unit))
+                fiber4      <- Fiber.run(latch.release.andThen(subStream4.run.unit))
                 latchPub    <- Latch.init(1)
-                publisherFiber <- Async.run(latch.await.andThen(Resource.run(
+                publisherFiber <- Fiber.run(latch.await.andThen(Resource.run(
                     Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                         .toPublisher
                         .map { publisher =>

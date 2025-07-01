@@ -37,7 +37,7 @@ class RequestsTest extends Test:
     "with fiber" in run {
         val backend = new TestBackend
         Requests.let(backend) {
-            Async.run {
+            Fiber.run {
                 for
                     r <- Requests(_.get(uri"https://httpbin.org/get"))
                 yield
@@ -60,7 +60,7 @@ class RequestsTest extends Test:
             def close(using Frame) = ???
         val backend = (new TestBackend).withMeter(meter)
         Requests.let(backend) {
-            Async.run {
+            Fiber.run {
                 for
                     r <- Requests(_.get(uri"https://httpbin.org/get"))
                 yield
