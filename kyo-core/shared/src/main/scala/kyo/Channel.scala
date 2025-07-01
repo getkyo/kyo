@@ -363,23 +363,23 @@ object Channel:
       * @note
       *   The actual capacity will be rounded up to the next power of two.
       * @note
-      *   Should be manually cleaned up using [[close]]
+      *   The channel should be manually cleaned up when no longer needed using [[close]]
       * @warning
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
-    def initUnsafe[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < Sync =
-        initUnsafeWith[A](capacity, access)(identity)
+    def initUnscoped[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < Sync =
+        initUnscopedWith[A](capacity, access)(identity)
 
     /** Uses a new Channel with the provided configuration without guaranteeing eventual cleanup.
       *
       * @param f
       *   The function to apply to the new Channel
       * @note
-      *   Channel should be manually cleaned up when no longer needed using [[close]]
+      *   The channel should be manually cleaned up when no longer needed using [[close]]
       * @return
       *   The result of applying the function
       */
-    inline def initUnsafeWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
+    inline def initUnscopedWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
     )(using inline frame: Frame): B < (S & Sync) =
         Sync.Unsafe(f(Unsafe.init[A](capacity, access)))

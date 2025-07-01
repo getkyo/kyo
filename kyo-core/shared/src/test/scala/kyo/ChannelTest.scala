@@ -2,13 +2,52 @@ package kyo
 
 class ChannelTest extends Test:
 
-    "initWith" in run {
-        Channel.initWith[Int](10) { c =>
-            for
-                b <- c.offer(1)
-                v <- c.poll
-            yield assert(b && v == Maybe(1))
+    "initWith" - {
+        "uses channel" in run {
+            Channel.initWith[Int](10) { c =>
+                for
+                    b <- c.offer(1)
+                    v <- c.poll
+                yield assert(b && v == Maybe(1))
+            }
         }
+
+        "resource safety" in run {
+            Resource.run(Channel.initWith[Int](10) { c =>
+                for
+                    b <- c.put(1)
+                    v <- c.take
+                yield (v, c)
+            }).map:
+                case (v, c) =>
+                    c.closed.map: isClosed =>
+                        assert(v == 1 && isClosed)
+        }
+    }
+
+    "initLocalWith" in run {
+        Channel.initLocalWith[Int](10) { c =>
+            for
+                b <- c.put(1)
+                v <- c.take
+            yield (v, c)
+        }.map:
+            case (v, c) =>
+                c.closed.map: isClosed =>
+                    assert(v == 1 && isClosed)
+    }
+
+    "initUnscopedWith" in run {
+        Channel.initUnscopedWith[Int](10) { c =>
+            for
+                b <- c.put(1)
+                v <- c.take
+            yield (v, c)
+        }.map:
+            case (v, c) =>
+                c.closed.map: isClosed =>
+                    c.close.andThen:
+                        assert(v == 1 && !isClosed)
     }
 
     "offer and poll" in run {

@@ -21,7 +21,7 @@ class ChannelBench extends BaseBench:
     @Benchmark def streamChunks() =
         val x =
             for
-                channel <- Channel.init[Int](size)
+                channel <- Channel.initUnscoped[Int](size)
                 _       <- channel.putBatch(Seq.fill(size)(intFillFn))
                 _       <- Fiber.run(channel.closeAwaitEmpty)
                 count   <- channel.streamUntilClosed(maxChunkSize).into(Sink.count)
