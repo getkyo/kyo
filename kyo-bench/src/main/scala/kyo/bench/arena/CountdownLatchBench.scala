@@ -29,7 +29,7 @@ class CountdownLatchBench extends ArenaBench.ForkOnly(0):
 
         for
             l <- Latch.init(depth)
-            _ <- Async.run(iterate(l, depth))
+            _ <- Fiber.run(iterate(l, depth))
             _ <- l.await
         yield 0
         end for

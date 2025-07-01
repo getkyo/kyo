@@ -226,7 +226,7 @@ object Hub:
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
             def currentListeners = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
-            Async.run {
+            Fiber.run {
                 Loop.foreach {
                     channel.take.map { value =>
                         Abort.recover { error =>

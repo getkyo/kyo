@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.debug.Debug
+import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -16,7 +17,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     inline def fork(
         using frame: Frame
     ): Fiber[E, A] < (Sync & Ctx) =
-        Async.run(effect)
+        Fiber.run(effect)
 
     /** Forks this computation using the Async effect and returns its result as a `Fiber[E, A]`, managed by the Resource effect. Unlike
       * `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is
@@ -28,7 +29,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     inline def forkScoped(
         using frame: Frame
     ): Fiber[E, A] < (Sync & Ctx & Resource) =
-        Kyo.acquireRelease(Async.run(effect))(_.interrupt.unit)
+        Kyo.acquireRelease(Fiber.run(effect))(_.interrupt.unit)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.
       *
@@ -49,8 +50,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         fr: Frame
     ): A1 < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
-            fiberA  <- Async.run(using s)(effect)
-            fiberA1 <- Async.run(using s2)(next)
+            fiberA  <- Fiber.run(using s)(effect)
+            fiberA1 <- Fiber.run(using s2)(next)
             _       <- fiberA.awaitCompletion
             a1      <- fiberA1.join
         yield a1
@@ -74,8 +75,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         fr: Frame
     ): A < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
-            fiberA  <- Async.run(using s)(effect)
-            fiberA1 <- Async.run(using s2)(next)
+            fiberA  <- Fiber.run(using s)(effect)
+            fiberA1 <- Fiber.run(using s2)(next)
             a       <- fiberA.join
             _       <- fiberA1.awaitCompletion
         yield a
@@ -96,14 +97,15 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         using
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
-        fr: Frame
-    ): (A, A1) < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+        fr: Frame,
+        zippable: Zippable[A, A1]
+    ): zippable.Out < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
-            fiberA  <- Async.run(using s)(effect)
-            fiberA1 <- Async.run(using s2)(next)
+            fiberA  <- Fiber.run(using s)(effect)
+            fiberA1 <- Fiber.run(using s2)(next)
             a       <- fiberA.join
             a1      <- fiberA1.join
-        yield (a, a1)
+        yield zippable.zip(a, a1)
 
 end extension
 

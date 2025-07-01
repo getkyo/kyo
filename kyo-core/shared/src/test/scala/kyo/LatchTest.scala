@@ -41,7 +41,7 @@ class LatchTest extends Test:
     "countDown + fibers + await" in run {
         for
             latch <- Latch.init(1)
-            _     <- Async.run(latch.release)
+            _     <- Fiber.run(latch.release)
             _     <- latch.await
         yield succeed
     }

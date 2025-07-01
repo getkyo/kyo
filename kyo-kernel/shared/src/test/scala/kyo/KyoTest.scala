@@ -2,6 +2,7 @@ package kyo
 
 import Tagged.*
 import kyo.kernel.*
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.collection.Iterable
 import scala.collection.IterableOps
@@ -29,11 +30,11 @@ class KyoTest extends Test:
     def widen[A](v: A): A < Any = v
 
     "toString" in run {
-        assert(TestEffect1(1).map(_ + 1).toString() ==
-            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:32:41, assert(TestEffect1(1).map(_ + 1))")
+        assert(TestEffect1(1).map(_ + 1).toString ==
+            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:33:41, assert(TestEffect1(1).map(_ + 1))")
         assert(
-            TestEffect1(1).map(_ + 1).map(_ + 2).toString() ==
-                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:35:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
+            TestEffect1(1).map(_ + 1).map(_ + 2).toString ==
+                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:36:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
         )
     }
 
@@ -380,6 +381,7 @@ class KyoTest extends Test:
             )
             assert(emptyTest.eval == "DEFAULT")
 
+            @nowarn("msg=deprecated")
             val arrayTest = Kyo.shiftedWhile(Array(1, 2, 3, 4))(
                 prolog = "",
                 f = lessThanThree,

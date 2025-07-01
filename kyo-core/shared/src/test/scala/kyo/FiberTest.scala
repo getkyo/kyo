@@ -489,7 +489,7 @@ class FiberTest extends Test:
 
         "timeout" in runNotJS {
             for
-                fiber  <- Async.run(Async.sleep(1.second).andThen(42))
+                fiber  <- Fiber.run(Async.sleep(1.second).andThen(42))
                 result <- fiber.block(1.millis)
             yield assert(result.isFailure)
         }
@@ -502,7 +502,7 @@ class FiberTest extends Test:
             stop   <- Latch.init(1)
             result <- AtomicInt.init(0)
             fiber <-
-                Async.run {
+                Fiber.run {
                     for
                         _ <- start.release
                         _ <- run.await

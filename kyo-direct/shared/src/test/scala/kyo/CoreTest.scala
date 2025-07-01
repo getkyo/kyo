@@ -153,14 +153,14 @@ class CoreTest extends Test:
             assert(barrier.pending.now == 2)
 
             // Start two fibers that will wait at the barrier
-            val fiber1 = Async.run {
+            val fiber1 = Fiber.run {
                 direct {
                     barrier.await.now
                     true
                 }
             }.now
 
-            val fiber2 = Async.run {
+            val fiber2 = Fiber.run {
                 direct {
                     barrier.await.now
                     true
@@ -181,7 +181,7 @@ class CoreTest extends Test:
             latch.release.now
             assert(latch.pending.now == 1)
             latch.release.now
-            val awaited = Async.run {
+            val awaited = Fiber.run {
                 direct {
                     latch.await.now
                     true

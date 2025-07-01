@@ -194,7 +194,7 @@ object Process:
                                 ()
                             }
                             for
-                                _ <- Async.run(Resource.run(resources))
+                                _ <- Fiber.run(Resource.run(resources))
                             yield ()
                         case _ => Kyo.unit
                 yield process
