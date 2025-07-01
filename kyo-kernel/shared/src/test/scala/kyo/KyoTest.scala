@@ -187,6 +187,62 @@ class KyoTest extends Test:
         }
     }
 
+    "when" - {
+        "true" in {
+            val trueEffect = Kyo.when(Kyo.lift(true))(Kyo.lift(1), Kyo.lift(2))
+            assert(trueEffect.eval == 1)
+        }
+        "false" in {
+            val falseEffect = Kyo.when(Kyo.lift(false))(Kyo.lift(1), Kyo.lift(2))
+            assert(falseEffect.eval == 2)
+        }
+        "effectful true" in {
+            val trueEffect = Kyo.when(TestEffect1(1).andThen(true))(TestEffect1(2), TestEffect1(10))
+            assert(TestEffect1.run(trueEffect).eval == 3)
+        }
+        "effectful false" in {
+            val falseEffect = Kyo.when(TestEffect1(1).andThen(false))(TestEffect1(2), TestEffect1(10))
+            assert(TestEffect1.run(falseEffect).eval == 11)
+        }
+        "single branch" - {
+            "true" in {
+                val trueEffect = Kyo.when(Kyo.lift(true))(Kyo.lift(1))
+                assert(trueEffect.eval == Present(1))
+            }
+            "false" in {
+                val falseEffect = Kyo.when(Kyo.lift(false))(Kyo.lift(1))
+                assert(falseEffect.eval == Absent)
+            }
+            "effectful true" in {
+                val trueEffect = Kyo.when(TestEffect1(1).andThen(true))(TestEffect1(2))
+                assert(TestEffect1.run(trueEffect).eval == Present(3))
+            }
+            "effectful false" in {
+                val falseEffect = Kyo.when(TestEffect1(1).andThen(false))(TestEffect1(2))
+                assert(TestEffect1.run(falseEffect).eval == Absent)
+            }
+        }
+    }
+
+    "unless" - {
+        "true" in {
+            val trueEffect = Kyo.unless(Kyo.lift(true))(Kyo.lift(1))
+            assert(trueEffect.eval == Absent)
+        }
+        "false" in {
+            val falseEffect = Kyo.unless(Kyo.lift(false))(Kyo.lift(1))
+            assert(falseEffect.eval == Present(1))
+        }
+        "effectful true" in {
+            val trueEffect = Kyo.unless(TestEffect1(1).andThen(true))(TestEffect1(2))
+            assert(TestEffect1.run(trueEffect).eval == Absent)
+        }
+        "effectful false" in {
+            val falseEffect = Kyo.unless(TestEffect1(1).andThen(false))(TestEffect1(2))
+            assert(TestEffect1.run(falseEffect).eval == Present(3))
+        }
+    }
+
     "seq" - {
         "collect" in {
             assert(Kyo.collectAll(Seq.empty).eval == Chunk.empty)
