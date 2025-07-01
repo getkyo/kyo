@@ -1,6 +1,6 @@
 package kyo.internal
 
-trait Zippable[-A, -B]:
+abstract class Zippable[-A, -B]:
     type Out
     def zip(left: A, right: B): Out
 
