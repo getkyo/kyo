@@ -631,4 +631,23 @@ object ArrowEffect:
         end partialLoop
         partialLoop(v, context)
     end handlePartial
+
+    private[kyo] inline def handleOuterDefer[A, S](v: A < S, context: Context): A < S =
+        def handleLoop(v: A < S, context: Context): A < S =
+            v match
+                case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] =>
+                    type Suspend[I[_], O[_], E <: ArrowEffect[I, O]] = KyoSuspend[I, O, E, Any, A, S]
+                    if kyo.tag <:< Tag[Defer] then
+                        val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
+                        handleLoop(k((), context), context)
+                    else
+                        // TODO: Do we need the safepoint.pushFrame here like in handlePartial?
+                        v
+                    end if
+                case _ =>
+                    v
+            end match
+        end handleLoop
+        handleLoop(v, context)
+    end handleOuterDefer
 end ArrowEffect

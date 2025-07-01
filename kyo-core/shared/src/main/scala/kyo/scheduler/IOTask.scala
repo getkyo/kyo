@@ -124,12 +124,13 @@ object IOTask:
         finalizers: Finalizers = Finalizers.empty,
         runtime: Int = 0
     ): IOTask[Ctx, E, A] =
-        val ctx = context
+        val ctx         = context
+        val nonDeferred = ArrowEffect.handleOuterDefer(curr, ctx)
         val task =
             if ctx.isEmpty then
-                new IOTask(curr, trace, finalizers)
+                new IOTask(nonDeferred, trace, finalizers)
             else
-                new IOTask(curr, trace, finalizers):
+                new IOTask(nonDeferred, trace, finalizers):
                     override def context = ctx
         task.addRuntime(runtime)
         Scheduler.get.schedule(task)
