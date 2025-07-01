@@ -39,7 +39,7 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       * @return
       *   The current value of type A
       */
-    final def current(using Frame): A < IO = currentWith(identity)
+    final def current(using Frame): A < Sync = currentWith(identity)
 
     /** Retrieves and transforms the current value of the signal.
       *
@@ -49,9 +49,9 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       * @param f
       *   The transformation function to apply to the current value
       * @return
-      *   The transformed value wrapped in combined effects S & IO
+      *   The transformed value wrapped in combined effects S & Sync
       */
-    def currentWith[B, S](f: A => B < S)(using Frame): B < (S & IO)
+    def currentWith[B, S](f: A => B < S)(using Frame): B < (S & Sync)
 
     /** Waits for and returns the next value change in the signal.
       *
@@ -155,7 +155,7 @@ object Signal:
         frame: Frame,
         @implicitNotFound(missingCanEqual)
         canEqual: CanEqual[A, A]
-    ): SignalRef[A] < IO =
+    ): SignalRef[A] < Sync =
         initRefWith[A](initial)(identity)
 
     /** Creates a new mutable signal reference with an initial value and applies a transformation function.
@@ -181,8 +181,8 @@ object Signal:
         frame: Frame,
         @implicitNotFound(missingCanEqual)
         canEqual: CanEqual[A, A]
-    ): B < (S & IO) =
-        IO.Unsafe(f(new SignalRef(SignalRef.Unsafe.init(initial))))
+    ): B < (S & Sync) =
+        Sync.Unsafe(f(new SignalRef(SignalRef.Unsafe.init(initial))))
 
     /** Creates a new immutable signal with a constant value.
       *
@@ -249,7 +249,7 @@ object Signal:
       */
     @nowarn("msg=anonymous")
     inline def initRaw[A](
-        inline currentWith: [B, S] => (A => B < S) => B < (S & IO),
+        inline currentWith: [B, S] => (A => B < S) => B < (S & Sync),
         inline nextWith: [B, S] => (A => B < S) => B < (S & Async)
     )(
         using
@@ -282,7 +282,7 @@ object Signal:
       */
     @nowarn("msg=anonymous")
     inline def initRawWith[A](
-        inline currentWith: [B, S] => (A => B < S) => B < (S & IO),
+        inline currentWith: [B, S] => (A => B < S) => B < (S & Sync),
         inline nextWith: [B, S] => (A => B < S) => B < (S & Async)
     )[B, S](f: Signal[A] => B < S)(
         using
@@ -295,7 +295,7 @@ object Signal:
     // Separated from initRaw to avoid name conflicts between parameters and Signal members
     @nowarn("msg=anonymous")
     private inline def _initRaw[A](
-        inline _currentWith: [B, S] => (A => B < S) => B < (S & IO),
+        inline _currentWith: [B, S] => (A => B < S) => B < (S & Sync),
         inline _nextWith: [B, S] => (A => B < S) => B < (S & Async)
     )(
         using
@@ -303,7 +303,7 @@ object Signal:
         canEqual: CanEqual[A, A]
     ): Signal[A] =
         new Signal[A]:
-            def currentWith[B, S](f: A => B < S)(using frame: Frame): B < (S & IO) =
+            def currentWith[B, S](f: A => B < S)(using frame: Frame): B < (S & Sync) =
                 _currentWith(f)
             def nextWith[B, S](f: A => B < S)(using frame: Frame): B < (S & Async) =
                 _nextWith(f)
@@ -320,9 +320,9 @@ object Signal:
       */
     final class SignalRef[A] private[Signal] (_unsafe: SignalRef.Unsafe[A])(using CanEqual[A, A]) extends Signal[A]:
 
-        def currentWith[B, S](f: A => B < S)(using Frame) = IO.Unsafe(f(unsafe.get()))
+        def currentWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe(f(unsafe.get()))
 
-        def nextWith[B, S](f: A => B < S)(using Frame) = IO.Unsafe(unsafe.next().safe.use(f))
+        def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe(unsafe.next().safe.use(f))
 
         /** Retrieves the current value of the reference.
           *
@@ -331,7 +331,7 @@ object Signal:
           * @return
           *   The current value
           */
-        def get(using Frame): A < IO = use(identity)
+        def get(using Frame): A < Sync = use(identity)
 
         /** Retrieves and transforms the current value of the reference.
           *
@@ -341,9 +341,9 @@ object Signal:
           * @param f
           *   The transformation function to apply to the current value
           * @return
-          *   The transformed value wrapped in combined effects S & IO
+          *   The transformed value wrapped in combined effects S & Sync
           */
-        inline def use[B, S](inline f: A => B < S)(using Frame): B < (S & IO) = IO.Unsafe(f(_unsafe.get()))
+        inline def use[B, S](inline f: A => B < S)(using Frame): B < (S & Sync) = Sync.Unsafe(f(_unsafe.get()))
 
         /** Sets the reference to a new value.
           *
@@ -352,7 +352,7 @@ object Signal:
           * @param value
           *   The new value to set
           */
-        def set(value: A)(using Frame): Unit < IO = IO.Unsafe(_unsafe.set(value))
+        def set(value: A)(using Frame): Unit < Sync = Sync.Unsafe(_unsafe.set(value))
 
         /** Updates the reference's value and returns the previous value.
           *
@@ -361,8 +361,8 @@ object Signal:
           * @return
           *   The previous value
           */
-        def getAndSet(value: A)(using Frame): A < IO =
-            IO.Unsafe(_unsafe.getAndSet(value))
+        def getAndSet(value: A)(using Frame): A < Sync =
+            Sync.Unsafe(_unsafe.getAndSet(value))
 
         /** Atomically sets the value to the given updated value if the current value equals the expected value.
           *
@@ -373,8 +373,8 @@ object Signal:
           * @return
           *   True if successful, false otherwise
           */
-        def compareAndSet(curr: A, next: A)(using Frame): Boolean < IO =
-            IO.Unsafe(_unsafe.compareAndSet(curr, next))
+        def compareAndSet(curr: A, next: A)(using Frame): Boolean < Sync =
+            Sync.Unsafe(_unsafe.compareAndSet(curr, next))
 
         /** Atomically updates the current value using the provided function and returns the previous value.
           *
@@ -383,8 +383,8 @@ object Signal:
           * @return
           *   The previous value
           */
-        def getAndUpdate(f: A => A)(using Frame): A < IO =
-            IO.Unsafe(_unsafe.getAndUpdate(f))
+        def getAndUpdate(f: A => A)(using Frame): A < Sync =
+            Sync.Unsafe(_unsafe.getAndUpdate(f))
 
         /** Atomically updates the current value using the provided function and returns the new value.
           *
@@ -393,8 +393,8 @@ object Signal:
           * @return
           *   The new value
           */
-        def updateAndGet(f: A => A)(using Frame): A < IO =
-            IO.Unsafe(_unsafe.updateAndGet(f))
+        def updateAndGet(f: A => A)(using Frame): A < Sync =
+            Sync.Unsafe(_unsafe.updateAndGet(f))
 
         def unsafe: SignalRef.Unsafe[A] = _unsafe
     end SignalRef

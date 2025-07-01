@@ -28,7 +28,7 @@ import scala.collection.mutable.PriorityQueue
   * `Clock.withTimeControl` and `Clock.withTimeShift` for precise temporal control during tests.
   *
   * All time-related operations in Clock are effect-based, properly tracking side effects in the type system. Operations like `now` and
-  * `nowMonotonic` are wrapped in IO effects, while time-suspending operations like `sleep` are wrapped in Async effects.
+  * `nowMonotonic` are wrapped in Sync effects, while time-suspending operations like `sleep` are wrapped in Async effects.
   *
   * The scheduling methods offer different execution patterns: `repeatWithDelay` waits for a specified duration after each task completes
   * before executing again (ensuring a minimum gap between executions), while `repeatAtInterval` aims to execute tasks at fixed time
@@ -64,7 +64,7 @@ final case class Clock(unsafe: Clock.Unsafe):
       * @see
       *   [[nowMonotonic]] for measuring elapsed time between events
       */
-    def now(using Frame): Instant < IO = IO.Unsafe(unsafe.now())
+    def now(using Frame): Instant < Sync = Sync.Unsafe(unsafe.now())
 
     /** Gets the current monotonic time as a Duration.
       *
@@ -86,14 +86,14 @@ final case class Clock(unsafe: Clock.Unsafe):
       * @see
       *   [[now]] for calendar time/date operations
       */
-    def nowMonotonic(using Frame): Duration < IO = IO.Unsafe(unsafe.nowMonotonic())
+    def nowMonotonic(using Frame): Duration < Sync = Sync.Unsafe(unsafe.nowMonotonic())
 
     /** Creates a new stopwatch.
       *
       * @return
       *   A new Stopwatch instance
       */
-    def stopwatch(using Frame): Clock.Stopwatch < IO = IO.Unsafe(unsafe.stopwatch().safe)
+    def stopwatch(using Frame): Clock.Stopwatch < Sync = Sync.Unsafe(unsafe.stopwatch().safe)
 
     /** Creates a new deadline with the specified duration.
       *
@@ -102,12 +102,12 @@ final case class Clock(unsafe: Clock.Unsafe):
       * @return
       *   A new Deadline instance
       */
-    def deadline(duration: Duration)(using Frame): Clock.Deadline < IO = IO.Unsafe(unsafe.deadline(duration).safe)
+    def deadline(duration: Duration)(using Frame): Clock.Deadline < Sync = Sync.Unsafe(unsafe.deadline(duration).safe)
 
-    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < IO =
+    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < Sync =
         if duration == Duration.Zero then Fiber.unit
         else if !duration.isFinite then Fiber.never
-        else IO.Unsafe(unsafe.sleep(duration).safe)
+        else Sync.Unsafe(unsafe.sleep(duration).safe)
 end Clock
 
 /** Companion object for creating and managing Clock instances. */
@@ -126,7 +126,7 @@ object Clock:
           * @return
           *   The elapsed time as a Duration
           */
-        def elapsed(using Frame): Duration < IO = IO.Unsafe(unsafe.elapsed())
+        def elapsed(using Frame): Duration < Sync = Sync.Unsafe(unsafe.elapsed())
     end Stopwatch
 
     object Stopwatch:
@@ -149,14 +149,14 @@ object Clock:
           * @return
           *   The remaining time as a Duration
           */
-        def timeLeft(using Frame): Duration < IO = IO.Unsafe(unsafe.timeLeft())
+        def timeLeft(using Frame): Duration < Sync = Sync.Unsafe(unsafe.timeLeft())
 
         /** Checks if the deadline is overdue.
           *
           * @return
           *   A boolean indicating if the deadline is overdue
           */
-        def isOverdue(using Frame): Boolean < IO = IO.Unsafe(unsafe.isOverdue())
+        def isOverdue(using Frame): Boolean < Sync = Sync.Unsafe(unsafe.isOverdue())
     end Deadline
 
     object Deadline:
@@ -223,10 +223,10 @@ object Clock:
       * @return
       *   The result of running the effect with scaled time
       */
-    def withTimeShift[A, S](factor: Double)(v: => A < S)(using Frame): A < (IO & S) =
+    def withTimeShift[A, S](factor: Double)(v: => A < S)(using Frame): A < (Sync & S) =
         if factor == 1 then v
         else
-            IO.Unsafe.withLocal(local) { clock =>
+            Sync.Unsafe.withLocal(local) { clock =>
                 val shifted =
                     new Unsafe:
                         val underlying  = clock.unsafe
@@ -251,6 +251,7 @@ object Clock:
       * behavior.
       */
     trait TimeControl:
+
         /** Sets the current time to a specific instant.
           *
           * @param now
@@ -258,7 +259,21 @@ object Clock:
           * @return
           *   Unit effect that updates the current time
           */
-        def set(now: Instant): Unit < IO
+        def set(now: Instant): Unit < Async
+
+        /** Sets the current time to a specific instant and waits for async operations to execute.
+          *
+          * When time is set, any pending sleep operations that should have completed are triggered. The wallClockDelay ensures these async
+          * operations have time to execute in wall clock time before returning.
+          *
+          * @param now
+          *   The instant to set the current time to
+          * @param wallClockDelay
+          *   Duration to wait in wall clock time for triggered async operations to execute
+          * @return
+          *   Unit effect that updates the current time and waits for async execution
+          */
+        def set(now: Instant, wallClockDelay: Duration): Unit < Async
 
         /** Advances the current time by the specified duration.
           *
@@ -267,7 +282,22 @@ object Clock:
           * @return
           *   Unit effect that advances the current time
           */
-        def advance(duration: Duration): Unit < IO
+        def advance(duration: Duration): Unit < Async
+
+        /** Advances the current time by the specified duration and waits for async operations to execute.
+          *
+          * When time is advanced, any pending sleep operations that should have completed are triggered. The wallClockDelay ensures these
+          * async operations have time to execute in wall clock time before returning.
+          *
+          * @param duration
+          *   The duration to advance time by
+          * @param wallClockDelay
+          *   Duration to wait in wall clock time for triggered async operations to execute
+          * @return
+          *   Unit effect that advances the current time and waits for async execution
+          */
+        def advance(duration: Duration, wallClockDelay: Duration): Unit < Async
+
     end TimeControl
 
     /** Runs an effect with a controlled Clock that allows manual time manipulation. This is primarily intended for testing scenarios where
@@ -280,8 +310,8 @@ object Clock:
       * @return
       *   The result of running the effect with controlled time
       */
-    def withTimeControl[A, S](f: TimeControl => A < S)(using Frame): A < (IO & S) =
-        IO.Unsafe {
+    def withTimeControl[A, S](f: TimeControl => A < S)(using Frame): A < (Sync & S) =
+        Sync.Unsafe {
             val controlled =
                 new Unsafe with TimeControl:
                     @volatile var current = Instant.Epoch
@@ -301,16 +331,22 @@ object Clock:
                         Promise.Unsafe.fromIOPromise(task)
                     end sleep
 
-                    def set(now: Instant) =
-                        IO {
+                    def set(now: Instant) = set(now, 100.millis)
+
+                    def set(now: Instant, wallClockDelay: Duration) =
+                        Sync {
                             current = now
                             tick()
+                            Clock.live.unsafe.sleep(wallClockDelay).safe.get
                         }
 
-                    def advance(duration: Duration) =
-                        IO {
+                    def advance(duration: Duration) = advance(duration, duration.min(100.millis))
+
+                    def advance(duration: Duration, wallClockDelay: Duration) =
+                        Sync {
                             current = current + duration
                             tick()
+                            Clock.live.unsafe.sleep(wallClockDelay).safe.get
                         }
 
                     def tick(): Unit =
@@ -338,8 +374,8 @@ object Clock:
       * @return
       *   The current time
       */
-    def now(using Frame): Instant < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.now())
+    def now(using Frame): Instant < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.now())
 
     /** Gets the current monotonic time using the local Clock instance. Unlike `now`, this is guaranteed to be strictly monotonic and
       * suitable for measuring elapsed time.
@@ -350,19 +386,19 @@ object Clock:
       * @return
       *   The current monotonic time as a Duration since system start
       */
-    def nowMonotonic(using Frame): Duration < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.nowMonotonic())
+    def nowMonotonic(using Frame): Duration < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.nowMonotonic())
 
-    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.sleep(duration).safe)
+    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.sleep(duration).safe)
 
     /** Creates a new stopwatch using the local Clock instance.
       *
       * @return
       *   A new Stopwatch instance
       */
-    def stopwatch(using Frame): Stopwatch < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.stopwatch().safe)
+    def stopwatch(using Frame): Stopwatch < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.stopwatch().safe)
 
     /** Creates a new deadline with the specified duration using the local Clock instance.
       *
@@ -371,8 +407,8 @@ object Clock:
       * @return
       *   A new Deadline instance
       */
-    def deadline(duration: Duration)(using Frame): Deadline < IO =
-        IO.Unsafe.withLocal(local)(_.unsafe.deadline(duration).safe)
+    def deadline(duration: Duration)(using Frame): Deadline < Sync =
+        Sync.Unsafe.withLocal(local)(_.unsafe.deadline(duration).safe)
 
     /** Repeatedly executes a task with a fixed delay between completions.
       *
@@ -386,7 +422,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delay: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatWithDelay[E, S](delay: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
         repeatWithDelay(Duration.Zero, delay)(f)
 
     /** Repeatedly executes a task with a fixed delay between completions, starting after an initial delay.
@@ -405,7 +441,7 @@ object Clock:
         delay: Duration
     )(
         f: => Any < (Async & Abort[E])
-    )(using Frame): Fiber[E, Unit] < IO =
+    )(using Frame): Fiber[E, Unit] < Sync =
         repeatWithDelay(startAfter, delay, ())(_ => f.unit)
 
     /** Repeatedly executes a task with a fixed delay between completions, maintaining state between executions.
@@ -429,7 +465,7 @@ object Clock:
         state: A
     )(
         f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < IO =
+    )(using Frame): Fiber[E, A] < Sync =
         repeatWithDelay(Schedule.delay(startAfter).andThen(Schedule.fixed(delay)), state)(f)
 
     /** Repeatedly executes a task with delays determined by a custom schedule.
@@ -441,7 +477,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
         repeatWithDelay(delaySchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with delays determined by a custom schedule, maintaining state between executions.
@@ -462,7 +498,7 @@ object Clock:
         state: A
     )(
         f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < IO =
+    )(using Frame): Fiber[E, A] < Sync =
         Async.run {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
@@ -488,7 +524,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](interval: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatAtInterval[E, S](interval: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
         repeatAtInterval(Duration.Zero, interval)(f)
 
     /** Repeatedly executes a task at fixed time intervals, starting after an initial delay.
@@ -507,7 +543,7 @@ object Clock:
         interval: Duration
     )(
         f: => Any < (Async & Abort[E])
-    )(using Frame): Fiber[E, Unit] < IO =
+    )(using Frame): Fiber[E, Unit] < Sync =
         repeatAtInterval(startAfter, interval, ())(_ => f.unit)
 
     /** Repeatedly executes a task at fixed time intervals, maintaining state between executions.
@@ -531,7 +567,7 @@ object Clock:
         state: A
     )(
         f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < IO =
+    )(using Frame): Fiber[E, A] < Sync =
         repeatAtInterval(Schedule.delay(startAfter).andThen(Schedule.fixed(interval)), state)(f)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule.
@@ -543,7 +579,7 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < IO =
+    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
         repeatAtInterval(intervalSchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule, maintaining state between executions.
@@ -564,7 +600,7 @@ object Clock:
         state: A
     )(
         f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < IO =
+    )(using Frame): Fiber[E, A] < Sync =
         Async.run {
             Clock.use { clock =>
                 clock.now.map { now =>

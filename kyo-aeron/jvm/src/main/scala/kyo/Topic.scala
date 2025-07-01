@@ -53,7 +53,7 @@ object Topic:
 
     /** Handles Topic with an embedded Aeron MediaDriver.
       *
-      * Creates and manages the lifecycle of an embedded MediaDriver, ensuring proper cleanup through IO.ensure.
+      * Creates and manages the lifecycle of an embedded MediaDriver, ensuring proper cleanup through Sync.ensure.
       *
       * @param v
       *   The computation requiring Topic capabilities
@@ -61,9 +61,9 @@ object Topic:
       *   The computation result within Async context
       */
     def run[A, S](v: A < (Topic & S))(using Frame): A < (Async & S) =
-        IO {
+        Sync {
             val driver = MediaDriver.launchEmbedded()
-            IO.ensure(driver.close()) {
+            Sync.ensure(driver.close()) {
                 run(driver)(v)
             }
         }
@@ -81,9 +81,9 @@ object Topic:
       *   The computation result within Async context
       */
     def run[A, S](driver: MediaDriver)(v: A < (Topic & S))(using Frame): A < (Async & S) =
-        IO {
+        Sync {
             val aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName(driver.aeronDirectoryName()))
-            IO.ensure(aeron.close()) {
+            Sync.ensure(aeron.close()) {
                 run(aeron)(v)
             }
         }
@@ -133,7 +133,7 @@ object Topic:
         etag: Tag[Emit[Chunk[A]]]
     ): Unit < (Topic & S & Abort[Closed | Backpressured] & Async) =
         Env.use[Aeron] { aeron =>
-            IO {
+            Sync {
                 // register the publication with Aeron using type's hash as stream ID
                 val publication = aeron.addPublication(aeronUri, tag.hash.abs)
 
@@ -144,10 +144,10 @@ object Topic:
                 val backpressured = Abort.fail(Backpressured())
 
                 // ensure publication is closed after use
-                IO.ensure(IO(publication.close())) {
+                Sync.ensure(Sync(publication.close())) {
                     stream.foreachChunk { messages =>
                         Retry[Backpressured](retrySchedule) {
-                            IO {
+                            Sync {
                                 if !publication.isConnected() then backpressured
                                 else
                                     // serialize messages with type tag for runtime verification
@@ -204,7 +204,7 @@ object Topic:
     )(using tag: Tag[A], etag: Tag[Emit[Chunk[A]]], frame: Frame): Stream[A, Topic & Abort[Backpressured] & Async] =
         Stream {
             Env.use[Aeron] { aeron =>
-                IO {
+                Sync {
                     // register subscription with Aeron using type's hash as stream ID
                     val subscription = aeron.addSubscription(aeronUri, tag.hash.abs)
 
@@ -223,10 +223,10 @@ object Topic:
                         )
 
                     // ensure subscription is closed after use
-                    IO.ensure(IO(subscription.close())) {
+                    Sync.ensure(Sync(subscription.close())) {
                         def loop(): Unit < (Emit[Chunk[A]] & Async & Abort[Backpressured]) =
                             Retry[Backpressured](retrySchedule) {
-                                IO {
+                                Sync {
                                     if !subscription.isConnected() then backpressured
                                     else
                                         // clear previous result before polling

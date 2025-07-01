@@ -75,6 +75,34 @@ class ChunkTest extends Test:
             }
         }
 
+        "Maybe" - {
+            "Present" in {
+                val maybe = Maybe(1)
+                val chunk = Chunk.from(maybe)
+                assert(chunk == Chunk(1))
+            }
+
+            "Absent" in {
+                val maybe = Maybe.empty
+                val chunk = Chunk.from(maybe)
+                assert(chunk.isEmpty)
+            }
+        }
+
+        "Option" - {
+            "Some" in {
+                val option = Option(1)
+                val chunk  = Chunk.from(option)
+                assert(chunk == Chunk(1))
+            }
+
+            "None" in {
+                val option = Option.empty[Int]
+                val chunk  = Chunk.from(option)
+                assert(chunk.isEmpty)
+            }
+        }
+
         "Indexed" - {
             "returns the same instance for Chunk.Indexed input" in {
                 val original = Chunk(1, 2, 3)

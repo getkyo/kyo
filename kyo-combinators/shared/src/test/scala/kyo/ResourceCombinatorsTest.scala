@@ -7,15 +7,15 @@ class ResourceCombinatorsTest extends Test:
     "construct" - {
         "should construct a resource with acquireRelease" in run {
             var state = 0
-            val acquire = IO {
-                (i: Int) => IO { state = i }
+            val acquire = Sync {
+                (i: Int) => Sync { state = i }
             }
             val resource = Kyo.acquireRelease(acquire)(_(0))
-            val effect: Int < (Resource & IO) =
+            val effect: Int < (Resource & Sync) =
                 for
                     setter <- resource
                     _      <- setter(50)
-                    result <- IO(state)
+                    result <- Sync(state)
                 yield result
             assert(state == 0)
             val handledResources: Int < Async = Resource.run(effect)
@@ -30,7 +30,7 @@ class ResourceCombinatorsTest extends Test:
 
         "should construct a resource using addFinalizer" in run {
             var state  = 0
-            val effect = Kyo.addFinalizer(IO { state = 100 })
+            val effect = Kyo.addFinalizer(Sync { state = 100 })
             Async.run(Resource.run(effect)).map(_.toFuture).map { handled =>
                 for
                     ass1 <- handled

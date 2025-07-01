@@ -34,28 +34,28 @@ final class Hub[A] private[kyo] (
       * @return
       *   true if the element was added successfully, false if the Hub's buffer was full
       */
-    def offer(v: A)(using Frame): Boolean < (IO & Abort[Closed]) = ch.offer(v)
+    def offer(v: A)(using Frame): Boolean < (Sync & Abort[Closed]) = ch.offer(v)
 
     /** Offers an element to the Hub without returning a result.
       *
       * @param v
       *   the element to offer
       */
-    def offerDiscard(v: A)(using Frame): Unit < (IO & Abort[Closed]) = ch.offerDiscard(v)
+    def offerDiscard(v: A)(using Frame): Unit < (Sync & Abort[Closed]) = ch.offerDiscard(v)
 
     /** Checks if the Hub is empty.
       *
       * @return
       *   true if the Hub is empty, false otherwise
       */
-    def empty(using Frame): Boolean < (IO & Abort[Closed]) = ch.empty
+    def empty(using Frame): Boolean < (Sync & Abort[Closed]) = ch.empty
 
     /** Checks if the Hub is full.
       *
       * @return
       *   true if the Hub is full, false otherwise
       */
-    def full(using Frame): Boolean < (IO & Abort[Closed]) = ch.full
+    def full(using Frame): Boolean < (Sync & Abort[Closed]) = ch.full
 
     /** Puts an element into the Hub, blocking if necessary until space is available.
       *
@@ -79,7 +79,7 @@ final class Hub[A] private[kyo] (
       * @return
       *   true if the Hub is closed, false otherwise
       */
-    def closed(using Frame): Boolean < IO = ch.closed
+    def closed(using Frame): Boolean < Sync = ch.closed
 
     /** Closes the Hub and returns any remaining messages.
       *
@@ -93,10 +93,10 @@ final class Hub[A] private[kyo] (
       *   a Maybe containing any messages that were in the Hub's buffer at the time of closing. Returns Absent if the close operation fails
       *   (e.g., if the Hub was already closed).
       */
-    def close(using frame: Frame): Maybe[Seq[A]] < IO =
+    def close(using frame: Frame): Maybe[Seq[A]] < Sync =
         fiber.interruptDiscard(Result.Failure(Closed("Hub", initFrame))).andThen {
             ch.close.map { r =>
-                IO {
+                Sync {
                     val l = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
                     discard(listeners.removeIf(_ => true)) // clear is not available in Scala Native
                     Kyo.foreachDiscard(l)(_.child.close.unit).andThen(r)
@@ -111,7 +111,7 @@ final class Hub[A] private[kyo] (
       * @see
       *   [[Hub.DefaultBufferSize]] for the default buffer size used by this method
       */
-    def listen(using Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
+    def listen(using Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
         listen(DefaultBufferSize)
 
     /** Creates a new listener for this Hub with the specified buffer size.
@@ -121,7 +121,7 @@ final class Hub[A] private[kyo] (
       * @return
       *   a new Listener with the specified buffer size
       */
-    def listen(bufferSize: Int)(using frame: Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
+    def listen(bufferSize: Int)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
         listen(bufferSize, _ => true)
 
     /** Creates a new listener for this Hub with a custom filter predicate.
@@ -133,7 +133,7 @@ final class Hub[A] private[kyo] (
       * @see
       *   [[Hub.DefaultBufferSize]] for the default buffer size used by this method
       */
-    def listen(filter: A => Boolean)(using frame: Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
+    def listen(filter: A => Boolean)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
         listen(DefaultBufferSize, filter)
 
     /** Creates a new listener for this Hub with specified buffer size and filter.
@@ -152,19 +152,19 @@ final class Hub[A] private[kyo] (
       * @return
       *   a new Listener that will receive filtered messages from the Hub
       */
-    def listen(bufferSize: Int, filter: A => Boolean)(using frame: Frame): Listener[A] < (IO & Abort[Closed] & Resource) =
+    def listen(bufferSize: Int, filter: A => Boolean)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
         def fail = Abort.fail(Closed("Hub", initFrame))
         closed.map {
             case true => fail
             case false =>
-                IO.Unsafe {
+                Sync.Unsafe {
                     val child    = Channel.Unsafe.init[A](bufferSize, Access.SingleProducerMultiConsumer).safe
                     val listener = new Listener[A](this, child, filter)
                     discard(listeners.add(listener))
                     closed.map {
                         case true =>
                             // race condition
-                            IO {
+                            Sync {
                                 discard(listeners.remove(listener))
                                 fail
                             }
@@ -175,8 +175,8 @@ final class Hub[A] private[kyo] (
         }
     end listen
 
-    private[kyo] def remove(listener: Listener[A])(using Frame): Unit < IO =
-        IO {
+    private[kyo] def remove(listener: Listener[A])(using Frame): Unit < Sync =
+        Sync {
             discard(listeners.remove(listener))
         }
 end Hub
@@ -195,7 +195,7 @@ object Hub:
       * @see
       *   [[Hub.DefaultBufferSize]] for the default capacity value used by this method
       */
-    def init[A](using Frame): Hub[A] < (IO & Resource) =
+    def init[A](using Frame): Hub[A] < (Sync & Resource) =
         init(DefaultBufferSize)
 
     /** Initializes a new Hub with the specified capacity.
@@ -207,7 +207,7 @@ object Hub:
       * @return
       *   a new Hub instance
       */
-    def init[A](capacity: Int)(using Frame): Hub[A] < (IO & Resource) =
+    def init[A](capacity: Int)(using Frame): Hub[A] < (Sync & Resource) =
         initWith[A](capacity)(identity)
 
     /** Uses a new Hub with the given type and capacity.
@@ -221,8 +221,8 @@ object Hub:
       * @return
       *   The result of applying the function
       */
-    def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & IO & Resource) =
-        IO.Unsafe {
+    def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & Sync & Resource) =
+        Sync.Unsafe {
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
             def currentListeners = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
@@ -269,21 +269,21 @@ object Hub:
           * @return
           *   the number of elements currently in the Listener's buffer
           */
-        def size(using Frame): Int < (IO & Abort[Closed]) = child.size
+        def size(using Frame): Int < (Sync & Abort[Closed]) = child.size
 
         /** Checks if the Listener's buffer is empty.
           *
           * @return
           *   true if the Listener's buffer is empty, false otherwise
           */
-        def empty(using Frame): Boolean < (IO & Abort[Closed]) = child.empty
+        def empty(using Frame): Boolean < (Sync & Abort[Closed]) = child.empty
 
         /** Checks if the Listener's buffer is full.
           *
           * @return
           *   true if the Listener's buffer is full, false otherwise
           */
-        def full(using Frame): Boolean < (IO & Abort[Closed]) = child.full
+        def full(using Frame): Boolean < (Sync & Abort[Closed]) = child.full
 
         private[Hub] def put(value: A)(using Frame): Unit < (Async & Abort[Closed]) =
             if !filter(value) then ()
@@ -294,7 +294,7 @@ object Hub:
           * @return
           *   a Maybe containing the head element if available, or empty if the buffer is empty
           */
-        def poll(using Frame): Maybe[A] < (IO & Abort[Closed]) = child.poll
+        def poll(using Frame): Maybe[A] < (Sync & Abort[Closed]) = child.poll
 
         /** Takes an element from the Listener's buffer, potentially blocking if the buffer is empty.
           *
@@ -323,14 +323,14 @@ object Hub:
           * @return
           *   true if the Listener is closed, false otherwise
           */
-        def closed(using Frame): Boolean < IO = child.closed
+        def closed(using Frame): Boolean < Sync = child.closed
 
         /** Closes the Listener and removes it from the Hub.
           *
           * @return
           *   a Maybe containing any remaining elements in the Listener's buffer
           */
-        def close(using Frame): Maybe[Seq[A]] < IO =
+        def close(using Frame): Maybe[Seq[A]] < Sync =
             hub.remove(this).andThen(child.close)
 
         /** Stream elements from listener, optionally specifying a maximum chunk size.
@@ -368,6 +368,6 @@ object Hub:
           * @return
           *   Chunk containing up to max elements
           */
-        def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = child.drainUpTo(max)
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = child.drainUpTo(max)
     end Listener
 end Hub

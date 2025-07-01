@@ -23,21 +23,21 @@ final case class Latch private (unsafe: Latch.Unsafe):
       * @return
       *   Unit wrapped in an Async effect
       */
-    def await(using Frame): Unit < Async = IO.Unsafe(unsafe.await().safe.get)
+    def await(using Frame): Unit < Async = Sync.Unsafe(unsafe.await().safe.get)
 
     /** Decrements the count of the latch, releasing it if the count reaches zero.
       *
       * @return
-      *   Unit wrapped in an IO effect
+      *   Unit wrapped in an Sync effect
       */
-    def release(using Frame): Unit < IO = IO.Unsafe(unsafe.release())
+    def release(using Frame): Unit < Sync = Sync.Unsafe(unsafe.release())
 
     /** Returns the current count of the latch.
       *
       * @return
-      *   The current count wrapped in an IO effect
+      *   The current count wrapped in an Sync effect
       */
-    def pending(using Frame): Int < IO = IO.Unsafe(unsafe.pending())
+    def pending(using Frame): Int < Sync = Sync.Unsafe(unsafe.pending())
 
 end Latch
 
@@ -49,9 +49,9 @@ object Latch:
       * @param count
       *   The initial count for the latch
       * @return
-      *   A new Latch instance wrapped in an IO effect
+      *   A new Latch instance wrapped in an Sync effect
       */
-    def init(count: Int)(using Frame): Latch < IO =
+    def init(count: Int)(using Frame): Latch < Sync =
         initWith(count)(identity)
 
     /** Uses a new Latch with the provided count.
@@ -62,8 +62,8 @@ object Latch:
       * @return
       *   The result of applying the function
       */
-    inline def initWith[A, S](count: Int)(inline f: Latch => A < S)(using inline frame: Frame): A < (S & IO) =
-        IO.Unsafe(f(Latch(Unsafe.init(count))))
+    inline def initWith[A, S](count: Int)(inline f: Latch => A < S)(using inline frame: Frame): A < (S & Sync) =
+        Sync.Unsafe(f(Latch(Unsafe.init(count))))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:

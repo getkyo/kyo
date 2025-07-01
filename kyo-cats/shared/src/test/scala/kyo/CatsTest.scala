@@ -99,15 +99,15 @@ class CatsTest extends Test:
 
     "interrupts" - {
 
-        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < IO =
-            def loop(i: Int): Unit < IO =
-                IO {
+        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < Sync =
+            def loop(i: Int): Unit < Sync =
+                Sync {
                     if i == 0 then
-                        IO(started.countDown()).andThen(loop(i + 1))
+                        Sync(started.countDown()).andThen(loop(i + 1))
                     else
                         loop(i + 2)
                 }
-            IO.ensure(IO(done.countDown()))(loop(0))
+            Sync.ensure(Sync(done.countDown()))(loop(0))
         end kyoLoop
 
         def catsLoop(started: CountDownLatch, done: CountDownLatch): CatsIO[Unit] =
@@ -202,10 +202,10 @@ class CatsTest extends Test:
                     val panic   = Result.Panic(new Exception)
                     for
                         f <- Async.run(Cats.get(catsLoop(started, done)))
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt(panic)
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r == panic)
                     end for
                 }
@@ -220,10 +220,10 @@ class CatsTest extends Test:
                         yield ()
                     for
                         f <- Async.run(v)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -238,10 +238,10 @@ class CatsTest extends Test:
                     end parallelEffect
                     for
                         f <- Async.run(parallelEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -256,10 +256,10 @@ class CatsTest extends Test:
                     end raceEffect
                     for
                         f <- Async.run(raceEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }

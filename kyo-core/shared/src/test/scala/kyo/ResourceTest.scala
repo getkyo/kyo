@@ -17,12 +17,12 @@ class ResourceTest extends Test:
     end TestResource
 
     case class EffectfulResource(id: Int, closes: AtomicInt):
-        def close: Unit < IO =
+        def close: Unit < Sync =
             closes.incrementAndGet.unit
 
     end EffectfulResource
     object EffectfulResource:
-        def apply(id: Int): EffectfulResource < IO =
+        def apply(id: Int): EffectfulResource < Sync =
             for
                 cl <- AtomicInt.init(0)
             yield EffectfulResource(id, cl)
@@ -156,7 +156,7 @@ class ResourceTest extends Test:
         case object TestException extends NoStackTrace
 
         "acquire fails" in run {
-            val io = Resource.acquireRelease(IO[Int, Any](throw TestException))(_ => ())
+            val io = Resource.acquireRelease(Sync[Int, Any](throw TestException))(_ => ())
             Resource.run(io)
                 .handle(Abort.run)
                 .map {
@@ -168,8 +168,8 @@ class ResourceTest extends Test:
         "release fails" in run {
             var acquired = false
             var released = false
-            val io = Resource.acquireRelease(IO { acquired = true; "resource" }) { _ =>
-                IO {
+            val io = Resource.acquireRelease(Sync { acquired = true; "resource" }) { _ =>
+                Sync {
                     released = true
                     throw TestException
                 }
@@ -184,7 +184,7 @@ class ResourceTest extends Test:
 
         "ensure fails" in run {
             var ensureCalled = false
-            val io           = Resource.ensure(IO { ensureCalled = true; throw TestException })
+            val io           = Resource.ensure(Sync { ensureCalled = true; throw TestException })
             Resource.run(io)
                 .map(_ => assert(ensureCalled))
 
@@ -211,7 +211,7 @@ class ResourceTest extends Test:
         "cleans up resources in parallel" in run {
             Latch.init(3).map { latch =>
                 def makeResource(id: Int) =
-                    Resource.acquireRelease(IO(id))(_ => latch.release)
+                    Resource.acquireRelease(Sync(id))(_ => latch.release)
 
                 val resources = Kyo.foreach(1 to 3)(makeResource)
 
@@ -227,7 +227,7 @@ class ResourceTest extends Test:
         "respects parallelism limit" in run {
             AtomicInt.init.map { counter =>
                 def makeResource(id: Int) =
-                    Resource.acquireRelease(IO(id)) { _ =>
+                    Resource.acquireRelease(Sync(id)) { _ =>
                         for
                             current <- counter.getAndIncrement
                             _       <- Async.sleep(1.millis)
@@ -297,7 +297,7 @@ class ResourceTest extends Test:
                     _ <- Resource.ensure {
                         Async.sleep(25.millis).andThen { secondFinalizerCalled = true }
                     }
-                    _ <- IO(Abort.fail("Fail after acquiring resources"))
+                    _ <- Sync(Abort.fail("Fail after acquiring resources"))
                 yield ()
 
             Resource.run(io)

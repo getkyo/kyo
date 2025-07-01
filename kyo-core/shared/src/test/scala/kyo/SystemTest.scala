@@ -85,14 +85,14 @@ class SystemTest extends Test:
     "custom System implementation" in run {
         val customSystem = new System:
             def unsafe: Unsafe = ???
-            def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO) =
-                IO(Maybe("custom_env").asInstanceOf[Maybe[A]])
-            def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO) =
-                IO(Maybe("custom_property").asInstanceOf[Maybe[A]])
-            def lineSeparator(using Frame): String < IO = IO("custom_separator")
-            def userName(using Frame): String < IO      = IO("custom_user")
-            def userHome(using Frame): String < IO      = IO("custom_home")
-            def operatingSystem(using Frame): OS < IO   = IO(OS.AIX)
+            def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =
+                Sync(Maybe("custom_env").asInstanceOf[Maybe[A]])
+            def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =
+                Sync(Maybe("custom_property").asInstanceOf[Maybe[A]])
+            def lineSeparator(using Frame): String < Sync = Sync("custom_separator")
+            def userName(using Frame): String < Sync      = Sync("custom_user")
+            def userHome(using Frame): String < Sync      = Sync("custom_home")
+            def operatingSystem(using Frame): OS < Sync   = Sync(OS.AIX)
 
         for
             env       <- System.let(customSystem)(System.env[String]("ANY"))

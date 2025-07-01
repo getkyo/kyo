@@ -34,7 +34,7 @@ class SemaphoreContentionBench extends ArenaBench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def repeat[A](n: Int)(io: A < IO): A < IO =
+        def repeat[A](n: Int)(io: A < Sync): A < Sync =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 

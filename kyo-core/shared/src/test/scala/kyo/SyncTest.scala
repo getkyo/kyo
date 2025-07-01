@@ -3,13 +3,13 @@ package kyo
 import org.scalatest.compatible.Assertion
 import scala.util.Try
 
-class IOTest extends Test:
+class SyncTest extends Test:
 
     "lazyRun" - {
         "execution" in run {
             var called = false
             val v =
-                IO {
+                Sync {
                     called = true
                     1
                 }
@@ -24,13 +24,13 @@ class IOTest extends Test:
             var called = false
             val v =
                 Env.get[Int].map { i =>
-                    IO {
+                    Sync {
                         called = true
                         i
                     }
                 }
             assert(!called)
-            val v2 = IO.Unsafe.run(v)
+            val v2 = Sync.Unsafe.run(v)
             assert(!called)
             assert(
                 Abort.run(Env.run(1)(v2)).eval ==
@@ -44,20 +44,20 @@ class IOTest extends Test:
             def fail: Int = throw ex
 
             val ios = List(
-                IO(fail),
-                IO(fail).map(_ + 1),
-                IO(1).map(_ => fail),
-                IO(IO(1)).map(_ => fail)
+                Sync(fail),
+                Sync(fail).map(_ + 1),
+                Sync(1).map(_ => fail),
+                Sync(Sync(1)).map(_ => fail)
             )
             ios.foreach { io =>
-                assert(Try(IO.Unsafe.evalOrThrow(io)) == Try(fail))
+                assert(Try(Sync.Unsafe.evalOrThrow(io)) == Try(fail))
             }
             succeed
         }
         "stack-safe" in run {
             val frames = 10000
-            def loop(i: Int): Int < IO =
-                IO {
+            def loop(i: Int): Int < Sync =
+                Sync {
                     if i < frames then
                         loop(i + 1)
                     else
@@ -71,8 +71,8 @@ class IOTest extends Test:
     "run" - {
         "execution" in run {
             var called = false
-            val v: Int < IO =
-                IO {
+            val v: Int < Sync =
+                Sync {
                     called = true
                     1
                 }
@@ -84,8 +84,8 @@ class IOTest extends Test:
         }
         "stack-safe" in run {
             val frames = 100000
-            def loop(i: Int): Assertion < IO =
-                IO {
+            def loop(i: Int): Assertion < Sync =
+                Sync {
                     if i < frames then
                         loop(i + 1)
                     else
@@ -99,13 +99,13 @@ class IOTest extends Test:
             def fail: Int = throw ex
 
             val ios = List(
-                IO(fail),
-                IO(fail).map(_ + 1),
-                IO(1).map(_ => fail),
-                IO(IO(1)).map(_ => fail)
+                Sync(fail),
+                Sync(fail).map(_ + 1),
+                Sync(1).map(_ => fail),
+                Sync(Sync(1)).map(_ => fail)
             )
             ios.foreach { io =>
-                assert(Try(IO.Unsafe.evalOrThrow(io)) == Try(fail))
+                assert(Try(Sync.Unsafe.evalOrThrow(io)) == Try(fail))
             }
             succeed
         }
@@ -114,7 +114,7 @@ class IOTest extends Test:
     "ensure" - {
         "success" in run {
             var called = false
-            IO.ensure { called = true }(1).map { result =>
+            Sync.ensure { called = true }(1).map { result =>
                 assert(result == 1)
                 assert(called)
             }
@@ -122,8 +122,8 @@ class IOTest extends Test:
         "failure" in run {
             val ex     = new Exception
             var called = false
-            Abort.run[Any](IO.ensure { called = true } {
-                IO[Int, Any](throw ex)
+            Abort.run[Any](Sync.ensure { called = true } {
+                Sync[Int, Any](throw ex)
             }).map { result =>
                 assert(result == Result.panic(ex))
                 assert(called)
@@ -133,8 +133,8 @@ class IOTest extends Test:
             var count       = 0
             var countEnsure = 0
 
-            val io: Unit < IO =
-                IO.ensure({ countEnsure = countEnsure + 1 })({ count = count + 1 })
+            val io: Unit < Sync =
+                Sync.ensure({ countEnsure = countEnsure + 1 })({ count = count + 1 })
 
             io.andThen(io).map: _ =>
                 assert(count == 2)
@@ -145,59 +145,59 @@ class IOTest extends Test:
     "evalOrThrow" - {
         import AllowUnsafe.embrace.danger
         "success" in run {
-            val result = IO.Unsafe.evalOrThrow(IO(42))
+            val result = Sync.Unsafe.evalOrThrow(Sync(42))
             assert(result == 42)
         }
 
         "throws exceptions" in run {
             val ex = new Exception("test error")
-            val io = IO[Int, Any](throw ex)
+            val io = Sync[Int, Any](throw ex)
 
             val caught = intercept[Exception] {
-                IO.Unsafe.evalOrThrow(io)
+                Sync.Unsafe.evalOrThrow(io)
             }
             assert(caught == ex)
         }
 
         "propagates nested exceptions" in run {
             val ex = new Exception("nested error")
-            val io = IO(IO(throw ex))
+            val io = Sync(Sync(throw ex))
 
             val caught = intercept[Exception] {
-                IO.Unsafe.evalOrThrow(io)
+                Sync.Unsafe.evalOrThrow(io)
             }
             assert(caught == ex)
         }
 
         "works with mapped values" in run {
-            val result = IO.Unsafe.evalOrThrow(IO(21).map(_ * 2))
+            val result = Sync.Unsafe.evalOrThrow(Sync(21).map(_ * 2))
             assert(result == 42)
         }
     }
 
     "abort" - {
-        "IO includes Abort[Nothing]" in {
+        "Sync includes Abort[Nothing]" in {
             val a: Int < Abort[Nothing] = 1
-            val b: Int < IO             = a
+            val b: Int < Sync           = a
             succeed
         }
 
         "does not include wider Abort types" in {
             typeCheckFailure("""
                 val a: Int < Abort[String] = 1
-                val b: Int < IO            = a
+                val b: Int < Sync            = a
             """)(
-                "Required: Int < kyo.IO"
+                "Required: Int < kyo.Sync"
             )
         }
 
         "preserves Nothing as most specific error type" in {
             typeCheckFailure("""
-                val io: Int < IO = IO {
+                val io: Int < Sync = Sync {
                     Abort.fail[String]("error")
                 }
             """)(
-                "Required: Int < kyo.IO"
+                "Required: Int < kyo.Sync"
             )
         }
     }
@@ -207,7 +207,7 @@ class IOTest extends Test:
             val local      = Local.init("test")
             var sideEffect = ""
 
-            IO.withLocal(local) { value =>
+            Sync.withLocal(local) { value =>
                 sideEffect = value
                 value.length
             }.map { result =>
@@ -221,7 +221,7 @@ class IOTest extends Test:
             var captured = ""
 
             local.let("modified") {
-                IO.withLocal(local) { value =>
+                Sync.withLocal(local) { value =>
                     captured = value
                     value.toUpperCase
                 }
@@ -236,7 +236,7 @@ class IOTest extends Test:
             var executed = false
 
             val computation =
-                IO.withLocal(local) { value =>
+                Sync.withLocal(local) { value =>
                     executed = true
                     value
                 }
@@ -258,7 +258,7 @@ class IOTest extends Test:
             val local      = Local.init(42)
             var sideEffect = 0
 
-            IO.Unsafe.withLocal(local) { value =>
+            Sync.Unsafe.withLocal(local) { value =>
                 sideEffect = unsafeOperation(value)
                 sideEffect
             }.map { result =>
@@ -272,7 +272,7 @@ class IOTest extends Test:
             var captured = 0
 
             local.let(20) {
-                IO.Unsafe.withLocal(local) { value =>
+                Sync.Unsafe.withLocal(local) { value =>
                     captured = unsafeOperation(value)
                     value + 1
                 }
@@ -288,11 +288,11 @@ class IOTest extends Test:
 
             val computation =
                 for
-                    v1 <- IO.Unsafe.withLocal(local) { value =>
+                    v1 <- Sync.Unsafe.withLocal(local) { value =>
                         steps = unsafeOperation(value) :: steps
                         value * 2
                     }
-                    v2 <- IO.Unsafe {
+                    v2 <- Sync.Unsafe {
                         steps = v1 :: steps
                         v1 + 1
                     }
@@ -305,4 +305,4 @@ class IOTest extends Test:
         }
     }
 
-end IOTest
+end SyncTest

@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.Clock.TimeControl
+
 class StreamCoreExtensionsTest extends Test:
 
     "factory" - {
@@ -47,6 +49,23 @@ class StreamCoreExtensionsTest extends Test:
     }
 
     "combinator" - {
+        "merge variance" in run {
+            enum T:
+                case T1(int: Int)
+                case T2(str: String)
+            object T:
+                given CanEqual[T, T] = CanEqual.derived
+
+            val stream1: Stream[T.T1, Any] = Stream.init(Seq[T.T1](T.T1(0), T.T1(1), T.T1(2)))
+            val stream2: Stream[T.T2, Any] = Stream.init(Seq[T.T2](T.T2("zero"), T.T2("one"), T.T2("two")))
+
+            val merged              = stream1.merge(stream2)
+            val _: Stream[T, Async] = merged
+
+            merged.run.map: chunk =>
+                assert(chunk.toSet == Set(T.T1(0), T.T1(1), T.T1(2), T.T2("zero"), T.T2("one"), T.T2("two")))
+        }
+
         "mergeHaltingLeft/Right" - {
             "should halt if non-halting side completes" in run {
                 Choice.run {
@@ -112,9 +131,9 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, Int.MaxValue)
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, par, Int.MaxValue)
-                        s2 = stream.mapPar(par, buf)(i => IO(i + 1))
+                        s2 = stream.mapPar(par, buf)(i => Sync(i + 1))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -129,7 +148,7 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
-                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         s2 = stream.mapPar(par)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
                         res <- s2.run
                     yield assert(
@@ -147,9 +166,9 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency)
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapParUnordered(par, buf)(i => IO(i + 1))
+                        s2 = stream.mapParUnordered(par, buf)(i => Sync(i + 1))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet
@@ -164,7 +183,7 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
-                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         s2 = stream.mapParUnordered(par)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
                         res <- s2.run
                     yield assert(
@@ -180,13 +199,13 @@ class StreamCoreExtensionsTest extends Test:
 
         "mapChunkPar" - {
             "should map all chunks preserving order" in run {
-                pending
+                // pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency)
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkPar(par, buf)(c => IO(c.map(_ + 1)))
+                        s2 = stream.mapChunkPar(par, buf)(c => Sync(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -198,11 +217,11 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "should preserve order when first transformation is delayed" in run {
-                pending
+                // pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
-                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         s2 =
                             stream.mapChunkPar(par)(c => if c.head == 1 then Async.sleep(10.millis).andThen(c.map(_ + 1)) else c.map(_ + 1))
                         res <- s2.run
@@ -256,7 +275,7 @@ class StreamCoreExtensionsTest extends Test:
                 "map with Choice" in run {
                     val it = Iterator("a", "b", "c")
 
-                    val stream: Stream[String, IO & Choice] =
+                    val stream: Stream[String, Sync & Choice] =
                         Stream.fromIterator(it, chunkSize).rechunk(10).map: str =>
                             Choice.eval(true, false).map:
                                 case true  => str.toUpperCase
@@ -403,7 +422,7 @@ class StreamCoreExtensionsTest extends Test:
 
                 "map with Choice" in run {
                     val it = Iterator("a", "b", "c")
-                    val stream: Stream[String, IO & Choice & Abort[Throwable]] =
+                    val stream: Stream[String, Sync & Choice & Abort[Throwable]] =
                         Stream.fromIteratorCatching[Throwable](it, chunkSize).rechunk(10).map: str =>
                             Choice.eval(true, false).map:
                                 case true  => str.toUpperCase
@@ -426,9 +445,9 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
-                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency)
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkParUnordered(par, buf)(c => IO(c.map(_ + 1)))
+                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet
@@ -443,7 +462,7 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
-                        par <- Choice.eval(2, 4, Async.defaultConcurrency)
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
                         s2 =
                             stream.mapChunkParUnordered(par)(c =>
                                 if c.head == 1 then Async.sleep(10.millis).andThen(c.map(_ + 1)) else c.map(_ + 1)
@@ -460,36 +479,155 @@ class StreamCoreExtensionsTest extends Test:
             }
         }
 
+        "broadcast" - {
+            val stream = Stream.init(0 to 10)
+
+            "broadcastDynamicWith" in run {
+                stream.broadcastDynamicWith { streamHub =>
+                    Kyo.zip(streamHub.subscribe, streamHub.subscribe)
+                }.map:
+                    case (s1, s2) =>
+                        // Ensure boundary works
+                        Async.sleep(30.millis).andThen:
+                            Kyo.zip(s1.run, s2.run).map:
+                                case (c1, c2) => assert(c1 == c2 && c1 == (0 to 10))
+            }
+
+            "broadcast2" in run {
+                stream.broadcast2().map:
+                    case (s1, s2) =>
+                        Kyo.zip(s1.run, s2.run).map:
+                            case (c1, c2) => assert(Set(c1, c2).size == 1 && c1 == (0 to 10))
+            }
+
+            "broadcast3" in run {
+                stream.broadcast3().map:
+                    case (s1, s2, s3) =>
+                        Kyo.zip(s1.run, s2.run, s3.run).map:
+                            case (c1, c2, c3) => assert(Set(c1, c2, c3).size == 1 && c1 == (0 to 10))
+            }
+
+            "broadcast4" in run {
+                stream.broadcast4().map:
+                    case (s1, s2, s3, s4) =>
+                        Kyo.zip(s1.run, s2.run, s3.run, s4.run).map:
+                            case (c1, c2, c3, c4) => assert(Set(c1, c2, c3, c4).size == 1 && c1 == (0 to 10))
+            }
+
+            "broadcast5" in run {
+                stream.broadcast5().map:
+                    case (s1, s2, s3, s4, s5) =>
+                        Kyo.zip(s1.run, s2.run, s3.run, s4.run, s5.run).map:
+                            case (c1, c2, c3, c4, c5) => assert(Set(c1, c2, c3, c4, c5).size == 1 && c1 == (0 to 10))
+            }
+
+            "broadcastN" in run {
+                stream.broadcastN(50).map: streamChunk =>
+                    Kyo.foreach(streamChunk)(_.run).map: resultChunks =>
+                        assert(resultChunks.size == 50 && resultChunks.toSet.size == 1 && resultChunks.headMaybe.contains(0 to 10))
+            }
+
+            "dynamic" - {
+                "broadcasted in unison" in runNotJS {
+                    Channel.initWith[Maybe[Int]](1024): channel =>
+                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                        lazyStream.broadcasted().map: reusableStream =>
+                            Latch.initWith(10): latch =>
+                                Async.run(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
+                                    latch.await.andThen:
+                                        Async.run(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                            runFiber.get.map: resultChunks =>
+                                                assert(
+                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                )
+                }
+
+                "broadcasted should produce empty results when running after original stream completes" in run {
+                    stream.broadcasted().map: reusableStream =>
+                        reusableStream.run.map: res1 =>
+                            reusableStream.run.map: res2 =>
+                                assert(res1 == (0 to 10) && res2.isEmpty)
+                }
+
+                "broadcasted should produce failure when running after original stream fails" in run {
+                    val failingStream = Stream(Stream.init(0 to 10).emit.andThen(Abort.fail("message")))
+                    failingStream.broadcasted().map: reusableStream =>
+                        Abort.run[String](reusableStream.run).map: res1 =>
+                            Abort.run[String](reusableStream.run).map: res2 =>
+                                assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
+                }
+
+                "broadcastDynamic in unison" in runNotJS {
+                    Channel.initWith[Maybe[Int]](1024): channel =>
+                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                        lazyStream.broadcastDynamic().map: streamHub =>
+                            Latch.initWith(10): latch =>
+                                Async.run(
+                                    Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
+                                ).map: runFiber =>
+                                    latch.await.andThen:
+                                        Async.run(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                            runFiber.get.map: resultChunks =>
+                                                assert(
+                                                    resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
+                                                )
+                }
+
+                "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in run {
+                    stream.broadcastDynamic().map: streamHub =>
+                        streamHub.subscribe.map(_.run).map: res1 =>
+                            streamHub.subscribe.map(_.run).map: res2 =>
+                                assert(res1 == (0 to 10) && res2.isEmpty)
+                }
+
+                "broadcasted subscriptions should fail when subscribing after original stream fails" in run {
+                    val failingStream = Stream(Stream.init(0 to 10).emit.andThen(Abort.fail("message")))
+                    failingStream.broadcastDynamic().map: streamHub =>
+                        Abort.run[String](streamHub.subscribe.map(_.run)).map: res1 =>
+                            Abort.run[String](streamHub.subscribe.map(_.run)).map: res2 =>
+                                assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
+                }
+            }
+        }
+
         "groupedWithin" - {
-            val stream = Stream {
+            def stream(tc: TimeControl) = Stream {
                 Loop(1): i =>
                     Emit.valueWith(Chunk(i)):
-                        (if i % 5 == 0 then Async.sleep(30.millis) else Kyo.unit)
+                        (if i % 5 == 0 then tc.advance(30.millis) else Kyo.unit)
                             .andThen(Loop.continue(i + 1))
             }.take(11)
 
             "group by size" in run {
-                stream.groupedWithin(3, Duration.Infinity).run.map: result =>
-                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(3, Duration.Infinity).run.map: result =>
+                        assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6), Chunk(7, 8, 9), Chunk(10, 11)))
+                }
             }
 
             "group by time" in run {
-                stream.groupedWithin(Int.MaxValue, 20.millis).run.map: result =>
-                    assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(Int.MaxValue, 30.millis).run.map: result =>
+                        assert(result == Chunk(Chunk(1, 2, 3, 4, 5), Chunk(6, 7, 8, 9, 10), Chunk(11)))
+                }
             }
 
             "group by size and time" in run {
-                stream.groupedWithin(3, 20.millis).run.map: result =>
-                    assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(3, 20.millis).run.map: result =>
+                        assert(result == Chunk(Chunk(1, 2, 3), Chunk(4, 5), Chunk(6, 7, 8), Chunk(9, 10), Chunk(11)))
+                }
             }
 
             "group to single chunk with max size + time" in run {
-                stream.groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
-                    assert(result == Chunk(1 to 11))
+                Clock.withTimeControl { tc =>
+                    stream(tc).groupedWithin(Int.MaxValue, Duration.Infinity).run.map: result =>
+                        assert(result == Chunk(1 to 11))
+                }
             }
 
             "empty" in run {
-                Stream.empty[Int].groupedWithin(3, 100.millis).run.map: result =>
+                Stream.empty[Int].groupedWithin(3, 10.millis).run.map: result =>
                     assert(result.isEmpty)
             }
 
@@ -499,19 +637,21 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "with Env" in run {
-                val envStream = Stream {
-                    Env.use[Int]: maxValue =>
-                        Loop(1): i =>
-                            if i > maxValue then Loop.done
-                            else
-                                Emit.valueWith(Chunk(i)):
-                                    Async.sleep(5.millis).andThen(Loop.continue(i + 1))
-                }
+                Clock.withTimeControl { tc =>
+                    val envStream = Stream {
+                        Env.use[Int]: maxValue =>
+                            Loop(1): i =>
+                                if i > maxValue then Loop.done
+                                else
+                                    Emit.valueWith(Chunk(i)):
+                                        tc.advance(5.millis).andThen(Loop.continue(i + 1))
+                    }
 
-                Env.run(7) {
-                    envStream.groupedWithin(3, 15.millis).run.map: result =>
-                        assert(result.flatten == (1 to 7))
-                        assert(result.size >= 2) // Should have multiple groups due to timing
+                    Env.run(7) {
+                        envStream.groupedWithin(3, 15.millis).run.map: result =>
+                            assert(result.flatten == (1 to 7))
+                            assert(result.size >= 2) // Should have multiple groups due to timing
+                    }
                 }
             }
 
@@ -537,6 +677,18 @@ class StreamCoreExtensionsTest extends Test:
                         result  <- stream.groupedWithin(3, Duration.Infinity, bufSize).run
                     yield assert(result.flatten == (1 to 10))
                 }.andThen(succeed)
+            }
+
+            "resource" in run {
+                pending
+                class TestResource(var closes: Int = 0) extends java.io.Closeable:
+                    def close() = closes += 1
+
+                val stream        = Stream(Resource.acquire(TestResource()).map(r => Emit.value(Chunk(r))))
+                val groupedWithin = stream.groupedWithin(3, Duration.Infinity)
+                groupedWithin.run.map: grouped =>
+                    stream.run.map: streamResult =>
+                        assert(grouped.flatten.head.closes == streamResult.head.closes)
             }
         }
     }

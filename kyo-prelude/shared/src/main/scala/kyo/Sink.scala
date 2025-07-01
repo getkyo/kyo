@@ -2,14 +2,17 @@ package kyo
 
 import kyo.Tag
 import kyo.kernel.ArrowEffect
-import kyo.kernel.internal.WeakFlat
 import scala.annotation.nowarn
-import scala.annotation.targetName
 
 /** Processes a stream of type `V`, producing a value of type `A`.
   *
-  * `Sink` provides a composable abstraction for processing `Stream` s. A `Sink[V, A, S]` can process a stream of type `Stream[V, S2]` to
-  * produce a value of type `A` using effects `S & S2`.
+  * `Sink` provides a composable abstraction for processing `Stream` s. A `Sink[V, A, S]` can evaluate a stream of type `Stream[V, S2]`,
+  * producing a value of type `A` using effects `S & S2`.
+  *
+  * @see
+  *   [[kyo.Sink.drain]]
+  * @see
+  *   [[kyo.Stream]] [[kyo.Pipe]]
   *
   * @tparam V
   *   The type of values that this sink can process
@@ -21,7 +24,7 @@ import scala.annotation.targetName
   * @see
   *   [[kyo.Poll]] for the underlying pull-based consumption mechanism
   */
-sealed abstract class Sink[V, A, -S] extends Serializable:
+sealed abstract class Sink[-V, +A, -S] extends Serializable:
 
     /** Returns the effect that produces the output value `A` from polling chunks of `V`. */
     def poll: A < (Poll[Chunk[V]] & S)
@@ -36,13 +39,13 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that produces a tuple of the outputs of the source sinks.
       */
-    final def zip[B, S2](other: Sink[V, B, S2])(using tag: Tag[Poll[Chunk[V]]], f: Frame): Sink[V, (A, B), S & S2] =
+    final def zip[VV <: V, B, S2](other: Sink[VV, B, S2])(using tag: Tag[Poll[Chunk[VV]]], f: Frame): Sink[VV, (A, B), S & S2] =
         Sink:
-            Loop((poll, other.poll)): (pollA, pollB) =>
+            Loop((poll: A < (Poll[Chunk[VV]] & S), other.poll)): (pollA, pollB) =>
                 ArrowEffect.handleFirst(tag, pollA)(
                     handle = [C] =>
                         (_, contA) =>
-                            Poll.andMap[Chunk[V]]: polledValue =>
+                            Poll.andMap[Chunk[VV]]: polledValue =>
                                 val nextA = contA(polledValue)
                                 ArrowEffect.handleFirst(tag, pollB)(
                                     handle = [C] =>
@@ -59,7 +62,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
                         ArrowEffect.handleFirst(tag, pollB)(
                             handle = [C] =>
                                 (_, contB) =>
-                                    Poll.andMap[Chunk[V]]: polledValue =>
+                                    Poll.andMap[Chunk[VV]]: polledValue =>
                                         contB(polledValue).map: b =>
                                             Loop.done((a, b)),
                             done = b =>
@@ -74,10 +77,10 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @param f
       *   Function mapping new stream element type to original stream element type
       * @return
-      *   A new sink that processes streams of the new element type
+      *   A sink that processes streams of the new element type
       */
-    final def contramap[V2](f: V2 => V)(using
-        t1: Tag[Poll[Chunk[V]]],
+    final def contramapPure[VV <: V, V2](f: V2 => VV)(using
+        t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
         fr: Frame
     ): Sink[V2, A, S] =
@@ -95,16 +98,18 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @param f
       *   Effectful function mapping new stream element type to original stream element type
       * @return
-      *   A new sink that processes streams of the new element type
+      *   A sink that processes streams of the new element type
       */
-    final def contramap[V2, S2](f: V2 => V < S2)(using
-        t1: Tag[Poll[Chunk[V]]],
+    final def contramap[VV <: V, V2, S2](f: V2 => VV < S2)(using
+        t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
-        d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[V]]], Poll[Chunk[V]], A, S, S2 & Poll[Chunk[V2]]](t1, poll)(
+            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, S2 & Poll[Chunk[V2]]](
+                t1,
+                poll
+            )(
                 [C] =>
                     (_, cont) =>
                         Poll.andMap[Chunk[V2]]:
@@ -122,13 +127,13 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that processes streams of the new element type
       */
-    final def contramapChunk[V2](f: Chunk[V2] => Chunk[V])(using
-        t1: Tag[Poll[Chunk[V]]],
+    final def contramapChunkPure[VV <: V, V2](f: Chunk[V2] => Chunk[VV])(using
+        t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
         fr: Frame
     ): Sink[V2, A, S] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[V]]], Poll[Chunk[V]], A, S, Poll[Chunk[V2]]](t1, poll)(
+            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, Poll[Chunk[V2]]](t1, poll)(
                 [C] =>
                     (_, cont) =>
                         Poll.andMap[Chunk[V2]]: maybeChunkV2 =>
@@ -144,14 +149,13 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   A new sink that processes streams of the new element type
       */
-    final def contramapChunk[V2, S2](f: Chunk[V2] => Chunk[V] < S2)(using
-        t1: Tag[Poll[Chunk[V]]],
+    final def contramapChunk[VV <: V, V2, S2](f: Chunk[V2] => Chunk[VV] < S2)(using
+        t1: Tag[Poll[Chunk[VV]]],
         t2: Tag[Poll[Chunk[V2]]],
-        d: Discriminator,
         fr: Frame
     ): Sink[V2, A, S & S2] =
         Sink:
-            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[V]]], Poll[Chunk[V]], A, S, S2 & Poll[Chunk[V2]]](t1, poll)(
+            ArrowEffect.handleLoop[Const[Unit], Const[Maybe[Chunk[VV]]], Poll[Chunk[VV]], A, S, S2 & Poll[Chunk[V2]]](t1, poll)(
                 [C] =>
                     (_, cont) =>
                         Poll.andMap[Chunk[V2]]:
@@ -161,7 +165,7 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
                                     Loop.continue(cont(Present(chunk1)))
             )
 
-    /** Transform a sink to produce a new output type using a function that transforms the original stream's result.
+    /** Transform a sink to produce a new output type using a function that transforms the original pipe's result.
       *
       * @param f
       *   Function mapping the original output to a new output value
@@ -184,8 +188,25 @@ sealed abstract class Sink[V, A, -S] extends Serializable:
       * @return
       *   An effect generating an output value from elements consumed from the stream
       */
-    final def drain[S2](stream: Stream[V, S2])(using Tag[Poll[Chunk[V]]], Tag[Emit[Chunk[V]]], Frame): A < (S & S2) =
-        Poll.run(stream.emit)(poll).map(_._2)
+    final def drain[VV <: V, S2](stream: Stream[VV, S2])(using
+        emitTag: Tag[Emit[Chunk[VV]]],
+        pollTag: Tag[Poll[Chunk[VV]]],
+        fr: Frame
+    ): A < (S & S2) =
+        Loop(stream.emit, poll: A < (Poll[Chunk[VV]] & S)) { (emit, poll) =>
+            ArrowEffect.handleFirst(pollTag, poll)(
+                handle = [C] =>
+                    (_, pollCont) =>
+                        ArrowEffect.handleFirst(emitTag, emit)(
+                            handle = [C2] =>
+                                (emitted, emitCont) =>
+                                    Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
+                            done = _ => Loop.continue(Kyo.unit, pollCont(Absent))
+                    ),
+                done = a =>
+                    Loop.done(a)
+            )
+        }
 end Sink
 
 object Sink:
@@ -193,6 +214,11 @@ object Sink:
     inline def apply[V, A, S](inline v: => A < (Poll[Chunk[V]] & S)): Sink[V, A, S] =
         new Sink[V, A, S]:
             def poll: A < (Poll[Chunk[V]] & S) = v
+
+    private val _empty = Sink(())
+
+    /** A sink that does nothing: returns an empty (Unit) value without ever running the input stream * */
+    def empty[V]: Sink[V, Unit, Any] = _empty
 
     /** Construct a sink that runs a stream of element type `V` without producing any value.
       *

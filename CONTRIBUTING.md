@@ -126,3 +126,41 @@ We encourage contributors to leverage Large Language Models (LLMs) responsibly:
   ```sh
   sbt "scalafmtCheckAll"
   ```
+
+## Design Guidelines
+
+### Adding a New Method
+
+If you want to contribute a new method like `S.newMethod` or `s.newMethod`, feel free to:
+
+- Open an issue
+- Discuss on Discord: [https://discord.gg/afch62vKaW](https://discord.gg/afch62vKaW)
+- Share design examples:
+    - Use cases
+    - Equivalent in `ZIO` or `Cats Effect`
+    - Other motivating patterns
+
+### Where to add Your `newMethod`
+
+| Subproject        | Use For                                                 |
+| ----------------- | ------------------------------------------------------- |
+| `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)      |
+| `kyo-prelude`     | Effect types without `Sync` (`Abort`, `Env`, `Var`, etc.) |
+| `kyo-core`        | Methods requiring `Sync`, `Async`, or `Resource`          |
+| `kyo-combinators` | Extensions or composition helpers                       |
+
+Add corresponding tests in the same subproject.
+
+**Example:**\
+A new `Stream.fromSomething` method:
+
+- If it uses `Sync`: place it in `kyo-core/shared/src/main/scala/kyo/StreamCoreExtensions.scala`
+- If it doesn't: place it in `kyo-prelude/shared/src/main/scala/kyo/Stream.scala`
+
+### Tips
+
+- Prefer [`call-by-name`](https://docs.scala-lang.org/tour/by-name-parameters.html) (`body: => A < S`) for deferred evaluation **when lifting to Sync**. This works because `Sync` is the final effect to be handled, allowing proper suspension of side effects. This does not apply to other effects.
+
+- Use [`inline`](https://docs.scala-lang.org/scala3/reference/metaprogramming/inline.html) only when beneficial in performance-sensitive APIs. Excessive use may increase compilation times.
+
+- Keep `S` open: use `[S] => A < (S & SomeEffect)` instead of `A < SomeEffect` to support effect composition.

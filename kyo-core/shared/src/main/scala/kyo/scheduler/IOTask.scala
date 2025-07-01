@@ -61,7 +61,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                             this.interrupts(input)
                                             input.onComplete { r =>
                                                 this.removeInterrupt(input)
-                                                curr = IO(cont(r.asInstanceOf[Result[Nothing, C]]))
+                                                curr = Sync(cont(r.asInstanceOf[Result[Nothing, C]]))
                                                 Scheduler.get.schedule(this)
                                             }
                                             nullResult

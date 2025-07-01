@@ -100,7 +100,7 @@ object STM:
                         Abort.recoverError[E] { error =>
                             // Retry arbitrary E failures in case the transaction is inconsistent
                             Var.use[TRefLog] { log =>
-                                IO.Unsafe {
+                                Sync.Unsafe {
                                     if !commit(tid, log, probe = true) then
                                         // The ref log shows inconsistency, retry the transaction
                                         Abort.fail(FailedTransaction(Present(error)))
@@ -112,7 +112,7 @@ object STM:
                         },
                         Var.runTuple(TRefLog.empty)
                     ).map { (log, result) =>
-                        IO.Unsafe {
+                        Sync.Unsafe {
                             if !commit(tid, log) then
                                 Abort.fail(FailedTransaction())
                             else

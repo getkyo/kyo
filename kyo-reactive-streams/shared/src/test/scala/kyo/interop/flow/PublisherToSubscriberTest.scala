@@ -12,7 +12,7 @@ import kyo.kernel.ArrowEffect
 abstract private class PublisherToSubscriberTest extends Test:
     import PublisherToSubscriberTest.*
 
-    protected def streamSubscriber: StreamSubscriber[Int] < IO
+    protected def streamSubscriber: StreamSubscriber[Int] < Sync
 
     "should have the same output as input" in runJVM {
         val stream = Stream.range(0, MaxStreamLength, 1, BufferSize)
@@ -31,11 +31,11 @@ abstract private class PublisherToSubscriberTest extends Test:
 
     "should propagate errors downstream" in runJVM {
         pending
-        val inputStream: Stream[Int, IO] = Stream
+        val inputStream: Stream[Int, Sync] = Stream
             .range(0, 10, 1, 1)
             .map { int =>
                 if int < 5 then
-                    IO(int)
+                    Sync(int)
                 else
                     Abort.panic(TestError)
             }
@@ -52,7 +52,7 @@ abstract private class PublisherToSubscriberTest extends Test:
 
     "single publisher & multiple subscribers" - {
         "contention" in runJVM {
-            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & IO) =
+            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then ()
                     else
@@ -101,10 +101,10 @@ abstract private class PublisherToSubscriberTest extends Test:
         }
 
         "one subscriber's failure does not affect others." in runJVM {
-            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & IO) =
+            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then
-                        IO(())
+                        Sync(())
                     else
                         Emit.valueWith(Chunk(value))(emit(counter))
                     end if
@@ -158,10 +158,10 @@ abstract private class PublisherToSubscriberTest extends Test:
         }
 
         "publisher's interuption should end all subscribed parties" in runJVM {
-            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & IO) =
+            def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then
-                        IO(())
+                        Sync(())
                     else
                         Emit.valueWith(Chunk(value))(emit(counter))
                     end if
@@ -213,12 +213,12 @@ abstract private class PublisherToSubscriberTest extends Test:
             for
                 promise    <- Fiber.Promise.init[Throwable, Unit]
                 subscriber <- streamSubscriber
-                subscription <- IO.Unsafe {
+                subscription <- Sync.Unsafe {
                     StreamSubscription.Unsafe.subscribe(
                         stream,
                         subscriber
                     ): fiber =>
-                        discard(IO.Unsafe.evalOrThrow(fiber.map(_.onComplete { result =>
+                        discard(Sync.Unsafe.evalOrThrow(fiber.map(_.onComplete { result =>
                             result match
                                 case Failure(StreamCanceled) => promise.completeDiscard(Success(()))
                                 case _                       => promise.completeDiscard(Failure(TestError))
@@ -240,11 +240,11 @@ object PublisherToSubscriberTest:
 end PublisherToSubscriberTest
 
 final class PublisherToEagerSubscriberTest extends PublisherToSubscriberTest:
-    override protected def streamSubscriber: StreamSubscriber[Int] < IO =
+    override protected def streamSubscriber: StreamSubscriber[Int] < Sync =
         StreamSubscriber[Int](PublisherToSubscriberTest.BufferSize, EmitStrategy.Eager)
 end PublisherToEagerSubscriberTest
 
 final class PublisherToBufferSubscriberTest extends PublisherToSubscriberTest:
-    override protected def streamSubscriber: StreamSubscriber[Int] < IO =
+    override protected def streamSubscriber: StreamSubscriber[Int] < Sync =
         StreamSubscriber[Int](PublisherToSubscriberTest.BufferSize, EmitStrategy.Buffer)
 end PublisherToBufferSubscriberTest

@@ -6,7 +6,6 @@ import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
 val scala3Version   = "3.7.0"
-val scala212Version = "2.12.20"
 val scala213Version = "2.13.16"
 
 val zioVersion       = "2.1.17"
@@ -30,21 +29,21 @@ val compilerOptions = Set(
 ThisBuild / scalaVersion := scala3Version
 publish / skip           := true
 
-ThisBuild / organization := "io.getkyo"
-ThisBuild / homepage     := Some(url("https://getkyo.io"))
-ThisBuild / licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
-ThisBuild / developers := List(
-    Developer(
-        "fwbrasil",
-        "Flavio Brasil",
-        "fwbrasil@gmail.com",
-        url("https://github.com/fwbrasil/")
-    )
-)
-
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
-ThisBuild / sonatypeProfileName    := "io.getkyo"
+inThisBuild(List(
+    organization := "io.getkyo",
+    homepage     := Some(url("https://getkyo.io")),
+    licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
+    developers := List(
+        Developer(
+            "fwbrasil",
+            "Flavio Brasil",
+            "fwbrasil@gmail.com",
+            url("https://github.com/fwbrasil/")
+        )
+    ),
+    resolvers += Resolver.sonatypeCentralSnapshots,
+    resolvers += Resolver.sonatypeCentralRepo("staging")
+))
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
@@ -61,7 +60,7 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
 
 Global / onLoad := {
@@ -179,7 +178,7 @@ lazy val `kyo-scheduler` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions                     := List(scala3Version, scala212Version, scala213Version),
+            crossScalaVersions                     := List(scala3Version, scala213Version),
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -204,7 +203,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     .jvmSettings(mimaCheck(false))
     .settings(
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+        crossScalaVersions := List(scala3Version, scala213Version)
     )
 
 lazy val `kyo-scheduler-cats` =
@@ -220,7 +219,7 @@ lazy val `kyo-scheduler-cats` =
         .jvmSettings(mimaCheck(false))
         .settings(
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+            crossScalaVersions := List(scala3Version, scala213Version)
         )
 
 lazy val `kyo-scheduler-pekko` =
@@ -231,13 +230,13 @@ lazy val `kyo-scheduler-pekko` =
         .in(file("kyo-scheduler-pekko"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.1.3",
-            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.1.3" % Test
+            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.1.4",
+            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.1.4" % Test
         )
         .jvmSettings(mimaCheck(false))
         .settings(
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+            crossScalaVersions := List(scala3Version, scala213Version)
         )
 
 lazy val `kyo-scheduler-finagle` =
@@ -280,7 +279,7 @@ lazy val `kyo-data` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.0",
-            libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.2" % Test
+            libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.3" % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -309,7 +308,7 @@ lazy val `kyo-prelude` =
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC40" % Test,
+            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC41" % Test,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -357,7 +356,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.0.2"
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -394,7 +393,7 @@ lazy val `kyo-stats-registry` =
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
-            crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
+            crossScalaVersions                       := List(scala3Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -408,8 +407,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.50.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.50.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.51.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.51.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -422,7 +421,7 @@ lazy val `kyo-cache` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.2.0"
+            libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.2.1"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -481,8 +480,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.25",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.25"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.34",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.34"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -593,7 +592,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.25"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.34"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -635,25 +634,25 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.2",
+            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.3",
             libraryDependencies += "org.typelevel"        %% "cats-effect"         % catsVersion,
-            libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.7.0",
-            libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.7.0",
+            libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.7.1",
+            libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.7.1",
             libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.5.0",
             libraryDependencies += "io.github.timwspence" %% "cats-stm"            % "0.13.5",
-            libraryDependencies += "com.47deg"            %% "fetch"               % "3.1.2",
+            libraryDependencies += "com.47deg"            %% "fetch"               % "3.2.0",
             libraryDependencies += "dev.zio"              %% "zio-logging"         % "2.5.0",
             libraryDependencies += "dev.zio"              %% "zio-logging-slf4j2"  % "2.5.0",
             libraryDependencies += "dev.zio"              %% "zio"                 % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.7",
-            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC40",
+            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC41",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.12.0",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M44",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M44",
-            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.2.0",
-            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR8",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR8"
+            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.3.3",
+            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0",
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0"
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")

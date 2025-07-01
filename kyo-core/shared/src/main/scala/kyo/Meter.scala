@@ -78,14 +78,14 @@ abstract class Meter private[kyo] ():
       * @return
       *   A Boolean effect indicating whether the Meter was successfully closed.
       */
-    def close(using Frame): Boolean < IO
+    def close(using Frame): Boolean < Sync
 
     /** Checks if the Meter is closed.
       *
       * @return
       *   A Boolean effect indicating whether the Meter is closed.
       */
-    def closed(using Frame): Boolean < IO
+    def closed(using Frame): Boolean < Sync
 
 end Meter
 
@@ -98,7 +98,7 @@ object Meter:
         def run[A, S](v: => A < S)(using Frame)    = v
         def tryRun[A, S](v: => A < S)(using Frame) = v.map(Maybe(_))
         def close(using Frame)                     = false
-        def closed(using Frame): Boolean < IO      = false
+        def closed(using Frame): Boolean < Sync    = false
     end Noop
 
     /** Creates a **reentrant** Meter that acts as a mutex (binary semaphore).
@@ -106,7 +106,7 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(using Frame): Meter < IO =
+    def initMutex(using Frame): Meter < Sync =
         initMutex(true)
 
     /** Creates a Meter that acts as a mutex (binary semaphore).
@@ -116,7 +116,7 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(reentrant: Boolean)(using Frame): Meter < IO =
+    def initMutex(reentrant: Boolean)(using Frame): Meter < Sync =
         initSemaphore(1, reentrant)
 
     /** Creates a Meter that acts as a semaphore with the specified concurrency.
@@ -128,12 +128,12 @@ object Meter:
       * @return
       *   A Meter effect that represents a semaphore.
       */
-    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < IO =
-        IO.Unsafe {
+    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < Sync =
+        Sync.Unsafe {
             new Base(concurrency, reentrant):
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
-                    IO.ensure(discard(release()))(v)
+                    Sync.ensure(discard(release()))(v)
                 def onClose(): Unit = ()
         }
 
@@ -148,12 +148,12 @@ object Meter:
       * @return
       *   A Meter effect that represents a rate limiter.
       */
-    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < IO =
-        IO.Unsafe {
+    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < Sync =
+        Sync.Unsafe {
             new Base(rate, reentrant):
                 val timerTask =
                     // Schedule periodic task to replenish permits
-                    IO.Unsafe.evalOrThrow(Clock.repeatAtInterval(period, period)(replenish()))
+                    Sync.Unsafe.evalOrThrow(Clock.repeatAtInterval(period, period)(replenish()))
 
                 def dispatch[A, S](v: => A < S) =
                     // Don't release a permit since it's managed by the timer task
@@ -175,7 +175,7 @@ object Meter:
       * @return
       *   A Meter effect that represents the pipeline of m1 and m2.
       */
-    def pipeline[S1, S2](m1: Meter < S1, m2: Meter < S2)(using Frame): Meter < (IO & S1 & S2) =
+    def pipeline[S1, S2](m1: Meter < S1, m2: Meter < S2)(using Frame): Meter < (Sync & S1 & S2) =
         pipeline[S1 & S2](List(m1, m2))
 
     /** Combines three Meters into a pipeline.
@@ -193,7 +193,7 @@ object Meter:
         m1: Meter < S1,
         m2: Meter < S2,
         m3: Meter < S3
-    )(using Frame): Meter < (IO & S1 & S2 & S3) =
+    )(using Frame): Meter < (Sync & S1 & S2 & S3) =
         pipeline[S1 & S2 & S3](List(m1, m2, m3))
 
     /** Combines four Meters into a pipeline.
@@ -214,7 +214,7 @@ object Meter:
         m2: Meter < S2,
         m3: Meter < S3,
         m4: Meter < S4
-    )(using Frame): Meter < (IO & S1 & S2 & S3 & S4) =
+    )(using Frame): Meter < (Sync & S1 & S2 & S3 & S4) =
         pipeline[S1 & S2 & S3 & S4](List(m1, m2, m3, m4))
 
     /** Combines a sequence of Meters into a pipeline.
@@ -224,7 +224,7 @@ object Meter:
       * @return
       *   A Meter effect that represents the pipeline of all input Meters.
       */
-    def pipeline[S](meters: Seq[Meter < (IO & S)])(using Frame): Meter < (IO & S) =
+    def pipeline[S](meters: Seq[Meter < (Sync & S)])(using Frame): Meter < (Sync & S) =
         Kyo.collectAll(meters).map { seq =>
             val meters = seq.toIndexedSeq
             new Meter:
@@ -258,10 +258,10 @@ object Meter:
                     loop()
                 end tryRun
 
-                def close(using Frame): Boolean < IO =
+                def close(using Frame): Boolean < Sync =
                     Kyo.foreach(meters)(_.close).map(_.exists(identity))
 
-                def closed(using Frame): Boolean < IO =
+                def closed(using Frame): Boolean < Sync =
                     Kyo.foreach(meters)(_.closed).map(_.exists(identity))
             end new
         }
@@ -277,12 +277,12 @@ object Meter:
         val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, Unit]](8)
         val closed  = Promise.Unsafe.init[Closed, Nothing]()
 
-        protected def dispatch[A, S](v: => A < S): A < (S & IO)
+        protected def dispatch[A, S](v: => A < S): A < (S & Sync)
         protected def onClose(): Unit
 
-        private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (IO & S) =
+        private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (Sync & S) =
             if reentrant then
-                IO.withLocal(acquiredMeters) { meters =>
+                Sync.withLocal(acquiredMeters) { meters =>
                     if meters.contains(this) then reenter
                     else acquire
                 }
@@ -343,21 +343,21 @@ object Meter:
         end tryRun
 
         final def availablePermits(using Frame) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 state.get() match
                     case Int.MinValue => closed.safe.get
                     case st           => Math.max(0, st)
             }
 
         final def pendingWaiters(using Frame) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 state.get() match
                     case Int.MinValue => closed.safe.get
                     case st           => Math.min(0, st).abs
             }
 
-        final def close(using frame: Frame): Boolean < IO =
-            IO.Unsafe {
+        final def close(using frame: Frame): Boolean < Sync =
+            Sync.Unsafe {
                 val st = state.getAndSet(Int.MinValue)
                 val ok = st != Int.MinValue // The meter wasn't already closed
                 if ok then
@@ -378,7 +378,7 @@ object Meter:
             }
         end close
 
-        final def closed(using Frame) = IO(state.get() == Int.MinValue)
+        final def closed(using Frame) = Sync(state.get() == Int.MinValue)
 
         @tailrec final protected def release(): Boolean =
             val st = state.get()

@@ -3,8 +3,7 @@ package kyo
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kyo.*
-import kyo.ZIOs.toError
-import kyo.ZIOs.toResult
+import kyo.ZIOs.*
 import kyo.kernel.Platform
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
@@ -15,6 +14,8 @@ import zio.Task
 import zio.ZIO
 
 class ZIOsTest extends Test:
+    given [E]: CanEqual[Cause[E], Cause[E]]        = CanEqual.derived
+    given [E, A]: CanEqual[Exit[E, A], Exit[E, A]] = CanEqual.derived
 
     def runZIO[T](v: Task[T]): T =
         zio.Unsafe.unsafe(implicit u =>
@@ -64,17 +65,17 @@ class ZIOsTest extends Test:
         }
     }
 
-    "Envs[Int]" in pendingUntilFixed {
-        assertCompiles("""
-            val a: Int < (Env[Int] & ZIOs) = ZIOs.get(ZIO.service[Int])
-            val b: Int < ZIOs              = Env.run(10)(a)
+    "Envs[Int]" in {
+        typeCheckFailure("""
+            val a: Int < (Env[Int] & Async) = ZIOs.get(ZIO.service[Int])
+            val b: Int < Async              = Env.run(10)(a)
             b.map(v => assert(v == 10))
-        """)
+        """)("ZIO environments are not supported yet.")
     }
-    "Envs[Int & Double]" in pendingUntilFixed {
-        assertCompiles("""
+    "Envs[Int & Double]" in {
+        typeCheckFailure("""
             val a = ZIOs.get(ZIO.service[Int] *> ZIO.service[Double])
-        """)
+        """)("could not find implicit value for izumi.reflect.Tag[Int & Double]")
     }
 
     "A < ZIOs" in runKyo {
@@ -132,15 +133,15 @@ class ZIOsTest extends Test:
 
     "interrupts" - {
 
-        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < IO =
-            def loop(i: Int): Unit < IO =
-                IO {
+        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < Sync =
+            def loop(i: Int): Unit < Sync =
+                Sync {
                     if i == 0 then
-                        IO(started.countDown()).andThen(loop(i + 1))
+                        Sync(started.countDown()).andThen(loop(i + 1))
                     else
                         loop(i + 1)
                 }
-            IO.ensure(IO(done.countDown()))(loop(0))
+            Sync.ensure(Sync(done.countDown()))(loop(0))
         end kyoLoop
 
         def zioLoop(started: CountDownLatch, done: CountDownLatch): Task[Unit] =
@@ -235,10 +236,10 @@ class ZIOsTest extends Test:
                     val panic   = Result.Panic(new Exception)
                     for
                         f <- Async.run(ZIOs.get(zioLoop(started, done)))
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt(panic)
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r == panic)
                     end for
                 }
@@ -253,10 +254,10 @@ class ZIOsTest extends Test:
                         yield ()
                     for
                         f <- Async.run(v)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -271,10 +272,10 @@ class ZIOsTest extends Test:
                     end parallelEffect
                     for
                         f <- Async.run(parallelEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -289,10 +290,10 @@ class ZIOsTest extends Test:
                     end raceEffect
                     for
                         f <- Async.run(raceEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -420,6 +421,37 @@ class ZIOsTest extends Test:
                 case Result.Panic(e) =>
                     assert(e.getMessage.startsWith("Unexpected zio.Cause.Empty at"))
             end match
+        }
+    }
+
+    "Result.Error toCause" - {
+        "Failure to Cause.Fail" in {
+            val error = Result.Failure("test error")
+            assert(error.toCause == Cause.fail("test error"))
+        }
+
+        "Panic to Cause.Die" in {
+            val exception = new RuntimeException("test exception")
+            val error     = Result.Panic(exception)
+            assert(error.toCause == Cause.die(exception))
+        }
+    }
+
+    "Result toExit" - {
+        "Success to Exit.Success" in {
+            val result = Result.succeed(42)
+            assert(result.toExit == Exit.succeed(42))
+        }
+
+        "Failure to Exit.Failure" in {
+            val result = Result.fail("error")
+            assert(result.toExit == Exit.fail("error"))
+        }
+
+        "Panic to Exit.Die" in {
+            val exception = new RuntimeException("panic")
+            val result    = Result.Panic(exception)
+            assert(result.toExit == Exit.die(exception))
         }
     }
 

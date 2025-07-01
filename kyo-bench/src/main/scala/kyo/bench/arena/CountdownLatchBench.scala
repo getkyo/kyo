@@ -23,7 +23,7 @@ class CountdownLatchBench extends ArenaBench.ForkOnly(0):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def iterate(l: Latch, n: Int): Unit < IO =
+        def iterate(l: Latch, n: Int): Unit < Sync =
             if n <= 0 then Kyo.unit
             else l.release.flatMap(_ => iterate(l, n - 1))
 

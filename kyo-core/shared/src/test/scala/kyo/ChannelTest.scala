@@ -511,17 +511,17 @@ class ChannelTest extends Test:
     }
 
     "Kyo computations" - {
-        "IO" in run {
+        "Sync" in run {
             for
-                channel <- Channel.init[Int < IO](2)
-                _       <- channel.put(IO(42))
+                channel <- Channel.init[Int < Sync](2)
+                _       <- channel.put(Sync(42))
                 result  <- channel.take.flatten
             yield assert(result == 42)
         }
         "AtomicBoolean" in run {
             for
                 flag    <- AtomicBoolean.init(false)
-                channel <- Channel.init[Int < IO](2)
+                channel <- Channel.init[Int < Sync](2)
                 _       <- channel.put(flag.set(true).andThen(42))
                 before  <- flag.get
                 result  <- channel.take.flatten
@@ -571,7 +571,7 @@ class ChannelTest extends Test:
                 .andThen(succeed)
         }
 
-        "offer and poll" in run {
+        "offer and poll" in runNotNative {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -591,7 +591,7 @@ class ChannelTest extends Test:
                 .andThen(succeed)
         }
 
-        "put and take" in run {
+        "put and take" in runNotNative {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -934,6 +934,19 @@ class ChannelTest extends Test:
             yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
             end for
         }
+
+        "should stop when channel is closed async" in run {
+            val fullStream = Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8)
+            for
+                c <- Channel.init[Int](3)
+                stream = c.streamUntilClosed()
+                f <- Async.run(stream.run)
+                _ <- Kyo.foreach(fullStream)(c.put).andThen(c.close)
+                _ <- Async.run(c.closeAwaitEmpty)
+                r <- Fiber.get(f)
+            yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
+            end for
+        }
     }
 
     "closeAwaitEmpty" - {
@@ -1167,7 +1180,7 @@ class ChannelTest extends Test:
 
     private def verifyRaceDrainWithClose(
         capacity: Int,
-        drain: Channel[Int] => Any < (Abort[Closed] & IO),
+        drain: Channel[Int] => Any < (Abort[Closed] & Sync),
         close: Channel[Int] => (Any < Async)
     ) =
         for

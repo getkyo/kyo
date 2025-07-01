@@ -28,7 +28,7 @@ class ChoiceCombinatorTest extends Test:
         "iteration" - {
             "should iterate using foreach" in run {
                 var state             = 0
-                def effectFor(i: Int) = IO { state += i; state }
+                def effectFor(i: Int) = Sync { state += i; state }
                 val effect            = Kyo.foreach(1 to 10)(effectFor)
                 assert(state == 0)
                 effect.map { result =>
@@ -41,7 +41,7 @@ class ChoiceCombinatorTest extends Test:
             "should iterate using collect" in run {
                 var state = 0
                 val effect = Kyo.collect(1 to 10) { i =>
-                    IO(Maybe.when(i % 2 == 0) { { state += i; i * 2 } })
+                    Sync(Maybe.when(i % 2 == 0) { { state += i; i * 2 } })
                 }
                 assert(state == 0)
                 effect.map { result =>
@@ -52,7 +52,7 @@ class ChoiceCombinatorTest extends Test:
 
             "should iterate using traverse" in run {
                 var state   = 0
-                val effects = (1 to 10).map(i => IO { state += i; state })
+                val effects = (1 to 10).map(i => Sync { state += i; state })
                 val effect  = Kyo.traverse(effects)
                 assert(state == 0)
                 effect.map { result =>
@@ -63,7 +63,7 @@ class ChoiceCombinatorTest extends Test:
 
             "should iterate using traverseDiscard" in run {
                 var state   = 0
-                val effects = (1 to 10).map(i => IO { state += i; state })
+                val effects = (1 to 10).map(i => Sync { state += i; state })
                 val effect  = Kyo.traverseDiscard(effects)
                 assert(state == 0)
                 effect.map { result =>

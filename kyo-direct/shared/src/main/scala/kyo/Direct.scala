@@ -64,8 +64,8 @@ private def nowImpl[A: Type, S: Type](self: Expr[A < S])(using Quotes): Expr[A] 
            |
            |${highlight("""
            |direct {
-           |  val x = IO(1).now     // Get result here
-           |  val y = IO(2).now     // Then get this result  
+           |  val x = Sync(1).now     // Get result here
+           |  val y = Sync(2).now     // Then get this result
            |  x + y                 // Use both results
            |}""".stripMargin)}
            |""".stripMargin,
@@ -85,8 +85,8 @@ private def laterImpl[A: Type, S: Type](self: Expr[A < S])(using Quotes): Expr[A
            |${highlight("""
            |// Example: Preserve effects for composition
            |def combination = direct {
-           |  val effect1 = IO(1).later   // Effect preserved
-           |  val effect2 = IO(2).later   // Effect preserved
+           |  val effect1 = Sync(1).later   // Effect preserved
+           |  val effect2 = Sync(2).later   // Effect preserved
            |  (effect1, effect2)          // Return tuple of effects
            |}
            |

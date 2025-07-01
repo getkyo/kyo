@@ -145,7 +145,7 @@ object Batch:
         def expand(items: Chunk[Item]): Chunk[Chunk[Item]] < S =
             Kyo.foreach(items) {
                 case ToExpand[A @unchecked, S @unchecked](seq: Seq[Any], cont) =>
-                    Kyo.foreach(seq)(v => capture(cont(v)))
+                    Kyo.foreach(Chunk.from(seq))(v => capture(cont(v)))
                 case item => Chunk(item)
             }
 
@@ -157,7 +157,7 @@ object Batch:
                     case (Expanded[A @unchecked, S @unchecked](_, source, _)) => source
                     case _ => () // Used as a placeholder for items that aren't source calls
                 }
-            Kyo.foreach(pending.toSeq) { tuple =>
+            Kyo.foreach(Chunk.from(pending)) { tuple =>
                 (tuple: @unchecked) match
                     case (_: Unit, items) =>
                         // No need for flushing
@@ -166,7 +166,7 @@ object Batch:
                         // Only request distinct items from the source
                         source(items.map(_.value).distinct).map { results =>
                             // Reassemble the results by iterating on the original collection
-                            Kyo.foreach(items) { e =>
+                            Kyo.foreach(Chunk.from(items)) { e =>
                                 // Note how each value can have its own effects
                                 capture(e.cont(results(e.value)))
                             }

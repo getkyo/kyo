@@ -26,7 +26,7 @@ class StreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestE
             .map: s =>
                 new WhiteboxSubscriber(s, p)
 
-        IO.Unsafe.evalOrThrow(streamSubscriber)
+        Sync.Unsafe.evalOrThrow(streamSubscriber)
     end createSubscriber
 
     def createElement(i: Int): Int = counter.getAndIncrement
@@ -56,7 +56,7 @@ final class WhiteboxSubscriber[V](
         probe.registerOnSubscribe(
             new SubscriberPuppet:
                 override def triggerRequest(elements: Long): Unit =
-                    val computation: Unit < IO = Loop(elements) { remaining =>
+                    val computation: Unit < Sync = Loop(elements) { remaining =>
                         if remaining <= 0 then
                             Loop.done
                         else
@@ -64,7 +64,7 @@ final class WhiteboxSubscriber[V](
                                 Loop.continue(remaining - accepted)
                             }
                     }
-                    discard(IO.Unsafe.evalOrThrow(computation))
+                    discard(Sync.Unsafe.evalOrThrow(computation))
                 end triggerRequest
 
                 override def signalCancel(): Unit =
@@ -108,12 +108,12 @@ final class SubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](n
             .map:
                 case 0 => StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Buffer)
                 case 1 => StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Eager)
-        new StreamSubscriberWrapper(IO.Unsafe.evalOrThrow(streamSubscriber))
+        new StreamSubscriberWrapper(Sync.Unsafe.evalOrThrow(streamSubscriber))
     end createSubscriber
 
     override def triggerRequest(s: Subscriber[? >: Int]): Unit =
-        val computation: Long < IO = s.asInstanceOf[StreamSubscriberWrapper[Int]].streamSubscriber.request
-        discard(IO.Unsafe.evalOrThrow(computation))
+        val computation: Long < Sync = s.asInstanceOf[StreamSubscriberWrapper[Int]].streamSubscriber.request
+        discard(Sync.Unsafe.evalOrThrow(computation))
 
     def createElement(i: Int): Int = counter.incrementAndGet()
 end SubscriberBlackboxSpec

@@ -22,48 +22,48 @@ final case class Console(unsafe: Console.Unsafe):
       * @return
       *   A String representing the line read from the console.
       */
-    def readLine(using Frame): String < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.readLine()))
+    def readLine(using Frame): String < (Sync & Abort[IOException]) = Sync.Unsafe(Abort.get(unsafe.readLine()))
 
     /** Prints a string to the console without a newline.
       *
       * @param s
       *   The string to print.
       */
-    def print(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.print(s.show))
+    def print(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.print(s.show))
 
     /** Prints a string to the console's error stream without a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printErr(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.printErr(s.show))
+    def printErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.printErr(s.show))
 
     /** Prints a string to the console followed by a newline.
       *
       * @param s
       *   The string to print.
       */
-    def println(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.printLine(s.show))
+    def println(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.printLine(s.show))
 
     /** Prints a string to the console's error stream followed by a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printLineErr(s: Text)(using Frame): Unit < IO = IO.Unsafe(unsafe.printLineErr(s.show))
+    def printLineErr(s: Text)(using Frame): Unit < Sync = Sync.Unsafe(unsafe.printLineErr(s.show))
 
     /** Checks if an error occurred in the console output or error streams.
       *
       * @return
       *   True if an error occurred, false otherwise.
       */
-    def checkErrors(using Frame): Boolean < IO = IO.Unsafe(unsafe.checkErrors)
+    def checkErrors(using Frame): Boolean < Sync = Sync.Unsafe(unsafe.checkErrors)
 
     /** Flushes the console output streams.
       *
       * This method ensures that any buffered output is written to the console.
       */
-    def flush(using Frame): Unit < IO = IO.Unsafe(unsafe.flush())
+    def flush(using Frame): Unit < Sync = Sync.Unsafe(unsafe.flush())
 end Console
 
 /** Companion object for Console, providing utility methods and a live implementation.
@@ -132,10 +132,10 @@ object Console:
       * @tparam S
       *   The type of effects in the computation.
       * @return
-      *   The result of the computation with IO effects.
+      *   The result of the computation with Sync effects.
       */
-    def withIn[A, S](lines: Iterable[String])(v: A < S)(using Frame): A < (IO & S) =
-        IO.withLocal(local) { console =>
+    def withIn[A, S](lines: Iterable[String])(v: A < S)(using Frame): A < (Sync & S) =
+        Sync.withLocal(local) { console =>
             val it = lines.iterator
             val proxy =
                 new Proxy(console.unsafe):
@@ -165,8 +165,8 @@ object Console:
       * @return
       *   A tuple containing the captured output (Out) and the computation result.
       */
-    def withOut[A, S](v: A < S)(using Frame): (Out, A) < (IO & S) =
-        IO.withLocal(local) { console =>
+    def withOut[A, S](v: A < S)(using Frame): (Out, A) < (Sync & S) =
+        Sync.withLocal(local) { console =>
             val stdOut = new StringBuffer
             val stdErr = new StringBuffer
             val proxy =
@@ -184,7 +184,7 @@ object Console:
                         stdErr.append(s + "\n")
                         ()
             let(Console(proxy))(v)
-                .map(r => IO((Out(stdOut.toString(), stdErr.toString()), r)))
+                .map(r => Sync((Out(stdOut.toString(), stdErr.toString()), r)))
         }
 
     /** Reads a line from the console.
@@ -192,8 +192,8 @@ object Console:
       * @return
       *   A String representing the line read from the console.
       */
-    def readLine(using Frame): String < (IO & Abort[IOException]) =
-        IO.Unsafe.withLocal(local)(console => Abort.get(console.unsafe.readLine()))
+    def readLine(using Frame): String < (Sync & Abort[IOException]) =
+        Sync.Unsafe.withLocal(local)(console => Abort.get(console.unsafe.readLine()))
 
     private def toString(v: Any)(using Frame): String =
         v match
@@ -207,39 +207,39 @@ object Console:
       * @param v
       *   The value to print.
       */
-    def print[A](v: A)(using Frame): Unit < IO =
-        IO.Unsafe.withLocal(local)(console => console.unsafe.print(toString(v)))
+    def print[A](v: A)(using Frame): Unit < Sync =
+        Sync.Unsafe.withLocal(local)(console => console.unsafe.print(toString(v)))
 
     /** Prints a value to the console's error stream without a newline.
       *
       * @param v
       *   The value to print to the error stream.
       */
-    def printErr[A](v: A)(using Frame): Unit < IO =
-        IO.Unsafe.withLocal(local)(console => console.unsafe.printErr(toString(v)))
+    def printErr[A](v: A)(using Frame): Unit < Sync =
+        Sync.Unsafe.withLocal(local)(console => console.unsafe.printErr(toString(v)))
 
     /** Prints a value to the console followed by a newline.
       *
       * @param v
       *   The value to print.
       */
-    def printLine[A](v: A)(using Frame): Unit < IO =
-        IO.Unsafe.withLocal(local)(console => console.unsafe.printLine(toString(v)))
+    def printLine[A](v: A)(using Frame): Unit < Sync =
+        Sync.Unsafe.withLocal(local)(console => console.unsafe.printLine(toString(v)))
 
     /** Prints a value to the console's error stream followed by a newline.
       *
       * @param v
       *   The value to print to the error stream.
       */
-    def printLineErr[A](v: A)(using Frame): Unit < IO =
-        IO.Unsafe.withLocal(local)(console => console.unsafe.printLineErr(toString(v)))
+    def printLineErr[A](v: A)(using Frame): Unit < Sync =
+        Sync.Unsafe.withLocal(local)(console => console.unsafe.printLineErr(toString(v)))
 
     /** Checks if an error occurred in the console output or error streams.
       *
       * @return
       *   True if an error occurred, false otherwise.
       */
-    def checkErrors(using Frame): Boolean < IO = IO.Unsafe.withLocal(local)(console => console.unsafe.checkErrors)
+    def checkErrors(using Frame): Boolean < Sync = Sync.Unsafe.withLocal(local)(console => console.unsafe.checkErrors)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe extends Serializable:

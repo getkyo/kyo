@@ -9,11 +9,11 @@ trait DB:
         account: Int,
         amount: Int,
         desc: String
-    ): Result < IO
+    ): Result < Sync
 
     def statement(
         account: Int
-    ): Statement < IO
+    ): Statement < Sync
 
 end DB
 
@@ -24,7 +24,7 @@ object DB:
         flushInterval: Duration
     )
 
-    val init: DB < (Env[Config] & IO) = direct {
+    val init: DB < (Env[Config] & Sync) = direct {
         val index = Index.init.now
         val log   = db.Log.init.now
         Live(index, log)
@@ -32,14 +32,14 @@ object DB:
 
     class Live(index: Index, log: db.Log) extends DB:
 
-        def transaction(account: Int, amount: Int, desc: String): Result < IO =
+        def transaction(account: Int, amount: Int, desc: String): Result < Sync =
             index.transaction(account, amount, desc).map {
                 case Denied => Denied
                 case result: Processed =>
                     log.transaction(result.balance, account, amount, desc).andThen(result)
             }
 
-        def statement(account: Int): Statement < IO =
+        def statement(account: Int): Statement < Sync =
             index.statement(account)
 
     end Live

@@ -138,7 +138,7 @@ class ConstructorsTest extends Test:
         }
 
         "suspend" - {
-            "should suspend an effect using IO" in run {
+            "should suspend an effect using Sync" in run {
                 var executed = false
                 val effect = Kyo.suspend {
                     executed = true
@@ -158,8 +158,8 @@ class ConstructorsTest extends Test:
                 val successEffect = Kyo.suspendAttempt(42)
                 val failureEffect = Kyo.suspendAttempt(throw new Exception("Error"))
 
-                val successResult = IO.Unsafe.evalOrThrow(Abort.run[Throwable](successEffect))
-                val failureResult = IO.Unsafe.evalOrThrow(Abort.run[Throwable](failureEffect))
+                val successResult = Sync.Unsafe.evalOrThrow(Abort.run[Throwable](successEffect))
+                val failureResult = Sync.Unsafe.evalOrThrow(Abort.run[Throwable](failureEffect))
 
                 assert(successResult == Result.succeed(42))
                 assert(failureResult.isInstanceOf[Result.Failure[?]])

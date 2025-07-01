@@ -28,7 +28,7 @@ class ResolverTest extends Test:
         k1: Int < Abort[Throwable],
         k2: Int < Async,
         k3: Int < (Abort[Throwable] & Async),
-        k4: Int < IO,
+        k4: Int < Sync,
         k5: Int < Async
     ) derives Schema.SemiAuto
 

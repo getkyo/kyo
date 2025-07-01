@@ -22,9 +22,9 @@ object TMap:
     /** Creates a new empty TMap.
       *
       * @return
-      *   A new empty TMap within the IO effect
+      *   A new empty TMap within the Sync effect
       */
-    def init[K, V](using Frame): TMap[K, V] < IO =
+    def init[K, V](using Frame): TMap[K, V] < Sync =
         TRef.init(Map.empty)
 
     /** Creates a new TMap containing the provided key-value pairs.
@@ -32,9 +32,9 @@ object TMap:
       * @param entries
       *   The initial key-value pairs to store in the map
       * @return
-      *   A new TMap containing the entries, within the IO effect
+      *   A new TMap containing the entries, within the Sync effect
       */
-    def init[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < IO =
+    def init[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < Sync =
         initWith(entries*)(identity)
 
     /** Creates a new TMap from an existing Map.
@@ -42,9 +42,9 @@ object TMap:
       * @param map
       *   The initial map to wrap
       * @return
-      *   A new TMap containing the map entries, within the IO effect
+      *   A new TMap containing the map entries, within the Sync effect
       */
-    def init[K, V](map: Map[K, V])(using Frame): TMap[K, V] < IO =
+    def init[K, V](map: Map[K, V])(using Frame): TMap[K, V] < Sync =
         init(map.toSeq*)
 
     /** Creates a new TMap and immediately applies a function to it.
@@ -57,11 +57,11 @@ object TMap:
       * @param f
       *   The function to apply to the newly created TMap
       * @return
-      *   The result of applying the function to the new TMap, within combined IO and S effects
+      *   The result of applying the function to the new TMap, within combined Sync and S effects
       */
     inline def initWith[K, V](inline entries: (K, V)*)[A, S](inline f: TMap[K, V] => A < S)(
         using inline frame: Frame
-    ): TMap[K, V] < (IO & S) =
+    ): TMap[K, V] < (Sync & S) =
         TID.useIOUnsafe { tid =>
             val trefs =
                 entries.foldLeft(Map.empty[K, TRef[V]]) {
