@@ -881,7 +881,7 @@ object Parse:
       *   Unit if character matches
       */
     def char(c: Char)(using Frame): Char < Parse[Char] =
-        literal(c) // Could be changed once we specialize Text state out of Chunk state
+        literal(c)
 
     /** Matches exact input
       *
