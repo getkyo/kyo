@@ -45,8 +45,10 @@ object CanLiftMacro:
         import quotes.reflect.*
         val tpe = TypeRepr.of[A]
         val sym = tpe.typeSymbol
+
         if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
+
         '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
     end liftImpl
 
@@ -67,38 +69,3 @@ object CanLift:
         inline given bypass[A]: CanLift[A] = null
     end unsafe
 end CanLift
-
-object LiftMacro:
-
-    def liftMacro[A: Type, S: Type](v: Expr[A])(using Quotes): Expr[A < S] =
-        import quotes.reflect.*
-
-        enum Mode derives CanEqual:
-            case Cast, Nested, DefaultLift
-
-        val tpe        = TypeRepr.of[A].dealias
-        inline def sym = tpe.typeSymbol
-
-        inline def isPending  = tpe <:< TypeRepr.of[Any < Nothing]
-        inline def isNothing  = tpe =:= TypeRepr.of[Nothing]
-        inline def isOpaque   = sym.flags.is(Flags.Opaque)
-        inline def isConcrete = tpe.typeSymbol.isClassDef
-
-        val mode =
-            if isPending then Mode.Nested // pending is opaque
-            else if isNothing || isConcrete || isOpaque then Mode.Cast
-            else Mode.DefaultLift
-
-        mode match
-            case Mode.Cast        => '{ $v.asInstanceOf[A < S] }
-            case Mode.Nested      => '{ Nested($v) }
-            case Mode.DefaultLift => '{ defaultLift($v) }
-        end match
-    end liftMacro
-
-    final def defaultLift[A, S](v: A): A < S =
-        v match
-            case kyo: Kyo[?, ?] => Nested(kyo)
-            case _              => v.asInstanceOf[A < S]
-
-end LiftMacro
