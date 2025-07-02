@@ -24,7 +24,7 @@ final class CancellationTest extends Test:
                 for
                     flag         <- AtomicBoolean.init(false)
                     subscription <- StreamSubscription.subscribe(stream, new Sub(flag))
-                    _            <- Sync.io(program(subscription))
+                    _            <- Sync.defer(program(subscription))
                 yield Loop.continue(index - 1)
             end if
         }

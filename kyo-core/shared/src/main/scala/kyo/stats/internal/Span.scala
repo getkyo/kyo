@@ -8,10 +8,10 @@ import scala.annotation.tailrec
 final case class Span(unsafe: Span.Unsafe):
 
     def end(using Frame): Unit < Sync =
-        Sync.io(unsafe.end())
+        Sync.defer(unsafe.end())
 
     def event(name: String, a: Attributes)(using Frame): Unit < Sync =
-        Sync.io(unsafe.event(name, a))
+        Sync.defer(unsafe.event(name, a))
 end Span
 
 object Span:

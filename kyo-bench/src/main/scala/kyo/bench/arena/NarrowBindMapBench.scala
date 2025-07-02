@@ -9,11 +9,11 @@ class NarrowBindMapBench extends ArenaBench.SyncAndFork(10000):
 
         def loop(i: Int): Int < Sync =
             if i < depth then
-                Sync.io(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                Sync.defer(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(loop)
-            else Sync.io(i)
+            else Sync.defer(i)
 
-        Sync.io(0).flatMap(loop)
+        Sync.defer(0).flatMap(loop)
     end kyoBench
 
     def catsBench() =

@@ -130,7 +130,7 @@ final private[kyo] class StreamSubscriber[V](
                         if remaining == 0 then
                             val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty[V], 0) -> Absent
                             if state.compareAndSet(curState, nextState) then
-                                Sync.io(true)
+                                Sync.defer(true)
                             else
                                 handleAwait()
                             end if
@@ -144,17 +144,17 @@ final private[kyo] class StreamSubscriber[V](
                             end if
                     else
                         if state.compareAndSet(curState, s) then
-                            Sync.io(false)
+                            Sync.defer(false)
                         else
                             handleAwait()
                 case other =>
                     if state.compareAndSet(curState, other) then
-                        Sync.io(false)
+                        Sync.defer(false)
                     else
                         handleAwait()
             end match
         end handleAwait
-        Sync.io(handleAwait())
+        Sync.defer(handleAwait())
     end await
 
     private[interop] def request(using Frame): Long < Sync =
@@ -164,18 +164,18 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.WaitForRequest(subscription, items, remaining), maybePromise) =>
                     val nextState = UpstreamState.WaitForRequest(subscription, items, remaining + bufferSize) -> maybePromise
                     if state.compareAndSet(curState, nextState) then
-                        Sync.io(subscription.request(bufferSize)).andThen(bufferSize.toLong)
+                        Sync.defer(subscription.request(bufferSize)).andThen(bufferSize.toLong)
                     else
                         handleRequest()
                     end if
                 case other =>
                     if state.compareAndSet(curState, other) then
-                        Sync.io(0L)
+                        Sync.defer(0L)
                     else
                         handleRequest()
             end match
         end handleRequest
-        Sync.io(handleRequest())
+        Sync.defer(handleRequest())
     end request
 
     private[interop] def poll(using Frame): Result[Error[Any] | SubscriberDone, Chunk[V]] < Sync =
@@ -185,14 +185,14 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.WaitForRequest(subscription, items, remaining), Absent) =>
                     val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty, remaining) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        Sync.io(Result.succeed(items))
+                        Sync.defer(Result.succeed(items))
                     else
                         handlePoll()
                     end if
                 case s @ (UpstreamState.Finished(reason, leftOver), Absent) =>
                     if leftOver.isEmpty then
                         if state.compareAndSet(curState, s) then
-                            Sync.io {
+                            Sync.defer {
                                 reason match
                                     case Present(error) => Result.fail(error)
                                     case Absent         => Result.fail(SubscriberDone)
@@ -202,19 +202,19 @@ final private[kyo] class StreamSubscriber[V](
                     else
                         val nextState = UpstreamState.Finished(reason, Chunk.empty) -> Absent
                         if state.compareAndSet(curState, nextState) then
-                            Sync.io(Result.succeed(leftOver))
+                            Sync.defer(Result.succeed(leftOver))
                         else
                             handlePoll()
                         end if
                     end if
                 case other =>
                     if state.compareAndSet(curState, other) then
-                        Sync.io(Result.succeed(Chunk.empty))
+                        Sync.defer(Result.succeed(Chunk.empty))
                     else
                         handlePoll()
             end match
         end handlePoll
-        Sync.io(handlePoll())
+        Sync.defer(handlePoll())
     end poll
 
     private[interop] def interupt(using Frame): Unit < Sync =
@@ -224,14 +224,14 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.Uninitialized, maybePromise) =>
                     val nextState = UpstreamState.Finished(Absent, Chunk.empty) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        Sync.io(maybePromise.foreach(_.completeDiscard(Result.succeed(()))))
+                        Sync.defer(maybePromise.foreach(_.completeDiscard(Result.succeed(()))))
                     else
                         handleInterupt()
                     end if
                 case (UpstreamState.WaitForRequest(subscription, _, _), Absent) =>
                     val nextState = UpstreamState.Finished(Absent, Chunk.empty) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        Sync.io(subscription.cancel())
+                        Sync.defer(subscription.cancel())
                     else
                         handleInterupt()
                     end if
@@ -242,7 +242,7 @@ final private[kyo] class StreamSubscriber[V](
                         handleInterupt()
             end match
         end handleInterupt
-        Sync.io(handleInterupt())
+        Sync.defer(handleInterupt())
     end interupt
 
     private[interop] def emit(using Frame, Tag[Emit[Chunk[V]]]): Unit < (Emit[Chunk[V]] & Async) =

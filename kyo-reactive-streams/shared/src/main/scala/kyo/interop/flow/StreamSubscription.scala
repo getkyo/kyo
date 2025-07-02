@@ -27,7 +27,7 @@ final private[kyo] class StreamSubscription[V, S](
         discard(requestChannel.close())
     end cancel
 
-    private[interop] def subscribe(using Frame): Unit < Sync = Sync.io(subscriber.onSubscribe(this))
+    private[interop] def subscribe(using Frame): Unit < Sync = Sync.defer(subscriber.onSubscribe(this))
 
     private[interop] def poll(using Tag[Poll[Chunk[V]]], Frame): StreamComplete < (Async & Poll[Chunk[V]] & Abort[StreamCanceled]) =
         def loopPoll(requesting: Long): (Chunk[V] | StreamComplete) < (Sync & Poll[Chunk[V]]) =
@@ -35,22 +35,22 @@ final private[kyo] class StreamSubscription[V, S](
                 Poll.andMap:
                     case Present(values) =>
                         if values.size <= requesting then
-                            Sync.io(values.foreach(subscriber.onNext(_)))
+                            Sync.defer(values.foreach(subscriber.onNext(_)))
                                 .andThen(Loop.continue(requesting - values.size))
                         else
-                            Sync.io(values.take(requesting.intValue).foreach(subscriber.onNext(_)))
+                            Sync.defer(values.take(requesting.intValue).foreach(subscriber.onNext(_)))
                                 .andThen(Loop.done(values.drop(requesting.intValue)))
                     case Absent =>
-                        Sync.io(Loop.done(StreamComplete))
+                        Sync.defer(Loop.done(StreamComplete))
 
         Loop[Chunk[V], StreamComplete, Async & Poll[Chunk[V]] & Abort[StreamCanceled]](Chunk.empty[V]): leftOver =>
             Abort.run[Closed](requestChannel.safe.take).map:
                 case Result.Success(requesting) =>
                     if requesting <= leftOver.size then
-                        Sync.io(leftOver.take(requesting.intValue).foreach(subscriber.onNext(_)))
+                        Sync.defer(leftOver.take(requesting.intValue).foreach(subscriber.onNext(_)))
                             .andThen(Loop.continue(leftOver.drop(requesting.intValue)))
                     else
-                        Sync.io(leftOver.foreach(subscriber.onNext(_)))
+                        Sync.defer(leftOver.foreach(subscriber.onNext(_)))
                             .andThen(loopPoll(requesting - leftOver.size))
                             .map {
                                 case nextLeftOver: Chunk[V] => Loop.continue(nextLeftOver)
@@ -68,8 +68,8 @@ final private[kyo] class StreamSubscription[V, S](
         Fiber.run[StreamCanceled, StreamComplete, S](Poll.runEmit(stream.emit)(poll).map(_._2))
             .map { fiber =>
                 fiber.onComplete {
-                    case Result.Success(StreamComplete) => Sync.io(subscriber.onComplete())
-                    case Result.Panic(e)                => Sync.io(subscriber.onError(e))
+                    case Result.Success(StreamComplete) => Sync.defer(subscriber.onComplete())
+                    case Result.Panic(e)                => Sync.defer(subscriber.onError(e))
                     case Result.Failure(StreamCanceled) => Kyo.unit
                 }.andThen(fiber)
             }

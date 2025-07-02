@@ -17,7 +17,7 @@ class PathTest extends Test:
         JFiles.delete(Paths.get(name))
 
     def useFile(name: String, text: String) =
-        Resource.acquireRelease(Sync.io(createFile(name, text)))(_ => Sync.io(destroyFile(name)))
+        Resource.acquireRelease(Sync.defer(createFile(name, text)))(_ => Sync.defer(destroyFile(name)))
 
     "read and write files" - {
         "read file as string" in run {
@@ -176,10 +176,10 @@ class PathTest extends Test:
             val stream = Stream.init(Chunk[Byte](115, 111, 109, 101, 32, 116, 101, 120, 116))
             val file   = Path(name)
             for
-                _   <- Sync.io(createFile(name, ""))
+                _   <- Sync.defer(createFile(name, ""))
                 _   <- stream.sink(file)
                 res <- file.read
-                _   <- Sync.io(destroyFile(name))
+                _   <- Sync.defer(destroyFile(name))
             yield assert(res == "some text")
             end for
 
@@ -190,10 +190,10 @@ class PathTest extends Test:
             val stream = Stream.init(Chunk("some text", "more text"))
             val file   = Path(name)
             for
-                _   <- Sync.io(createFile(name, ""))
+                _   <- Sync.defer(createFile(name, ""))
                 _   <- stream.sinkLines(file)
                 res <- file.readLines
-                _   <- Sync.io(destroyFile(name))
+                _   <- Sync.defer(destroyFile(name))
             yield assert(res == List("some text", "more text"))
             end for
         }
@@ -344,49 +344,49 @@ class PathTest extends Test:
         "cache" in run {
             for
                 kyoPath <- Path.basePaths.map(_.cache)
-                libPath <- Sync.io(BaseDirectories.get().cacheDir)
+                libPath <- Sync.defer(BaseDirectories.get().cacheDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "config" in run {
             for
                 kyoPath <- Path.basePaths.map(_.config)
-                libPath <- Sync.io(BaseDirectories.get().configDir)
+                libPath <- Sync.defer(BaseDirectories.get().configDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "data" in run {
             for
                 kyoPath <- Path.basePaths.map(_.data)
-                libPath <- Sync.io(BaseDirectories.get().dataDir)
+                libPath <- Sync.defer(BaseDirectories.get().dataDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "dataLocal" in run {
             for
                 kyoPath <- Path.basePaths.map(_.dataLocal)
-                libPath <- Sync.io(BaseDirectories.get().dataLocalDir)
+                libPath <- Sync.defer(BaseDirectories.get().dataLocalDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "executable" in run {
             for
                 kyoPath <- Path.basePaths.map(_.executable)
-                libPath <- Sync.io(BaseDirectories.get().executableDir)
+                libPath <- Sync.defer(BaseDirectories.get().executableDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "preference" in run {
             for
                 kyoPath <- Path.basePaths.map(_.preference)
-                libPath <- Sync.io(BaseDirectories.get().preferenceDir)
+                libPath <- Sync.defer(BaseDirectories.get().preferenceDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "runtime" in run {
             for
                 kyoPath <- Path.basePaths.map(_.runtime)
-                libPath <- Sync.io(BaseDirectories.get().runtimeDir)
+                libPath <- Sync.defer(BaseDirectories.get().runtimeDir)
             yield assert(kyoPath == Path(libPath))
         }
     }
@@ -395,70 +395,70 @@ class PathTest extends Test:
         "home" in run {
             for
                 kyoPath <- Path.userPaths.map(_.home)
-                libPath <- Sync.io(UserDirectories.get().homeDir)
+                libPath <- Sync.defer(UserDirectories.get().homeDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "audio" in run {
             for
                 kyoPath <- Path.userPaths.map(_.audio)
-                libPath <- Sync.io(UserDirectories.get().audioDir)
+                libPath <- Sync.defer(UserDirectories.get().audioDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "desktop" in run {
             for
                 kyoPath <- Path.userPaths.map(_.desktop)
-                libPath <- Sync.io(UserDirectories.get().desktopDir)
+                libPath <- Sync.defer(UserDirectories.get().desktopDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "document" in run {
             for
                 kyoPath <- Path.userPaths.map(_.document)
-                libPath <- Sync.io(UserDirectories.get().documentDir)
+                libPath <- Sync.defer(UserDirectories.get().documentDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "download" in run {
             for
                 kyoPath <- Path.userPaths.map(_.download)
-                libPath <- Sync.io(UserDirectories.get().downloadDir)
+                libPath <- Sync.defer(UserDirectories.get().downloadDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "font" in run {
             for
                 kyoPath <- Path.userPaths.map(_.font)
-                libPath <- Sync.io(UserDirectories.get().fontDir)
+                libPath <- Sync.defer(UserDirectories.get().fontDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "picture" in run {
             for
                 kyoPath <- Path.userPaths.map(_.picture)
-                libPath <- Sync.io(UserDirectories.get().pictureDir)
+                libPath <- Sync.defer(UserDirectories.get().pictureDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "public" in run {
             for
                 kyoPath <- Path.userPaths.map(_.public)
-                libPath <- Sync.io(UserDirectories.get().publicDir)
+                libPath <- Sync.defer(UserDirectories.get().publicDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "template" in run {
             for
                 kyoPath <- Path.userPaths.map(_.template)
-                libPath <- Sync.io(UserDirectories.get().templateDir)
+                libPath <- Sync.defer(UserDirectories.get().templateDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "video" in run {
             for
                 kyoPath <- Path.userPaths.map(_.video)
-                libPath <- Sync.io(UserDirectories.get().videoDir)
+                libPath <- Sync.defer(UserDirectories.get().videoDir)
             yield assert(kyoPath == Path(libPath))
         }
     }
@@ -470,49 +470,49 @@ class PathTest extends Test:
         "path" in run {
             for
                 kyoPath <- testProject.map(_.path)
-                libPath <- Sync.io(libProject.projectPath)
+                libPath <- Sync.defer(libProject.projectPath)
             yield assert(kyoPath == Path(libPath))
         }
 
         "cache" in run {
             for
                 kyoPath <- testProject.map(_.cache)
-                libPath <- Sync.io(libProject.cacheDir)
+                libPath <- Sync.defer(libProject.cacheDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "config" in run {
             for
                 kyoPath <- testProject.map(_.config)
-                libPath <- Sync.io(libProject.configDir)
+                libPath <- Sync.defer(libProject.configDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "data" in run {
             for
                 kyoPath <- testProject.map(_.data)
-                libPath <- Sync.io(libProject.dataDir)
+                libPath <- Sync.defer(libProject.dataDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "dataLocal" in run {
             for
                 kyoPath <- testProject.map(_.dataLocal)
-                libPath <- Sync.io(libProject.dataLocalDir)
+                libPath <- Sync.defer(libProject.dataLocalDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "preference" in run {
             for
                 kyoPath <- testProject.map(_.preference)
-                libPath <- Sync.io(libProject.preferenceDir)
+                libPath <- Sync.defer(libProject.preferenceDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "runtime" in run {
             for
                 kyoPath <- testProject.map(_.runtime)
-                libPath <- Sync.io(libProject.runtimeDir)
+                libPath <- Sync.defer(libProject.runtimeDir)
             yield assert(kyoPath == Path(libPath))
         }
     }

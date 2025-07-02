@@ -112,7 +112,7 @@ class PatMatchTest extends AnyFreeSpec with Assertions:
     "misc" - {
         "val patmatch" in {
             runLiftTest(1) {
-                val Some(a) = Sync.io(Some(1)).now
+                val Some(a) = Sync.defer(Some(1)).now
                 a
             }
         }

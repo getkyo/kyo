@@ -27,7 +27,7 @@ class KyoAppTest extends Test:
                 run { ref.getAndIncrement }
                 run { ref.getAndIncrement }
 
-            _    <- Sync.io(app.main(Array.empty))
+            _    <- Sync.defer(app.main(Array.empty))
             runs <- ref.get
         yield assert(runs == 3)
     }
@@ -36,10 +36,10 @@ class KyoAppTest extends Test:
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Assertion]()
         val app = new KyoApp:
-            run { Async.delay(10.millis)(Sync.io(x += 1)) }
-            run { Async.delay(10.millis)(Sync.io(x += 2)) }
-            run { Async.delay(10.millis)(Sync.io(x += 3)) }
-            run { Sync.io(promise.complete(Try(assert(x.toList == List(1, 2, 3))))) }
+            run { Async.delay(10.millis)(Sync.defer(x += 1)) }
+            run { Async.delay(10.millis)(Sync.defer(x += 2)) }
+            run { Async.delay(10.millis)(Sync.defer(x += 3)) }
+            run { Sync.defer(promise.complete(Try(assert(x.toList == List(1, 2, 3))))) }
         app.main(Array.empty)
         promise.future
     }

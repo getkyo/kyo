@@ -35,7 +35,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             .range(0, 10, 1, 1)
             .map { int =>
                 if int < 5 then
-                    Sync.io(int)
+                    Sync.defer(int)
                 else
                     Abort.panic(TestError)
             }
@@ -104,7 +104,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then
-                        Sync.io(())
+                        Sync.defer(())
                     else
                         Emit.valueWith(Chunk(value))(emit(counter))
                     end if
@@ -161,7 +161,7 @@ abstract private class PublisherToSubscriberTest extends Test:
             def emit(counter: AtomicInt): Unit < (Emit[Chunk[Int]] & Sync) =
                 counter.getAndIncrement.map: value =>
                     if value >= MaxStreamLength then
-                        Sync.io(())
+                        Sync.defer(())
                     else
                         Emit.valueWith(Chunk(value))(emit(counter))
                     end if

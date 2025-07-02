@@ -19,51 +19,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && Sync.io(True).now
+                    True && Sync.defer(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    True && Sync.io(False).now
+                    True && Sync.defer(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    False && Sync.io(NotExpected).now
+                    False && Sync.defer(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    Sync.io(True).now && True
+                    Sync.defer(True).now && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    Sync.io(True).now && False
+                    Sync.defer(True).now && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    Sync.io(False).now && NotExpected
+                    Sync.defer(False).now && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    Sync.io(True).now && Sync.io(True).now
+                    Sync.defer(True).now && Sync.defer(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    Sync.io(True).now && Sync.io(False).now
+                    Sync.defer(True).now && Sync.defer(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    Sync.io(False).now && Sync.io(NotExpected).now
+                    Sync.defer(False).now && Sync.defer(NotExpected).now
                 }
             }
         }
@@ -77,51 +77,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || Sync.io(False).now
+                    False || Sync.defer(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || Sync.io(True).now
+                    False || Sync.defer(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || Sync.io(NotExpected).now
+                    True || Sync.defer(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    Sync.io(False).now || False
+                    Sync.defer(False).now || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    Sync.io(False).now || True
+                    Sync.defer(False).now || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    Sync.io(True).now || NotExpected
+                    Sync.defer(True).now || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    Sync.io(False).now || Sync.io(False).now
+                    Sync.defer(False).now || Sync.defer(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    Sync.io(False).now || Sync.io(True).now
+                    Sync.defer(False).now || Sync.defer(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    Sync.io(True).now || Sync.io(NotExpected).now
+                    Sync.defer(True).now || Sync.defer(NotExpected).now
                 }
             }
         }

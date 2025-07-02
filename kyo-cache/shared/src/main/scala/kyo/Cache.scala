@@ -35,13 +35,13 @@ class Cache(private[kyo] val store: Store) extends Serializable:
         (v: A) =>
             Promise.initWith[Throwable, B] { p =>
                 val key = (this, v)
-                Sync.io {
+                Sync.defer {
                     val p2 = store.get(key, _ => p.asInstanceOf[Promise[Nothing, Any]])
                     if p.equals(p2) then
                         Sync.ensure {
                             p.interrupt.map {
                                 case true =>
-                                    Sync.io(store.invalidate(key))
+                                    Sync.defer(store.invalidate(key))
                                 case false =>
                                     ()
                             }
@@ -51,7 +51,7 @@ class Cache(private[kyo] val store: Store) extends Serializable:
                                     p.complete(Result.Success(v))
                                         .andThen(v)
                                 case r =>
-                                    Sync.io(store.invalidate(key))
+                                    Sync.defer(store.invalidate(key))
                                         .andThen(p.complete(r))
                                         .andThen(r.getOrThrow)
                             }
@@ -225,7 +225,7 @@ object Cache:
       *   A new Cache instance wrapped in an Sync effect
       */
     def init(f: Builder => Builder)(using Frame): Cache < Sync =
-        Sync.io {
+        Sync.defer {
             new Cache(
                 f(new Builder(Caffeine.newBuilder())).b
                     .build[Any, Promise[Nothing, Any]]()

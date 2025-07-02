@@ -300,7 +300,7 @@ object Fiber:
           * @return
           *   The number of waiters on this Fiber
           */
-        def waiters(using Frame): Int < Sync = Sync.io(self.asPromise.waiters())
+        def waiters(using Frame): Int < Sync = Sync.defer(self.asPromise.waiters())
 
         /** Polls the Fiber for a result without blocking.
           *
@@ -569,7 +569,7 @@ object Fiber:
                     val safepoint = Safepoint.get
                     isolate.runInternal { (trace, context) =>
                         foreach(iterable) { (idx, v) =>
-                            val fiber = IOTask(Sync.io(f(idx, v)), safepoint.copyTrace(trace), context)
+                            val fiber = IOTask(Sync.defer(f(idx, v)), safepoint.copyTrace(trace), context)
                             state.interrupts(fiber)
                             fiber.onComplete(state(idx, _))
                         }
@@ -664,7 +664,7 @@ object Fiber:
           *   The result of applying the function
           */
         inline def initWith[E, A](using inline frame: Frame)[B, S](inline f: Promise[E, A] => B < S): B < (S & Sync) =
-            Sync.io(f(IOPromise()))
+            Sync.defer(f(IOPromise()))
 
         extension [E, A](self: Promise[E, A])
             /** Completes the Promise with a result.

@@ -188,9 +188,9 @@ object Memory:
           *   The result of the operation
           */
         def run[A, S](f: A < (Arena & S))(using Frame): A < (Sync & S) =
-            Sync.io {
+            Sync.defer {
                 val arena = JArena.ofShared()
-                Sync.ensure(Sync.io(arena.close))(Env.run(arena)(f))
+                Sync.ensure(Sync.defer(arena.close))(Env.run(arena)(f))
             }
 
         given isolate: Isolate.Contextual[Arena, Sync] = Isolate.Contextual.derive[Arena, Sync]

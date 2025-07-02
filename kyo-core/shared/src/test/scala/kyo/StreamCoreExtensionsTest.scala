@@ -133,7 +133,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, par, Int.MaxValue)
-                        s2 = stream.mapPar(par, buf)(i => Sync.io(i + 1))
+                        s2 = stream.mapPar(par, buf)(i => Sync.defer(i + 1))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -168,7 +168,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapParUnordered(par, buf)(i => Sync.io(i + 1))
+                        s2 = stream.mapParUnordered(par, buf)(i => Sync.defer(i + 1))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet
@@ -205,7 +205,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkPar(par, buf)(c => Sync.io(c.map(_ + 1)))
+                        s2 = stream.mapChunkPar(par, buf)(c => Sync.defer(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -447,7 +447,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync.io(c.map(_ + 1)))
+                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync.defer(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet

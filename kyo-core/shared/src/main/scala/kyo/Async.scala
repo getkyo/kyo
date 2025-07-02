@@ -93,8 +93,8 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   The suspended computation wrapped in an Async effect
       */
-    inline def io[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
-        Sync.io(v)
+    inline def defer[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
+        Sync.defer(v)
 
     /** Runs an asynchronous computation with interrupt masking.
       *
@@ -761,7 +761,7 @@ object Async extends AsyncPlatformSpecific:
                         else
                             loop()
                         end if
-            Kyo.lift(Sync.io(loop()))
+            Kyo.lift(Sync.defer(loop()))
         }
 
     /** Converts a Future to an asynchronous computation.

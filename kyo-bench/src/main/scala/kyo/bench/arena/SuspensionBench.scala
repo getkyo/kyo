@@ -16,12 +16,12 @@ class SuspensionBench extends ArenaBench.SyncAndFork(()):
     def kyoBench() =
         import kyo.*
 
-        Sync.io(())
-            .flatMap(_ => Sync.io(())).map(_ => ()).flatMap(_ => Sync.io(())).map(_ => ())
-            .flatMap(_ => Sync.io(())).map(_ => ()).flatMap(_ => Sync.io(())).map(_ => ())
-            .flatMap(_ => Sync.io(())).map(_ => ()).flatMap(_ => Sync.io(())).map(_ => ())
-            .flatMap(_ => Sync.io(())).map(_ => ()).flatMap(_ => Sync.io(())).map(_ => ())
-            .flatMap(_ => Sync.io(())).map(_ => ()).flatMap(_ => Sync.io(())).map(_ => ())
+        Sync.defer(())
+            .flatMap(_ => Sync.defer(())).map(_ => ()).flatMap(_ => Sync.defer(())).map(_ => ())
+            .flatMap(_ => Sync.defer(())).map(_ => ()).flatMap(_ => Sync.defer(())).map(_ => ())
+            .flatMap(_ => Sync.defer(())).map(_ => ()).flatMap(_ => Sync.defer(())).map(_ => ())
+            .flatMap(_ => Sync.defer(())).map(_ => ()).flatMap(_ => Sync.defer(())).map(_ => ())
+            .flatMap(_ => Sync.defer(())).map(_ => ()).flatMap(_ => Sync.defer(())).map(_ => ())
     end kyoBench
 
     def zioBench() =

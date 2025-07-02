@@ -118,7 +118,7 @@ object Resolvers:
         for
             interpreter <- v
             endpoints = interpreter.serverEndpoints[R, NoStreams](NoStreams).map(convertEndpoint(_, runtime))
-            bindings <- Sync.io(server.addEndpoints(endpoints).start())
+            bindings <- Sync.defer(server.addEndpoints(endpoints).start())
         yield bindings
 
     /** Creates an HttpInterpreter from a GraphQL API.

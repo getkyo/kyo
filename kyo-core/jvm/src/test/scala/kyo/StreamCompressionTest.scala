@@ -79,70 +79,70 @@ class StreamCompressionTest extends Test:
     "deflate/inflate" - {
         "inflate please wrap" in run {
             for
-                inStream <- Sync.io(Stream.init(
+                inStream <- Sync.defer(Stream.init(
                     Chunk.from(Array[Byte](120, -100, -53, -52, 75, -53, 73, 44, 73, 85, 40, -56, 73, 77, 44, 78, 85, 40, 47, 74, 44, 0, 0,
                         73, -20, 7, 88))
                 ))
-                outStream <- Sync.io(inStream.inflate())
+                outStream <- Sync.defer(inStream.inflate())
                 bytes     <- outStream.run.map(toUnboxByteArray)
-                string    <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string    <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == "inflate please wrap")
         }
 
         "inflate please nowrap" in run {
             for
-                inStream <- Sync.io(Stream.init(
+                inStream <- Sync.defer(Stream.init(
                     Chunk.from(Array[Byte](-53, -52, 75, -53, 73, 44, 73, 85, 40, -56, 73, 77, 44, 78, 85, -56, -53, 47, 47, 74, 44, 0, 0))
                 ))
-                outStream <- Sync.io(inStream.inflate(noWrap = true))
+                outStream <- Sync.defer(inStream.inflate(noWrap = true))
                 bytes     <- outStream.run.map(toUnboxByteArray)
-                string    <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string    <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == "inflate please nowrap")
         }
 
         "short stream" in run {
             for
-                inStream <- Sync.io(Stream.init(Chunk.from(getBytes(shortText))))
+                inStream <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
                 inChunk  <- inStream.run
-                deflatedStream <- Sync.io {
+                deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
                 }
-                inflatedStream <- Sync.io(deflatedStream.inflate(noWrap = false))
+                inflatedStream <- Sync.defer(deflatedStream.inflate(noWrap = false))
                 bytes          <- inflatedStream.run.map(toUnboxByteArray)
-                string         <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string         <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == shortText)
         }
 
         "stream of two deflated inputs" in run {
             for
-                inStream1 <- Sync.io(Stream.init(Chunk.from(getBytes(shortText))))
+                inStream1 <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
                 inChunk1  <- inStream1.run
-                deflatedStream1 <- Sync.io {
+                deflatedStream1 <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk1, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
                 }
-                inStream2 <- Sync.io(Stream.init(Chunk.from(getBytes(otherShortText))))
+                inStream2 <- Sync.defer(Stream.init(Chunk.from(getBytes(otherShortText))))
                 inChunk2  <- inStream2.run
-                deflatedStream2 <- Sync.io {
+                deflatedStream2 <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk2, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
                 }
-                inflatedStream <- Sync.io(deflatedStream1.concat(deflatedStream2).inflate(noWrap = false))
+                inflatedStream <- Sync.defer(deflatedStream1.concat(deflatedStream2).inflate(noWrap = false))
                 bytes          <- inflatedStream.run.map(toUnboxByteArray)
-                string         <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string         <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == shortText ++ otherShortText)
         }
 
         "inflate input (deflated larger than inflated)" in runJVM {
             for
-                inStream <- Sync.io(Stream.init(
+                inStream <- Sync.defer(Stream.init(
                     Chunk.from(getBytes("꒔諒ᇂ즆ᰃ遇ኼ㎐만咘똠ᯈ䕍쏮쿻ࣇ㦲䷱瘫椪⫐褽睌쨘꛹騏蕾☦余쒧꺠ܝ猸b뷈埣ꂓ琌ཬ隖㣰忢鐮橀쁚誅렌폓㖅ꋹ켗餪庺Đ懣㫍㫌굦뢲䅦苮Ѣқ闭䮚ū﫣༶漵>껆拦휬콯耙腒䔖돆圹Ⲷ曩ꀌ㒈")),
                     1
                 ))
-                deflatedStream <- Sync.io(inStream.deflate(noWrap = false))
+                deflatedStream <- Sync.defer(inStream.deflate(noWrap = false))
                 byteChunk      <- deflatedStream.run
-                expected <- Sync.io {
+                expected <- Sync.defer {
                     val bos = new ByteArrayOutputStream()
                     val ios = new InflaterOutputStream(bos, new Inflater(false))
                     ios.write(toUnboxByteArray(byteChunk), 0, byteChunk.length)
@@ -153,64 +153,64 @@ class StreamCompressionTest extends Test:
                     ios.close()
                     inflatedBytes
                 }
-                inflatedStream <- Sync.io(deflatedStream.inflate(noWrap = false))
+                inflatedStream <- Sync.defer(deflatedStream.inflate(noWrap = false))
                 result         <- inflatedStream.run
             yield assert(expected == result)
         }
 
         "long input, buffer smaller than chunks" in run {
             for
-                inStream <- Sync.io(Stream.init(
+                inStream <- Sync.defer(Stream.init(
                     Chunk.from(getBytes(longText)),
                     64
                 ))
                 inChunk <- inStream.run
-                deflatedStream <- Sync.io {
+                deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
                 }
-                inflatedStream <- Sync.io(deflatedStream.inflate(bufferSize = 8, noWrap = false))
+                inflatedStream <- Sync.defer(deflatedStream.inflate(bufferSize = 8, noWrap = false))
                 bytes          <- inflatedStream.run.map(toUnboxByteArray)
-                string         <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string         <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == longText)
         }
 
         "long input, chunks smaller then buffer" in run {
             for
-                inStream <- Sync.io(Stream.init(
+                inStream <- Sync.defer(Stream.init(
                     Chunk.from(getBytes(longText)),
                     8
                 ))
                 inChunk <- inStream.run
-                deflatedStream <- Sync.io {
+                deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.Default.value, false))
                     Stream.init(deflatedChunk)
                 }
-                inflatedStream <- Sync.io(deflatedStream.inflate(bufferSize = 64, noWrap = false))
+                inflatedStream <- Sync.defer(deflatedStream.inflate(bufferSize = 64, noWrap = false))
                 bytes          <- inflatedStream.run.map(toUnboxByteArray)
-                string         <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string         <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == longText)
         }
 
         "long input, nowrap = true" in run {
             for
-                inStream <- Sync.io(Stream.init(Chunk.from(getBytes(longText))))
+                inStream <- Sync.defer(Stream.init(Chunk.from(getBytes(longText))))
                 inChunk  <- inStream.run
-                deflatedStream <- Sync.io {
+                deflatedStream <- Sync.defer {
                     val deflatedChunk = jdkDeflate(inChunk, new Deflater(CompressionLevel.BestCompression.value, true))
                     Stream.init(deflatedChunk)
                 }
-                inflatedStream <- Sync.io(deflatedStream.inflate(noWrap = true))
+                inflatedStream <- Sync.defer(deflatedStream.inflate(noWrap = true))
                 bytes          <- inflatedStream.run.map(toUnboxByteArray)
-                string         <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string         <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == longText)
         }
 
         "fail early if header is corrupted" in run {
             Abort.run(
                 for
-                    inStream       <- Sync.io(Stream.init(Chunk[Byte](1, 2, 3, 4, 5)))
-                    inflatedStream <- Sync.io(inStream.inflate())
+                    inStream       <- Sync.defer(Stream.init(Chunk[Byte](1, 2, 3, 4, 5)))
+                    inflatedStream <- Sync.defer(inStream.inflate())
                     _              <- inflatedStream.run
                 yield ()
             ).map: result =>
@@ -221,12 +221,12 @@ class StreamCompressionTest extends Test:
 
         "inflate nowrap: remaining = 0 but not all was pulled" in run {
             for
-                deflatedStream <- Sync.io {
+                deflatedStream <- Sync.defer {
                     val deflatedChunk =
                         jdkDeflate(inflateRandomExampleThatFailed, new Deflater(CompressionLevel.BestCompression.value, true))
                     Stream.init(deflatedChunk)
                 }
-                inflatedStream <- Sync.io(deflatedStream.inflate(noWrap = true))
+                inflatedStream <- Sync.defer(deflatedStream.inflate(noWrap = true))
                 resultChunk    <- inflatedStream.run
             yield assert(resultChunk == inflateRandomExampleThatFailed)
         }
@@ -234,9 +234,9 @@ class StreamCompressionTest extends Test:
         "deflate and then inflate" in run {
             val longTextChunk = Chunk.from(getBytes(longText))
             for
-                inStream       <- Sync.io(Stream.init(longTextChunk))
-                deflatedStream <- Sync.io(inStream.deflate(noWrap = true))
-                inflatedStream <- Sync.io(deflatedStream.inflate(noWrap = true))
+                inStream       <- Sync.defer(Stream.init(longTextChunk))
+                deflatedStream <- Sync.defer(inStream.deflate(noWrap = true))
+                inflatedStream <- Sync.defer(deflatedStream.inflate(noWrap = true))
                 byteChunk      <- inflatedStream.run
             yield assert(byteChunk == longTextChunk)
             end for
@@ -249,8 +249,8 @@ class StreamCompressionTest extends Test:
                 | “College Hall (is) the oldest building in continuous use for Educational purposes west of the Rocky Mountains. Here were educated men and women who have won recognition throughout the world in all the learned professions.”""".stripMargin
             ))
             for
-                inStream       <- Sync.io(Stream.init(uncompressed))
-                deflatedStream <- Sync.io(inStream.deflate(compressionLevel = CompressionLevel.BestCompression))
+                inStream       <- Sync.defer(Stream.init(uncompressed))
+                deflatedStream <- Sync.defer(inStream.deflate(compressionLevel = CompressionLevel.BestCompression))
                 deflatedChunk  <- deflatedStream.run
             yield assert(deflatedChunk.length < uncompressed.length)
             end for
@@ -266,10 +266,10 @@ class StreamCompressionTest extends Test:
                     | She knew her mom would enter her room at any minute, and she could pretend that she hadn't heard any of the previous yelling.""".stripMargin
             ))
             for
-                inStream       <- Sync.io(Stream.init(input))
-                deflatedStream <- Sync.io(inStream.deflate())
+                inStream       <- Sync.defer(Stream.init(input))
+                deflatedStream <- Sync.defer(inStream.deflate())
                 deflatedChunk  <- deflatedStream.run
-                inflatedChunk  <- Sync.io(jdkInflate(deflatedChunk, new Inflater(false)))
+                inflatedChunk  <- Sync.defer(jdkInflate(deflatedChunk, new Inflater(false)))
             yield assert(inflatedChunk == input)
             end for
         }
@@ -283,10 +283,10 @@ class StreamCompressionTest extends Test:
                     | A decision had to be made and the wrong choice could signal the end of the pack.""".stripMargin
             ))
             for
-                inStream       <- Sync.io(Stream.init(input))
-                deflatedStream <- Sync.io(inStream.deflate(noWrap = true))
+                inStream       <- Sync.defer(Stream.init(input))
+                deflatedStream <- Sync.defer(inStream.deflate(noWrap = true))
                 deflatedChunk  <- deflatedStream.run
-                inflatedChunk  <- Sync.io(jdkInflate(deflatedChunk, new Inflater(true)))
+                inflatedChunk  <- Sync.defer(jdkInflate(deflatedChunk, new Inflater(true)))
             yield assert(inflatedChunk == input)
             end for
         }
@@ -303,24 +303,24 @@ class StreamCompressionTest extends Test:
                     | Stormi is a dog I love.""".stripMargin
             ))
             for
-                inStream         <- Sync.io(Stream.init(input))
-                deflatedStream   <- Sync.io(inStream.deflate(bufferSize = 1))
+                inStream         <- Sync.defer(Stream.init(input))
+                deflatedStream   <- Sync.defer(inStream.deflate(bufferSize = 1))
                 deflatedChunk    <- deflatedStream.run
-                jdkDeflatedChunk <- Sync.io(jdkDeflate(input, new Deflater(StreamCompression.CompressionLevel.Default.value, false)))
-                inflatedStream   <- Sync.io(deflatedStream.inflate(bufferSize = 1))
+                jdkDeflatedChunk <- Sync.defer(jdkDeflate(input, new Deflater(StreamCompression.CompressionLevel.Default.value, false)))
+                inflatedStream   <- Sync.defer(deflatedStream.inflate(bufferSize = 1))
                 inflatedChunk    <- inflatedStream.run
-                jdkInflatedChunk <- Sync.io(jdkInflate(jdkDeflatedChunk, new Inflater(false)))
+                jdkInflatedChunk <- Sync.defer(jdkInflate(jdkDeflatedChunk, new Inflater(false)))
             yield assert(deflatedChunk == jdkDeflatedChunk && inflatedChunk == jdkInflatedChunk)
             end for
         }
 
         "deflate empty bytes" in run {
             for
-                inStream       <- Sync.io(Stream.empty[Byte])
-                deflatedStream <- Sync.io(inStream.deflate())
+                inStream       <- Sync.defer(Stream.empty[Byte])
+                deflatedStream <- Sync.defer(inStream.deflate())
                 deflatedChunk  <- deflatedStream.run
                 jdkDeflatedChunk <-
-                    Sync.io(jdkDeflate(Chunk.empty[Byte], new Deflater(StreamCompression.CompressionLevel.Default.value, false)))
+                    Sync.defer(jdkDeflate(Chunk.empty[Byte], new Deflater(StreamCompression.CompressionLevel.Default.value, false)))
             yield assert(deflatedChunk == jdkDeflatedChunk)
             end for
         }
@@ -330,47 +330,47 @@ class StreamCompressionTest extends Test:
         "short stream" in run {
             val shortTextChunk = Chunk.from(getBytes(shortText))
             for
-                jdkGzippedStream <- Sync.io {
+                jdkGzippedStream <- Sync.defer {
                     val gzipByte = jdkGzip(shortTextChunk, syncFlush = true)
                     Stream.init(gzipByte)
                 }
-                gunzippedStream <- Sync.io(jdkGzippedStream.gunzip())
+                gunzippedStream <- Sync.defer(jdkGzippedStream.gunzip())
                 gunzippedChunk  <- gunzippedStream.run
-                string          <- Sync.io(new String(toUnboxByteArray(gunzippedChunk), StandardCharsets.UTF_8))
+                string          <- Sync.defer(new String(toUnboxByteArray(gunzippedChunk), StandardCharsets.UTF_8))
             yield assert(string == shortText)
             end for
         }
 
         "stream of two gzipped inputs" in run {
             for
-                inStream1 <- Sync.io(Stream.init(Chunk.from(getBytes(shortText))))
+                inStream1 <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
                 inChunk1  <- inStream1.run
-                jdkGzippedStream1 <- Sync.io {
+                jdkGzippedStream1 <- Sync.defer {
                     val gzipByte = jdkGzip(inChunk1, syncFlush = true)
                     Stream.init(gzipByte)
                 }
-                inStream2 <- Sync.io(Stream.init(Chunk.from(getBytes(otherShortText))))
+                inStream2 <- Sync.defer(Stream.init(Chunk.from(getBytes(otherShortText))))
                 inChunk2  <- inStream2.run
-                jdkGzippedStream2 <- Sync.io {
+                jdkGzippedStream2 <- Sync.defer {
                     val gzipByte = jdkGzip(inChunk2, syncFlush = true)
                     Stream.init(gzipByte)
                 }
-                gunzippedStream <- Sync.io(jdkGzippedStream1.concat(jdkGzippedStream2).gunzip())
+                gunzippedStream <- Sync.defer(jdkGzippedStream1.concat(jdkGzippedStream2).gunzip())
                 bytes           <- gunzippedStream.run.map(toUnboxByteArray)
-                string          <- Sync.io(new String(bytes, StandardCharsets.UTF_8))
+                string          <- Sync.defer(new String(bytes, StandardCharsets.UTF_8))
             yield assert(string == shortText ++ otherShortText)
         }
 
         "long stream, no sync flush" in run {
             val longTextChunk = Chunk.from(getBytes(longText))
             for
-                jdkGzippedStream <- Sync.io {
+                jdkGzippedStream <- Sync.defer {
                     val gzipByte = jdkGzip(longTextChunk, syncFlush = false)
                     Stream.init(gzipByte)
                 }
-                gunzippedStream <- Sync.io(jdkGzippedStream.gunzip())
+                gunzippedStream <- Sync.defer(jdkGzippedStream.gunzip())
                 gunzippedChunk  <- gunzippedStream.run
-                string          <- Sync.io(new String(toUnboxByteArray(gunzippedChunk), StandardCharsets.UTF_8))
+                string          <- Sync.defer(new String(toUnboxByteArray(gunzippedChunk), StandardCharsets.UTF_8))
             yield assert(string == longText)
             end for
         }
@@ -399,24 +399,24 @@ class StreamCompressionTest extends Test:
             end crc16
             val totalHeader = Chunk.from(header ++ headerExtra ++ comment ++ fileName ++ crc16)
             for
-                jdkGzippedStream <- Sync.io {
+                jdkGzippedStream <- Sync.defer {
                     val gzipByte        = jdkGzip(Chunk.from(getBytes(shortText)), syncFlush = false)
                     val withTotalHeader = totalHeader.concat(gzipByte.drop(10))
                     Stream.init(withTotalHeader)
                 }
-                gunzippedStream <- Sync.io(jdkGzippedStream.gunzip())
+                gunzippedStream <- Sync.defer(jdkGzippedStream.gunzip())
                 gunzippedChunk  <- gunzippedStream.run
-                string          <- Sync.io(new String(toUnboxByteArray(gunzippedChunk), StandardCharsets.UTF_8))
+                string          <- Sync.defer(new String(toUnboxByteArray(gunzippedChunk), StandardCharsets.UTF_8))
             yield assert(string == shortText)
             end for
         }
 
         "gzip empty bytes" in run {
             for
-                inStream     <- Sync.io(Stream.empty[Byte])
-                gzipStream   <- Sync.io(inStream.gzip())
+                inStream     <- Sync.defer(Stream.empty[Byte])
+                gzipStream   <- Sync.defer(inStream.gzip())
                 gzipChunk    <- gzipStream.run
-                jdkGzipChunk <- Sync.io(jdkGzip(Chunk.empty[Byte], syncFlush = false))
+                jdkGzipChunk <- Sync.defer(jdkGzip(Chunk.empty[Byte], syncFlush = false))
             yield assert(gzipChunk == jdkGzipChunk)
             end for
         }
@@ -424,9 +424,9 @@ class StreamCompressionTest extends Test:
         "gzip and then gunzip" in run {
             val longTextChunk = Chunk.from(getBytes(longText))
             for
-                inStream     <- Sync.io(Stream.init(longTextChunk))
-                gzipStream   <- Sync.io(inStream.gzip())
-                gunzipStream <- Sync.io(gzipStream.gunzip())
+                inStream     <- Sync.defer(Stream.init(longTextChunk))
+                gzipStream   <- Sync.defer(inStream.gzip())
+                gunzipStream <- Sync.defer(gzipStream.gunzip())
                 byteChunk    <- gunzipStream.run
             yield assert(byteChunk == longTextChunk)
             end for
@@ -441,8 +441,8 @@ class StreamCompressionTest extends Test:
                    |Love may not always be a ray of sunshine.
                    |That is unless they were referring to how the sun can burn.""".stripMargin))
             for
-                inStream   <- Sync.io(Stream.init(uncompressed))
-                gzipStream <- Sync.io(inStream.gzip(bufferSize = 2048))
+                inStream   <- Sync.defer(Stream.init(uncompressed))
+                gzipStream <- Sync.defer(inStream.gzip(bufferSize = 2048))
                 gzipChunk  <- gzipStream.run
             yield assert(gzipChunk.length < uncompressed.length)
             end for
@@ -456,13 +456,13 @@ class StreamCompressionTest extends Test:
                     | And instead of an answer, you are simply left with a question. Why?""".stripMargin
             ))
             for
-                inStream       <- Sync.io(Stream.init(input))
-                gzipStream     <- Sync.io(inStream.gzip(bufferSize = 1))
+                inStream       <- Sync.defer(Stream.init(input))
+                gzipStream     <- Sync.defer(inStream.gzip(bufferSize = 1))
                 gzipChunk      <- gzipStream.run
-                jdkGzipChunk   <- Sync.io(jdkGzip(input, true))
-                gunzipStream   <- Sync.io(gzipStream.gunzip(bufferSize = 1))
+                jdkGzipChunk   <- Sync.defer(jdkGzip(input, true))
+                gunzipStream   <- Sync.defer(gzipStream.gunzip(bufferSize = 1))
                 gunzipChunk    <- gunzipStream.run
-                jdkGunzipChunk <- Sync.io(jdkGunzip(jdkGzipChunk))
+                jdkGunzipChunk <- Sync.defer(jdkGunzip(jdkGzipChunk))
             yield assert(gzipChunk == jdkGzipChunk && gunzipChunk == jdkGunzipChunk)
             end for
         }

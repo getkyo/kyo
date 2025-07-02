@@ -173,7 +173,7 @@ object Random:
       *   The result of the effect execution with the seeded Random instance.
       */
     def withSeed[A, S](seed: Int)(v: A < S)(using Frame): A < (S & Sync) =
-        Sync.io(Random(Random.Unsafe(new java.util.Random(seed)))).map(let(_)(v))
+        Sync.defer(Random(Random.Unsafe(new java.util.Random(seed)))).map(let(_)(v))
 
     /** Gets the current Random instance from the local context.
       *

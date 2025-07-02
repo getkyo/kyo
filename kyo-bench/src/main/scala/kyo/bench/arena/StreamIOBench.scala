@@ -16,8 +16,8 @@ class StreamIOBench extends ArenaBench.SyncAndFork(25000000):
     def kyoBench() =
         import kyo.*
         Stream.init(seq)
-            .filter(v => Sync.io(v % 2 == 0))
-            .map(v => Sync.io(v + 1))
+            .filter(v => Sync.defer(v % 2 == 0))
+            .map(v => Sync.defer(v + 1))
             .fold(0)(_ + _)
     end kyoBench
 

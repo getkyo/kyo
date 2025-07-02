@@ -107,7 +107,7 @@ class ZLayersTest extends Test:
 
     ".run" - {
         "Sync" in runZIO {
-            val klayer: Layer[TestService, Sync] = Layer(Sync.io(TestServiceImpl(0)))
+            val klayer: Layer[TestService, Sync] = Layer(Sync.defer(TestServiceImpl(0)))
 
             val zlayer = ZLayers.run(klayer)
 
