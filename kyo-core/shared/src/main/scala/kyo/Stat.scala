@@ -111,9 +111,9 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     ): Counter =
         new Counter:
             val unsafe                    = registryScope.counter(name, description)
-            def get(using Frame)          = Sync(unsafe.get())
-            def inc(using Frame)          = Sync(unsafe.inc())
-            def add(v: Long)(using Frame) = Sync(unsafe.add(v))
+            def get(using Frame)          = Sync.defer(unsafe.get())
+            def inc(using Frame)          = Sync.defer(unsafe.inc())
+            def add(v: Long)(using Frame) = Sync.defer(unsafe.add(v))
 
     /** Initialize a new Histogram.
       * @param name
@@ -129,10 +129,10 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     ): Histogram =
         new Histogram:
             val unsafe                                    = registryScope.histogram(name, description)
-            def observe(v: Double)(using Frame)           = Sync(unsafe.observe(v))
-            def observe(v: Long)(using Frame)             = Sync(unsafe.observe(v))
-            def count(using Frame)                        = Sync(unsafe.count())
-            def valueAtPercentile(v: Double)(using Frame) = Sync(unsafe.valueAtPercentile(v))
+            def observe(v: Double)(using Frame)           = Sync.defer(unsafe.observe(v))
+            def observe(v: Long)(using Frame)             = Sync.defer(unsafe.observe(v))
+            def count(using Frame)                        = Sync.defer(unsafe.count())
+            def valueAtPercentile(v: Double)(using Frame) = Sync.defer(unsafe.valueAtPercentile(v))
 
     /** Initialize a new Gauge.
       * @param name
@@ -150,7 +150,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     )(f: => Double): Gauge =
         new Gauge:
             val unsafe               = registryScope.gauge(name, description)(f)
-            def collect(using Frame) = Sync(unsafe.collect())
+            def collect(using Frame) = Sync.defer(unsafe.collect())
 
     /** Initialize a new CounterGauge.
       * @param name
@@ -168,7 +168,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
     )(f: => Long): CounterGauge =
         new CounterGauge:
             val unsafe               = registryScope.counterGauge(name, description)(f)
-            def collect(using Frame) = Sync(f)
+            def collect(using Frame) = Sync.defer(f)
 
     /** Trace a span of execution.
       * @param name

@@ -109,30 +109,12 @@ object Fiber:
       * @return
       *   A Fiber representing the running computation
       */
-    def run[E, A, S](
+    def init[E, A, S](
         using isolate: Isolate.Contextual[S, Sync]
     )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (Sync & S) =
         isolate.runInternal((trace, context) =>
             Fiber.fromTask(IOTask(v, trace, context))
         )
-
-    /** Runs an asynchronous computation in a new fiber and blocks until completion or timeout.
-      *
-      * @param timeout
-      *   The maximum duration to wait
-      * @param v
-      *   The computation to run
-      * @return
-      *   The result of the computation, or a Timeout error
-      */
-    def runAndBlock[E, A, S](
-        using isolate: Isolate.Contextual[S, Sync]
-    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & Sync & S) =
-        run(v).map { fiber =>
-            fiber.block(timeout).map(Abort.get(_))
-        }
 
     private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 
@@ -300,7 +282,7 @@ object Fiber:
           * @return
           *   The number of waiters on this Fiber
           */
-        def waiters(using Frame): Int < Sync = Sync(self.asPromise.waiters())
+        def waiters(using Frame): Int < Sync = Sync.defer(self.asPromise.waiters())
 
         /** Polls the Fiber for a result without blocking.
           *
@@ -569,7 +551,7 @@ object Fiber:
                     val safepoint = Safepoint.get
                     isolate.runInternal { (trace, context) =>
                         foreach(iterable) { (idx, v) =>
-                            val fiber = IOTask(Sync(f(idx, v)), safepoint.copyTrace(trace), context)
+                            val fiber = IOTask(Sync.defer(f(idx, v)), safepoint.copyTrace(trace), context)
                             state.interrupts(fiber)
                             fiber.onComplete(state(idx, _))
                         }
@@ -664,7 +646,7 @@ object Fiber:
           *   The result of applying the function
           */
         inline def initWith[E, A](using inline frame: Frame)[B, S](inline f: Promise[E, A] => B < S): B < (S & Sync) =
-            Sync(f(IOPromise()))
+            Sync.defer(f(IOPromise()))
 
         extension [E, A](self: Promise[E, A])
             /** Completes the Promise with a result.

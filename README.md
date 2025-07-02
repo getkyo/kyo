@@ -198,7 +198,7 @@ Kyo also offers an `andThen` method for more fluent code, combining two computat
 import kyo.*
 
 val a: Unit < Sync =
-    Sync(println("hello"))
+    Sync.defer(println("hello"))
 
 val b: String < Sync =
     a.andThen("test")
@@ -365,7 +365,7 @@ import kyo.*
 val a: String < (Abort[Exception] & Sync) =
     direct {
         val b: String =
-            Sync("hello").now
+            Sync.defer("hello").now
         val c: String =
             Abort.get(Right("world")).now
         b + " " + c
@@ -373,7 +373,7 @@ val a: String < (Abort[Exception] & Sync) =
 
 // Equivalent desugared
 val b: String < (Abort[Exception] & Sync) =
-    Sync("hello").map { b =>
+    Sync.defer("hello").map { b =>
         Abort.get(Right("world")).map { c =>
             b + " " + c
         }
@@ -392,12 +392,12 @@ val a: Int < Sync =
     direct {
         // Incorrect usage of a '<' value
         // without '.now' or '.later'
-        Sync(println(42))
+        Sync.defer(println(42))
         42
     }
 ```
 
-> Note: In the absence of effectful hygiene, the side effect `Sync(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
+> Note: In the absence of effectful hygiene, the side effect `Sync.defer(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
 
 The `.now` operator is used when you need the effect's result immediately, while `.later` is an advanced operation that preserves the effect without sequencing it:
 
@@ -406,22 +406,22 @@ import kyo.*
 
 // Using .now for immediate sequencing
 val immediate = direct {
-    val x: Int = Sync(1).now      // Get result here
-    val y: Int = Sync(2).now      // Then get this result
+    val x: Int = Sync.defer(1).now      // Get result here
+    val y: Int = Sync.defer(2).now      // Then get this result
     x + y                       // Use both results
 }
 
 // Using .later for preserved effects
 val preserved = direct {
-    val effect1: Int < Sync = Sync(1).later   // Effect preserved
-    val effect2: Int < Sync = Sync(2).later   // Effect preserved
+    val effect1: Int < Sync = Sync.defer(1).later   // Effect preserved
+    val effect2: Int < Sync = Sync.defer(2).later   // Effect preserved
     effect1.now + effect2.now             // Sequence effects
 }
 
 // Combining both approaches
 val combined = direct {
-    val effect1: Int < Sync = Sync(1).later   // Effect preserved
-    val effect2: Int = Sync(2).now          // Effect sequenced
+    val effect1: Int < Sync = Sync.defer(1).later   // Effect preserved
+    val effect2: Int = Sync.defer(2).now          // Effect sequenced
     effect1.now + effect2                 // Combine results
 }
 ```
@@ -436,26 +436,26 @@ direct {
     val a: Int = 5
 
     // Effectful value
-    val b: Int = Sync(10).now
+    val b: Int = Sync.defer(10).now
 
     // Control flow
     val c: String =
-        if Sync(true).now then "True branch" else "False branch"
+        if Sync.defer(true).now then "True branch" else "False branch"
 
     // Logical operations
     val d: Boolean =
-        Sync(true).now && Sync(false).now
+        Sync.defer(true).now && Sync.defer(false).now
 
     val e: Boolean =
-        Sync(true).now || Sync(true).now
+        Sync.defer(true).now || Sync.defer(true).now
 
     // Loop (for demonstration; this loop
     // won't execute its body)
-    while Sync(false).now do "Looping"
+    while Sync.defer(false).now do "Looping"
 
     // Pattern matching
     val matchResult: String =
-        Sync(1).now match
+        Sync.defer(1).now match
             case 1 => "One"
             case _ => "Other"
 }
@@ -521,7 +521,7 @@ import kyo.*
 
 // An example computation
 val a: Int < Sync =
-    Sync(Math.cos(42).toInt)
+    Sync.defer(Math.cos(42).toInt)
 
 // Avoid! Run the application with a timeout
 val b: Result[Throwable, Int] =
@@ -635,7 +635,7 @@ def writeBytes = 1 // placeholder
 
 // 'apply' is used to suspend side effects
 val a: Int < Sync =
-    Sync(writeBytes)
+    Sync.defer(writeBytes)
 ```
 
 Users shouldn't typically handle the `Sync` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `KyoApp` instead.
@@ -646,7 +646,7 @@ In some specific cases where Kyo isn't used as the main effect system of an appl
 import kyo.*
 
 val a: Int < Sync =
-    Sync(42)
+    Sync.defer(42)
 
 // ** Avoid 'Sync.Unsafe.run', use 'KyoApp' instead. **
 val b: Int < Abort[Nothing] =
@@ -735,19 +735,19 @@ trait Logger:
 val dbLayer: Layer[Database, Any] =
     Layer {
         new Database:
-            def query = Sync("DB result")
+            def query = Sync.defer("DB result")
     }
 
 val cacheLayer: Layer[Cache, Any] =
     Layer {
         new Cache:
-            def get = Sync(42)
+            def get = Sync.defer(42)
     }
 
 val loggerLayer: Layer[Logger, Any] =
     Layer {
         new Logger:
-            def log(msg: String) = Sync(println(msg))
+            def log(msg: String) = Sync.defer(println(msg))
     }
 
 // The `Layer.init` method provides a way to create a layer from multiple sub-layers, automatically 
@@ -800,7 +800,7 @@ trait EmailService:
 // Define layers
 val dbLayer: Layer[Database, Sync] = Layer {
     new Database:
-        def query = Sync("DB result")
+        def query = Sync.defer("DB result")
 }
 
 val userServiceLayer: Layer[UserService, Env[Database] & Sync] =
@@ -812,7 +812,7 @@ val userServiceLayer: Layer[UserService, Env[Database] & Sync] =
 val emailServiceLayer: Layer[EmailService, Sync] = Layer {
     new EmailService:
         def sendEmail(to: String, content: String) =
-            Sync(println(s"Email sent to $to: $content"))
+            Sync.defer(println(s"Email sent to $to: $content"))
 }
 
 // Example of `to`: Output of dbLayer is used as input for userServiceLayer
@@ -898,7 +898,7 @@ val b: Int < Async =
 // Example method to execute a function on a database
 def withDb[T](f: Database => T < Async): T < (Resource & Async) =
     // Initializes the database ('new Database' is a placeholder)
-    Sync(new Database).map { db =>
+    Sync.defer(new Database).map { db =>
         // Registers `db.close` to be finalized
         Resource.ensure(db.close).andThen {
             // Invokes the function
@@ -930,7 +930,7 @@ val source1 = Batch.sourceSeq[Int, String, Any] { seq =>
 // Using 'Batch.sourceMap' for processing the entire sequence at once, returning a 'Map'
 val source2 = Batch.sourceMap[Int, String, Sync] { seq =>
     // Source functions can perform arbitrary effects like 'Sync' before returning the results
-    Sync {
+    Sync.defer {
         seq.map(i => i -> i.toString).toMap
     }
 }
@@ -939,7 +939,7 @@ val source2 = Batch.sourceMap[Int, String, Sync] { seq =>
 // This is a more generic method that allows effects for each of the inputs
 val source3 = Batch.source[Int, String, Sync] { seq =>
     val map = seq.map { i =>
-        i -> Sync((i * 2).toString)
+        i -> Sync.defer((i * 2).toString)
     }.toMap
     (i: Int) => map(i)
 }
@@ -981,7 +981,7 @@ import kyo.*
 
 // Correct usage: reusing the source
 val source = Batch.sourceSeq[Int, Int, Sync] { seq => 
-    Sync(seq.map(_ * 2))
+    Sync.defer(seq.map(_ * 2))
 }
 
 val goodBatch = for
@@ -993,8 +993,8 @@ yield c
 // Incorrect usage: creating new sources inline
 val badBatch = for
     a <- Batch.eval(1 to 1000)
-    b <- Batch.sourceSeq[Int, Int, Sync](seq => Sync(seq.map(_ * 2)))(a)  // This won't be batched
-    c <- Batch.sourceSeq[Int, Int, Sync](seq => Sync(seq.map(_ * 2)))(b)  // This also won't be batched
+    b <- Batch.sourceSeq[Int, Int, Sync](seq => Sync.defer(seq.map(_ * 2)))(a)  // This won't be batched
+    c <- Batch.sourceSeq[Int, Int, Sync](seq => Sync.defer(seq.map(_ * 2)))(b)  // This also won't be batched
 yield c
 ```
 
@@ -1063,7 +1063,7 @@ val b: Int < Any =
 val d: Int < Sync =
     Loop(1)(i =>
         if i < 5 then
-            Sync(println(s"Iteration: $i")).map(_ => Loop.continue(i + 1))
+            Sync.defer(println(s"Iteration: $i")).map(_ => Loop.continue(i + 1))
         else
             Loop.done(i)
     )
@@ -1352,7 +1352,7 @@ case class Config(someConfig: String)
 // Stream with Sync effect
 val a: Stream[String, Sync] =
     Stream.init(Seq("file1.txt", "file2.txt"))
-        .map(fileName => Sync(scala.io.Source.fromFile(fileName).mkString))
+        .map(fileName => Sync.defer(scala.io.Source.fromFile(fileName).mkString))
 
 // Stream with Abort effect
 val b: Stream[Int, Abort[NumberFormatException]] =
@@ -1699,7 +1699,7 @@ val authCut =
             (input, cont) =>
                 input.metadata.get("auth-token") match
                     case Some("valid-token") => cont(input)
-                    case _                   => Sync(Response(input.value, status = 401))
+                    case _                   => Sync.defer(Response(input.value, status = 401))
     )
 
 // Add logging via another Cut
@@ -1751,7 +1751,7 @@ val a: Unit < Check =
 // Checks can be composed with other effects
 val b: Int < (Check & Sync) =
     for
-        value <- Sync(42)
+        value <- Sync.defer(42)
         _     <- Check.require(value > 0, "Value is positive")
     yield value
 
@@ -1854,7 +1854,7 @@ import kyo.*
 // An example computation to
 // be scheduled
 val a: Unit < Sync =
-    Sync(())
+    Sync.defer(())
 
 // Recurring task with a delay between
 // executions
@@ -2034,7 +2034,7 @@ val stats2: Stat =
 
 // Some example computation
 val a: Int < Sync =
-    Sync(42)
+    Sync.defer(42)
 
 // Trace the execution of the
 // `a` example computation
@@ -2202,7 +2202,7 @@ import kyo.*
 // taken by reference and automatically
 // suspended with 'Sync'
 val a: Fiber[Nothing, Int] < Sync =
-    Fiber.run(Math.cos(42).toInt)
+    Fiber.init(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a
 // 'Fiber' via the 'get' method. This is also
@@ -2218,7 +2218,7 @@ import kyo.*
 
 // An example computation
 val a: Int < Sync =
-    Sync(Math.cos(42).toInt)
+    Sync.defer(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
 // parallel computations. Parameters taken by
@@ -2246,7 +2246,7 @@ import kyo.*
 
 // An example computation
 val a: Int < Sync =
-    Sync(Math.cos(42).toInt)
+    Sync.defer(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
 // computations. Parameters taken by reference
@@ -2342,17 +2342,17 @@ import kyo.*
 
 // An example computation with fibers
 val a: Int < Async =
-    Fiber.run(Math.cos(42).toInt).map(_.get)
+    Fiber.init(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Async' directly
 val b: Fiber[Nothing, Int] < Sync =
-    Fiber.run(a)
+    Fiber.init(a)
 
 // The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
 // on thread blocking and requires a timeout
 val c: Int < (Abort[Timeout] & Sync) =
-    Fiber.runAndBlock(5.seconds)(a)
+    Async.runAndBlock(5.seconds)(a)
 ```
 
 > Note: Handling the `Async` effect doesn't break referential transparency as with `Sync` but its usage is not trivial due to the limitations of the pending effects. Prefer `KyoApp` instead.
@@ -2373,7 +2373,7 @@ val b: Boolean < Sync =
 // Fullfil the promise with
 // another fiber
 val c: Boolean < Sync =
-    a.map(fiber => Fiber.run(1).map(fiber.become(_)))
+    a.map(fiber => Fiber.init(1).map(fiber.become(_)))
 ```
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
@@ -2754,12 +2754,12 @@ val d: Unit < Async =
 val e: Unit < Async =
     for
         barrier <- Barrier.init(3)
-        fiber1  <- Fiber.run(Async.sleep(1.second))
-        fiber2  <- Fiber.run(Async.sleep(2.seconds))
+        fiber1  <- Fiber.init(Async.sleep(1.second))
+        fiber2  <- Fiber.init(Async.sleep(2.seconds))
         _       <- Async.zip(
                      fiber1.get.map(_ => barrier.await),
                      fiber2.get.map(_ => barrier.await),
-                     Fiber.run(barrier.await).map(_.get)
+                     Fiber.init(barrier.await).map(_.get)
                    )
     yield ()
 ```
@@ -2856,14 +2856,14 @@ import kyo.debug.*
 // and the result (or exception) of the computation
 val a: Int < Sync =
     Debug {
-        Sync(42)
+        Sync.defer(42)
     }
 
 // Similar to `apply`, but also prints intermediate steps
 // of the computation, providing a trace of execution
 val b: Int < Sync =
     Debug.trace {
-        Sync(41).map(_ + 1)
+        Sync.defer(41).map(_ + 1)
     }
 
 // Allows printing of specific values along with their 
@@ -2871,7 +2871,7 @@ val b: Int < Sync =
 // The return type of 'values' is 'Unit', not an effectful
 // computation.
 val c: Unit < Sync =
-    Sync {
+    Sync.defer {
         val x = 42
         val y = "Hello"
         Debug.values(x, y)
@@ -3210,7 +3210,7 @@ val a: Int < Async =
         fun = cache.memo { (v: String) =>
             // Note how the implementation
             // can use other effects
-            Sync(v.toInt)
+            Sync.defer(v.toInt)
         }
 
         // Use the function
@@ -3357,15 +3357,15 @@ import zio.{Fiber => _, *}
 val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- ZIOs.get(ZIO.succeed(21))
-        v2 <- Sync(21)
-        v3 <- Fiber.run(-42).map(_.get)
+        v2 <- Sync.defer(21)
+        v3 <- Fiber.init(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- ZIOs.get(ZIO.succeed(21).fork)
-        f2 <- Fiber.run(Sync(21))
+        f2 <- Fiber.init(Sync.defer(21))
         v1 <- ZIOs.get(f1.join)
         v2 <- f2.get
     yield v1 + v2
@@ -3376,7 +3376,7 @@ val c: Int < (Abort[Nothing] & Async) =
 
 // Transforming Kyo effects within ZIO effects
 val d: Task[Int] =
-    ZIOs.run(Sync(21).map(_ * 2))
+    ZIOs.run(Sync.defer(21).map(_ * 2))
 ```
 
 > Note: Support for ZIO environments (`R` in `ZIO[R, E, A]`) is currently in development. Once implemented, it will be possible to use ZIO effects with environments directly within Kyo computations.
@@ -3409,15 +3409,15 @@ import cats.effect.kernel.Outcome.Succeeded
 val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- Cats.get(CatsIO.pure(21))
-        v2 <- Sync(21)
-        v3 <- Fiber.run(-42).map(_.get)
+        v2 <- Sync.defer(21)
+        v3 <- Fiber.init(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries:
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- Cats.get(CatsIO.pure(21).start)
-        f2 <- Fiber.run(Sync(21))
+        f2 <- Fiber.init(Sync.defer(21))
         v1 <- Cats.get(f1.joinWith(CatsIO(99)))
         v2 <- f2.get
     yield v1 + v2
@@ -3428,7 +3428,7 @@ val c: Int < (Abort[Nothing] & Async) =
 
 // Transforming Kyo effects within Cats Effect Sync:
 val d: CatsIO[Int] =
-    Cats.run(Sync(21).map(_ * 2))
+    Cats.run(Sync.defer(21).map(_ * 2))
 ```
 
 ### Resolvers: GraphQL Server via Caliban
@@ -3567,7 +3567,7 @@ end effect
 // There are no combinators for handling Sync or blocking Async, since this should
 // be done at the edge of the program
 Sync.Unsafe.run {                        // Handles Sync
-    Fiber.runAndBlock(Duration.Inf) {  // Handles Async
+    Async.runAndBlock(Duration.Inf) {  // Handles Async
         Kyo.scoped {                   // Handles Resource
             Memo.run:                  // Handles Memo (introduced by .provide, below)
                 effect

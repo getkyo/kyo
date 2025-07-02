@@ -87,10 +87,10 @@ class ChannelTest extends Test:
         for
             c     <- Channel.init[Int](2)
             b     <- c.offer(1)
-            put   <- Fiber.run(c.put(2))
+            put   <- Fiber.init(c.put(2))
             _     <- untilTrue(c.full)
-            take1 <- Fiber.run(c.take)
-            take2 <- Fiber.run(c.take)
+            take1 <- Fiber.init(c.take)
+            take2 <- Fiber.init(c.take)
             v1    <- take1.get
             _     <- put.get
             v2    <- take1.get
@@ -102,7 +102,7 @@ class ChannelTest extends Test:
             c  <- Channel.init[Int](2)
             _  <- c.put(1)
             _  <- c.put(2)
-            f  <- Fiber.run(c.put(3))
+            f  <- Fiber.init(c.put(3))
             _  <- Async.sleep(10.millis)
             d1 <- f.done
             v1 <- c.poll
@@ -114,7 +114,7 @@ class ChannelTest extends Test:
     "blocking take" in run {
         for
             c  <- Channel.init[Int](2)
-            f  <- Fiber.run(c.take)
+            f  <- Fiber.init(c.take)
             _  <- Async.sleep(10.millis)
             d1 <- f.done
             _  <- c.put(1)
@@ -134,7 +134,7 @@ class ChannelTest extends Test:
             "should put batch incrementally if exceeds channel size" in run {
                 for
                     c   <- Channel.init[Int](2)
-                    f   <- Fiber.run(c.putBatch(Chunk(1, 2, 3, 4, 5, 6)))
+                    f   <- Fiber.init(c.putBatch(Chunk(1, 2, 3, 4, 5, 6)))
                     res <- c.takeExactly(6)
                     _   <- Fiber.get(f)
                 yield assert(res == Chunk(1, 2, 3, 4, 5, 6))
@@ -160,8 +160,8 @@ class ChannelTest extends Test:
             "should notify waiting takers immediately" in run {
                 for
                     c     <- Channel.init[Int](2)
-                    take1 <- Fiber.run(c.take)
-                    take2 <- Fiber.run(c.take)
+                    take1 <- Fiber.init(c.take)
+                    take2 <- Fiber.init(c.take)
                     _     <- c.putBatch(Seq(1, 2))
                     v1    <- take1.get
                     v2    <- take2.get
@@ -172,11 +172,11 @@ class ChannelTest extends Test:
                     c     <- Channel.init[Int](2)
                     _     <- c.put(1)
                     _     <- c.put(2)
-                    take1 <- Fiber.run(c.take)
-                    fiber <- Fiber.run(c.putBatch(Seq(3, 4)))
+                    take1 <- Fiber.init(c.take)
+                    fiber <- Fiber.init(c.putBatch(Seq(3, 4)))
                     v1    <- take1.get
                     done1 <- fiber.done
-                    take2 <- Fiber.run(c.take)
+                    take2 <- Fiber.init(c.take)
                     v2    <- take2.get
                     _     <- fiber.get
                 yield assert(v1 == 1 && v2 == 2 && !done1)
@@ -199,7 +199,7 @@ class ChannelTest extends Test:
             "should preserve elements put before closure during partial batch put" in run {
                 for
                     c     <- Channel.init[Int](2)
-                    fiber <- Fiber.run(c.putBatch(Chunk(1, 2, 3, 4, 5)))
+                    fiber <- Fiber.init(c.putBatch(Chunk(1, 2, 3, 4, 5)))
                     v1    <- c.take
                     v2    <- c.take
                     _     <- c.close
@@ -219,7 +219,7 @@ class ChannelTest extends Test:
             "should put batch incrementally if exceeds channel size" in run {
                 for
                     c   <- Channel.init[Any](2)
-                    f   <- Fiber.run(c.putBatch(Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6))))
+                    f   <- Fiber.init(c.putBatch(Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6))))
                     res <- c.takeExactly(6)
                     _   <- Fiber.get(f)
                 yield assert(res == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6)))
@@ -254,7 +254,7 @@ class ChannelTest extends Test:
             "should put batch incrementally if exceeds channel size" in run {
                 for
                     c <- Channel.init[Chunk.Indexed[Int]](2)
-                    f <- Fiber.run(c.putBatch(Chunk(
+                    f <- Fiber.init(c.putBatch(Chunk(
                         Chunk(1).toIndexed,
                         Chunk(2).toIndexed,
                         Chunk(3).toIndexed,
@@ -308,7 +308,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
-                f  <- Fiber.run(c.takeExactly(5))
+                f  <- Fiber.init(c.takeExactly(5))
                 _  <- untilTrue(c.size.map(_ == 0))
                 fd <- f.done
                 _  <- f.interrupt
@@ -326,7 +326,7 @@ class ChannelTest extends Test:
             for
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
-                f  <- Fiber.run(c.takeExactly(6))
+                f  <- Fiber.init(c.takeExactly(6))
                 _  <- untilTrue(c.empty)
                 fd <- f.done
                 _  <- Kyo.foreach(4 to 6)(c.put(_))
@@ -353,9 +353,9 @@ class ChannelTest extends Test:
         "should consider pending puts" in run {
             for
                 c         <- Channel.init[Int](2)
-                _         <- Fiber.run(c.put(1))
-                _         <- Fiber.run(c.put(2))
-                _         <- Fiber.run(c.put(3))
+                _         <- Fiber.init(c.put(1))
+                _         <- Fiber.init(c.put(2))
+                _         <- Fiber.init(c.put(3))
                 _         <- untilTrue(c.pendingPuts.map(_ == 1))
                 result    <- c.drain
                 finalSize <- c.size
@@ -365,9 +365,9 @@ class ChannelTest extends Test:
         "should consider pending puts - zero capacity" in run {
             for
                 c         <- Channel.init[Int](0)
-                _         <- Fiber.run(c.put(1))
-                _         <- Fiber.run(c.put(2))
-                _         <- Fiber.run(c.put(3))
+                _         <- Fiber.init(c.put(1))
+                _         <- Fiber.init(c.put(2))
+                _         <- Fiber.init(c.put(3))
                 _         <- untilTrue(c.pendingPuts.map(_ == 3))
                 result    <- c.drain
                 finalSize <- c.size
@@ -429,10 +429,10 @@ class ChannelTest extends Test:
         "should consider pending puts" in run {
             for
                 c         <- Channel.init[Int](2)
-                _         <- Fiber.run(c.put(1))
-                _         <- Fiber.run(c.put(2))
-                _         <- Fiber.run(c.put(3))
-                _         <- Fiber.run(c.put(4))
+                _         <- Fiber.init(c.put(1))
+                _         <- Fiber.init(c.put(2))
+                _         <- Fiber.init(c.put(3))
+                _         <- Fiber.init(c.put(4))
                 _         <- untilTrue(c.pendingPuts.map(_ == 2))
                 result    <- c.drainUpTo(3)
                 finalSize <- c.size
@@ -441,10 +441,10 @@ class ChannelTest extends Test:
         "should consider pending puts - zero capacity" in run {
             for
                 c         <- Channel.init[Int](0)
-                _         <- Fiber.run(c.put(1))
-                _         <- Fiber.run(c.put(2))
-                _         <- Fiber.run(c.put(3))
-                _         <- Fiber.run(c.put(4))
+                _         <- Fiber.init(c.put(1))
+                _         <- Fiber.init(c.put(2))
+                _         <- Fiber.init(c.put(3))
+                _         <- Fiber.init(c.put(4))
                 _         <- untilTrue(c.pendingPuts.map(_ == 4))
                 result    <- c.drainUpTo(3)
                 finalSize <- c.size
@@ -480,7 +480,7 @@ class ChannelTest extends Test:
         "pending take" in run {
             for
                 c <- Channel.init[Int](2)
-                f <- Fiber.run(c.take)
+                f <- Fiber.init(c.take)
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.full)
@@ -491,7 +491,7 @@ class ChannelTest extends Test:
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
                 _ <- c.put(2)
-                f <- Fiber.run(c.put(3))
+                f <- Fiber.init(c.put(3))
                 r <- c.close
                 d <- f.getResult
                 e <- Abort.run(c.offer(1))
@@ -500,7 +500,7 @@ class ChannelTest extends Test:
         "no buffer w/ pending put" in run {
             for
                 c <- Channel.init[Int](0)
-                f <- Fiber.run(c.put(1))
+                f <- Fiber.init(c.put(1))
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run(c.poll)
@@ -509,7 +509,7 @@ class ChannelTest extends Test:
         "no buffer w/ pending take" in run {
             for
                 c <- Channel.init[Int](0)
-                f <- Fiber.run(c.take)
+                f <- Fiber.init(c.take)
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run[Throwable](c.put(1))
@@ -519,7 +519,7 @@ class ChannelTest extends Test:
     "no buffer" in run {
         for
             c <- Channel.init[Int](0)
-            _ <- Fiber.run(c.put(1))
+            _ <- Fiber.init(c.put(1))
             v <- c.take
             f <- c.full
             e <- c.empty
@@ -529,8 +529,8 @@ class ChannelTest extends Test:
         "with buffer" in run {
             for
                 c  <- Channel.init[Int](10)
-                f1 <- Fiber.run(Async.fill(1000, 1000)(c.put(1)))
-                f2 <- Fiber.run(Async.fill(1000, 1000)(c.take))
+                f1 <- Fiber.init(Async.fill(1000, 1000)(c.put(1)))
+                f2 <- Fiber.init(Async.fill(1000, 1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.empty
@@ -540,8 +540,8 @@ class ChannelTest extends Test:
         "no buffer" in run {
             for
                 c  <- Channel.init[Int](0)
-                f1 <- Fiber.run(Async.fill(1000, 1000)(c.put(1)))
-                f2 <- Fiber.run(Async.fill(1000, 1000)(c.take))
+                f1 <- Fiber.init(Async.fill(1000, 1000)(c.put(1)))
+                f2 <- Fiber.init(Async.fill(1000, 1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.empty
@@ -553,7 +553,7 @@ class ChannelTest extends Test:
         "Sync" in run {
             for
                 channel <- Channel.init[Int < Sync](2)
-                _       <- channel.put(Sync(42))
+                _       <- channel.put(Sync.defer(42))
                 result  <- channel.take.flatten
             yield assert(result == 42)
         }
@@ -585,10 +585,10 @@ class ChannelTest extends Test:
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
-                closeFiber    <- Fiber.run(latch.await.andThen(channel.close))
+                closeFiber    <- Fiber.init(latch.await.andThen(channel.close))
                 _             <- latch.release
                 offered       <- offerFiber.get
                 backlog       <- closeFiber.get
@@ -615,10 +615,10 @@ class ChannelTest extends Test:
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
-                pollFiber <- Fiber.run(
+                pollFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(100, 100)(Abort.run(channel.poll)))
                 )
                 _           <- latch.release
@@ -635,10 +635,10 @@ class ChannelTest extends Test:
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
-                putFiber <- Fiber.run(
+                putFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.put(i))))
                 )
-                takeFiber <- Fiber.run(
+                takeFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(100, 100)(Abort.run(channel.take)))
                 )
                 _     <- latch.release
@@ -655,10 +655,10 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 _       <- Kyo.foreach(1 to size)(i => channel.offer(i))
                 latch   <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
-                closeFiber <- Fiber.run(latch.await.andThen(channel.close))
+                closeFiber <- Fiber.init(latch.await.andThen(channel.close))
                 _          <- latch.release
                 offered    <- offerFiber.get
                 backlog    <- closeFiber.get
@@ -681,10 +681,10 @@ class ChannelTest extends Test:
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
-                closeFiber <- Fiber.run(
+                closeFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(100, 100)(channel.close))
                 )
                 _        <- latch.release
@@ -709,19 +709,19 @@ class ChannelTest extends Test:
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 50, 50)(i => Abort.run(channel.offer(i))))
                 )
-                pollFiber <- Fiber.run(
+                pollFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(50, 50)(Abort.run(channel.poll)))
                 )
-                putFiber <- Fiber.run(
+                putFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(51 to 100, 50)(i => Abort.run(channel.put(i))))
                 )
-                takeFiber <- Fiber.run(
+                takeFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(50, 50)(Abort.run(channel.take)))
                 )
-                closeFiber <- Fiber.run(latch.await.andThen(channel.close))
+                closeFiber <- Fiber.init(latch.await.andThen(channel.close))
                 _          <- latch.release
                 offered    <- offerFiber.get
                 polled     <- pollFiber.get
@@ -750,12 +750,12 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 
-                putFiber <- Fiber.run(
+                putFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach((1 to 60).grouped(3).toSeq, 60)(batch =>
                         channel.putBatch(batch).andThen(batch)
                     ))
                 )
-                takeFiber <- Fiber.run(
+                takeFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(60, 60)(channel.take))
                 )
                 _         <- latch.release
@@ -773,12 +773,12 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 
-                putFiber <- Fiber.run(
+                putFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach((1 to 60).grouped(3).toSeq, 60)(batch =>
                         channel.putBatch(batch).andThen(batch)
                     ))
                 )
-                takeFiber <- Fiber.run(
+                takeFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(6, 6)(
                         channel.takeExactly(10)
                     ))
@@ -848,7 +848,7 @@ class ChannelTest extends Test:
         "should stream concurrently with ingest, without specified chunk size" in run {
             for
                 c  <- Channel.init[Int](4)
-                bg <- Fiber.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                bg <- Fiber.init(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
                 stream = c.stream().take(20).mapChunk(ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
@@ -858,7 +858,7 @@ class ChannelTest extends Test:
         "should stream concurrently with ingest, never exceeding specified chunk size" in run {
             for
                 c  <- Channel.init[Int](4)
-                bg <- Fiber.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                bg <- Fiber.init(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
                 stream = c.stream(2).take(20).mapChunk(ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
@@ -868,7 +868,7 @@ class ChannelTest extends Test:
         "should fail when channel is closed" in run {
             for
                 c  <- Channel.init[Int](3)
-                bg <- Fiber.run(Kyo.foreach(0 to 8)(c.put).andThen(c.close))
+                bg <- Fiber.init(Kyo.foreach(0 to 8)(c.put).andThen(c.close))
                 stream = c.stream().mapChunk(ch => Chunk(ch))
                 v <- Abort.run(stream.run)
             yield v match
@@ -880,7 +880,7 @@ class ChannelTest extends Test:
         "should stream concurrently with ingest via putBatch, yielding consistent chunk sizes" in run {
             for
                 c  <- Channel.init[Int](9)
-                bg <- Fiber.run(Loop(0)(i => c.putBatch(Chunk(i, i + 1, i + 2)).andThen(Loop.continue(i + 3))))
+                bg <- Fiber.init(Loop(0)(i => c.putBatch(Chunk(i, i + 1, i + 2)).andThen(Loop.continue(i + 3))))
                 stream = c.stream(3).take(15).mapChunk(ch => Chunk(ch))
                 res <- stream.run
                 _   <- bg.interrupt
@@ -945,7 +945,7 @@ class ChannelTest extends Test:
         "should stream concurrently with ingest, without specified chunk size" in run {
             for
                 c  <- Channel.init[Int](4)
-                bg <- Fiber.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                bg <- Fiber.init(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
                 stream = c.streamUntilClosed().take(20).mapChunk(ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
@@ -955,7 +955,7 @@ class ChannelTest extends Test:
         "should stream concurrently with ingest, with specified chunk size" in run {
             for
                 c  <- Channel.init[Int](4)
-                bg <- Fiber.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                bg <- Fiber.init(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
                 stream = c.streamUntilClosed(2).take(20).mapChunk(ch => Chunk(ch))
                 v <- stream.run
                 _ <- bg.interrupt
@@ -967,7 +967,7 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](3)
                 stream = c.streamUntilClosed()
-                f <- Fiber.run(stream.run)
+                f <- Fiber.init(stream.run)
                 _ <- Kyo.foreach(fullStream)(c.put).andThen(c.close)
                 r <- Fiber.get(f)
             yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
@@ -979,9 +979,9 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](3)
                 stream = c.streamUntilClosed()
-                f <- Fiber.run(stream.run)
+                f <- Fiber.init(stream.run)
                 _ <- Kyo.foreach(fullStream)(c.put).andThen(c.close)
-                _ <- Fiber.run(c.closeAwaitEmpty)
+                _ <- Fiber.init(c.closeAwaitEmpty)
                 r <- Fiber.get(f)
             yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
             end for
@@ -1001,7 +1001,7 @@ class ChannelTest extends Test:
                 c       <- Channel.init[Int](10)
                 _       <- c.put(1)
                 _       <- c.put(2)
-                fiber   <- Fiber.run(c.closeAwaitEmpty)
+                fiber   <- Fiber.init(c.closeAwaitEmpty)
                 closed1 <- c.closed
                 _       <- c.take
                 closed2 <- c.closed
@@ -1023,7 +1023,7 @@ class ChannelTest extends Test:
             for
                 c      <- Channel.init[Int](10)
                 _      <- Kyo.foreach(1 to 5)(i => c.put(i))
-                fiber  <- Fiber.run(c.closeAwaitEmpty)
+                fiber  <- Fiber.init(c.closeAwaitEmpty)
                 _      <- Async.foreach(1 to 5)(_ => c.take)
                 result <- fiber.get
             yield assert(result)
@@ -1041,7 +1041,7 @@ class ChannelTest extends Test:
                 c      <- Channel.init[Int](2)
                 _      <- c.put(1)
                 _      <- c.put(2)
-                fiber  <- Fiber.run(c.closeAwaitEmpty)
+                fiber  <- Fiber.init(c.closeAwaitEmpty)
                 _      <- c.take
                 _      <- c.take
                 take   <- Abort.run(c.take)
@@ -1054,7 +1054,7 @@ class ChannelTest extends Test:
                 c      <- Channel.init[Int](10)
                 _      <- c.put(1)
                 _      <- c.put(2)
-                fiber  <- Fiber.run(Async.fill(10)(c.closeAwaitEmpty))
+                fiber  <- Fiber.init(Async.fill(10)(c.closeAwaitEmpty))
                 _      <- c.take
                 _      <- c.take
                 closes <- fiber.get
@@ -1067,10 +1067,10 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 _       <- Kyo.foreach(1 to (size min 5))(i => channel.put(i))
                 latch   <- Latch.init(1)
-                closeAwaitEmptyFiber <- Fiber.run(
+                closeAwaitEmptyFiber <- Fiber.init(
                     latch.await.andThen(channel.closeAwaitEmpty)
                 )
-                closeFiber <- Fiber.run(
+                closeFiber <- Fiber.init(
                     latch.await.andThen(channel.close)
                 )
                 _        <- latch.release
@@ -1092,20 +1092,20 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 
-                producerFiber1 <- Fiber.run(
+                producerFiber1 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(channel.put(i)))
                             .andThen(channel.closeAwaitEmpty)
                     )
                 )
-                producerFiber2 <- Fiber.run(
+                producerFiber2 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(channel.put(i)))
                             .andThen(channel.closeAwaitEmpty)
                     )
                 )
 
-                consumerFiber <- Fiber.run(
+                consumerFiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(100, 10)(Abort.run(channel.take))
                     )
@@ -1132,20 +1132,20 @@ class ChannelTest extends Test:
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
 
-                producerFiber1 <- Fiber.run(
+                producerFiber1 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(channel.put(i)))
                             .andThen(channel.closeAwaitEmpty)
                     )
                 )
-                producerFiber2 <- Fiber.run(
+                producerFiber2 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(channel.put(i)))
                             .andThen(channel.close)
                     )
                 )
 
-                consumerFiber <- Fiber.run(
+                consumerFiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(100, 10)(Abort.run(channel.take))
                     )
@@ -1180,8 +1180,8 @@ class ChannelTest extends Test:
                 c     <- Channel.init[Int](2)
                 _     <- c.put(1)
                 _     <- c.put(2)
-                f1    <- Fiber.run(c.put(3))
-                f2    <- Fiber.run(c.put(4))
+                f1    <- Fiber.init(c.put(3))
+                f2    <- Fiber.init(c.put(4))
                 _     <- Async.sleep(10.millis)
                 puts  <- c.pendingPuts
                 takes <- c.pendingTakes
@@ -1195,8 +1195,8 @@ class ChannelTest extends Test:
         "should count pending takes when channel is empty" in run {
             for
                 c     <- Channel.init[Int](2)
-                f1    <- Fiber.run(c.take)
-                f2    <- Fiber.run(c.take)
+                f1    <- Fiber.init(c.take)
+                f2    <- Fiber.init(c.take)
                 _     <- Async.sleep(10.millis)
                 puts  <- c.pendingPuts
                 takes <- c.pendingTakes
@@ -1227,7 +1227,7 @@ class ChannelTest extends Test:
             ref <- AtomicRef.init(c0)
             // Create a fiber that repeatedly puts and item and then checks to see if the channel
             // has been drained. If it has then it closes the channel and creates a new one.
-            producer <- Fiber.run {
+            producer <- Fiber.init {
                 Loop.foreach:
                     for
                         c     <- ref.get

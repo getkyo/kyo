@@ -88,7 +88,7 @@ object StreamCoreExtensions:
             t2: Tag[Emit[Chunk[A]]],
             fr: Frame
         ): Unit < (Async & S & Resource) =
-            Resource.acquireRelease(Fiber.run {
+            Resource.acquireRelease(Fiber.init {
                 Abort.run[E](
                     Abort.run[Closed](
                         latch.await.andThen(stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk)))))
@@ -138,7 +138,7 @@ object StreamCoreExtensions:
             Stream:
                 Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.run[E, Unit, S](Abort.run {
+                        _ <- Fiber.init[E, Unit, S](Abort.run {
                             Async.foreachDiscard(streams)(
                                 _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
                             )
@@ -157,13 +157,13 @@ object StreamCoreExtensions:
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Sync] =
-            val stream: Stream[V, Sync] < Sync = Sync:
+            val stream: Stream[V, Sync] < Sync = Sync.defer:
                 val it      = v
                 val size    = chunkSize max 1
                 val builder = ChunkBuilder.init[V]
 
                 val pull: Chunk[V] < Sync =
-                    Sync:
+                    Sync.defer:
                         var count = 0
                         while count < size && it.hasNext do
                             builder.addOne(it.next())
@@ -177,7 +177,7 @@ object StreamCoreExtensions:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
                             case Result.Panic(throwable) =>
-                                Sync:
+                                Sync.defer:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.panic(throwable))
 
@@ -205,13 +205,13 @@ object StreamCoreExtensions:
                     "\n - `fromIteratorCatching[E = Throwable]` catches all Exceptions as `Failure`."
             ) notNothing: NotGiven[E =:= Nothing]
         ): Stream[V, Sync & Abort[E]] =
-            val stream: Stream[V, (Sync & Abort[E])] < Sync = Sync:
+            val stream: Stream[V, (Sync & Abort[E])] < Sync = Sync.defer:
                 val it      = v
                 val size    = chunkSize max 1
                 val builder = ChunkBuilder.init[V]
 
                 val pull: Chunk[V] < (Sync & Abort[E]) =
-                    Sync:
+                    Sync.defer:
                         Abort.catching[E]:
                             var count = 0
                             while count < size && it.hasNext do
@@ -226,7 +226,7 @@ object StreamCoreExtensions:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
                             case error: Result.Error[E] @unchecked =>
-                                Sync:
+                                Sync.defer:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.error(error))
 
@@ -255,7 +255,7 @@ object StreamCoreExtensions:
             Stream:
                 Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.run(Abort.run(
+                        _ <- Fiber.init(Abort.run(
                             Async
                                 .foreachDiscard(streams)(
                                     _.foreachChunk(c => Abort.run(channel.put(Present(c))))
@@ -335,7 +335,7 @@ object StreamCoreExtensions:
             Stream:
                 Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.run(
+                        _ <- Fiber.init(
                             Async.gather(
                                 stream.foreachChunk(c => channel.put(Present(c)))
                                     .andThen(channel.put(Absent)),
@@ -401,14 +401,14 @@ object StreamCoreExtensions:
                                     Kyo.foreach(input) { v =>
                                         // Fork transformation, pass result through stagingChannel merely as rate limiter,
                                         // (signal to continue)
-                                        Fiber.run(f(v)).map: transformationFiber =>
+                                        Fiber.init(f(v)).map: transformationFiber =>
                                             transformationFiber.map(_ => true).map: signalFiber =>
                                                 stagingChannel.put(signalFiber).andThen:
                                                     transformationFiber
                                     }.map: fiberChunk =>
                                         // Note that this means one of the concurrency is "slots" is used to assemble chunk
                                         // this is not an expensive operation, however, so should not be a problem
-                                        Fiber.run(Kyo.foreach(fiberChunk)(_.get)).map: chunkFiber =>
+                                        Fiber.init(Kyo.foreach(fiberChunk)(_.get)).map: chunkFiber =>
                                             stagingChannel.put(chunkFiber).andThen:
                                                 Loop.continue(cont(()))
                         ).andThen(stagingChannel.put(Fiber.success(false)))
@@ -423,7 +423,7 @@ object StreamCoreExtensions:
                                     case chunk: Chunk[V2] => channelOut.put(Present(chunk)).andThen(Loop.continue)
 
                         // Run stream and staging handlers in background, handling failures (end stream)
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
                                 onFail = {
@@ -483,7 +483,7 @@ object StreamCoreExtensions:
                     Channel.initLocalWith[Fiber[E | Closed, Boolean]](parallel): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork(effect: Any < (Async & Abort[Closed | E] & S2)) =
-                            Fiber.run(effect).map: effectFiber =>
+                            Fiber.init(effect).map: effectFiber =>
                                 effectFiber.map(_ => true).map: signalFiber =>
                                     parChannel.put(signalFiber).andThen:
                                         effectFiber
@@ -505,7 +505,7 @@ object StreamCoreExtensions:
                                     if continue then Loop.continue
                                     else Loop.done
 
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
                                 onFail = {
@@ -572,7 +572,7 @@ object StreamCoreExtensions:
                         val handledStream = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
                                 (input, cont) =>
-                                    Fiber.run(f(input).map(Present(_))).map: fiber =>
+                                    Fiber.init(f(input).map(Present(_))).map: fiber =>
                                         stagingChannel.put(fiber).andThen:
                                             Loop.continue(cont(()))
                         ).andThen(stagingChannel.put(Fiber.success(Absent)).unit)
@@ -586,7 +586,7 @@ object StreamCoreExtensions:
                                         else Loop.continue
 
                         // Run stream handler and staging handler in background, handling errors
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(outputChannel.put(Absent)).unit,
                                 onFail = {
@@ -649,7 +649,7 @@ object StreamCoreExtensions:
                     Channel.initLocalWith[Fiber[E | Closed, Boolean]](parallel - 1): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork[A](task: Any < (Async & Abort[Closed | E] & S2)) =
-                            Fiber.run(task).map: fiber =>
+                            Fiber.init(task).map: fiber =>
                                 fiber.map(_ => true).map: signalFiber =>
                                     parChannel.put(signalFiber).unit
 
@@ -669,7 +669,7 @@ object StreamCoreExtensions:
                                 else Loop.done
 
                         // Run stream handler and par handler in background, handling errors (ensure stream ends)
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
                                 onFail = {
@@ -827,10 +827,10 @@ object StreamCoreExtensions:
                 val builder = Chunk.newBuilder[Stream[V, Abort[E] & Resource & Async]]
                 Loop(numStreams): remaining =>
                     if remaining <= 0 then
-                        Sync(builder.result()).map(chunk => Loop.done(chunk))
+                        Sync.defer(builder.result()).map(chunk => Loop.done(chunk))
                     else
                         streamHub.subscribe.map: stream =>
-                            Sync(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
+                            Sync.defer(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
             }(using i1, i2, t1, t2, t3, t4, fr)
 
         /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream
@@ -973,8 +973,8 @@ object StreamCoreExtensions:
 
                     // Handle loop collecting emitted values and flushing them until completion
                     val push: Fiber[E | Closed, Unit] < (Sync & S) =
-                        Fiber.run[E | Closed, Unit, S]:
-                            Sync.ensure(Fiber.run[Closed, Unit, Any](channel.put(Flush))):
+                        Fiber.init[E | Closed, Unit, S]:
+                            Sync.ensure(Fiber.init[Closed, Unit, Any](channel.put(Flush))):
                                 ArrowEffect.handleLoop(t1, stream.emit)(
                                     handle = [C] =>
                                         (chunk, cont) =>

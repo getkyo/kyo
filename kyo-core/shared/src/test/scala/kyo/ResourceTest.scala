@@ -111,7 +111,7 @@ class ResourceTest extends Test:
 
         "ensure" in run {
             var closes = 0
-            Resource.ensure(Fiber.run(closes += 1).map(_.get).unit)
+            Resource.ensure(Fiber.init(closes += 1).map(_.get).unit)
                 .handle(
                     Resource.run,
                     Abort.run
@@ -126,7 +126,7 @@ class ResourceTest extends Test:
             val acquire = Abort.get(Some(42))
             // only Async in release
             def release(i: Int) =
-                Fiber.run {
+                Fiber.init {
                     assert(i == 42)
                     closes += 1
                 }.map(_.get)
@@ -142,7 +142,7 @@ class ResourceTest extends Test:
 
         "acquire" in run {
             val r = TestResource(1)
-            Resource.acquire(Fiber.run(r).map(_.get))
+            Resource.acquire(Fiber.init(r).map(_.get))
                 .handle(
                     Resource.run,
                     Abort.run
@@ -156,7 +156,7 @@ class ResourceTest extends Test:
         case object TestException extends NoStackTrace
 
         "acquire fails" in run {
-            val io = Resource.acquireRelease(Sync[Int, Any](throw TestException))(_ => ())
+            val io = Resource.acquireRelease(Sync.defer[Int, Any](throw TestException))(_ => ())
             Resource.run(io)
                 .handle(Abort.run)
                 .map {
@@ -168,8 +168,8 @@ class ResourceTest extends Test:
         "release fails" in run {
             var acquired = false
             var released = false
-            val io = Resource.acquireRelease(Sync { acquired = true; "resource" }) { _ =>
-                Sync {
+            val io = Resource.acquireRelease(Sync.defer { acquired = true; "resource" }) { _ =>
+                Sync.defer {
                     released = true
                     throw TestException
                 }
@@ -184,7 +184,7 @@ class ResourceTest extends Test:
 
         "ensure fails" in run {
             var ensureCalled = false
-            val io           = Resource.ensure(Sync { ensureCalled = true; throw TestException })
+            val io           = Resource.ensure(Sync.defer { ensureCalled = true; throw TestException })
             Resource.run(io)
                 .map(_ => assert(ensureCalled))
 
@@ -195,7 +195,7 @@ class ResourceTest extends Test:
             val io =
                 for
                     l <- Latch.init(1)
-                    f <- Fiber.run(l.await.andThen(Resource.ensure { called = true }))
+                    f <- Fiber.init(l.await.andThen(Resource.ensure { called = true }))
                 yield (l, f)
             for
                 (l, f) <- Resource.run(io)
@@ -211,12 +211,12 @@ class ResourceTest extends Test:
         "cleans up resources in parallel" in run {
             Latch.init(3).map { latch =>
                 def makeResource(id: Int) =
-                    Resource.acquireRelease(Sync(id))(_ => latch.release)
+                    Resource.acquireRelease(Sync.defer(id))(_ => latch.release)
 
                 val resources = Kyo.foreach(1 to 3)(makeResource)
 
                 for
-                    close <- Fiber.run(resources.handle(Resource.run(3)))
+                    close <- Fiber.init(resources.handle(Resource.run(3)))
                     _     <- latch.await
                     ids   <- close.get
                 yield assert(ids == (1 to 3))
@@ -227,7 +227,7 @@ class ResourceTest extends Test:
         "respects parallelism limit" in run {
             AtomicInt.init.map { counter =>
                 def makeResource(id: Int) =
-                    Resource.acquireRelease(Sync(id)) { _ =>
+                    Resource.acquireRelease(Sync.defer(id)) { _ =>
                         for
                             current <- counter.getAndIncrement
                             _       <- Async.sleep(1.millis)
@@ -240,7 +240,7 @@ class ResourceTest extends Test:
                 val resources = Kyo.foreach(1 to 10)(makeResource)
 
                 for
-                    close <- Fiber.run(resources.handle(Resource.run(3)))
+                    close <- Fiber.init(resources.handle(Resource.run(3)))
                     ids   <- close.get
                 yield assert(ids == (1 to 10))
                 end for
@@ -297,7 +297,7 @@ class ResourceTest extends Test:
                     _ <- Resource.ensure {
                         Async.sleep(25.millis).andThen { secondFinalizerCalled = true }
                     }
-                    _ <- Sync(Abort.fail("Fail after acquiring resources"))
+                    _ <- Sync.defer(Abort.fail("Fail after acquiring resources"))
                 yield ()
 
             Resource.run(io)
