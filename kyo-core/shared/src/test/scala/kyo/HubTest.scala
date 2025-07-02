@@ -63,7 +63,7 @@ class HubTest extends Test:
                 _     <- h.listen(0)
                 _     <- h.put(1)
                 _     <- h.put(2)
-                fiber <- Fiber.run(h.put(3))
+                fiber <- Fiber.init(h.put(3))
                 _     <- Async.sleep(10.millis)
                 done  <- fiber.done
                 hFull <- h.full
@@ -161,7 +161,7 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](4)
                 l <- h.listen
-                f <- Fiber.run(l.stream().take(4).run)
+                f <- Fiber.init(l.stream().take(4).run)
                 _ <- h.put(1)
                 _ <- h.put(2)
                 _ <- h.put(3)
@@ -174,7 +174,7 @@ class HubTest extends Test:
             for
                 h     <- Hub.init[Int](4)
                 l     <- h.listen
-                fiber <- Fiber.run(l.streamFailing().run)
+                fiber <- Fiber.init(l.streamFailing().run)
                 _     <- h.close
                 res   <- Abort.run[Closed](fiber.get)
             yield assert(res.isFailure)
@@ -184,7 +184,7 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](4)
                 l <- h.listen
-                f <- Fiber.run(l.stream(2).mapChunk(Chunk(_)).take(2).run)
+                f <- Fiber.init(l.stream(2).mapChunk(Chunk(_)).take(2).run)
                 _ <- h.putBatch(1 to 4)
                 r <- f.get
             yield assert(r.forall(_.size <= 2))
@@ -194,7 +194,7 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](4)
                 l <- h.listen
-                f <- Fiber.run(l.stream().take(1000).run)
+                f <- Fiber.init(l.stream().take(1000).run)
                 _ <- Kyo.foreachDiscard(1 to 1000)(h.put)
                 r <- f.get
             yield assert(r.size == 1000 && r == Chunk.from(1 to 1000))
@@ -209,22 +209,22 @@ class HubTest extends Test:
                 l2    <- hub.listen
                 l3    <- hub.listen
                 latch <- Latch.init(1)
-                pubFiber <- Fiber.run(
+                pubFiber <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(1 to 10, 10)(i => Abort.run(hub.put(i)))
                     )
                 )
-                sub1Fiber <- Fiber.run(
+                sub1Fiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(10, 10)(Abort.run(l1.take))
                     )
                 )
-                sub2Fiber <- Fiber.run(
+                sub2Fiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(10, 10)(Abort.run(l2.take))
                     )
                 )
-                sub3Fiber <- Fiber.run(
+                sub3Fiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(10, 10)(Abort.run(l3.take))
                     )
@@ -250,12 +250,12 @@ class HubTest extends Test:
                 size  <- Choice.eval(1, 2, 10, 100)
                 hub   <- Hub.init[Int](size)
                 latch <- Latch.init(1)
-                listenerFiber <- Fiber.run(
+                listenerFiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(20, 20)(Abort.run(hub.listen))
                     )
                 )
-                closeFiber <- Fiber.run(latch.await.andThen(hub.close))
+                closeFiber <- Fiber.init(latch.await.andThen(hub.close))
                 _          <- latch.release
                 listeners  <- listenerFiber.get
                 backlog    <- closeFiber.get
@@ -272,7 +272,7 @@ class HubTest extends Test:
                 latch <- Latch.init(1)
                 pubFibers <-
                     Async.foreach(0 until 4, 4) { n =>
-                        Fiber.run(
+                        Fiber.init(
                             latch.await.andThen(
                                 Kyo.foreachDiscard(
                                     (n * 250) until ((n + 1) * 250)
@@ -280,12 +280,12 @@ class HubTest extends Test:
                             )
                         )
                     }
-                collector1 <- Fiber.run(
+                collector1 <- Fiber.init(
                     latch.await.andThen(
                         l1.stream().take(1000).run
                     )
                 )
-                collector2 <- Fiber.run(
+                collector2 <- Fiber.init(
                     latch.await.andThen(
                         l2.stream().take(1000).run
                     )
@@ -308,14 +308,14 @@ class HubTest extends Test:
                 hub          <- Hub.init[Int](10)
                 latch        <- Latch.init(1)
                 slowListener <- hub.listen(0)
-                slowConsumer <- Fiber.run(
+                slowConsumer <- Fiber.init(
                     latch.await.andThen(
                         Kyo.foreach(1 to 10) { _ =>
                             Async.sleep(1.millis).andThen(slowListener.take)
                         }
                     )
                 )
-                producerFiber <- Fiber.run(
+                producerFiber <- Fiber.init(
                     latch.await.andThen(
                         Kyo.foreachDiscard(1 to 10)(hub.put)
                     )
@@ -335,14 +335,14 @@ class HubTest extends Test:
                 listeners <- Async.foreach(0 until 10, 10) { n =>
                     hub.listen(_ % 10 == n)
                 }
-                publisher <- Fiber.run(
+                publisher <- Fiber.init(
                     latch.await.andThen(
                         Kyo.foreachDiscard(1 to 1000)(hub.put)
                     )
                 )
                 collectors <- Async.collectAll(
                     listeners.map(l =>
-                        Fiber.run(
+                        Fiber.init(
                             latch.await.andThen(
                                 l.stream().take(100).run
                             )
@@ -406,7 +406,7 @@ class HubTest extends Test:
             for
                 h <- Hub.init[Int](0)
                 l <- h.listen
-                f <- Fiber.run(h.put(1))
+                f <- Fiber.init(h.put(1))
                 v <- l.take
                 d <- f.done
             yield assert(v == 1 && d)
@@ -451,7 +451,7 @@ class HubTest extends Test:
                     h     <- Hub.init[Int](2)
                     l     <- h.listen(2)
                     _     <- h.putBatch(1 to 2)
-                    fiber <- Fiber.run(h.putBatch(3 to 6))
+                    fiber <- Fiber.init(h.putBatch(3 to 6))
                     _     <- Async.sleep(10.millis)
                     done  <- fiber.done
                     size  <- l.size
@@ -472,7 +472,7 @@ class HubTest extends Test:
                 for
                     h     <- Hub.init[Int](4)
                     l     <- h.listen
-                    fiber <- Fiber.run(l.takeExactly(4))
+                    fiber <- Fiber.init(l.takeExactly(4))
                     _     <- Async.sleep(10.millis)
                     done1 <- fiber.done
                     _     <- h.putBatch(1 to 4)
@@ -494,7 +494,7 @@ class HubTest extends Test:
                 for
                     h     <- Hub.init[Int](4)
                     l     <- h.listen
-                    fiber <- Fiber.run(l.takeExactly(4))
+                    fiber <- Fiber.init(l.takeExactly(4))
                     _     <- h.putBatch(1 to 2)
                     _     <- h.close
                     res   <- Abort.run(fiber.get)

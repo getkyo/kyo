@@ -172,13 +172,13 @@ class KyoCombinatorsTest extends Test:
         "delay" - {
             "with short delay" in run {
                 val effect = Sync.defer(42).delay(1.millis)
-                Fiber.run(effect).map(_.toFuture).map { handled =>
+                Fiber.init(effect).map(_.toFuture).map { handled =>
                     handled.map(v => assert(v == 42))
                 }
             }
             "with zero delay" in run {
                 val effect = Sync.defer("test").delay(0.millis)
-                Fiber.run(effect).map(_.toFuture).map { handled =>
+                Fiber.init(effect).map(_.toFuture).map { handled =>
                     handled.map(v => assert(v == "test"))
                 }
             }
@@ -209,7 +209,7 @@ class KyoCombinatorsTest extends Test:
                     var count    = 0
                     val schedule = Schedule.repeat(3)
                     val effect   = Sync.defer { count += 1; count }.repeatAtInterval(schedule)
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)
                             assert(count == 4)
@@ -223,7 +223,7 @@ class KyoCombinatorsTest extends Test:
                     var count   = 0
                     val backoff = (i: Int) => Math.pow(2, i).toLong.millis
                     val effect  = Sync.defer { count += 1; count }.repeatAtInterval(backoff, 3)
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)
                             assert(count == 4)
@@ -238,14 +238,14 @@ class KyoCombinatorsTest extends Test:
                 "condition becomes false" in run {
                     var count  = 0
                     val effect = Sync.defer { count += 1; count }.repeatWhile(_ < 3)
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map(v => assert(v == 3))
                     }
                 }
                 "condition is initially false" in run {
                     var count  = 5
                     val effect = Sync.defer { count += 1; count }.repeatWhile(_ < 3)
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map(v => assert(v == 6))
                     }
                 }
@@ -255,7 +255,7 @@ class KyoCombinatorsTest extends Test:
                 "condition becomes false with delay" in run {
                     var count  = 0
                     val effect = Sync.defer { count += 1; count }.repeatWhile((v, i) => (v < 3, 10.millis))
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map(v => assert(v == 3))
                     }
                 }
@@ -267,14 +267,14 @@ class KyoCombinatorsTest extends Test:
                 "condition becomes true" in run {
                     var count  = 0
                     val effect = Sync.defer { count += 1; count }.repeatUntil(_ == 3)
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map(v => assert(v == 3))
                     }
                 }
                 "condition is initially true" in run {
                     var count  = 0
                     val effect = Sync.defer { count += 1; count }.repeatUntil(_ => true)
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map(v => assert(v == 1))
                     }
                 }
@@ -284,7 +284,7 @@ class KyoCombinatorsTest extends Test:
                 "condition becomes true with delay" in run {
                     var count  = 0
                     val effect = Sync.defer { count += 1; count }.repeatUntil((v, i) => (v == 3, 10.millis))
-                    Fiber.run(effect).map(_.toFuture).map { handled =>
+                    Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map(v => assert(v == 3))
                     }
                 }

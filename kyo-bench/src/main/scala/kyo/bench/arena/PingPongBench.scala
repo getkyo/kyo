@@ -47,17 +47,17 @@ class PingPongBench extends ArenaBench.ForkOnly(()):
                 chan <- Channel.init[Unit](1)
                 effect =
                     for
-                        _ <- Fiber.run(chan.put(()))
+                        _ <- Fiber.init(chan.put(()))
                         _ <- chan.take
                         n <- ref.decrementAndGet
                         _ <- if n == 0 then promise.complete(Result.unit).unit else Kyo.unit
                     yield ()
-                _ <- repeat(depth)(Fiber.run[Closed, Unit, Any](effect))
+                _ <- repeat(depth)(Fiber.init[Closed, Unit, Any](effect))
             yield ()
 
         for
             promise <- Promise.init[Nothing, Unit]
-            _       <- Fiber.run(iterate(promise, depth))
+            _       <- Fiber.init(iterate(promise, depth))
             _       <- promise.get
         yield ()
         end for
