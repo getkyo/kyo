@@ -19,6 +19,19 @@ class ConstructorsTest extends Test:
             }
         }
 
+        "poll" - {
+            "should poll a value" in run {
+                val effect =
+                    for
+                        v1 <- Kyo.poll[Int]
+                        v2 <- Kyo.poll[Int]
+                        v3 <- Kyo.poll[Int]
+                    yield (v1, v2, v3)
+                Poll.run(Chunk(1, 2, 3))(effect).map: res =>
+                    assert(res == (Present(1), Present(2), Present(3)))
+            }
+        }
+
         "fail" - {
             "should create an effect that fails with Abort[E]" in {
                 val effect = Kyo.fail("Error message")
@@ -140,7 +153,7 @@ class ConstructorsTest extends Test:
         "suspend" - {
             "should suspend an effect using Sync" in run {
                 var executed = false
-                val effect = Kyo.suspend {
+                val effect = Kyo.defer {
                     executed = true
                     42
                 }
@@ -155,8 +168,8 @@ class ConstructorsTest extends Test:
         "suspendAttempt" - {
             "should suspend an effect and handle exceptions" in {
                 import AllowUnsafe.embrace.danger
-                val successEffect = Kyo.suspendAttempt(42)
-                val failureEffect = Kyo.suspendAttempt(throw new Exception("Error"))
+                val successEffect = Kyo.deferAttempt(42)
+                val failureEffect = Kyo.deferAttempt(throw new Exception("Error"))
 
                 val successResult = Sync.Unsafe.evalOrThrow(Abort.run[Throwable](successEffect))
                 val failureResult = Sync.Unsafe.evalOrThrow(Abort.run[Throwable](failureEffect))
@@ -211,6 +224,40 @@ class ConstructorsTest extends Test:
                         }
                     }
                 }
+            }
+        }
+
+        "defer" in {
+            var state = 0
+            val effect = Kyo.defer:
+                state += 1
+            assert(state == 0)
+            import AllowUnsafe.embrace.danger
+            Sync.Unsafe.evalOrThrow(effect)
+            assert(state == 1)
+        }
+
+        "deferAttempt" - {
+            "success" in {
+                var state = 0
+                val effect = Kyo.deferAttempt:
+                    state += 1
+                assert(state == 0)
+                import AllowUnsafe.embrace.danger
+                Sync.Unsafe.evalOrThrow(effect)
+                assert(state == 1)
+            }
+
+            "fail" in {
+                var state     = 0
+                val exception = Exception("failure")
+                val effect = Kyo.deferAttempt:
+                    state += 1
+                    throw exception
+                assert(state == 0)
+                import AllowUnsafe.embrace.danger
+                val result = Sync.Unsafe.evalOrThrow(Abort.run(effect))
+                assert(state == 1 && result == Result.Failure(exception))
             }
         }
     }

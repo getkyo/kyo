@@ -200,7 +200,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation wrapped in Present if the condition is satisfied, or Absent if not
       */
-    def when[S1](condition: => Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
+    def when[S1](condition: Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(c => if c then effect.map(Present.apply) else Absent)
 
     /** Performs this computation catching any Throwable in an Abort[Throwable] effect.
