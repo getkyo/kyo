@@ -146,7 +146,7 @@ object Queue:
           *   A `Fiber` that completes with `true` if the queue was successfully closed and emptied, `false` if it was already closed or
           *   another `closeAwaitEmpty` is already running.
           */
-        def closeAwaitEmptyFiber(using Frame): Fiber[Nothing, Boolean] < IO = IO.Unsafe(self.closeAwaitEmpty().safe)
+        def closeAwaitEmptyFiber(using Frame): Fiber[Nothing, Boolean] < Sync = Sync.Unsafe(self.closeAwaitEmpty().safe)
 
         /** Checks if the queue is closed.
           *
@@ -167,7 +167,7 @@ object Queue:
           * @return
           *   `true` if the queue is open, `false` otherwise
           */
-        def open(using Frame): Boolean < IO = IO.Unsafe(self.open())
+        def open(using Frame): Boolean < Sync = Sync.Unsafe(self.open())
 
         /** Returns the unsafe version of the queue.
           *
