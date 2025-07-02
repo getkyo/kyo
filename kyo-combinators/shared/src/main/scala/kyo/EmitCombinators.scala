@@ -15,8 +15,6 @@ extension [A, S](effect: Unit < (Emit[Chunk[A]] & S))
     def emitToStream: Stream[A, S] = Stream(effect)
 end extension
 
-private case object FinalEmit
-
 extension [A, B, S](effect: B < (Emit[A] & S))
     /** Handle Emit[A], returning all emitted values along with the original effect's result value.
       *

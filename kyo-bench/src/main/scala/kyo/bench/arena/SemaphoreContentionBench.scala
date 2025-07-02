@@ -34,7 +34,7 @@ class SemaphoreContentionBench extends ArenaBench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def repeat[A](n: Int)(io: A < IO): A < IO =
+        def repeat[A](n: Int)(io: A < Sync): A < Sync =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
@@ -47,7 +47,7 @@ class SemaphoreContentionBench extends ArenaBench.ForkOnly(()):
         for
             sem <- Meter.initSemaphore(permits)
             cdl <- Latch.init(parallism)
-            _   <- repeat(parallism)(Async.run(loop(sem, cdl)))
+            _   <- repeat(parallism)(Fiber.run(loop(sem, cdl)))
             _   <- cdl.await
         yield {}
         end for

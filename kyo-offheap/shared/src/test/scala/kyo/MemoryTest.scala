@@ -121,7 +121,7 @@ class MemoryTest extends Test:
             Arena.run {
                 for
                     mem <- Memory.init[Int](5)
-                    v <- IO.Unsafe {
+                    v <- Sync.Unsafe {
                         val unsafe: Unsafe[Int] = mem.unsafe
                         unsafe.set(0, 42)
                         unsafe.get(0)
@@ -134,7 +134,7 @@ class MemoryTest extends Test:
             Arena.run {
                 for
                     mem <- Memory.init[Int](5)
-                    (v0, v4) <- IO.Unsafe {
+                    (v0, v4) <- Sync.Unsafe {
                         val unsafe = mem.unsafe
                         unsafe.fill(42)
                         (unsafe.get(0), unsafe.get(4))
@@ -147,7 +147,7 @@ class MemoryTest extends Test:
             Arena.run {
                 for
                     mem <- Memory.init[Int](3)
-                    v <- IO.Unsafe {
+                    v <- Sync.Unsafe {
                         val unsafe = mem.unsafe
                         unsafe.set(0, 1)
                         unsafe.set(1, 2)

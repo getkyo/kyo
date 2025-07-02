@@ -11,14 +11,14 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                     assertCompletes
                 },
                 test("IOs Succeed") {
-                    IO(assertCompletes)
+                    Sync.defer(assertCompletes)
                 }
             ),
             suite("failing!")(
-                test("IO fail") {
-                    IO(throw new Exception("Fail!")).map(_ => assertCompletes)
+                test("Sync fail") {
+                    Sync.defer(throw new Exception("Fail!")).map(_ => assertCompletes)
                 },
-                test("IO Succeed") {
+                test("Sync Succeed") {
                     Abort.fail[Throwable](new RuntimeException("Abort!")).map(_ => assertCompletes)
                 },
                 test("Async.delay") {
@@ -43,7 +43,7 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                 ),
                 test("checkKyo")(
                     check(Gen.boolean) { b =>
-                        IO(assertTrue(b == b))
+                        Sync.defer(assertTrue(b == b))
                     }
                 )
             )

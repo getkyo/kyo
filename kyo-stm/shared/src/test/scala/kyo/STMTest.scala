@@ -18,7 +18,7 @@ class STMTest extends Test:
                 ref      <- TRef.init(0)
                 start    <- Latch.init(1)
                 continue <- Latch.init(1)
-                fiber <- Async.run {
+                fiber <- Fiber.run {
                     STM.run {
                         for
                             _ <- ref.set(42)
@@ -94,7 +94,7 @@ class STMTest extends Test:
                     latch2   <- Latch.init(1)
                     attempts <- AtomicInt.init
                     _ <-
-                        Async.run {
+                        Fiber.run {
                             STM.run(latch1.release.andThen(ref.set(42)))
                                 .andThen(latch2.release)
                         }
@@ -121,7 +121,7 @@ class STMTest extends Test:
                 latch2   <- Latch.init(1)
                 attempts <- AtomicInt.init
                 _ <-
-                    Async.run {
+                    Fiber.run {
                         STM.run(latch1.release.andThen(ref.set(42)))
                             .andThen(latch2.release)
                     }
@@ -551,11 +551,11 @@ class STMTest extends Test:
     "Concurrency" - {
 
         val repeats = 10
-        val sizes   = Seq(1, 10, 100, 1000)
+        val sizes   = Choice.eval(1, 10, 100, 1000)
 
         "concurrent updates" in runNotJS {
             (for
-                size  <- Choice.eval(sizes)
+                size  <- sizes
                 ref   <- TRef.init(0)
                 _     <- Async.fill(size, size)(STM.run(ref.update(_ + 1)))
                 value <- STM.run(ref.get)
@@ -566,13 +566,13 @@ class STMTest extends Test:
 
         "concurrent reads and writes" in runNotJS {
             (for
-                size  <- Choice.eval(sizes)
+                size  <- sizes
                 ref   <- TRef.init(0)
                 latch <- Latch.init(1)
-                writeFiber <- Async.run(
+                writeFiber <- Fiber.run(
                     latch.await.andThen(Async.fill(size, size)(STM.run(ref.update(_ + 1))))
                 )
-                readFiber <- Async.run(
+                readFiber <- Fiber.run(
                     latch.await.andThen(Async.fill(size, size)(STM.run(ref.get)))
                 )
                 _     <- latch.release
@@ -586,7 +586,7 @@ class STMTest extends Test:
 
         "concurrent nested transactions" in runNotJS {
             (for
-                size <- Choice.eval(sizes)
+                size <- sizes
                 ref  <- TRef.init(0)
                 _ <- Async.fill(size, size) {
                     STM.run {
@@ -748,7 +748,7 @@ class STMTest extends Test:
                     STM.run {
                         for
                             _ <- ref.set(1)
-                            fiber <- Async.run {
+                            fiber <- Fiber.run {
                                 STM.run {
                                     for
                                         _ <- ref.set(2)
@@ -776,7 +776,7 @@ class STMTest extends Test:
                 (parentTid, childTid) <-
                     STM.run {
                         TID.useIO { parentTid =>
-                            Async.run {
+                            Fiber.run {
                                 STM.run(TID.useIO(identity))
                             }.map(_.get).map { childTid =>
                                 (parentTid, childTid)
@@ -790,8 +790,8 @@ class STMTest extends Test:
     "bug #925" in runJVM {
         def unsafeToFuture[A](a: => A < (Async & Abort[Throwable])): Future[A] =
             import kyo.AllowUnsafe.embrace.danger
-            IO.Unsafe.evalOrThrow(
-                Async.run(a).map(_.toFuture)
+            Sync.Unsafe.evalOrThrow(
+                Fiber.run(a).map(_.toFuture)
             )
         end unsafeToFuture
 
@@ -802,7 +802,7 @@ class STMTest extends Test:
             r.get
         }
 
-        val task = Async.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
+        val task = Fiber.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
 
         Abort.run(task).map { result =>
             assert(result == Result.fail(ex))

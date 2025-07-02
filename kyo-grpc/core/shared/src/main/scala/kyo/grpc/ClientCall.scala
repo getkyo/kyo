@@ -26,7 +26,7 @@ object ClientCall:
     )(using Frame, Tag[Emit[Chunk[Request]]]): Response < GrpcRequest =
         for
             promise          <- Promise.init[GrpcResponse.Errors, Response]
-            responseObserver <- IO.Unsafe(UnaryResponseStreamObserver(promise))
+            responseObserver <- Sync.Unsafe(UnaryResponseStreamObserver(promise))
             requestObserver = ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver)
             _        <- StreamNotifier.notifyObserver(requests, requestObserver)
             response <- promise.get
@@ -42,10 +42,10 @@ object ClientCall:
             for
                 responseChannel <- StreamChannel.init[Response, GrpcResponse.Errors]
                 // TODO: Do we have to cancel the observer returned here?
-                responseObserver <- IO.Unsafe(ResponseStreamObserver(responseChannel))
+                responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
                 _ = ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver)
             yield responseChannel.stream
-        Stream.embed(responses)
+        Stream.unwrap(responses)
     end serverStreaming
 
     def bidiStreaming[Request: Tag, Response: Tag](
@@ -58,11 +58,11 @@ object ClientCall:
             for
                 responseChannel <- StreamChannel.init[Response, GrpcResponse.Errors]
                 // TODO: Do we have to cancel the observer returned here?
-                responseObserver <- IO.Unsafe(ResponseStreamObserver(responseChannel))
+                responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
                 requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)
                 _ <- StreamNotifier.notifyObserver(requests, requestObserver)
             yield responseChannel.stream
-        Stream.embed(responses)
+        Stream.unwrap(responses)
     end bidiStreaming
 
 end ClientCall

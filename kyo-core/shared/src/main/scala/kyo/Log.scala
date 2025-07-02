@@ -3,33 +3,32 @@ package kyo
 import kyo.internal.LogPlatformSpecific
 
 final case class Log(unsafe: Log.Unsafe):
-    def level: Log.Level                                                        = unsafe.level
-    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.trace(msg.show))
-    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        IO.Unsafe(unsafe.trace(msg.show, t))
-    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.debug(msg.show))
-    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        IO.Unsafe(unsafe.debug(msg.show, t))
-    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.info(msg.show))
-    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.info(msg.show, t))
-    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.warn(msg.show))
-    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO        = IO.Unsafe(unsafe.warn(msg.show, t))
-    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < IO                        = IO.Unsafe(unsafe.error(msg.show))
-    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.error(msg.show, t))
+    def level: Log.Level                                                          = unsafe.level
+    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.trace(msg))
+    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+        Sync.Unsafe(unsafe.trace(msg, t))
+    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.debug(msg))
+    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
+        Sync.Unsafe(unsafe.debug(msg, t))
+    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < Sync                         = Sync.Unsafe(unsafe.info(msg))
+    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.info(msg, t))
+    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < Sync                         = Sync.Unsafe(unsafe.warn(msg))
+    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync        = Sync.Unsafe(unsafe.warn(msg, t))
+    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < Sync                        = Sync.Unsafe(unsafe.error(msg))
+    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < Sync       = Sync.Unsafe(unsafe.error(msg, t))
 end Log
 
 /** Logging utility object for Kyo applications. */
 object Log extends LogPlatformSpecific:
 
-    sealed abstract class Level(private val priority: Int) derives CanEqual:
+    enum Level(private val priority: Int) derives CanEqual:
         def enabled(other: Level): Boolean = other.priority <= priority
-    object Level:
-        case object trace  extends Level(10)
-        case object debug  extends Level(20)
-        case object info   extends Level(30)
-        case object warn   extends Level(40)
-        case object error  extends Level(50)
-        case object silent extends Level(60)
+        case trace  extends Level(10)
+        case debug  extends Level(20)
+        case info   extends Level(30)
+        case warn   extends Level(40)
+        case error  extends Level(50)
+        case silent extends Level(60)
     end Level
 
     private val local = Local.init(live)
@@ -170,12 +169,12 @@ object Log extends LogPlatformSpecific:
         end ConsoleLogger
     end Unsafe
 
-    private inline def logWhen(inline level: Level)(inline doLog: Log => Any < IO)(using
+    private inline def logWhen(inline level: Level)(inline doLog: Log => Unit < Sync)(using
         inline frame: Frame
-    ): Unit < IO =
-        IO.Unsafe.withLocal(local) { log =>
+    ): Unit < Sync =
+        Sync.Unsafe.withLocal(local) { log =>
             if level.enabled(log.level) then
-                doLog(log).unit
+                doLog(log)
             else
                 (
             )
@@ -186,9 +185,9 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
-    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < IO =
+    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.trace)(_.trace(msg))
 
     /** Logs a trace message with an exception.
@@ -198,9 +197,9 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
-    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.trace)(_.trace(msg, t))
 
     /** Logs a debug message.
@@ -208,9 +207,9 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
-    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < IO =
+    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.debug)(_.debug(msg))
 
     /** Logs a debug message with an exception.
@@ -220,9 +219,9 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
-    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.debug)(_.debug(msg, t))
 
     /** Logs an info message.
@@ -230,9 +229,9 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
-    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < IO =
+    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.info)(_.info(msg))
 
     /** Logs an info message with an exception.
@@ -242,9 +241,9 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
-    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.info)(_.info(msg, t))
 
     /** Logs a warning message.
@@ -252,9 +251,9 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
-    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < IO =
+    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.warn)(_.warn(msg))
 
     /** Logs a warning message with an exception.
@@ -264,9 +263,9 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
-    inline def warn(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+    inline def warn(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.warn)(_.warn(msg, t))
 
     /** Logs an error message.
@@ -274,9 +273,9 @@ object Log extends LogPlatformSpecific:
       * @param msg
       *   The message to log
       * @return
-      *   An IO effect that logs the message
+      *   An Sync effect that logs the message
       */
-    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < IO =
+    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.error)(_.error(msg))
 
     /** Logs an error message with an exception.
@@ -286,9 +285,9 @@ object Log extends LogPlatformSpecific:
       * @param t
       *   The exception to log
       * @return
-      *   An IO effect that logs the message and exception
+      *   An Sync effect that logs the message and exception
       */
-    inline def error(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+    inline def error(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < Sync =
         logWhen(Level.error)(_.error(msg, t))
 
 end Log

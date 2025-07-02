@@ -18,18 +18,18 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         val serverObserver = mock[ServerCallStreamObserver[String]]
 
         def setupExpectations(latch: Latch) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 serverObserver.onNext
                     .expects("next next")
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .once()
 
                 (() => serverObserver.onCompleted())
                     .expects()
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .once()
             }
@@ -37,10 +37,10 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(2)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onCompleted())
+            observer <- Sync.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onCompleted())
             _        <- latch.await
         yield succeed
     }
@@ -52,11 +52,11 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         def setupExpectations(latch: Latch) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 serverObserver.onError
                     .expects(argThat[StatusException](_ === statusException))
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .once()
             }
@@ -64,10 +64,10 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(1)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onError(statusException))
+            observer <- Sync.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onError(statusException))
             _        <- latch.await
         yield succeed
     }
@@ -79,11 +79,11 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         def setupExpectations(latch: Latch) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 serverObserver.onError
                     .expects(argThat[StatusException](_ === statusException))
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .once()
             }
@@ -91,10 +91,10 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(1)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onError(exception))
+            observer <- Sync.Unsafe(RequestStreamObserver.init(foldRequests, serverObserver))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onError(exception))
             _        <- latch.await
         yield succeed
     }

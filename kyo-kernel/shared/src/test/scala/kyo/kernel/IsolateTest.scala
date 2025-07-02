@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import kyo.*
+import kyo.Result.Error
 import kyo.kernel.internal.*
 
 class IsolateTest extends Test:
@@ -83,8 +84,8 @@ class IsolateTest extends Test:
     "restoring" in {
         var interceptorCalled = false
         val interceptor = new Safepoint.Interceptor:
-            def addFinalizer(f: () => Unit): Unit    = ()
-            def removeFinalizer(f: () => Unit): Unit = ()
+            def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = ()
+            def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = ()
             def enter(frame: Frame, value: Any): Boolean =
                 interceptorCalled = true
                 true

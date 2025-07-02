@@ -467,20 +467,20 @@ class ServiceTest extends Test:
 
     private def createChannel(port: Int) =
         Resource.acquireRelease(
-            IO(
+            Sync.defer(
                 ManagedChannelBuilder
                     .forAddress("localhost", port)
                     .usePlaintext()
                     .build()
             )
         ) { channel =>
-            IO(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
+            Sync.defer(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
         }
 
     private def findFreePort =
         for
-            socket <- IO(new ServerSocket(0))
-            port   <- IO.ensure(IO(socket.close()))(socket.getLocalPort)
+            socket <- Sync.defer(new ServerSocket(0))
+            port   <- Sync.ensure(Sync.defer(socket.close()))(socket.getLocalPort)
         yield port
 
 end ServiceTest

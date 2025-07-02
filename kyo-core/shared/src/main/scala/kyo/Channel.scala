@@ -72,7 +72,29 @@ object Channel:
           * @return
           *   The number of elements currently in the channel
           */
-        def size(using Frame): Int < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.size()))
+        def size(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.size()))
+
+        /** Returns the number of fibers currently waiting to put values into the channel.
+          *
+          * This method provides visibility into the backpressure state of the channel by counting how many producer fibers are currently
+          * suspended waiting for space to become available. A non-zero value indicates that producers are being throttled due to the
+          * channel being full.
+          *
+          * @return
+          *   The number of fibers waiting to put values into the channel
+          */
+        def pendingPuts(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.pendingPuts()))
+
+        /** Returns the number of fibers currently waiting to take values from the channel.
+          *
+          * This method provides visibility into the consumer demand state of the channel by counting how many consumer fibers are currently
+          * suspended waiting for values to become available. A non-zero value indicates that consumers are waiting for producers to add
+          * values.
+          *
+          * @return
+          *   The number of fibers waiting to take values from the channel
+          */
+        def pendingTakes(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.pendingTakes()))
 
         /** Attempts to offer an element to the channel without blocking.
           *
@@ -81,21 +103,21 @@ object Channel:
           * @return
           *   true if the element was added to the channel, false otherwise
           */
-        def offer(value: A)(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.offer(value)))
+        def offer(value: A)(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.offer(value)))
 
         /** Offers an element to the channel without returning a result.
           *
           * @param v
           *   The element to offer
           */
-        def offerDiscard(value: A)(using Frame): Unit < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.offer(value).unit))
+        def offerDiscard(value: A)(using Frame): Unit < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.offer(value).unit))
 
         /** Attempts to poll an element from the channel without blocking.
           *
           * @return
           *   Maybe containing the polled element, or empty if the channel is empty
           */
-        def poll(using Frame): Maybe[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.poll()))
+        def poll(using Frame): Maybe[A] < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.poll()))
 
         /** Puts an element into the channel, asynchronously blocking if necessary.
           *
@@ -103,7 +125,7 @@ object Channel:
           *   The element to put
           */
         def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 self.offer(value).foldError(
                     {
                         case true  => ()
@@ -121,9 +143,9 @@ object Channel:
         def putBatch(values: Seq[A])(using Frame): Unit < (Abort[Closed] & Async) =
             if values.isEmpty then ()
             else if self.capacity == 0 then
-                IO.Unsafe(self.putBatchFiber(values).safe.get)
+                Sync.Unsafe(self.putBatchFiber(values).safe.get)
             else
-                IO.Unsafe {
+                Sync.Unsafe {
                     self.offerAll(values) match
                         case Result.Success(remaining) =>
                             if remaining.isEmpty then ()
@@ -140,7 +162,7 @@ object Channel:
           *   The taken element
           */
         def take(using Frame): A < (Abort[Closed] & Async) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 self.poll().foldError(
                     {
                         case Present(value) => value
@@ -178,21 +200,21 @@ object Channel:
           * @return
           *   A sequence containing all elements that were in the channel
           */
-        def drain(using Frame): Chunk[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.drain()))
+        def drain(using Frame): Chunk[A] < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.drain()))
 
         /** Takes up to [[max]] elements from the channel.
           *
           * @return
           *   a sequence of up to [[max]] elements that were in the channel.
           */
-        def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.drainUpTo(max)))
 
         /** Closes the channel.
           *
           * @return
           *   A sequence of remaining elements
           */
-        def close(using Frame): Maybe[Seq[A]] < IO = IO.Unsafe(self.close())
+        def close(using Frame): Maybe[Seq[A]] < Sync = Sync.Unsafe(self.close())
 
         /** Closes the channel and asynchronously waits until it's empty.
           *
@@ -203,7 +225,7 @@ object Channel:
           * @return
           *   `true` if the channel was successfully closed and emptied, `false` if it was already closed
           */
-        def closeAwaitEmpty(using Frame): Boolean < Async = IO.Unsafe(self.closeAwaitEmpty().safe.get)
+        def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe(self.closeAwaitEmpty().safe.get)
 
         /** Closes the channel and returns the [[Fiber]] waits until it's empty.
           *
@@ -230,7 +252,7 @@ object Channel:
           * @return
           *   `true` if the channel is closed, `false` otherwise
           */
-        def closed(using Frame): Boolean < IO = IO.Unsafe(self.closed())
+        def closed(using Frame): Boolean < Sync = Sync.Unsafe(self.closed())
 
         /** Checks if the channel is open.
           *
@@ -246,14 +268,14 @@ object Channel:
           * @return
           *   true if the channel is empty, false otherwise
           */
-        def empty(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.empty()))
+        def empty(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.empty()))
 
         /** Checks if the channel is full.
           *
           * @return
           *   true if the channel is full, false otherwise
           */
-        def full(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.full()))
+        def full(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.full()))
 
         private def emitChunks(maxChunkSize: Int = Int.MaxValue)(
             using
@@ -262,17 +284,21 @@ object Channel:
         ): Unit < (Emit[Chunk[A]] & Abort[Closed] & Async) =
             if maxChunkSize <= 0 then ()
             else if maxChunkSize == 1 then
-                Loop.foreach:
+                Loop.forever:
                     Channel.take(self).map: v =>
-                        Emit.valueWith(Chunk(v))(Loop.continue)
+                        Emit.value(Chunk(v))
             else
                 val drainEffect =
                     if maxChunkSize == Int.MaxValue then Channel.drain(self)
-                    else Channel.drainUpTo(self)(maxChunkSize - 1)
-                Loop[Unit, Unit, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
-                    Channel.take(self).map: a =>
-                        drainEffect.map: chunk =>
-                            Emit.valueWith(Chunk(a).concat(chunk))(Loop.continue)
+                    else Channel.drainUpTo(self)(maxChunkSize)
+                Loop.forever:
+                    drainEffect.map:
+                        case chunk if chunk.nonEmpty => Emit.value(chunk)
+                        case _ =>
+                            for
+                                a  <- Channel.take(self)
+                                ch <- Channel.drainUpTo(self)(maxChunkSize - 1)
+                            yield Emit.value(Chunk(a).concat(ch))
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
@@ -321,7 +347,7 @@ object Channel:
       * @warning
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
-    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < IO =
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < Sync =
         initWith[A](capacity, access)(identity)
 
     /** Uses a new Channel with the provided configuration.
@@ -332,13 +358,15 @@ object Channel:
       */
     inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
-    )(using inline frame: Frame): B < (S & IO) =
-        IO.Unsafe(f(Unsafe.init(capacity, access)))
+    )(using inline frame: Frame): B < (S & Sync) =
+        Sync.Unsafe(f(Unsafe.init(capacity, access)))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe[A] extends Serializable:
         def capacity: Int
         def size()(using AllowUnsafe, Frame): Result[Closed, Int]
+        def pendingPuts()(using AllowUnsafe, Frame): Result[Closed, Int]
+        def pendingTakes()(using AllowUnsafe, Frame): Result[Closed, Int]
 
         def offer(value: A)(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def offerAll(values: Seq[A])(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
@@ -439,6 +467,9 @@ object Channel:
             def capacity = 0
 
             def size()(using AllowUnsafe, Frame) = succeedIfOpen(0)
+
+            def pendingPuts()(using AllowUnsafe, Frame)  = succeedIfOpen(puts.size())
+            def pendingTakes()(using AllowUnsafe, Frame) = succeedIfOpen(takes.size())
 
             def offer(value: A)(using AllowUnsafe, Frame) =
                 Maybe(takes.poll()) match
@@ -616,6 +647,9 @@ object Channel:
             val queue = Queue.Unsafe.init[A](capacity, access)
 
             def size()(using AllowUnsafe, Frame) = queue.size()
+
+            def pendingPuts()(using AllowUnsafe, Frame)  = queue.size().map(_ => puts.size())
+            def pendingTakes()(using AllowUnsafe, Frame) = queue.size().map(_ => (takes.size()))
 
             def offer(value: A)(using AllowUnsafe, Frame) =
                 val result = queue.offer(value)

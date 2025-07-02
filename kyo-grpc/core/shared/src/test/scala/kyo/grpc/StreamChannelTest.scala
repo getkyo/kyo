@@ -88,7 +88,7 @@ class StreamChannelTest extends Test:
         "interrupts take" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Async.run(channel.take)
+                fiber   <- Fiber.run(channel.take)
                 _       <- Async.delay(delay)(channel.error("error"))
                 result  <- Abort.run(fiber.get)
             yield assert(result == Result.fail("error"))
@@ -97,7 +97,7 @@ class StreamChannelTest extends Test:
         "interrupts stream" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Async.run(channel.stream.run)
+                fiber   <- Fiber.run(channel.stream.run)
                 _       <- Async.delay(delay)(channel.error("error"))
                 result  <- Abort.run(fiber.get)
             yield assert(result == Result.fail("error"))
@@ -125,7 +125,7 @@ class StreamChannelTest extends Test:
         "interrupts take" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Async.run(channel.take)
+                fiber   <- Fiber.run(channel.take)
                 _       <- Async.delay(delay)(channel.closeProducer)
                 result  <- Abort.run[Closed](fiber.get)
             yield assert(result.isFailure)
@@ -134,7 +134,7 @@ class StreamChannelTest extends Test:
         "interrupts stream" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Async.run(channel.stream.run)
+                fiber   <- Fiber.run(channel.stream.run)
                 _       <- Async.delay(delay)(channel.closeProducer)
                 result  <- fiber.get
             yield assert(result == Chunk.empty)
@@ -240,7 +240,7 @@ class StreamChannelTest extends Test:
         "stops when producer closes" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Async.run(channel.stream.run)
+                fiber   <- Fiber.run(channel.stream.run)
                 _       <- channel.put(1)
                 _       <- channel.put(2)
                 _       <- channel.put(3)
@@ -255,7 +255,7 @@ class StreamChannelTest extends Test:
         "closes when done" in run {
             for
                 channel   <- StreamChannel.init[Int, String]
-                fiber     <- Async.run(channel.stream.run)
+                fiber     <- Fiber.run(channel.stream.run)
                 _         <- channel.put(1)
                 _         <- channel.put(2)
                 _         <- channel.put(3)
@@ -272,7 +272,7 @@ class StreamChannelTest extends Test:
             for
                 channel <- StreamChannel.init[Int, String]
                 // Don't forget to only use a single producer.
-                _      <- Async.run(Loop(1)(i => channel.put(i).andThen(Loop.continue(i + 1))))
+                _      <- Fiber.run(Loop(1)(i => channel.put(i).andThen(Loop.continue(i + 1))))
                 result <- channel.stream.take(10).run
             yield assert(result == Chunk.from(1 to 10))
         }
@@ -280,7 +280,7 @@ class StreamChannelTest extends Test:
         "last error closes" in run {
             for
                 channel   <- StreamChannel.init[Int, String]
-                fiber     <- Async.run(channel.stream.splitAt(1))
+                fiber     <- Fiber.run(channel.stream.splitAt(1))
                 _         <- channel.put(1)
                 _         <- channel.error("error")
                 (_, tail) <- fiber.get
@@ -303,7 +303,7 @@ class StreamChannelTest extends Test:
         "fails with error after last take" in run {
             for
                 channel      <- StreamChannel.init[Int, String]
-                fiber        <- Async.run(channel.stream.splitAt(1))
+                fiber        <- Fiber.run(channel.stream.splitAt(1))
                 _            <- channel.put(1)
                 (head, tail) <- fiber.get
                 _            <- channel.error("error")

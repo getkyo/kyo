@@ -58,7 +58,7 @@ object ServerHandler:
         ServerCalls.asyncClientStreamingCall(responseObserver =>
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
             val requestObserver        = RequestStreamObserver.init(f, serverResponseObserver)
-            Abort.run(IO.Unsafe.run(requestObserver)).eval.getOrThrow
+            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
         )
 
     /** Creates a server handler for server streaming gRPC calls.
@@ -80,7 +80,7 @@ object ServerHandler:
         Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
-            val completed = StreamNotifier.notifyObserver(Stream.embed(f(request)), responseObserver)
+            val completed = StreamNotifier.notifyObserver(Stream.unwrap(f(request)), responseObserver)
             KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
         }
 
@@ -109,7 +109,7 @@ object ServerHandler:
         ServerCalls.asyncBidiStreamingCall(responseObserver =>
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
             val requestObserver        = BidiRequestStreamObserver.init(f, serverResponseObserver)
-            Abort.run(IO.Unsafe.run(requestObserver)).eval.getOrThrow
+            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
         )
 
 end ServerHandler

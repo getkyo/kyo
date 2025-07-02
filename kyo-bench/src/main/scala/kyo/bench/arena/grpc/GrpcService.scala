@@ -59,12 +59,12 @@ object GrpcService:
             .flatMap(TestServiceFs2Grpc.stubResource[CIO](_))
     end createCatsClient
 
-    def createKyoServer(port: Int, static: Boolean): grpc.Server < (Resource & IO) =
+    def createKyoServer(port: Int, static: Boolean): grpc.Server < (Resource & Sync) =
         val service = if static then StaticKyoTestService(size) else KyoTestService(size)
         kyo.grpc.Server.start(port)(_.addService(service))
     end createKyoServer
 
-    def createKyoClient(port: Int): TestService.Client < (Resource & IO) =
+    def createKyoClient(port: Int): TestService.Client < (Resource & Sync) =
         TestService.managedClient(host, port)(_.usePlaintext())
 
     def createZioServer(port: Int, static: Boolean): ZIO[Scope, Throwable, zio_grpc.Server] =

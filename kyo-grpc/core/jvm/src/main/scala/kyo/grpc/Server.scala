@@ -18,8 +18,8 @@ object Server:
       * @param timeout
       *   The maximum duration to wait for graceful termination (default: 30 seconds)
       */
-    def shutdown(server: io.grpc.Server, timeout: Duration = 30.seconds)(using Frame): Unit < IO =
-        IO:
+    def shutdown(server: io.grpc.Server, timeout: Duration = 30.seconds)(using Frame): Unit < Sync =
+        Sync.defer:
             val terminated =
                 server
                     .shutdown()
@@ -38,14 +38,14 @@ object Server:
       *   A function to handle the shutdown of the server, which takes the server instance and a timeout duration. Defaults to
       *   [[Server.shutdown]]
       * @return
-      *   the running server pending [[Resource]] and [[IO]]
+      *   the running server pending [[Resource]] and [[Sync]]
       */
     def start(port: Int, timeout: Duration = 30.seconds)(
         configure: ServerBuilder[?] => ServerBuilder[?],
-        shutdown: (io.grpc.Server, Duration) => Frame ?=> Any < IO = shutdown
-    )(using Frame): io.grpc.Server < (Resource & IO) =
+        shutdown: (io.grpc.Server, Duration) => Frame ?=> Any < Sync = shutdown
+    )(using Frame): io.grpc.Server < (Resource & Sync) =
         Resource.acquireRelease(
-            IO(configure(ServerBuilder.forPort(port)).build().start())
+            Sync.defer(configure(ServerBuilder.forPort(port)).build().start())
         )(shutdown(_, timeout))
 
     // This is required until https://github.com/getkyo/kyo/issues/491 is done.
@@ -74,8 +74,8 @@ object Server:
         for
             promise <- Promise.init[Nothing, Unit]
             complete = promise.complete(Result.succeed(())).unit
-            _ <- IO(Signal.handle(new Signal("INT"), _ => Abort.run(IO.Unsafe.run(complete)).eval.getOrThrow))
-            _ <- IO(Signal.handle(new Signal("TERM"), _ => Abort.run(IO.Unsafe.run(complete)).eval.getOrThrow))
+            _ <- Sync.defer(Signal.handle(new Signal("INT"), _ => Abort.run(Sync.Unsafe.run(complete)).eval.getOrThrow))
+            _ <- Sync.defer(Signal.handle(new Signal("TERM"), _ => Abort.run(Sync.Unsafe.run(complete)).eval.getOrThrow))
             _ <- promise.get
         yield ()
 

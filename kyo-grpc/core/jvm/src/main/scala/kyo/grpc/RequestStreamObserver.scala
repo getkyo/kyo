@@ -45,7 +45,7 @@ class RequestStreamObserver[Request, Response](
     end onError
 
     override def onCompleted(): Unit =
-        IO.Unsafe.evalOrThrow(requestChannel.closeProducer)
+        Sync.Unsafe.evalOrThrow(requestChannel.closeProducer)
 
 end RequestStreamObserver
 
@@ -53,7 +53,7 @@ object RequestStreamObserver:
 
     /** Initializes a [[RequestStreamObserver]].
       *
-      * When the pending [[IO]] is run, it will start the background processing of requests and sending of the response. It will complete
+      * When the pending [[Sync]] is run, it will start the background processing of requests and sending of the response. It will complete
       * when the response has been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while
       * processing the requests or sending the response and the `responseObserver` will receive the error.
       *
@@ -66,16 +66,16 @@ object RequestStreamObserver:
       * @tparam Response
       *   the type of the response message
       * @return
-      *   an instance of `RequestStreamObserver` pending [[IO]]
+      *   an instance of `RequestStreamObserver` pending [[Sync]]
       */
     def init[Request, Response](
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
-    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request, Response] < IO =
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request, Response] < Sync =
         for
             requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
             observer = RequestStreamObserver(f, requestChannel, responseObserver)
-            _ <- Async.run(observer.start)
+            _ <- Fiber.run(observer.start)
         yield observer
     end init
 

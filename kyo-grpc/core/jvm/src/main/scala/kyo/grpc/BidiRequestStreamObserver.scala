@@ -28,7 +28,7 @@ class BidiRequestStreamObserver[Request, Response] private (
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]) extends StreamObserver[Request]:
 
-    private val responses = Stream.embed(f(requestChannel.stream))
+    private val responses = Stream.unwrap(f(requestChannel.stream))
 
     /** Only run this once.
       */
@@ -46,7 +46,7 @@ class BidiRequestStreamObserver[Request, Response] private (
     end onError
 
     override def onCompleted(): Unit =
-        IO.Unsafe.evalOrThrow(requestChannel.closeProducer)
+        Sync.Unsafe.evalOrThrow(requestChannel.closeProducer)
 
 end BidiRequestStreamObserver
 
@@ -54,7 +54,7 @@ object BidiRequestStreamObserver:
 
     /** Initializes a [[BidiRequestStreamObserver]].
       *
-      * When the pending [[IO]] is run, it will start the background processing of requests and sending of responses. It will complete when
+      * When the pending [[Sync]] is run, it will start the background processing of requests and sending of responses. It will complete when
       * all responses have been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while processing
       * the requests or sending the responses and the `responseObserver` will receive the error.
       *
@@ -67,16 +67,16 @@ object BidiRequestStreamObserver:
       * @tparam Response
       *   the type of the response messages
       * @return
-      *   an instance of `BidiRequestStreamObserver` pending [[IO]]
+      *   an instance of `BidiRequestStreamObserver` pending [[Sync]]
       */
     def init[Request, Response](
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
-    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): BidiRequestStreamObserver[Request, Response] < IO =
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): BidiRequestStreamObserver[Request, Response] < Sync =
         for
             requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
             observer = BidiRequestStreamObserver(f, requestChannel, responseObserver)
-            _ <- Async.run(observer.start)
+            _ <- Fiber.run(observer.start)
         yield observer
     end init
 

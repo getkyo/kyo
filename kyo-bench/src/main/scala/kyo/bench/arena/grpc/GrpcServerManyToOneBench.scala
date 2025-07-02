@@ -59,7 +59,7 @@ class GrpcServerManyToOneBench extends ArenaBench2(response):
                         )
                     end onCompleted
 
-                val run = Async:
+                val run = Async.defer:
                     val requestObserver = stub.manyToOne(observer)
                     requests.foreach(requestObserver.onNext)
                     requestObserver.onCompleted()

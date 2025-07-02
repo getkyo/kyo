@@ -590,7 +590,7 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           * @return
           *   a single value Chunk of type A
           */
-        private[Chunk] def single[A](a: A): Indexed[A] = Single(a)
+        private[kyo] def single[A](a: A): Indexed[A] = Single(a)
 
         def from[A](source: Array[A]): Indexed[A] =
             source.length match
@@ -611,21 +611,23 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
           *   a new Chunk.Indexed containing the elements from the IterableOnce
           */
         def from[A](source: IterableOnce[A]): Indexed[A] =
-            source.knownSize match
-                case 0 => empty[A]
-                case 1 => single(source.iterator.next())
-                case _ =>
-                    source match
-                        case chunk: Chunk.Indexed[A] @unchecked => chunk
-                        case seq: IndexedSeq[A]                 => FromSeq(seq)
+            source match
+                case chunk: Chunk.Indexed[A] @unchecked => chunk
+                case other =>
+                    other.knownSize match
+                        case 0 => empty[A]
+                        case 1 => single(source.iterator.next())
                         case _ =>
-                            val array = source.iterator.toArray(using erasedTag[A])
-                            array.length match
-                                case 0 => empty[A]
-                                case 1 => single(array(0))
-                                case _ => Compact(array)
-                            end match
-            end match
+                            other match
+                                case seq: IndexedSeq[A] => FromSeq(seq)
+                                case _ =>
+                                    val array = other.iterator.toArray(using erasedTag[A])
+                                    array.length match
+                                        case 0 => empty[A]
+                                        case 1 => single(array(0))
+                                        case _ => Compact(array)
+                                    end match
+                    end match
         end from
 
         /** Creates an Indexed Chunk from a Maybe.
@@ -695,9 +697,36 @@ object Chunk extends StrictOptimizedSeqFactory[Chunk]:
       * @param source
       *   the IterableOnce to create the Chunk from
       * @return
-      *   a new Chunk.Indexed containing the elements from the IterableOnce
+      *   a new Chunk containing the elements from the IterableOnce
       */
-    def from[A](source: IterableOnce[A]): Chunk[A] = Indexed.from(source)
+    def from[A](source: IterableOnce[A]): Chunk[A] =
+        source match
+            case chunk: Chunk.Indexed[A] @unchecked => chunk
+            case other                              => Indexed.from(other)
+        end match
+    end from
+
+    /** Creates a Chunk from a Maybe.
+      *
+      * @tparam A
+      *   the type of the element
+      * @param source
+      *   the Maybe to create the Chunk from
+      * @return
+      *   a new Chunk.Indexed containing the single element
+      */
+    def from[A](source: Maybe[A]): Chunk[A] = Indexed.from(source)
+
+    /** Creates a Chunk from an Option.
+      *
+      * @tparam A
+      *   the type of the element
+      * @param source
+      *   the Option to create the Chunk from
+      * @return
+      *   a new Chunk.Indexed containing the single element
+      */
+    def from[A](source: Option[A]): Chunk[A] = Indexed.from(source)
 
     /** Creates a new **mutable** builder for constructing Chunks.
       *

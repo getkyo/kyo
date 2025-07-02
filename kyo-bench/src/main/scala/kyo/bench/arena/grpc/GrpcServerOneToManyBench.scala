@@ -31,7 +31,7 @@ class GrpcServerOneToManyBench extends ArenaBench2(size):
     def kyoBench(warmup: KyoForkWarmup, state: KyoState): Int =
         import state.*
         forkKyo:
-            IO(consume(blockingStub.oneToMany(request)))
+            Sync.defer(consume(blockingStub.oneToMany(request)))
     end kyoBench
 
     @Benchmark

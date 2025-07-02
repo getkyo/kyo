@@ -644,4 +644,55 @@ class EmitTest extends Test:
             assert(result.eval == (Chunk("two", "three", "four"), "done"))
         }
     }
+
+    "partial handling" - {
+        enum T:
+            case T1(int: Int)
+            case T2(str: String)
+        object T:
+            given CanEqual[T, T] = CanEqual.derived
+
+        val emit =
+            for
+                _ <- Emit.value[T.T1](T.T1(0))
+                _ <- Emit.value[T.T2](T.T2("zero"))
+                _ <- Emit.value[T.T1](T.T1(1))
+                _ <- Emit.value[T.T2](T.T2("one"))
+                _ <- Emit.value[T.T1](T.T1(2))
+                _ <- Emit.value[T.T2](T.T2("two"))
+            yield ()
+
+        "run" in run {
+            assert(Emit.runDiscard(Emit.run[T.T1](emit)).eval == (Chunk(T.T1(0), T.T1(1), T.T1(2)), ()))
+            assert(Emit.run(Emit.runDiscard[T.T1](emit)).eval == (Chunk(T.T2("zero"), T.T2("one"), T.T2("two")), ()))
+        }
+
+        "runForeach" in run {
+            var chunk = Chunk.empty[T.T1]
+            Emit.runDiscard(Emit.runForeach[T.T1](emit)(t1 => chunk = chunk.appended(t1))).eval
+            assert(chunk == Chunk(T.T1(0), T.T1(1), T.T1(2)))
+        }
+
+        "runWhile" in run {
+            var chunk = Chunk.empty[T.T1]
+            Emit.runDiscard(Emit.runWhile[T.T1](emit)(t1 =>
+                chunk = chunk.appended(t1)
+                t1.int < 1
+            )).eval
+            assert(chunk == Chunk(T.T1(0), T.T1(1)))
+        }
+
+        "runFirst" in run {
+            val ranFirst = Emit.runDiscard:
+                Emit.runFirst[T.T2](emit).map:
+                    case (mv2, cont) =>
+                        Emit.runFirst[T.T1](cont()).map:
+                            case (mv1, cont) =>
+                                Emit.runDiscard(cont())
+                                    .andThen((mv2, mv1))
+
+            assert(ranFirst.eval == (Present(T.T2("zero")), Present(T.T1(1))))
+        }
+
+    }
 end EmitTest

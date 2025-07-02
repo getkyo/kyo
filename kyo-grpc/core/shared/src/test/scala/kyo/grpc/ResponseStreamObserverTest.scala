@@ -14,7 +14,7 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
 
     "onNext puts value" in run {
         val channel  = mock[StreamChannel[String, GrpcResponse.Errors]]
-        val observer = IO.Unsafe(ResponseStreamObserver[String](channel))
+        val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
 
         (channel.put(_: String)(using _: Frame))
             .expects("next", *)
@@ -26,7 +26,7 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
 
     "onError with status exception fails" in run {
         val channel = mock[StreamChannel[String, GrpcResponse.Errors]]
-        val observer = IO.Unsafe(ResponseStreamObserver[String](channel))
+        val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
         val exception = new RuntimeException("Test exception")
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
@@ -42,7 +42,7 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
 
     "onError with other exception fails" in run {
         val channel         = mock[StreamChannel[String, GrpcResponse.Errors]]
-        val observer        = IO.Unsafe(ResponseStreamObserver[String](channel))
+        val observer        = Sync.Unsafe(ResponseStreamObserver[String](channel))
         val exception       = new RuntimeException("Test exception")
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
@@ -56,7 +56,7 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
 
     "onCompleted completes" in run {
         val channel  = mock[StreamChannel[String, GrpcResponse.Errors]]
-        val observer = IO.Unsafe(ResponseStreamObserver[String](channel))
+        val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
 
         (channel.closeProducer(using _: Frame))
             .expects(*)

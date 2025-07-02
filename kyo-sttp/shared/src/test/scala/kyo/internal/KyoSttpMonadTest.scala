@@ -7,25 +7,25 @@ import sttp.monad.Canceler
 class KyoSttpMonadTest extends Test:
 
     "map" in run {
-        KyoSttpMonad.map(IO(1))(_ + 1).map(r => assert(r == 2))
+        KyoSttpMonad.map(Sync.defer(1))(_ + 1).map(r => assert(r == 2))
     }
 
     "flatMap" in run {
-        KyoSttpMonad.flatMap(IO(1))(v => IO(v + 1)).map(r => assert(r == 2))
+        KyoSttpMonad.flatMap(Sync.defer(1))(v => Sync.defer(v + 1)).map(r => assert(r == 2))
     }
 
     "handleError" - {
         "ok" in run {
-            KyoSttpMonad.handleError(IO(1))(_ => 2).map(r => assert(r == 1))
+            KyoSttpMonad.handleError(Sync.defer(1))(_ => 2).map(r => assert(r == 1))
         }
         "nok" in run {
-            KyoSttpMonad.handleError(IO(throw new Exception))(_ => 2).map(r => assert(r == 2))
+            KyoSttpMonad.handleError(Sync.defer(throw new Exception))(_ => 2).map(r => assert(r == 2))
         }
     }
 
     "ensure" in run {
         var calls = 0
-        KyoSttpMonad.ensure(IO(1), IO(calls += 1)).map { r =>
+        KyoSttpMonad.ensure(Sync.defer(1), Sync.defer(calls += 1)).map { r =>
             assert(r == 1)
             assert(calls == 1)
         }
@@ -90,7 +90,7 @@ class KyoSttpMonadTest extends Test:
             for
                 started   <- Latch.init(1)
                 cancelled <- Latch.init(1)
-                fiber <- Async.run {
+                fiber <- Fiber.run {
                     KyoSttpMonad.async[Int] { _ =>
                         import AllowUnsafe.embrace.danger
                         started.unsafe.release()

@@ -31,24 +31,24 @@ class KyoSttpMonad extends MonadAsyncError[M]:
     def ensure[A](f: M[A], e: => M[Unit]) =
         Promise.initWith[Nothing, Unit] { p =>
             def run =
-                Async.run(e).map(p.become).unit
-            IO.ensure(run)(f).map(r => p.get.andThen(r))
+                Fiber.run(e).map(p.become).unit
+            Sync.ensure(run)(f).map(r => p.get.andThen(r))
         }
 
     def error[A](t: Throwable) =
-        IO(throw t)
+        Sync.defer(throw t)
 
     def unit[A](t: A) =
         t
 
     override def eval[A](t: => A) =
-        IO(t)
+        Sync.defer(t)
 
     override def suspend[A](t: => M[A]) =
-        IO(t)
+        Sync.defer(t)
 
     def async[A](register: (Either[Throwable, A] => Unit) => Canceler): M[A] =
-        IO.Unsafe {
+        Sync.Unsafe {
             val p = Promise.Unsafe.init[Nothing, A]()
             val canceller =
                 register {

@@ -3,8 +3,7 @@ package kyo
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kyo.*
-import kyo.ZIOs.toError
-import kyo.ZIOs.toResult
+import kyo.ZIOs.*
 import kyo.kernel.Platform
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
@@ -15,6 +14,8 @@ import zio.Task
 import zio.ZIO
 
 class ZIOsTest extends Test:
+    given [E]: CanEqual[Cause[E], Cause[E]]        = CanEqual.derived
+    given [E, A]: CanEqual[Exit[E, A], Exit[E, A]] = CanEqual.derived
 
     def runZIO[T](v: Task[T]): T =
         zio.Unsafe.unsafe(implicit u =>
@@ -64,17 +65,17 @@ class ZIOsTest extends Test:
         }
     }
 
-    "Envs[Int]" in pendingUntilFixed {
-        assertCompiles("""
-            val a: Int < (Env[Int] & ZIOs) = ZIOs.get(ZIO.service[Int])
-            val b: Int < ZIOs              = Env.run(10)(a)
+    "Envs[Int]" in {
+        typeCheckFailure("""
+            val a: Int < (Env[Int] & Async) = ZIOs.get(ZIO.service[Int])
+            val b: Int < Async              = Env.run(10)(a)
             b.map(v => assert(v == 10))
-        """)
+        """)("ZIO environments are not supported yet.")
     }
-    "Envs[Int & Double]" in pendingUntilFixed {
-        assertCompiles("""
+    "Envs[Int & Double]" in {
+        typeCheckFailure("""
             val a = ZIOs.get(ZIO.service[Int] *> ZIO.service[Double])
-        """)
+        """)("could not find implicit value for izumi.reflect.Tag[Int & Double]")
     }
 
     "A < ZIOs" in runKyo {
@@ -93,25 +94,25 @@ class ZIOsTest extends Test:
         "basic interop" in runKyo {
             for
                 v1 <- ZIOs.get(ZIO.succeed(1))
-                v2 <- Async.run(2).map(_.get)
+                v2 <- Fiber.run(2).map(_.get)
                 v3 <- ZIOs.get(ZIO.succeed(3))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3)
         }
 
         "nested Kyo in ZIO" in runKyo {
             ZIOs.get(ZIO.suspendSucceed {
-                val kyoComputation = Async.run(42).map(_.get)
+                val kyoComputation = Fiber.run(42).map(_.get)
                 ZIOs.run(kyoComputation)
             }).map(v => assert(v == 42))
         }
 
         "nested ZIO in Kyo" in runKyo {
-            Async.run(ZIOs.get(ZIOs.run(42))).map(_.get)
+            Fiber.run(ZIOs.get(ZIOs.run(42))).map(_.get)
                 .map(v => assert(v == 42))
         }
 
         "complex nested pattern with parallel and race" in runKyo {
-            def kyoTask(i: Int): Int < (Abort[Nothing] & Async)   = Async.run(i * 2).map(_.get)
+            def kyoTask(i: Int): Int < (Abort[Nothing] & Async)   = Fiber.run(i * 2).map(_.get)
             def zioTask(i: Int): Int < (Abort[Throwable] & Async) = ZIOs.get(ZIO.succeed(i + 1))
 
             for
@@ -132,15 +133,15 @@ class ZIOsTest extends Test:
 
     "interrupts" - {
 
-        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < IO =
-            def loop(i: Int): Unit < IO =
-                IO {
+        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < Sync =
+            def loop(i: Int): Unit < Sync =
+                Sync.defer {
                     if i == 0 then
-                        IO(started.countDown()).andThen(loop(i + 1))
+                        Sync.defer(started.countDown()).andThen(loop(i + 1))
                     else
                         loop(i + 1)
                 }
-            IO.ensure(IO(done.countDown()))(loop(0))
+            Sync.ensure(Sync.defer(done.countDown()))(loop(0))
         end kyoLoop
 
         def zioLoop(started: CountDownLatch, done: CountDownLatch): Task[Unit] =
@@ -177,7 +178,7 @@ class ZIOsTest extends Test:
                     val v =
                         for
                             _ <- ZIOs.get(zioLoop(started, done))
-                            _ <- Async.run(kyoLoop(started, done))
+                            _ <- Fiber.run(kyoLoop(started, done))
                         yield ()
                     for
                         f <- ZIOs.run(v).fork
@@ -234,11 +235,11 @@ class ZIOsTest extends Test:
                     val done    = new CountDownLatch(1)
                     val panic   = Result.Panic(new Exception)
                     for
-                        f <- Async.run(ZIOs.get(zioLoop(started, done)))
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.run(ZIOs.get(zioLoop(started, done)))
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt(panic)
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r == panic)
                     end for
                 }
@@ -252,11 +253,11 @@ class ZIOsTest extends Test:
                             _ <- kyoLoop(started, done)
                         yield ()
                     for
-                        f <- Async.run(v)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.run(v)
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -270,11 +271,11 @@ class ZIOsTest extends Test:
                         Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
                     end parallelEffect
                     for
-                        f <- Async.run(parallelEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.run(parallelEffect)
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -288,11 +289,11 @@ class ZIOsTest extends Test:
                         Async.race(loop1, loop2)
                     end raceEffect
                     for
-                        f <- Async.run(raceEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.run(raceEffect)
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -420,6 +421,37 @@ class ZIOsTest extends Test:
                 case Result.Panic(e) =>
                     assert(e.getMessage.startsWith("Unexpected zio.Cause.Empty at"))
             end match
+        }
+    }
+
+    "Result.Error toCause" - {
+        "Failure to Cause.Fail" in {
+            val error = Result.Failure("test error")
+            assert(error.toCause == Cause.fail("test error"))
+        }
+
+        "Panic to Cause.Die" in {
+            val exception = new RuntimeException("test exception")
+            val error     = Result.Panic(exception)
+            assert(error.toCause == Cause.die(exception))
+        }
+    }
+
+    "Result toExit" - {
+        "Success to Exit.Success" in {
+            val result = Result.succeed(42)
+            assert(result.toExit == Exit.succeed(42))
+        }
+
+        "Failure to Exit.Failure" in {
+            val result = Result.fail("error")
+            assert(result.toExit == Exit.fail("error"))
+        }
+
+        "Panic to Exit.Die" in {
+            val exception = new RuntimeException("panic")
+            val result    = Result.Panic(exception)
+            assert(result.toExit == Exit.die(exception))
         }
     }
 

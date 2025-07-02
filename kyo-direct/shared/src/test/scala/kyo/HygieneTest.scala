@@ -4,113 +4,113 @@ class HygieneTest extends Test:
 
     "use of var" in {
         typeCheckFailure("""
-          defer {
+          direct {
             var willFail = 1
-            IO(1).now
+            Sync.defer(1).now
           }
         """)(
-            "`var` declarations are not allowed inside a `defer` block."
+            "`var` declarations are not allowed inside a `direct` block."
         )
     }
 
     "use of return" in {
         typeCheckFailure("""
-          defer {
+          direct {
             return 42
-            IO(1).now
+            Sync.defer(1).now
           }
         """)(
             "Exception occurred while executing macro expansion"
         )
     }
 
-    "nested defer block" in {
+    "nested direct block" in {
         typeCheckFailure("""
-          defer {
-            defer {
-              IO(1).now
+          direct {
+            direct {
+              Sync.defer(1).now
             }
           }
         """)(
-            "Effectful computations must explicitly use either .now or .later in a defer block."
+            "Effectful computations must explicitly use either .now or .later in a direct block."
         )
     }
 
     "lazy val" in {
         typeCheckFailure("""
-          defer {
+          direct {
             lazy val x = 10
-            IO(1).now
+            Sync.defer(1).now
           }
         """)(
-            "`lazy val` and `object` declarations are not allowed inside a `defer` block."
+            "`lazy val` and `object` declarations are not allowed inside a `direct` block."
         )
     }
 
     "function containing await" in {
         typeCheckFailure("""
-          defer {
-            def foo() = IO(1).now
+          direct {
+            def foo() = Sync.defer(1).now
             foo()
           }
         """)(
-            "Method definitions containing .now are not supported inside `defer` blocks."
+            "Method definitions containing .now are not supported inside `direct` blocks."
         )
     }
 
     "try/catch" in {
         typeCheckFailure("""
-          defer {
+          direct {
             try {
-              IO(1).now
+              Sync.defer(1).now
             } catch {
-              case _: Exception => IO(2).now
+              case _: Exception => Sync.defer(2).now
             }
           }
         """)(
-            "`try`/`catch` blocks are not supported inside `defer` blocks."
+            "`try`/`catch` blocks are not supported inside `direct` blocks."
         )
     }
 
     "class declaration" in {
         typeCheckFailure("""
-          defer {
+          direct {
             class A(val x: Int)
-            IO(1).now
+            Sync.defer(1).now
           }
         """)(
-            "`class` and `trait` declarations are not allowed inside `defer` blocks."
+            "`class` and `trait` declarations are not allowed inside `direct` blocks."
         )
     }
 
     "object declaration" in {
         typeCheckFailure("""
-          defer {
+          direct {
             object A
-            IO(1).now
+            Sync.defer(1).now
           }
         """)(
-            "`class` and `trait` declarations are not allowed inside `defer` blocks."
+            "`class` and `trait` declarations are not allowed inside `direct` blocks."
         )
     }
 
     "trait declaration" in {
         typeCheckFailure("""
-          defer {
+          direct {
             trait A
-            IO(1).now
+            Sync.defer(1).now
           }
         """)(
-            "`class` and `trait` declarations are not allowed inside `defer` blocks."
+            "`class` and `trait` declarations are not allowed inside `direct` blocks."
         )
     }
 
     "for-comprehension" in {
         typeCheckFailure("""
-          defer {
+          direct {
             for {
-              x <- IO(1).now
-              y <- IO(2).now
+              x <- Sync.defer(1).now
+              y <- Sync.defer(2).now
             } yield x + y
           }
         """)(
@@ -120,45 +120,45 @@ class HygieneTest extends Test:
 
     "try without catch or finally" in {
         typeCheckFailure("""
-          defer {
+          direct {
             try {
-              IO(1).now
+              Sync.defer(1).now
             }
           }
         """)(
-            "`try`/`catch` blocks are not supported inside `defer` blocks."
+            "`try`/`catch` blocks are not supported inside `direct` blocks."
         )
     }
 
     "try with only finally" in {
         typeCheckFailure("""
-          defer {
+          direct {
             try {
-              IO(1).now
+              Sync.defer(1).now
             } finally {
               println("Cleanup")
             }
           }
         """)(
-            "`try`/`catch` blocks are not supported inside `defer` blocks."
+            "`try`/`catch` blocks are not supported inside `direct` blocks."
         )
     }
 
     "new instance with by-name parameter" in {
         typeCheckFailure("""
           class A(x: => String)
-          defer {
-              new A(IO("blah").now)
+          direct {
+              new A(Sync.defer("blah").now)
           }
         """)(
-            "Can't find AsyncShift (Found:    cps.runtime.CpsMonadSelfAsyncShift[[A] =>> A < kyo.IO"
+            "Can't find AsyncShift (Found:    cps.runtime.CpsMonadSelfAsyncShift[[A] =>> A < kyo.Sync"
         )
     }
 
     "match expression without cases" in {
         typeCheckFailure("""
-          defer {
-            IO(1).now match {}
+          direct {
+            Sync.defer(1).now match {}
           }
         """)(
             "case' expected, but '}' found"
@@ -167,10 +167,10 @@ class HygieneTest extends Test:
 
     "for-comprehension without yield" in {
         typeCheckFailure("""
-          defer {
+          direct {
             for {
-              x <- IO(1).now
-              y <- IO(2).now
+              x <- Sync.defer(1).now
+              y <- Sync.defer(2).now
             } x + y
           }
         """)(
@@ -180,60 +180,100 @@ class HygieneTest extends Test:
 
     "nested functions" in {
         typeCheckFailure("""
-          defer {
+          direct {
             def outer() = {
-              def inner() = IO(1).now
+              def inner() = Sync.defer(1).now
               inner()
             }
             outer()
           }
         """)(
-            "Method definitions containing .now are not supported inside `defer` blocks"
+            "Method definitions containing .now are not supported inside `direct` blocks"
         )
     }
 
     "lambdas with await" in {
         typeCheckFailure("""
-          defer {
-            val f = (x: Int) => IO(1).now + x
+          direct {
+            val f = (x: Int) => Sync.defer(1).now + x
             f(10)
           }
         """)(
-            "async lambda can't be result of expression"
+            "Method definitions containing .now are not supported inside `direct` blocks."
         )
     }
 
     "throw" in {
         typeCheckFailure("""
-          defer {
-              if IO("foo").now == "bar" then
+          direct {
+              if Sync.defer("foo").now == "bar" then
                   throw new Exception
               else
                   2
           }
         """)(
-            "`throw` expressions are not allowed inside a `defer` block."
+            "`throw` expressions are not allowed inside a `direct` block."
         )
     }
 
     "synchronized" in {
         typeCheckFailure("""
-          defer {
+          direct {
               val x = synchronized(1)
-              IO(x).now
+              Sync.defer(x).now
           }
         """)(
-            "`synchronized` blocks are not allowed inside a `defer` block."
+            "`synchronized` blocks are not allowed inside a `direct` block."
         )
     }
 
-    "defer drop" in {
+    "nested var" in {
+        typeCheckFailure("""direct {{var x = 1; Sync.defer(x)}.now}""")("`var` declarations are not allowed inside a `direct` block.")
+    }
+
+    "nested nested var" in {
+        typeCheckFailure("""direct {{val y = 1;{var x = 1; Sync.defer(x)}}.now}""")(
+            "`var` declarations are not allowed inside a `direct` block."
+        )
+    }
+
+    "nested now in def" in {
+        typeCheckFailure("""
+             direct {
+               val i = Sync.defer(1).later
+               def f =  i.now > 0
+               f
+             }""")("Method definitions containing .now are not supported inside `direct` blocks.")
+    }
+
+    "asyncShift explicit .later" in {
+        typeCheckFailure(
+            """
+              val default:Int < Any = 2
+              val value = scala.util.Try(1)
+              direct(value.getOrElse(default))
+             """
+        )("Effectful computations must explicitly use either .now or .later in a direct block.")
+    }
+
+    "direct drop" in {
         typeCheckFailure(
             """
                  val default: Unit < Abort[String] = ()
-                 val x: Unit < Emit[Int] = defer(default.now)
+                 val x: Unit < Emit[Int] = direct(default.now)
                  
                """.stripMargin
         )("Cannot lift `Unit < kyo.Abort[scala.Predef.String]` to the expected type (`Unit < ?`).")
+    }
+
+    "opaque types issue #993" in {
+        val maybe1: Maybe[Int] < Sync = Maybe(1)
+        val maybe0: Maybe[Int]        = Maybe(0)
+        direct:
+            maybe1.now.fold(2)(_ + 1)
+            maybe1.now.contains(1)
+            maybe0.contains(1)
+
+        assertionSuccess
     }
 end HygieneTest

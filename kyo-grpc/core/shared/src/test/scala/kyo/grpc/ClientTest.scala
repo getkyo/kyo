@@ -128,19 +128,19 @@ class ClientTest extends Test with AsyncMockFactory2:
         result.map(_ => assert(shutdownCount == 1))
     }
 
-    private def replaceProviders(provider: ManagedChannelProvider): Unit < IO =
+    private def replaceProviders(provider: ManagedChannelProvider): Unit < Sync =
         for
-            registry <- IO(ManagedChannelRegistry.getDefaultRegistry())
+            registry <- Sync.defer(ManagedChannelRegistry.getDefaultRegistry())
             _        <- removeProviders(registry)
-            _        <- IO(registry.register(provider))
+            _        <- Sync.defer(registry.register(provider))
         yield ()
 
-    private def removeProviders(registry: ManagedChannelRegistry): Unit < IO =
+    private def removeProviders(registry: ManagedChannelRegistry): Unit < Sync =
         Loop(registry): registry =>
             Abort.recover[ProviderNotFoundException](_ => Loop.done):
                 for
                     provider <- Abort.catching[ProviderNotFoundException](ManagedChannelProvider.provider())
-                    _        <- IO(registry.deregister(provider))
+                    _        <- Sync.defer(registry.deregister(provider))
                 yield Loop.continue(registry)
 
     abstract private class Builder extends ManagedChannelBuilder[Builder]

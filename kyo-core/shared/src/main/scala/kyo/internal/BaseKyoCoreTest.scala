@@ -4,7 +4,7 @@ import kyo.*
 import scala.concurrent.Future
 
 private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async & Resource]:
-    def run(v: Future[Assertion] < (Abort[Any] & Async & Resource)): Future[Assertion] =
+    def run(v: Future[Assertion] < (Abort[Any] & Async & Resource))(using Frame): Future[Assertion] =
         import AllowUnsafe.embrace.danger
         v.handle(
             Resource.run,
@@ -13,13 +13,13 @@ private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async 
                 case e             => throw new IllegalStateException(s"Test aborted with $e")
             },
             Async.timeout(timeout),
-            Async.run,
+            Fiber.run,
             _.map(_.toFuture).map(_.flatten),
-            IO.Unsafe.evalOrThrow
+            Sync.Unsafe.evalOrThrow
         )
     end run
 
-    def untilTrue[S](f: => Boolean < S): Unit < (Async & S) =
+    def untilTrue[S](f: => Boolean < S)(using Frame): Unit < (Async & S) =
         Abort.recover(Abort.panic) {
             Retry[AssertionError](Schedule.fixed(10.millis)) {
                 f.map {

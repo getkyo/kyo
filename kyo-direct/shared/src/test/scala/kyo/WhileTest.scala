@@ -5,7 +5,7 @@ import scala.collection.mutable.ArrayBuffer
 class WhileTest extends Test:
 
     "atomic counter" in run {
-        defer {
+        direct {
             val counter = AtomicInt.init(0).now
             while counter.get.now < 3 do
                 counter.incrementAndGet.now
@@ -32,10 +32,10 @@ class WhileTest extends Test:
             i
         end incrementB
 
-        defer {
+        direct {
             while i < 3 do
-                IO(incrementA()).now
-                IO(incrementB()).now
+                Sync.defer(incrementA()).now
+                Sync.defer(incrementB()).now
                 ()
             end while
             assert(i == 4)
@@ -46,7 +46,7 @@ class WhileTest extends Test:
 
     "effectful condition" - {
         "simple condition" in run {
-            defer {
+            direct {
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 5 do
                     counter.incrementAndGet.now
@@ -56,7 +56,7 @@ class WhileTest extends Test:
         }
 
         "compound condition" in run {
-            defer {
+            direct {
                 val counter1 = AtomicInt.init(0).now
                 val counter2 = AtomicInt.init(10).now
                 while counter1.get.now < 5 && counter2.get.now > 5 do
@@ -75,11 +75,11 @@ class WhileTest extends Test:
     "nested effects" - {
         "in condition and body" in run {
             val results = ArrayBuffer[Int]()
-            defer {
+            direct {
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 3 do
                     val current = counter.incrementAndGet.now
-                    IO(results += current).now
+                    Sync.defer(results += current).now
                     ()
                 end while
                 val finalCount = counter.get.now
@@ -89,10 +89,10 @@ class WhileTest extends Test:
         }
 
         "with abort effect" in run {
-            defer {
+            direct {
                 val counter = AtomicInt.init(0).now
                 val result = Abort.run {
-                    defer {
+                    direct {
                         while counter.get.now < 2 do
                             if counter.get.now >= 5 then
                                 Abort.fail("Too high").now
@@ -109,10 +109,10 @@ class WhileTest extends Test:
 
     "complex control flow" - {
         "break using abort" in run {
-            defer {
+            direct {
                 val counter = AtomicInt.init(0).now
                 val result = Abort.run {
-                    defer {
+                    direct {
                         while true do
                             val current = counter.incrementAndGet.now
                             if current >= 3 then
@@ -128,14 +128,14 @@ class WhileTest extends Test:
 
         "continue pattern" in run {
             val evens = ArrayBuffer[Int]()
-            defer {
+            direct {
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 5 do
                     val current = counter.incrementAndGet.now
-                    if IO(current % 2 == 1).now then
+                    if Sync.defer(current % 2 == 1).now then
                         () // Skip odd numbers
                     else
-                        IO { evens += current }.now
+                        Sync.defer { evens += current }.now
                         ()
                     end if
                 end while
@@ -148,13 +148,13 @@ class WhileTest extends Test:
 
     "error handling" in run {
         val operations = ArrayBuffer[String]()
-        defer {
+        direct {
             val result = Abort.run {
-                defer {
+                direct {
                     val counter = AtomicInt.init(0).now
                     while counter.get.now < 5 do
                         val op = s"op${counter.get.now}"
-                        IO { operations += op }.now
+                        Sync.defer { operations += op }.now
                         val current = counter.incrementAndGet.now
                         if current == 2 then
                             Abort.fail(s"Error at $current").now

@@ -14,7 +14,7 @@ abstract class ArenaBench2[A](val expectedResult: A) extends BaseBench:
         import kyo.*
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        IO.Unsafe.evalOrThrow(Async.run(kyoBenchFiber).flatMap(_.block(Duration.Infinity))).getOrThrow
+        Sync.Unsafe.evalOrThrow(Fiber.run(kyoBenchFiber).flatMap(_.block(Duration.Infinity))).getOrThrow
     end forkKyo
 
     def forkZIO(zioBench: zio.Task[A])(using zioRuntime: zio.Runtime[Any]): A = zio.Unsafe.unsafe(implicit u =>

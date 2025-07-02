@@ -18,18 +18,18 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         val serverObserver = mock[ServerCallStreamObserver[String]]
 
         def setupExpectations(latch: Latch) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 serverObserver.onNext
                     .expects("NEXT")
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .twice()
 
                 (() => serverObserver.onCompleted())
                     .expects()
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .once()
             }
@@ -37,10 +37,10 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onCompleted())
+            observer <- Sync.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onCompleted())
             _        <- latch.await
         yield succeed
     }
@@ -52,18 +52,18 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         def setupExpectations(latch: Latch) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 serverObserver.onNext
                     .expects("NEXT")
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .twice()
 
                 serverObserver.onError
                     .expects(argThat[StatusException](_ === statusException))
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .once()
             }
@@ -71,10 +71,10 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onError(statusException))
+            observer <- Sync.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onError(statusException))
             _        <- latch.await
         yield succeed
     }
@@ -86,18 +86,18 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         def setupExpectations(latch: Latch) =
-            IO.Unsafe {
+            Sync.Unsafe {
                 serverObserver.onNext
                     .expects("NEXT")
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .twice()
 
                 serverObserver.onError
                     .expects(argThat[StatusException](_ === statusException))
                     .onCall { _ =>
-                        IO.Unsafe.evalOrThrow(latch.release)
+                        Sync.Unsafe.evalOrThrow(latch.release)
                     }
                     .once()
             }
@@ -105,10 +105,10 @@ class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
         for
             latch    <- Latch.init(3)
             _        <- setupExpectations(latch)
-            observer <- IO.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onNext("next"))
-            _        <- IO(observer.onError(exception))
+            observer <- Sync.Unsafe(BidiRequestStreamObserver.init(mapRequests, serverObserver))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onNext("next"))
+            _        <- Sync.defer(observer.onError(exception))
             _        <- latch.await
         yield succeed
     }

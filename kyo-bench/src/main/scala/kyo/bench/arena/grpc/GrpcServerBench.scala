@@ -79,10 +79,10 @@ object GrpcServerBench:
             val finalizer = Resource.Finalizer.Awaitable.Unsafe.init(1)
             val kyoServer = createKyoServer(port, static = true)
             val result    = ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(kyoServer)
-            val _: Server = Abort.run(IO.Unsafe.run(result)).eval.getOrThrow
+            val _: Server = Abort.run(Sync.Unsafe.run(result)).eval.getOrThrow
 
             addFinalizer:
-                Abort.run(IO.Unsafe.run(finalizer.close)).eval.getOrThrow
+                Abort.run(Sync.Unsafe.run(finalizer.close(Absent))).eval.getOrThrow
         end setup
 
     end KyoState

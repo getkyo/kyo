@@ -34,8 +34,8 @@ class ProducerConsumerBench extends ArenaBench.ForkOnly(()):
 
         Channel.init[Unit](depth / 2, Access.SingleProducerSingleConsumer).flatMap { q =>
             for
-                producer <- Async.run(repeat(depth)(q.put(())))
-                consumer <- Async.run(repeat(depth)(q.take))
+                producer <- Fiber.run(repeat(depth)(q.put(())))
+                consumer <- Fiber.run(repeat(depth)(q.take))
                 _        <- producer.get
                 _        <- consumer.get
             yield {}

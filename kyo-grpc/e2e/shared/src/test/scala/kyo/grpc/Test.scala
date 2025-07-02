@@ -14,10 +14,10 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
 //    def run(v: Future[Assertion] < (Async & Abort[Throwable] & Resource)): Future[Assertion] =
 //        Resource.run(v)
-//            .pipe(Async.run)
+//            .pipe(Fiber.run)
 //            .map(_.toFuture)
 //            .map(_.flatten)
-//            .pipe(IO.run)
+//            .pipe(Sync.run)
 //            .eval
 //    end run
 

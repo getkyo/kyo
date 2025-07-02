@@ -15,8 +15,8 @@ class UnaryResponseStreamObserverTest extends Test:
     "onNext puts value" in run {
         for
             promise  <- Promise.init[GrpcResponse.Errors, String]
-            observer <- IO.Unsafe(UnaryResponseStreamObserver[String](promise))
-            _        <- IO(observer.onNext("next"))
+            observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
+            _        <- Sync.defer(observer.onNext("next"))
             result   <- promise.poll
         yield assert(result === Success("next"))
     }
@@ -27,8 +27,8 @@ class UnaryResponseStreamObserverTest extends Test:
 
         for
             promise <- Promise.init[GrpcResponse.Errors, String]
-            observer <- IO.Unsafe(UnaryResponseStreamObserver[String](promise))
-            _ <- IO(observer.onError(statusException))
+            observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
+            _ <- Sync.defer(observer.onError(statusException))
             result <- promise.poll
         yield assert(result.get.failure.get === statusException)
     }
@@ -39,8 +39,8 @@ class UnaryResponseStreamObserverTest extends Test:
 
         for
             promise  <- Promise.init[GrpcResponse.Errors, String]
-            observer <- IO.Unsafe(UnaryResponseStreamObserver[String](promise))
-            _        <- IO(observer.onError(exception))
+            observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
+            _        <- Sync.defer(observer.onError(exception))
             result   <- promise.poll
         yield assert(result.get.failure.get === statusException)
     }
@@ -50,8 +50,8 @@ class UnaryResponseStreamObserverTest extends Test:
 
         for
             promise  <- Promise.init[GrpcResponse.Errors, String]
-            observer <- IO.Unsafe(UnaryResponseStreamObserver[String](promise))
-            _        <- IO(observer.onCompleted())
+            observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
+            _        <- Sync.defer(observer.onCompleted())
             result   <- promise.poll
         yield assert(result.get.failure.get === statusException)
     }

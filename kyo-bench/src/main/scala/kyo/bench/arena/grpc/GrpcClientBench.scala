@@ -128,10 +128,10 @@ object GrpcClientBench:
             val clientEffect = createKyoClient(port)
             val clientResult = ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(clientEffect)
 
-            client = Abort.run(IO.Unsafe.run(clientResult)).eval.getOrThrow
+            client = Abort.run(Sync.Unsafe.run(clientResult)).eval.getOrThrow
 
             addFinalizer:
-                Abort.run(IO.Unsafe.run(finalizer.close)).eval.getOrThrow
+                Abort.run(Sync.Unsafe.run(finalizer.close(Absent))).eval.getOrThrow
         end setup
 
     end KyoState

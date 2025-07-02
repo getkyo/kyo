@@ -53,10 +53,10 @@ object TestService {
     options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
   )(
     configure: _root_.io.grpc.ManagedChannelBuilder[?] => _root_.io.grpc.ManagedChannelBuilder[?],
-    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.IO] = _root_.kyo.grpc.Client.shutdown
+    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.Sync] = _root_.kyo.grpc.Client.shutdown
   )(using
     _root_.kyo.Frame
-  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.IO] =
+  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.Sync] =
     _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(TestService.client(_, options))
   
   trait Client {
@@ -141,10 +141,10 @@ object UtilityService {
     options: _root_.io.grpc.CallOptions = _root_.io.grpc.CallOptions.DEFAULT
   )(
     configure: _root_.io.grpc.ManagedChannelBuilder[?] => _root_.io.grpc.ManagedChannelBuilder[?],
-    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.IO] = _root_.kyo.grpc.Client.shutdown
+    shutdown: (_root_.io.grpc.ManagedChannel, _root_.kyo.Duration) => _root_.kyo.Frame ?=> _root_.kyo.<[Any, _root_.kyo.Sync] = _root_.kyo.grpc.Client.shutdown
   )(using
     _root_.kyo.Frame
-  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.IO] =
+  ): _root_.kyo.<[Client, _root_.kyo.Resource & _root_.kyo.Sync] =
     _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(UtilityService.client(_, options))
   
   trait Client {

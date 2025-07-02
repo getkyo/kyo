@@ -56,7 +56,7 @@ object TestServiceImpl extends TestService:
             }
 
     override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
-        requests.foldKyo(Maybe.empty[String])((acc, request) =>
+        requests.fold(Maybe.empty[String])((acc, request) =>
             for
                 response <- requestToResponse(request)
                 nextAcc <- response.asNonEmpty.get match

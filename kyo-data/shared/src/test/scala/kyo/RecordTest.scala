@@ -19,6 +19,28 @@ class RecordTest extends Test:
             assert(record.age == 30)
         }
 
+        "allows to use any names for fields" in {
+            val record =
+                "size" ~ 3 &
+                    "fields" ~ List("x", "y", "z") &
+                    "toMap" ~ Map(1 -> "x", 2 -> "y", 3 -> "z") &
+                    "getField" ~ true &
+                    "&" ~ "and" &
+                    "equals" ~ "==" &
+                    ";" ~ ";" &
+                    "" ~ "empty"
+
+            assert((record.size: Int) == 3)
+            assert((record.fields: List[String]) == List("x", "y", "z"))
+
+            assert(record.getField["toMap", Map[Int, String]] == Map(1 -> "x", 2 -> "y", 3 -> "z"))
+            assert(record.getField["getField", Boolean] == true)
+            assert(record.getField["&", String] == "and")
+            assert(record.getField["equals", String] == "==")
+            assert(record.getField[";", String] == ";")
+            assert(record.getField["", String] == "empty")
+        }
+
         "from product types" in {
             case class Person(name: String, age: Int)
             val person = Person("Alice", 30)
@@ -26,7 +48,6 @@ class RecordTest extends Test:
             assert(record.name == "Alice")
             assert(record.age == 30)
         }
-
     }
 
     "complex types" - {
@@ -131,7 +152,7 @@ class RecordTest extends Test:
         "empty case class" in {
             case class Empty()
             val record = Record.fromProduct(Empty())
-            assert(record.size == 0)
+            assert(Record.sizeOf(record) == 0)
         }
 
         "case class with 22+ fields" in {
@@ -162,7 +183,7 @@ class RecordTest extends Test:
             )
             val large  = Large(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
             val record = Record.fromProduct(large)
-            assert(record.size == 23)
+            assert(Record.sizeOf(record) == 23)
             assert(record.f1 == 1)
             assert(record.f23 == 23)
         }
@@ -218,13 +239,13 @@ class RecordTest extends Test:
     "type system" - {
         "type tag behavior" in {
             val record = "num" ~ 42
-            val field  = record.fields.head
+            val field  = Record.fieldsOf(record).head
             assert(field.tag =:= Tag[Int])
         }
 
         "handle generic types" in {
             val record = "list" ~ List(1, 2, 3)
-            val field  = record.fields.head
+            val field  = Record.fieldsOf(record).head
             assert(field.tag =:= Tag[List[Int]])
         }
 
@@ -257,8 +278,8 @@ class RecordTest extends Test:
 
         "fields set operations" in {
             val record = "name" ~ "Alice" & "age" ~ 30
-            assert(record.fields.size == 2)
-            assert(record.fields.map(_.name).toSet == Set("name", "age"))
+            assert(Record.fieldsOf(record).size == 2)
+            assert(Record.fieldsOf(record).map(_.name).toSet == Set("name", "age"))
         }
     }
 
@@ -268,7 +289,7 @@ class RecordTest extends Test:
                 "name" ~ "Frank" & "age" ~ 40
             val compacted = record.compact
 
-            assert(compacted.size == 2)
+            assert(Record.sizeOf(compacted) == 2)
             assert(compacted.name == "Frank")
             assert(compacted.age == 40)
         }
@@ -277,7 +298,7 @@ class RecordTest extends Test:
             val record: Record["name" ~ String] =
                 "name" ~ "Frank" & "age" ~ 40
             val compacted = record.compact
-            assert(compacted.size == 1)
+            assert(Record.sizeOf(compacted) == 1)
             typeCheckFailure("""
                 compacted.age
             """)("""Invalid field access: ("age" : String)""")
@@ -626,13 +647,13 @@ class RecordTest extends Test:
             }
 
             "fields returns correct set" in {
-                val fields: Set[Field[?, ?]] = record.fields
+                val fields: Set[Field[?, ?]] = Record.fieldsOf(record)
                 assert(fields.size == 2)
                 assert(fields.map(_.name) == Set("name", "age"))
             }
 
             "size returns correct count" in {
-                val size: Int = record.size
+                val size: Int = Record.sizeOf(record)
                 assert(size == 2)
             }
 

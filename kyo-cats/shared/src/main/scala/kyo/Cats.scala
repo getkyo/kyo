@@ -16,7 +16,7 @@ object Cats:
       *   A Kyo effect that, when run, will execute the cats.effect.IO
       */
     def get[A](io: => CatsIO[A])(using Frame): A < (Abort[Nothing] & Async) =
-        IO.Unsafe {
+        Sync.Unsafe {
             import cats.effect.unsafe.implicits.global
             val p                = Promise.Unsafe.init[Nothing, A]()
             val (future, cancel) = io.unsafeToFutureCancelable()
@@ -40,14 +40,14 @@ object Cats:
     def run[A](v: => A < (Abort[Throwable] & Async))(using frame: Frame): CatsIO[A] =
         CatsIO.defer {
             import AllowUnsafe.embrace.danger
-            Async.run(v).map { fiber =>
+            Fiber.run(v).map { fiber =>
                 CatsIO.async[A] { cb =>
                     CatsIO {
                         fiber.unsafe.onComplete(r => cb(r.toEither))
                         Some(CatsIO(fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))).void)
                     }
                 }
-            }.handle(IO.Unsafe.evalOrThrow)
+            }.handle(Sync.Unsafe.evalOrThrow)
         }
     end run
 end Cats

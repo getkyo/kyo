@@ -6,6 +6,12 @@ class AbortCombinatorsTest extends Test:
 
     given ce[A, B]: CanEqual[A, B] = CanEqual.canEqualAny
 
+    "Abort module" - {
+        "shoud not compile" in {
+            typeCheckFailure("Abort.foldAbort(identity, identity)")("Cannot lift 'kyo.Abort$' to a 'Abort$ < S")
+        }
+    }
+
     "abort" - {
         "construct" - {
             "should construct from Result" in {
@@ -50,14 +56,14 @@ class AbortCombinatorsTest extends Test:
                 assert(Abort.run[Throwable](effect1).eval.getOrElse(-1) == 1)
             }
 
-            "should construct from an IO" in {
+            "should construct from an Sync" in {
                 import AllowUnsafe.embrace.danger
-                val effect = Kyo.attempt(IO(throw new Exception("failure")))
-                assert(IO.Unsafe.evalOrThrow(
+                val effect = Kyo.attempt(Sync.defer(throw new Exception("failure")))
+                assert(Sync.Unsafe.evalOrThrow(
                     Abort.run[Throwable](effect)
                 ).failure.get.getMessage == "failure")
-                val effect1 = Kyo.attempt(IO(1))
-                assert(IO.Unsafe.evalOrThrow(
+                val effect1 = Kyo.attempt(Sync.defer(1))
+                assert(Sync.Unsafe.evalOrThrow(
                     Abort.run[Throwable](effect1)
                 ).getOrElse(-1) == 1)
             }
@@ -307,12 +313,12 @@ class AbortCombinatorsTest extends Test:
             }
 
             "should convert empty choice to absent abort" in {
-                val failure: Int < Choice                     = Choice.eval(Seq())
+                val failure: Int < Choice                     = Choice.eval()
                 val converted: Int < (Choice & Abort[Absent]) = failure.choiceDropToAbsent
                 val handled                                   = Abort.run(Choice.run(converted))
                 assert(handled.eval == Result.fail(Absent))
 
-                val success: Int < Choice                      = Choice.eval(Seq(23))
+                val success: Int < Choice                      = Choice.eval(23)
                 val converted2: Int < (Choice & Abort[Absent]) = success.choiceDropToAbsent
                 val handled2                                   = Abort.run(Choice.run(converted2))
                 assert(handled2.eval == Result.succeed(Chunk(23)))

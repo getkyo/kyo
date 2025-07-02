@@ -49,7 +49,7 @@ class GrpcServerManyToManyBench extends ArenaBench2(sizeSquared):
                         import AllowUnsafe.embrace.danger
                         discard(promise.unsafe.complete(Result.succeed(count)))
 
-                val run = Async:
+                val run = Async.defer:
                     val requestObserver = stub.manyToMany(observer)
                     requests.foreach(requestObserver.onNext)
                     requestObserver.onCompleted()

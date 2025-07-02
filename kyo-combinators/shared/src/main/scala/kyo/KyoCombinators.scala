@@ -1,6 +1,8 @@
 package kyo
 
+import kyo.Result.Error
 import kyo.debug.Debug
+import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -41,8 +43,8 @@ extension [A, S](effect: A < S)
       *   A computation that produces a tuple of both results
       */
     @targetName("zip")
-    def <*>[A1, S1](next: => A1 < S1)(using Frame): (A, A1) < (S & S1) =
-        effect.map(e => next.map(n => (e, n)))
+    def <*>[A1, S1](next: => A1 < S1)(using frame: Frame, zippable: Zippable[A, A1]): zippable.Out < (S & S1) =
+        effect.map(e => next.map(n => zippable.zip(e, n)))
 
     /** Performs this computation and prints its result to the console.
       *
@@ -237,7 +239,20 @@ extension [A, S](effect: A < S)
       * @return
       *   An effect that executes the finalizer after this effect
       */
-    def ensuring(finalizer: => Any < Async)(using Frame): A < (S & Resource & IO) =
+    def ensuring(finalizer: => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Resource & Sync) =
+        Resource.ensure(finalizer).andThen(effect)
+
+    /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
+      * the Resource effect is handled.
+      *
+      * If the effect fails, the error is propagated as a `Present`. If the effect succeeds, the 'error' will be `Absent`.
+      *
+      * @param finalizer
+      *   The finalizer to execute after this effect
+      * @return
+      *   An effect that executes the finalizer after this effect
+      */
+    def ensuringError(finalizer: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Resource & Sync) =
         Resource.ensure(finalizer).andThen(effect)
 
 end extension

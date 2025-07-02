@@ -17,25 +17,11 @@ object GrpcRequest:
     type Errors = StatusException
 
     def fromFuture[Response](f: Future[Response])(using Frame): Response < GrpcRequest =
-        // TODO: Is there a better way to do this?
-        for
-            p <- IO {
-                val p = new IOPromise[Errors, Response]()
-                f.onComplete {
-                    case Success(v) =>
-                        p.complete(Result.succeed(v))
-                    case Failure(ex: Errors) =>
-                        p.complete(Result.fail(ex))
-                    case Failure(ex: StatusRuntimeException) =>
-                        p.complete(Result.fail(StreamNotifier.throwableToStatusException(ex)))
-                    case Failure(ex) =>
-                        p.complete(Result.panic(ex))
-                }(using ExecutionContext.parasitic)
-                p
-            }
-            response <- Async.get(p)
-        yield response
-    end fromFuture
+        Fiber.fromFuture(f).map(_.getResult).map:
+            case Success(response: Response) => response
+            case Result.Error(ex: Errors) => Abort.fail(ex)
+            case Result.Error(ex: StatusRuntimeException) => Abort.fail(StreamNotifier.throwableToStatusException(ex))
+            case Result.Error(t) => Abort.panic(t)
 
     def run[Request, S](request: Request < (GrpcRequest & S))(using Frame): Result[Errors, Request] < (Async & S) =
         Abort.run[StatusException](request)

@@ -1,6 +1,8 @@
 package kyo.kernel.internal
 
 import kyo.*
+import kyo.Result.Error
+import kyo.Result.Panic
 import kyo.Tag
 import kyo.Tagged.*
 import kyo.kernel.*
@@ -181,15 +183,15 @@ class SafepointTest extends Test:
 
     "interceptors" - {
         abstract class TestInterceptor extends Safepoint.Interceptor:
-            def addFinalizer(f: () => Unit): Unit    = {}
-            def removeFinalizer(f: () => Unit): Unit = {}
+            def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = {}
+            def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = {}
 
         "immediate" - {
 
             "use the interceptor" in {
                 var executed = false
                 val interceptor = new TestInterceptor:
-                    def ensure(f: () => Unit): Unit = ()
+                    def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         executed = true
                         true
@@ -201,7 +203,7 @@ class SafepointTest extends Test:
             "eval removes the interceptor" in {
                 var executed = false
                 val interceptor = new TestInterceptor:
-                    def ensure(f: () => Unit): Unit = ()
+                    def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         executed = true
                         true
@@ -213,13 +215,13 @@ class SafepointTest extends Test:
             "restore previous interceptor" in {
                 var count = 0
                 val interceptor1 = new TestInterceptor:
-                    def ensure(f: () => Unit): Unit = ()
+                    def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 1
                         true
 
                 val interceptor2 = new TestInterceptor:
-                    def ensure(f: () => Unit): Unit = ()
+                    def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 10
                         true
@@ -236,7 +238,7 @@ class SafepointTest extends Test:
             "through suspensions" in {
                 var count = 0
                 val interceptor = new TestInterceptor:
-                    def ensure(f: () => Unit): Unit = ()
+                    def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 1
                         true
@@ -259,13 +261,13 @@ class SafepointTest extends Test:
                 var innerCount = 0
 
                 val outerInterceptor = new TestInterceptor:
-                    def ensure(f: () => Unit): Unit = ()
+                    def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         outerCount += 1
                         true
 
                 val innerInterceptor = new TestInterceptor:
-                    def ensure(f: () => Unit): Unit = ()
+                    def ensure(f: Maybe[Error[Any]] => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         innerCount += 1
                         true
@@ -339,7 +341,7 @@ class SafepointTest extends Test:
 
         "executes cleanup after successful completion" in {
             var cleaned = false
-            val result = Safepoint.ensure { cleaned = true } {
+            val result = Safepoint.ensure { _ => cleaned = true } {
                 42
             }
             assert(result.eval == 42)
@@ -349,7 +351,7 @@ class SafepointTest extends Test:
         "executes cleanup after exception" in {
             var cleaned = false
             assertThrows[RuntimeException] {
-                Safepoint.ensure { cleaned = true } {
+                Safepoint.ensure { _ => cleaned = true } {
                     throw new RuntimeException("Test exception")
                 }.eval
             }
@@ -359,8 +361,8 @@ class SafepointTest extends Test:
         "nested ensures" in {
             var outer = false
             var inner = false
-            val result = Safepoint.ensure { outer = true } {
-                Safepoint.ensure { inner = true } {
+            val result = Safepoint.ensure { _ => outer = true } {
+                Safepoint.ensure { _ => inner = true } {
                     42
                 }
             }
@@ -371,9 +373,9 @@ class SafepointTest extends Test:
 
         "cleanup functions execute in reverse order" in {
             val order = scala.collection.mutable.ArrayBuffer[Int]()
-            val result = Safepoint.ensure { order += 1 } {
-                Safepoint.ensure { order += 2 } {
-                    Safepoint.ensure { order += 3 } {
+            val result = Safepoint.ensure { _ => order += 1 } {
+                Safepoint.ensure { _ => order += 2 } {
+                    Safepoint.ensure { _ => order += 3 } {
                         42
                     }
                 }
@@ -384,7 +386,7 @@ class SafepointTest extends Test:
 
         "works with effects" in {
             var cleaned = false
-            val result = Safepoint.ensure { cleaned = true } {
+            val result = Safepoint.ensure { _ => cleaned = true } {
                 for
                     x <- ArrowEffect.suspend[Int](Tag[TestEffect1], 5)
                     y <- ArrowEffect.suspend[Int](Tag[TestEffect1], 6)
@@ -397,7 +399,7 @@ class SafepointTest extends Test:
 
         "executes cleanup when effect fails" in {
             var cleaned = false
-            val result = Safepoint.ensure { cleaned = true } {
+            val result = Safepoint.ensure { _ => cleaned = true } {
                 for
                     _ <- ArrowEffect.suspend[Int](Tag[TestEffect1], 5)
                     _ <- ArrowEffect.suspend[Int](Tag[TestEffect1], throw new RuntimeException("Test failure"))
@@ -411,7 +413,7 @@ class SafepointTest extends Test:
 
         "works with defer" in {
             var cleaned = false
-            val suspended = Safepoint.ensure { cleaned = true } {
+            val suspended = Safepoint.ensure { _ => cleaned = true } {
                 Effect.defer(42)
             }
             assert(!cleaned)
@@ -421,7 +423,7 @@ class SafepointTest extends Test:
 
         "executes thunk only once" in {
             var count = 0
-            val effect = Safepoint.ensure {
+            val effect = Safepoint.ensure { _ =>
                 count += 1
             } {
                 42
@@ -432,7 +434,7 @@ class SafepointTest extends Test:
 
         "executes thunk on normal completion" in {
             var executed = false
-            val effect = Safepoint.ensure {
+            val effect = Safepoint.ensure { _ =>
                 executed = true
             } {
                 "result"
@@ -444,7 +446,7 @@ class SafepointTest extends Test:
         "executes thunk on exception" in {
             var executed = false
             assertThrows[RuntimeException] {
-                Safepoint.ensure {
+                Safepoint.ensure { _ =>
                     executed = true
                 } {
                     throw new RuntimeException("Test exception")
@@ -456,10 +458,10 @@ class SafepointTest extends Test:
         "nested ensure executes all thunks" in {
             var outer = 0
             var inner = 0
-            val effect = Safepoint.ensure {
+            val effect = Safepoint.ensure { _ =>
                 outer += 1
             } {
-                Safepoint.ensure {
+                Safepoint.ensure { _ =>
                     inner += 1
                 } {
                     "nested result"
@@ -472,7 +474,7 @@ class SafepointTest extends Test:
 
         "multiple evaluations execute thunk only once" in {
             var count = 0
-            val effect = Safepoint.ensure {
+            val effect = Safepoint.ensure { _ =>
                 count += 1
             } {
                 count
@@ -484,12 +486,12 @@ class SafepointTest extends Test:
 
         "executes thunk only once with map" in {
             var count = 0
-            val effect = Safepoint.ensure {
+            val effect = Safepoint.ensure { _ =>
                 count += 1
             } {
                 42
             }.map { value =>
-                Safepoint.ensure {
+                Safepoint.ensure { _ =>
                     count += 1
                 } {
                     value * 2
@@ -502,19 +504,19 @@ class SafepointTest extends Test:
         "with interceptor" - {
 
             class TestInterceptor extends Safepoint.Interceptor:
-                var ensuresAdded: List[() => Unit]                = Nil
-                var ensuresRemoved: List[() => Unit]              = Nil
-                override def addFinalizer(f: () => Unit): Unit    = ensuresAdded = f :: ensuresAdded
-                override def removeFinalizer(f: () => Unit): Unit = ensuresRemoved = f :: ensuresRemoved
-                def enter(frame: Frame, value: Any): Boolean      = true
-                def exit(): Unit                                  = {}
+                var ensuresAdded: List[Maybe[Error[Any]] => Unit]                = Nil
+                var ensuresRemoved: List[Maybe[Error[Any]] => Unit]              = Nil
+                override def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = ensuresAdded = f :: ensuresAdded
+                override def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = ensuresRemoved = f :: ensuresRemoved
+                def enter(frame: Frame, value: Any): Boolean                     = true
+                def exit(): Unit                                                 = {}
             end TestInterceptor
 
             "passes ensure function to Interceptor" in {
                 val interceptor = new TestInterceptor
 
                 def testEnsure[A, S](v: => A < S)(using Frame): A < S =
-                    Safepoint.ensure(())(v)
+                    Safepoint.ensure(_ => ())(v)
 
                 Safepoint.immediate(interceptor) {
                     testEnsure {
@@ -533,7 +535,7 @@ class SafepointTest extends Test:
                 val interceptor = new TestInterceptor
 
                 def testEnsure[A, S](v: => A < S)(using Frame): A < S =
-                    Safepoint.ensure(())(v)
+                    Safepoint.ensure(_ => ())(v)
 
                 Safepoint.immediate(interceptor) {
                     testEnsure {
@@ -548,7 +550,7 @@ class SafepointTest extends Test:
                 val interceptor = new TestInterceptor
 
                 def testEnsure[A, S](v: => A < S)(using Frame): A < S =
-                    Safepoint.ensure(())(v)
+                    Safepoint.ensure(_ => ())(v)
 
                 Safepoint.immediate(interceptor) {
                     testEnsure {
@@ -569,18 +571,18 @@ class SafepointTest extends Test:
                 var interceptorCalls = 0
 
                 val interceptor = new Safepoint.Interceptor:
-                    override def addFinalizer(f: () => Unit): Unit =
+                    override def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit =
                         interceptorCalls += 1
-                        f()
-                        f()
+                        f(Absent)
+                        f(Absent)
                     end addFinalizer
 
-                    override def removeFinalizer(f: () => Unit): Unit = {}
-                    def enter(frame: Frame, value: Any): Boolean      = true
-                    def exit(): Unit                                  = {}
+                    override def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean                     = true
+                    def exit(): Unit                                                 = {}
 
                 val effect = Safepoint.propagating(interceptor) {
-                    Safepoint.ensure {
+                    Safepoint.ensure { _ =>
                         count += 1
                     } {
                         42
@@ -596,13 +598,13 @@ class SafepointTest extends Test:
                 var interceptorActive = false
 
                 val interceptor = new Safepoint.Interceptor:
-                    override def addFinalizer(f: () => Unit): Unit    = {}
-                    override def removeFinalizer(f: () => Unit): Unit = {}
-                    def enter(frame: Frame, value: Any): Boolean      = true
-                    def exit(): Unit                                  = {}
+                    override def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = {}
+                    override def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean                     = true
+                    def exit(): Unit                                                 = {}
 
                 val effect = Safepoint.propagating(interceptor) {
-                    Safepoint.ensure {
+                    Safepoint.ensure { _ =>
                         ensureExecuted = true
                         interceptorActive = Safepoint.get.getInterceptor() != null
                     } {
@@ -620,14 +622,14 @@ class SafepointTest extends Test:
                 var interceptorActive = false
 
                 val interceptor = new Safepoint.Interceptor:
-                    override def addFinalizer(f: () => Unit): Unit    = {}
-                    override def removeFinalizer(f: () => Unit): Unit = {}
-                    def enter(frame: Frame, value: Any): Boolean      = true
-                    def exit(): Unit                                  = {}
+                    override def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = {}
+                    override def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean                     = true
+                    def exit(): Unit                                                 = {}
 
                 assertThrows[RuntimeException] {
                     Safepoint.propagating(interceptor) {
-                        Safepoint.ensure {
+                        Safepoint.ensure { _ =>
                             ensureExecuted = true
                             interceptorActive = Safepoint.get.getInterceptor() != null
                         } {
@@ -637,6 +639,58 @@ class SafepointTest extends Test:
                 }
                 assert(ensureExecuted)
                 assert(!interceptorActive)
+            }
+        }
+
+        "Maybe[Error[Any]] parameter" - {
+            "receives Absent on normal completion" in {
+                var receivedValue: Maybe[Error[Any]] = null
+                val effect = Safepoint.ensure { t =>
+                    receivedValue = t
+                } {
+                    42
+                }
+                assert(effect.eval == 42)
+                assert(receivedValue == Absent)
+            }
+
+            "receives Present with exception on failure" in {
+                var receivedValue: Maybe[Error[Any]] = null
+                val exception                        = new RuntimeException("Test exception")
+
+                assertThrows[RuntimeException] {
+                    Safepoint.ensure { t =>
+                        receivedValue = t
+                    } {
+                        throw exception
+                    }.eval
+                }
+
+                assert(receivedValue.isDefined)
+                assert(receivedValue.get == Panic(exception))
+            }
+
+            "with nested ensures passes correct exception to each handler" in {
+                var outerException: Maybe[Error[Any]] = null
+                var innerException: Maybe[Error[Any]] = null
+                val testException                     = new RuntimeException("Test nested exception")
+
+                assertThrows[RuntimeException] {
+                    Safepoint.ensure { t =>
+                        outerException = t
+                    } {
+                        Safepoint.ensure { t =>
+                            innerException = t
+                        } {
+                            throw testException
+                        }
+                    }.eval
+                }
+
+                assert(innerException.isDefined)
+                assert(innerException.get == Panic(testException))
+                assert(outerException.isDefined)
+                assert(outerException.get == Panic(testException))
             }
         }
     }

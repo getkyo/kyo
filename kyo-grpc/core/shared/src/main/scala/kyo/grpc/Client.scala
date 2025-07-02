@@ -17,8 +17,8 @@ object Client:
       * @param timeout
       *   The maximum duration to wait for graceful termination (default: 30 seconds)
       */
-    def shutdown(channel: ManagedChannel, timeout: Duration = 30.seconds)(using Frame): Unit < IO =
-        IO:
+    def shutdown(channel: ManagedChannel, timeout: Duration = 30.seconds)(using Frame): Unit < Sync =
+        Sync.defer:
             val terminated =
                 channel
                     .shutdown()
@@ -73,14 +73,14 @@ object Client:
       *   The shutdown function to use when releasing the channel resource. Defaults to [[shutdown]] method which performs graceful
       *   shutdown with fallback to forced shutdown
       * @return
-      *   A `ManagedChannel` pending `Resource` and `IO` effects
+      *   A `ManagedChannel` pending `Resource` and `Sync` effects
       */
     def channel(host: String, port: Int, timeout: Duration = 30.seconds)(
         configure: ManagedChannelBuilder[?] => ManagedChannelBuilder[?],
-        shutdown: (ManagedChannel, Duration) => Frame ?=> Any < IO = shutdown
-    )(using Frame): ManagedChannel < (Resource & IO) =
+        shutdown: (ManagedChannel, Duration) => Frame ?=> Any < Sync = shutdown
+    )(using Frame): ManagedChannel < (Resource & Sync) =
         Resource.acquireRelease(
-            IO(configure(ManagedChannelBuilder.forAddress(host, port)).build())
+            Sync.defer(configure(ManagedChannelBuilder.forAddress(host, port)).build())
         )(shutdown(_, timeout))
 
 end Client

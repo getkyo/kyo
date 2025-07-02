@@ -19,9 +19,9 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     def this() = this(Pending())
     def this(interrupts: IOPromise[?, ?]) = this(Pending().interrupts(interrupts))
 
-    def addFinalizer(f: () => Unit): Unit        = {}
-    def removeFinalizer(f: () => Unit): Unit     = {}
-    def enter(frame: Frame, value: Any): Boolean = true
+    def addFinalizer(f: Maybe[Error[Any]] => Unit): Unit    = {}
+    def removeFinalizer(f: Maybe[Error[Any]] => Unit): Unit = {}
+    def enter(frame: Frame, value: Any): Boolean            = true
 
     private def compareAndSet(curr: State[E, A], next: State[E, A]): Boolean =
         IOPromisePlatformSpecific.stateHandle match
@@ -56,6 +56,13 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                     Present(r.asInstanceOf[Result[E, A]])
         pollLoop(this)
     end poll
+
+    final protected def pollError(): Maybe[Error[Any]] =
+        (state: @unchecked) match
+            case e: Result.Error[Any] =>
+                Present(e)
+            case _ =>
+                Absent
 
     final protected def isPending(): Boolean =
         state.isInstanceOf[Pending[?, ?]]

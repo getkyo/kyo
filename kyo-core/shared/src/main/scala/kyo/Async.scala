@@ -12,13 +12,14 @@ import scala.util.control.NonFatal
 
 /** Asynchronous computation effect.
   *
-  * While IO handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
-  * and execution control. It includes IO in its effect set, making it a unified solution for both synchronous and asynchronous operations.
+  * While Sync handles pure effect suspension, Async provides the complete toolkit for concurrent programming - managing fibers, scheduling,
+  * and execution control. It includes Sync in its effect set, making it a unified solution for both synchronous and asynchronous
+  * operations.
   *
   * This separation, enabled by Kyo's algebraic effect system, is reflected in the codebase's design: the presence of Async in pending
-  * effects signals that a computation may park or involve fiber scheduling, contrasting with IO-only operations that run to completion.
+  * effects signals that a computation may park or involve fiber scheduling, contrasting with Sync-only operations that run to completion.
   *
-  * Most application code can work exclusively with Async, with the IO/Async distinction becoming relevant primarily in library code or
+  * Most application code can work exclusively with Async, with the Sync/Async distinction becoming relevant primarily in library code or
   * performance-critical sections where precise control over execution characteristics is needed.
   *
   * Note: For collection operations, Async provides concurrent execution variants of the `Kyo` companion object sequential operations. These
@@ -26,10 +27,8 @@ import scala.util.control.NonFatal
   * can be overridden per operation when needed. On platforms like the JVM, these operations may execute in parallel using multiple threads.
   * On single-threaded platforms like JavaScript, operations will be interleaved concurrently but not execute in parallel.
   *
-  * This effect includes IO in its effect set to handle both async and sync execution in a single effect.
+  * This effect includes Sync in its effect set to handle both async and sync execution in a single effect.
   *
-  * @see
-  *   [[Async.run]] for executing asynchronous computations and obtaining a Fiber
   * @see
   *   [[Fiber]] for the low-level primitive that powers async execution (primarily for library authors)
   * @see
@@ -39,7 +38,7 @@ import scala.util.control.NonFatal
   * @see
   *   [[Async.foreach]], [[Async.collect]], and their variants for concurrent collection processing with bounded concurrency
   */
-opaque type Async <: (IO & Async.Join) = Async.Join & IO
+opaque type Async <: (Sync & Async.Join) = Async.Join & Sync
 
 object Async extends AsyncPlatformSpecific:
 
@@ -58,7 +57,7 @@ object Async extends AsyncPlatformSpecific:
       * ```
       *
       * Consider adjusting this based on:
-      *   - Nature of operations (CPU vs IO bound)
+      *   - Nature of operations (CPU vs Sync bound)
       *   - Available system resources
       *   - Specific performance requirements
       *
@@ -67,17 +66,17 @@ object Async extends AsyncPlatformSpecific:
     val defaultConcurrency =
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        IO.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
+        Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
     end defaultConcurrency
 
-    /** Convenience method for suspending computations in an Async effect.
+    /** Convenience method for suspending side effects in an Async effect.
       *
-      * While IO is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
-      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes IO in its effect set, this
+      * While Sync is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
+      * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes Sync in its effect set, this
       * method allows users to work with a single unified effect that handles both concerns.
       *
       * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use
-      * Async.run or combinators like Async.parallel instead.
+      * Fiber.run or combinators like Async.parallel instead.
       *
       * This is particularly useful in application code where the distinction between pure side effects and asynchronous execution is less
       * important than having a simple, consistent way to handle effects. The underlying effects are typically managed together at the
@@ -94,40 +93,8 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   The suspended computation wrapped in an Async effect
       */
-    inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
-        IO(v)
-
-    /** Runs an asynchronous computation and returns a Fiber.
-      *
-      * @param v
-      *   The computation to run
-      * @return
-      *   A Fiber representing the running computation
-      */
-    def run[E, A, S](
-        using isolate: Isolate.Contextual[S, IO]
-    )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (IO & S) =
-        isolate.runInternal((trace, context) =>
-            Fiber.fromTask(IOTask(v, trace, context))
-        )
-
-    /** Runs an asynchronous computation and blocks until completion or timeout.
-      *
-      * @param timeout
-      *   The maximum duration to wait
-      * @param v
-      *   The computation to run
-      * @return
-      *   The result of the computation, or a Timeout error
-      */
-    def runAndBlock[E, A, S](
-        using isolate: Isolate.Contextual[S, IO]
-    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & IO & S) =
-        run(v).map { fiber =>
-            fiber.block(timeout).map(Abort.get(_))
-        }
+    inline def defer[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
+        Sync.defer(v)
 
     /** Runs an asynchronous computation with interrupt masking.
       *
@@ -146,7 +113,7 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         isolate.capture { state =>
-            Async.run(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
+            Fiber.run(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
         }
 
     /** Creates a computation that never completes.
@@ -189,15 +156,15 @@ object Async extends AsyncPlatformSpecific:
     def timeout[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        if after == Duration.Zero then Abort.fail(Timeout())
+        if after == Duration.Zero then Abort.fail(Timeout(Present(after)))
         else if !after.isFinite then v
         else
             isolate.capture { state =>
-                Async.run(isolate.isolate(state, v)).map { task =>
+                Fiber.run(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
-                        IO.Unsafe {
+                        Sync.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
-                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout()))))
+                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                             isolate.restore(task.get)
                         }
@@ -207,16 +174,19 @@ object Async extends AsyncPlatformSpecific:
         end if
     end timeout
 
-    /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
-      * are interrupted.
+    /** Races multiple computations and returns the result of the first successful computation to complete. When one computation succeeds,
+      * all other computations are interrupted.
       *
       * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
       * platforms supporting parallel execution (like JVM), computations may run in parallel.
       *
+      * Note: Unlike `raceFirst`, this method will only complete when a successful computation completes. If all computations fail, it will
+      * wait for the last failure. If some fail while others never complete, it will wait indefinitely for a success.
+      *
       * @param seq
       *   The sequence of computations to race
       * @return
-      *   The result of the first computation to complete
+      *   The result of the first successful computation to complete
       */
     def race[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
@@ -229,14 +199,17 @@ object Async extends AsyncPlatformSpecific:
         }
     end race
 
-    /** Races two or more computations and returns the result of the first to complete.
+    /** Races two or more computations and returns the result of the first successful computation to complete.
+      *
+      * Note: Unlike `race`, this method will only complete when a successful computation completes. If all computations fail, it will wait
+      * for the last failure. If some fail while others never complete, it will wait indefinitely for a success.
       *
       * @param first
       *   The first computation
       * @param rest
       *   The rest of the computations
       * @return
-      *   The result of the first computation to complete
+      *   The result of the first successful computation to complete
       */
     def race[E, A, S](
         using Isolate.Stateful[S, Abort[E] & Async]
@@ -247,6 +220,55 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         race[E, A, S](first +: rest)
+
+    /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
+      * are interrupted.
+      *
+      * WARNING: Executes all computations concurrently without bounds. Use with caution on large sequences to avoid resource exhaustion. On
+      * platforms supporting parallel execution (like JVM), computations may run in parallel.
+      *
+      * Note: Unlike `race`, this method will complete as soon as any computation completes, regardless of whether it succeeded or failed.
+      * For example, if one computation fails while another never completes, this method will return the failure, interrupting the other
+      * computation(s).
+      *
+      * @param seq
+      *   The sequence of computations to race
+      * @return
+      *   The result of the first computation to complete
+      */
+    def raceFirst[E, A, S](
+        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+    )(iterable: Iterable[A < (Abort[E] & Async & S)])(
+        using frame: Frame
+    ): A < (Abort[E] & Async & S) =
+        require(iterable.nonEmpty, "Can't race an empty collection.")
+        isolate.capture { state =>
+            Fiber.raceFirst(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
+        }
+    end raceFirst
+
+    /** Races two or more computations and returns the result of the first to complete. When one computation completes, all other
+      * computations are interrupted.
+      *
+      * Note: Unlike `race`, this method will complete as soon as any computation completes, regardless of whether it succeeded or failed.
+      * For example, if one computation fails while another never completes, this method will return the failure, interrupting the other
+      * computation(s).
+      *
+      * @param first
+      *   The first computation
+      * @param rest
+      *   The rest of the computations
+      * @return
+      */
+    def raceFirst[E, A, S](
+        using Isolate.Stateful[S, Abort[E] & Async]
+    )(
+        first: A < (Abort[E] & Async & S),
+        rest: A < (Abort[E] & Async & S)*
+    )(
+        using frame: Frame
+    ): A < (Abort[E] & Async & S) =
+        raceFirst[E, A, S](first +: rest)
 
     /** Concurrently executes two or more computations and collects their successful results.
       *
@@ -337,8 +359,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations with indexed access, using bounded concurrency.
       *
-      * @param seq
-      *   The sequence of elements to process
+      * @param iterable
+      *   The collection of elements to process
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
       * @param f
@@ -352,7 +374,7 @@ object Async extends AsyncPlatformSpecific:
         Frame
     ): Chunk[B] < (Abort[E] & Async & S) =
         if concurrency <= 1 then
-            Kyo.foreachIndexed(iterable.toSeq)(f)
+            Kyo.foreachIndexed(Chunk.from(iterable))(f)
         else
             iterable.size match
                 case 0 => Chunk.empty
@@ -365,15 +387,15 @@ object Async extends AsyncPlatformSpecific:
                 case size =>
                     isolate.capture { state =>
                         val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
-                        Fiber.foreachIndexed(iterable.grouped(groupSize).toSeq)((idx, group) =>
-                            Kyo.foreachIndexed(group.toSeq)((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
+                        Fiber.foreachIndexed(Chunk.from(iterable.grouped(groupSize)))((idx, group) =>
+                            Kyo.foreachIndexed(Chunk.from(group))((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
                         ).map(_.use(r => Kyo.foreach(r.flattenChunk)(isolate.restore)))
                     }
 
     /** Executes a sequence of computations using bounded concurrency.
       *
-      * @param seq
-      *   The sequence of elements to process
+      * @param iterable
+      *   The collection of elements to process
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
       * @param f
@@ -390,8 +412,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations in parallel, discarding the results.
       *
-      * @param seq
-      *   The sequence of elements to process
+      * @param iterable
+      *   The collection of elements to process
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to defaultConcurrency)
       * @param f
@@ -406,8 +428,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Filters elements from a sequence using bounded concurrency.
       *
-      * @param seq
-      *   The sequence to filter
+      * @param iterable
+      *   The collection to filter
       * @param concurrency
       *   Maximum number of concurrent predicate evaluations (defaults to [[defaultConcurrency]])
       * @param f
@@ -424,8 +446,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Transforms and filters elements from a sequence using bounded concurrency.
       *
-      * @param seq
-      *   The sequence to process
+      * @param iterable
+      *   The collection to process
       * @param concurrency
       *   Maximum number of concurrent evaluations (defaults to [[defaultConcurrency]])
       * @param f
@@ -442,8 +464,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations using bounded concurrency.
       *
-      * @param seq
-      *   The sequence of computations to execute
+      * @param iterable
+      *   The collection of computations to execute
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to [[defaultConcurrency]])
       * @return
@@ -458,8 +480,8 @@ object Async extends AsyncPlatformSpecific:
 
     /** Executes a sequence of computations in parallel, discarding their results.
       *
-      * @param seq
-      *   The sequence of computations to execute
+      * @param iterable
+      *   The collection of computations to execute
       * @param concurrency
       *   Maximum number of concurrent computations (defaults to defaultConcurrency)
       */
@@ -714,8 +736,8 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   A nested computation that returns the memoized result
       */
-    def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < IO =
-        IO.Unsafe {
+    def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
+        Sync.Unsafe {
             val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Nothing, A]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
@@ -724,14 +746,14 @@ object Async extends AsyncPlatformSpecific:
                         val promise = Promise.Unsafe.init[Nothing, A]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
-                                IO.Unsafe {
+                                Sync.Unsafe {
                                     if !r.isSuccess then
                                         ref.set(Absent)
                                     promise.completeDiscard(r)
                                     Abort.get(r)
                                 }
-                            }.handle(IO.ensure {
-                                IO.Unsafe {
+                            }.handle(Sync.ensure {
+                                Sync.Unsafe {
                                     if !promise.done() then
                                         ref.set(Absent)
                                 }
@@ -739,7 +761,7 @@ object Async extends AsyncPlatformSpecific:
                         else
                             loop()
                         end if
-            Kyo.lift(IO(loop()))
+            Kyo.lift(Sync.defer(loop()))
         }
 
     /** Converts a Future to an asynchronous computation.
@@ -760,7 +782,7 @@ object Async extends AsyncPlatformSpecific:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): A < (reduce.SReduced & Async) =
-        reduce(use(v)(identity))
+        use(v)(identity)
 
     private[kyo] def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(
         using

@@ -73,7 +73,7 @@ class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initF
       * @return
       *   a pending computation that always aborts with either the error or `Closed`
       */
-    private def errorOrClosed(closed: Closed)(using Frame): Nothing < (Abort[E | Closed] & IO) =
+    private def errorOrClosed(closed: Closed)(using Frame): Nothing < (Abort[E | Closed] & Sync) =
         error.getAndSet(Maybe.empty)
             .map(e => Abort.fail(e.getOrElse(closed)))
 
@@ -86,7 +86,7 @@ class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initF
       * @return
       *   a pending computation that completes with [[Unit]] when the channel is closed
       */
-    def closeProducer(using Frame): Unit < IO =
+    def closeProducer(using Frame): Unit < Sync =
         channel.closeAwaitEmptyFiber.unit
 
     /** Checks if the channel is completely closed.
@@ -97,7 +97,7 @@ class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initF
       * @return
       *   a pending computation that produces `true` if the channel is closed, `false` otherwise
       */
-    def closed(using Frame): Boolean < IO =
+    def closed(using Frame): Boolean < Sync =
         for
             channelClosed <- channel.closed
             // TODO: It'd be better if this was a lazy operation.
@@ -168,7 +168,7 @@ object StreamChannel:
       * @return
       *   a pending computation that produces a new `StreamChannel` instance
       */
-    def init[A, E](using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < IO =
+    def init[A, E](using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < Sync =
         for
             channel <- Channel.init[A](capacity = Capacity, access = Access.SingleProducerSingleConsumer)
             error   <- AtomicRef.init(Maybe.empty[E])

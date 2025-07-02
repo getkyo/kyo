@@ -21,6 +21,6 @@ class ResponseStreamObserver[Response](
     end onError
 
     override def onCompleted(): Unit =
-        IO.Unsafe.evalOrThrow(responseChannel.closeProducer)
+        Sync.Unsafe.evalOrThrow(responseChannel.closeProducer)
 
 end ResponseStreamObserver

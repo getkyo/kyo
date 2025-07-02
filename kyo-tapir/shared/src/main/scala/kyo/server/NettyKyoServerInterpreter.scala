@@ -43,11 +43,11 @@ object NettyKyoServerInterpreter:
         override def apply(f: => KyoSttpMonad.M[Unit]): Unit =
             val exec =
                 if forkExecution then
-                    Async.run(f).map(_.get)
+                    Fiber.run(f).map(_.get)
                 else
                     f
             import AllowUnsafe.embrace.danger
-            val _ = IO.Unsafe.evalOrThrow(Async.run(exec))
+            val _ = Sync.Unsafe.evalOrThrow(Fiber.run(exec))
         end apply
     end KyoRunAsync
 end NettyKyoServerInterpreter

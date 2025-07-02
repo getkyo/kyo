@@ -133,10 +133,10 @@ private[compiler] case class ServicePrinter(
             )
             .addParameterList( //
                 "configure" :- s"${Types.managedChannelBuilder("?")} => ${Types.managedChannelBuilder("?")}",
-                "shutdown" :- s"(${Types.managedChannel}, ${Types.duration}) => ${Types.frame} ?=> ${Types.pending(Types.any, Types.io)}" := s"${Types.client}.shutdown"
+                "shutdown" :- s"(${Types.managedChannel}, ${Types.duration}) => ${Types.frame} ?=> ${Types.pending(Types.any, Types.sync)}" := s"${Types.client}.shutdown"
             )
             .addUsingParameters(Types.frame)
-            .addReturnType(Types.pending("Client", s"${Types.resource} & ${Types.io}"))
+            .addReturnType(Types.pending("Client", s"${Types.resource} & ${Types.sync}"))
             .addBody(
                 _.add(s"${Types.client}.channel(host, port, timeout)(configure, shutdown).map($name.client(_, options))")
             )

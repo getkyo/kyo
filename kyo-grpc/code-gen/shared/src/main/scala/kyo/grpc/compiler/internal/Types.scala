@@ -18,7 +18,7 @@ private[compiler] object Types {
 
     val frame = "_root_.kyo.Frame"
 
-    val io = "_root_.kyo.IO"
+    val sync = "_root_.kyo.Sync"
 
     val resource = "_root_.kyo.Resource"
 

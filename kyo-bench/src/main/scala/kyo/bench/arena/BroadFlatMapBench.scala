@@ -18,7 +18,7 @@ class BroadFlatMapBench extends ArenaBench.SyncAndFork(BigInt(610)):
     def kyoBench() =
         import kyo.*
 
-        def kyoFib(n: Int): BigInt < IO =
+        def kyoFib(n: Int): BigInt < Sync =
             if n <= 1 then BigInt(n)
             else kyoFib(n - 1).flatMap(a => kyoFib(n - 2).flatMap(b => a + b))
 
