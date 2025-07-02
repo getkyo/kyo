@@ -135,13 +135,13 @@ class ZIOsTest extends Test:
 
         def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < Sync =
             def loop(i: Int): Unit < Sync =
-                Sync {
+                Sync.defer {
                     if i == 0 then
-                        Sync(started.countDown()).andThen(loop(i + 1))
+                        Sync.defer(started.countDown()).andThen(loop(i + 1))
                     else
                         loop(i + 1)
                 }
-            Sync.ensure(Sync(done.countDown()))(loop(0))
+            Sync.ensure(Sync.defer(done.countDown()))(loop(0))
         end kyoLoop
 
         def zioLoop(started: CountDownLatch, done: CountDownLatch): Task[Unit] =
@@ -236,10 +236,10 @@ class ZIOsTest extends Test:
                     val panic   = Result.Panic(new Exception)
                     for
                         f <- Fiber.run(ZIOs.get(zioLoop(started, done)))
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt(panic)
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r == panic)
                     end for
                 }
@@ -254,10 +254,10 @@ class ZIOsTest extends Test:
                         yield ()
                     for
                         f <- Fiber.run(v)
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -272,10 +272,10 @@ class ZIOsTest extends Test:
                     end parallelEffect
                     for
                         f <- Fiber.run(parallelEffect)
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -290,10 +290,10 @@ class ZIOsTest extends Test:
                     end raceEffect
                     for
                         f <- Fiber.run(raceEffect)
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }

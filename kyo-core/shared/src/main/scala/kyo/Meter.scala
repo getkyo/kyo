@@ -378,7 +378,7 @@ object Meter:
             }
         end close
 
-        final def closed(using Frame) = Sync(state.get() == Int.MinValue)
+        final def closed(using Frame) = Sync.defer(state.get() == Int.MinValue)
 
         @tailrec final protected def release(): Boolean =
             val st = state.get()

@@ -96,7 +96,7 @@ final class Hub[A] private[kyo] (
     def close(using frame: Frame): Maybe[Seq[A]] < Sync =
         fiber.interruptDiscard(Result.Failure(Closed("Hub", initFrame))).andThen {
             ch.close.map { r =>
-                Sync {
+                Sync.defer {
                     val l = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
                     discard(listeners.removeIf(_ => true)) // clear is not available in Scala Native
                     Kyo.foreachDiscard(l)(_.child.close.unit).andThen(r)
@@ -164,7 +164,7 @@ final class Hub[A] private[kyo] (
                     closed.map {
                         case true =>
                             // race condition
-                            Sync {
+                            Sync.defer {
                                 discard(listeners.remove(listener))
                                 fail
                             }
@@ -176,7 +176,7 @@ final class Hub[A] private[kyo] (
     end listen
 
     private[kyo] def remove(listener: Listener[A])(using Frame): Unit < Sync =
-        Sync {
+        Sync.defer {
             discard(listeners.remove(listener))
         }
 end Hub

@@ -6,7 +6,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             var willFail = 1
-            Sync(1).now
+            Sync.defer(1).now
           }
         """)(
             "`var` declarations are not allowed inside a `direct` block."
@@ -17,7 +17,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             return 42
-            Sync(1).now
+            Sync.defer(1).now
           }
         """)(
             "Exception occurred while executing macro expansion"
@@ -28,7 +28,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             direct {
-              Sync(1).now
+              Sync.defer(1).now
             }
           }
         """)(
@@ -40,7 +40,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             lazy val x = 10
-            Sync(1).now
+            Sync.defer(1).now
           }
         """)(
             "`lazy val` and `object` declarations are not allowed inside a `direct` block."
@@ -50,7 +50,7 @@ class HygieneTest extends Test:
     "function containing await" in {
         typeCheckFailure("""
           direct {
-            def foo() = Sync(1).now
+            def foo() = Sync.defer(1).now
             foo()
           }
         """)(
@@ -62,9 +62,9 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             try {
-              Sync(1).now
+              Sync.defer(1).now
             } catch {
-              case _: Exception => Sync(2).now
+              case _: Exception => Sync.defer(2).now
             }
           }
         """)(
@@ -76,7 +76,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             class A(val x: Int)
-            Sync(1).now
+            Sync.defer(1).now
           }
         """)(
             "`class` and `trait` declarations are not allowed inside `direct` blocks."
@@ -87,7 +87,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             object A
-            Sync(1).now
+            Sync.defer(1).now
           }
         """)(
             "`class` and `trait` declarations are not allowed inside `direct` blocks."
@@ -98,7 +98,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             trait A
-            Sync(1).now
+            Sync.defer(1).now
           }
         """)(
             "`class` and `trait` declarations are not allowed inside `direct` blocks."
@@ -109,8 +109,8 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             for {
-              x <- Sync(1).now
-              y <- Sync(2).now
+              x <- Sync.defer(1).now
+              y <- Sync.defer(2).now
             } yield x + y
           }
         """)(
@@ -122,7 +122,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             try {
-              Sync(1).now
+              Sync.defer(1).now
             }
           }
         """)(
@@ -134,7 +134,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             try {
-              Sync(1).now
+              Sync.defer(1).now
             } finally {
               println("Cleanup")
             }
@@ -148,7 +148,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           class A(x: => String)
           direct {
-              new A(Sync("blah").now)
+              new A(Sync.defer("blah").now)
           }
         """)(
             "Can't find AsyncShift (Found:    cps.runtime.CpsMonadSelfAsyncShift[[A] =>> A < kyo.Sync"
@@ -158,7 +158,7 @@ class HygieneTest extends Test:
     "match expression without cases" in {
         typeCheckFailure("""
           direct {
-            Sync(1).now match {}
+            Sync.defer(1).now match {}
           }
         """)(
             "case' expected, but '}' found"
@@ -169,8 +169,8 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             for {
-              x <- Sync(1).now
-              y <- Sync(2).now
+              x <- Sync.defer(1).now
+              y <- Sync.defer(2).now
             } x + y
           }
         """)(
@@ -182,7 +182,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
             def outer() = {
-              def inner() = Sync(1).now
+              def inner() = Sync.defer(1).now
               inner()
             }
             outer()
@@ -195,7 +195,7 @@ class HygieneTest extends Test:
     "lambdas with await" in {
         typeCheckFailure("""
           direct {
-            val f = (x: Int) => Sync(1).now + x
+            val f = (x: Int) => Sync.defer(1).now + x
             f(10)
           }
         """)(
@@ -206,7 +206,7 @@ class HygieneTest extends Test:
     "throw" in {
         typeCheckFailure("""
           direct {
-              if Sync("foo").now == "bar" then
+              if Sync.defer("foo").now == "bar" then
                   throw new Exception
               else
                   2
@@ -220,7 +220,7 @@ class HygieneTest extends Test:
         typeCheckFailure("""
           direct {
               val x = synchronized(1)
-              Sync(x).now
+              Sync.defer(x).now
           }
         """)(
             "`synchronized` blocks are not allowed inside a `direct` block."
@@ -228,17 +228,19 @@ class HygieneTest extends Test:
     }
 
     "nested var" in {
-        typeCheckFailure("""direct {{var x = 1; Sync(x)}.now}""")("`var` declarations are not allowed inside a `direct` block.")
+        typeCheckFailure("""direct {{var x = 1; Sync.defer(x)}.now}""")("`var` declarations are not allowed inside a `direct` block.")
     }
 
     "nested nested var" in {
-        typeCheckFailure("""direct {{val y = 1;{var x = 1; Sync(x)}}.now}""")("`var` declarations are not allowed inside a `direct` block.")
+        typeCheckFailure("""direct {{val y = 1;{var x = 1; Sync.defer(x)}}.now}""")(
+            "`var` declarations are not allowed inside a `direct` block."
+        )
     }
 
     "nested now in def" in {
         typeCheckFailure("""
              direct {
-               val i = Sync(1).later
+               val i = Sync.defer(1).later
                def f =  i.now > 0
                f
              }""")("Method definitions containing .now are not supported inside `direct` blocks.")
