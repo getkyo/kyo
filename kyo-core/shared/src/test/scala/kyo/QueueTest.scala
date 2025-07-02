@@ -621,7 +621,7 @@ class QueueTest extends Test:
     }
 
     "closeAwaitEmptyFiber" - {
-        "returns true when queue is already empty" in run {
+        "returns true when queue is already empty" in runNotNative {
             for
                 queue  <- Queue.init[Int](10)
                 result <- queue.closeAwaitEmptyFiber.map(_.get)
@@ -630,7 +630,7 @@ class QueueTest extends Test:
             yield assert(result && closed && !open)
         }
 
-        "returns true when queue becomes empty after closing" in run {
+        "returns true when queue becomes empty after closing" in runNotNative {
             for
                 queue   <- Queue.init[Int](10)
                 _       <- queue.offer(1)
@@ -653,7 +653,7 @@ class QueueTest extends Test:
             )
         }
 
-        "returns false if queue is already closed" in run {
+        "returns false if queue is already closed" in runNotNative {
             for
                 queue  <- Queue.init[Int](10)
                 _      <- queue.close
@@ -662,14 +662,14 @@ class QueueTest extends Test:
         }
 
         "unbounded queue" - {
-            "returns true when queue is already empty" in run {
+            "returns true when queue is already empty" in runNotNative {
                 for
                     queue  <- Queue.Unbounded.init[Int]()
                     result <- queue.closeAwaitEmptyFiber.map(_.get)
                 yield assert(result)
             }
 
-            "returns true when queue becomes empty after closing" in run {
+            "returns true when queue becomes empty after closing" in runNotNative {
                 for
                     queue  <- Queue.Unbounded.init[Int]()
                     _      <- queue.add(1)
@@ -682,7 +682,7 @@ class QueueTest extends Test:
             }
         }
 
-        "concurrent polling and waiting" in run {
+        "concurrent polling and waiting" in runNotNative {
             for
                 queue  <- Queue.init[Int](10)
                 _      <- Kyo.foreach(1 to 5)(i => queue.offer(i))
@@ -692,7 +692,7 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "sliding queue" in run {
+        "sliding queue" in runNotNative {
             for
                 queue  <- Queue.Unbounded.initSliding[Int](2)
                 _      <- queue.add(1)
@@ -704,7 +704,7 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "dropping queue" in run {
+        "dropping queue" in runNotNative {
             for
                 queue  <- Queue.Unbounded.initDropping[Int](2)
                 _      <- queue.add(1)
@@ -716,14 +716,14 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "zero capacity queue" in run {
+        "zero capacity queue" in runNotNative {
             for
                 queue  <- Queue.init[Int](0)
                 result <- queue.closeAwaitEmptyFiber.map(_.get)
             yield assert(result)
         }
 
-        "race between closeAwaitEmpty and close" in run {
+        "race between closeAwaitEmpty and close" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -748,7 +748,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "two producers calling closeAwaitEmpty" in run {
+        "two producers calling closeAwaitEmpty" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -787,7 +787,7 @@ class QueueTest extends Test:
                 .andThen(succeed)
         }
 
-        "producer calling closeAwaitEmpty and another calling close" in run {
+        "producer calling closeAwaitEmpty and another calling close" in runNotNative {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
