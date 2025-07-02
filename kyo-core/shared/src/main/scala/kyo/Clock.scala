@@ -499,7 +499,7 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E])
     )(using Frame): Fiber[E, A] < Sync =
-        Fiber.run {
+        Fiber.init {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
                     clock.now.map { now =>
@@ -601,7 +601,7 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E])
     )(using Frame): Fiber[E, A] < Sync =
-        Fiber.run {
+        Fiber.init {
             Clock.use { clock =>
                 clock.now.map { now =>
                     Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>

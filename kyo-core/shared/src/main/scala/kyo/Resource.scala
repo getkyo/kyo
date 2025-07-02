@@ -185,7 +185,7 @@ object Resource:
                                                 Abort.run[Throwable](task(ex))
                                                     .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                                             }
-                                                .handle(Fiber.run[Nothing, Unit, Any])
+                                                .handle(Fiber.init[Nothing, Unit, Any])
                                                 .map(promise.becomeDiscard)
                             }
 

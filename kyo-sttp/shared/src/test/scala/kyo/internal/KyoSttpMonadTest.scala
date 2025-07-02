@@ -90,7 +90,7 @@ class KyoSttpMonadTest extends Test:
             for
                 started   <- Latch.init(1)
                 cancelled <- Latch.init(1)
-                fiber <- Fiber.run {
+                fiber <- Fiber.init {
                     KyoSttpMonad.async[Int] { _ =>
                         import AllowUnsafe.embrace.danger
                         started.unsafe.release()

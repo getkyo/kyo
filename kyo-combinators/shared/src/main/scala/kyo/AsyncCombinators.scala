@@ -17,7 +17,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     inline def fork(
         using frame: Frame
     ): Fiber[E, A] < (Sync & Ctx) =
-        Fiber.run(effect)
+        Fiber.init(effect)
 
     /** Forks this computation using the Async effect and returns its result as a `Fiber[E, A]`, managed by the Resource effect. Unlike
       * `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is
@@ -29,7 +29,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     inline def forkScoped(
         using frame: Frame
     ): Fiber[E, A] < (Sync & Ctx & Resource) =
-        Kyo.acquireRelease(Fiber.run(effect))(_.interrupt.unit)
+        Kyo.acquireRelease(Fiber.init(effect))(_.interrupt.unit)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.
       *
@@ -50,8 +50,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         fr: Frame
     ): A1 < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
-            fiberA  <- Fiber.run(using s)(effect)
-            fiberA1 <- Fiber.run(using s2)(next)
+            fiberA  <- Fiber.init(using s)(effect)
+            fiberA1 <- Fiber.init(using s2)(next)
             _       <- fiberA.awaitCompletion
             a1      <- fiberA1.join
         yield a1
@@ -75,8 +75,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         fr: Frame
     ): A < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
-            fiberA  <- Fiber.run(using s)(effect)
-            fiberA1 <- Fiber.run(using s2)(next)
+            fiberA  <- Fiber.init(using s)(effect)
+            fiberA1 <- Fiber.init(using s2)(next)
             a       <- fiberA.join
             _       <- fiberA1.awaitCompletion
         yield a
@@ -101,8 +101,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         zippable: Zippable[A, A1]
     ): zippable.Out < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
-            fiberA  <- Fiber.run(using s)(effect)
-            fiberA1 <- Fiber.run(using s2)(next)
+            fiberA  <- Fiber.init(using s)(effect)
+            fiberA1 <- Fiber.init(using s2)(next)
             a       <- fiberA.join
             a1      <- fiberA1.join
         yield zippable.zip(a, a1)

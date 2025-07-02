@@ -10,7 +10,7 @@ class FiberCombinatorsTest extends Test:
                     state = state + 1
                     continuation(state)
                 )
-                Fiber.run(effect).map(_.toFuture).map { handledEffect =>
+                Fiber.init(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(state == 1)
                         assert(v == 1)
@@ -21,7 +21,7 @@ class FiberCombinatorsTest extends Test:
             "should construct from Future" in run {
                 val future = scala.concurrent.Future(100)
                 val effect = Kyo.fromFuture(future)
-                Fiber.run(effect).map(_.toFuture).map { handledEffect =>
+                Fiber.init(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(v == 100)
                     )
@@ -34,21 +34,21 @@ class FiberCombinatorsTest extends Test:
                 scala.concurrent.Future {
                     promise.complete(scala.util.Success(100))
                 }
-                Fiber.run(effect).map(_.toFuture).map { handledEffect =>
+                Fiber.init(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v => assert(v == 100))
                 }
             }
 
             "should construct from foreachPar" in run {
                 val effect = Kyo.foreachPar(Seq(1, 2, 3))(v => v * 2)
-                Fiber.run(effect).map(_.toFuture).map { handledEffect =>
+                Fiber.init(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v => assert(v == Seq(2, 4, 6)))
                 }
             }
 
             "should construct from traversePar" in run {
                 val effect = Kyo.traversePar(Seq(Sync(1), Sync(2), Sync(3)))
-                Fiber.run(effect).map(_.toFuture).map { handledEffect =>
+                Fiber.init(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v => assert(v == Seq(1, 2, 3)))
                 }
             }
@@ -57,7 +57,7 @@ class FiberCombinatorsTest extends Test:
                 val effect = Kyo.never
                 runJVM {
                     Abort.run[Throwable] {
-                        val r = Fiber.runAndBlock(5.millis)(effect)
+                        val r = Async.runAndBlock(5.millis)(effect)
                         Abort.catching[Throwable](r)
                     }.map { handledEffect =>
                         assert(handledEffect match
@@ -73,16 +73,16 @@ class FiberCombinatorsTest extends Test:
                 val effect       = Async.sleep(100.millis) *> 10
                 val forkedEffect = effect.fork
                 val joinedEffect = forkedEffect.map(_.get)
-                Fiber.run(joinedEffect).map(_.toFuture).map { handled =>
+                Fiber.init(joinedEffect).map(_.toFuture).map { handled =>
                     handled.map(v => assert(v == 10))
                 }
             }
 
             "should join a forked effect" in run {
                 val effect       = Async.sleep(100.millis) *> 10
-                val forkedEffect = Fiber.run(effect)
+                val forkedEffect = Fiber.init(effect)
                 val joinedEffect = forkedEffect.join
-                Fiber.run(joinedEffect).map(_.toFuture).map { handled =>
+                Fiber.init(joinedEffect).map(_.toFuture).map { handled =>
                     handled.map(v => assert(v == 10))
                 }
             }
@@ -98,7 +98,7 @@ class FiberCombinatorsTest extends Test:
                 val e1     = Sync(1)
                 val e2     = Sync(2)
                 val effect = e1 &> e2
-                Fiber.run(effect).map(_.toFuture).map { handled =>
+                Fiber.init(effect).map(_.toFuture).map { handled =>
                     handled.map(v =>
                         assert(v == 2)
                     )
@@ -109,7 +109,7 @@ class FiberCombinatorsTest extends Test:
                 val e1     = Sync(1)
                 val e2     = Sync(2)
                 val effect = e1 <& e2
-                Fiber.run(effect).map(_.toFuture).map { handled =>
+                Fiber.init(effect).map(_.toFuture).map { handled =>
                     handled.map(v =>
                         assert(v == 1)
                     )
@@ -120,7 +120,7 @@ class FiberCombinatorsTest extends Test:
                 val e1     = Sync(1)
                 val e2     = Sync(2)
                 val effect = e1 <&> e2
-                Fiber.run(effect).map(_.toFuture).map { handled =>
+                Fiber.init(effect).map(_.toFuture).map { handled =>
                     handled.map(v =>
                         assert(v == (1, 2))
                     )
@@ -141,7 +141,7 @@ class FiberCombinatorsTest extends Test:
                         result <- fiber.join
                     yield result
 
-                Fiber.run(Resource.run(program)).map(_.toFuture).map { handledEffect =>
+                Fiber.init(Resource.run(program)).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(state == 1)
                         assert(v == 1)
@@ -162,7 +162,7 @@ class FiberCombinatorsTest extends Test:
                         result <- fiber.join
                     yield result
 
-                Fiber.run(Resource.run(program)).map(_.toFuture).map { handledEffect =>
+                Fiber.init(Resource.run(program)).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(v == 42)
                         assert(cleanedUp)
@@ -186,7 +186,7 @@ class FiberCombinatorsTest extends Test:
                         _     <- fiber.awaitCompletion
                     yield completed
 
-                Fiber.run(program).map(_.toFuture).map { handledEffect =>
+                Fiber.init(program).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(v)
                     )
@@ -204,7 +204,7 @@ class FiberCombinatorsTest extends Test:
                         _     <- fiber.awaitCompletion
                     yield ()
 
-                Fiber.run(program).map(_.toFuture).map { handledEffect =>
+                Fiber.init(program).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(v == ())
                     )

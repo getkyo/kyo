@@ -32,7 +32,7 @@ class BarrierTest extends Test:
     "await + fibers" in run {
         for
             barrier <- Barrier.init(1)
-            _       <- Fiber.run(barrier.await)
+            _       <- Fiber.init(barrier.await)
             _       <- barrier.await
         yield succeed
     }

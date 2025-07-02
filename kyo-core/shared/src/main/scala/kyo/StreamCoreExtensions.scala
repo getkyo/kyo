@@ -88,7 +88,7 @@ object StreamCoreExtensions:
             t2: Tag[Emit[Chunk[A]]],
             fr: Frame
         ): Unit < (Async & S & Resource) =
-            Resource.acquireRelease(Fiber.run {
+            Resource.acquireRelease(Fiber.init {
                 Abort.run[E](
                     Abort.run[Closed](
                         latch.await.andThen(stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk)))))
@@ -139,7 +139,7 @@ object StreamCoreExtensions:
                 Channel.init[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer).map: channel =>
                     Sync.ensure(channel.close):
                         for
-                            _ <- Fiber.run[E, Unit, S](Abort.run {
+                            _ <- Fiber.init[E, Unit, S](Abort.run {
                                 Async.foreachDiscard(streams)(
                                     _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
                                 )
@@ -257,7 +257,7 @@ object StreamCoreExtensions:
                 Channel.initWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     Sync.ensure(channel.close):
                         for
-                            _ <- Fiber.run(Abort.run(
+                            _ <- Fiber.init(Abort.run(
                                 Async
                                     .foreachDiscard(streams)(
                                         _.foreachChunk(c => Abort.run(channel.put(Present(c))))
@@ -338,7 +338,7 @@ object StreamCoreExtensions:
                 Channel.initWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     Sync.ensure(channel.close):
                         for
-                            _ <- Fiber.run(
+                            _ <- Fiber.init(
                                 Async.gather(
                                     stream.foreachChunk(c => channel.put(Present(c)))
                                         .andThen(channel.put(Absent)),
@@ -404,14 +404,14 @@ object StreamCoreExtensions:
                                     Kyo.foreach(input) { v =>
                                         // Fork transformation, pass result through stagingChannel merely as rate limiter,
                                         // (signal to continue)
-                                        Fiber.run(f(v)).map: transformationFiber =>
+                                        Fiber.init(f(v)).map: transformationFiber =>
                                             transformationFiber.map(_ => true).map: signalFiber =>
                                                 stagingChannel.put(signalFiber).andThen:
                                                     transformationFiber
                                     }.map: fiberChunk =>
                                         // Note that this means one of the concurrency is "slots" is used to assemble chunk
                                         // this is not an expensive operation, however, so should not be a problem
-                                        Fiber.run(Kyo.foreach(fiberChunk)(_.get)).map: chunkFiber =>
+                                        Fiber.init(Kyo.foreach(fiberChunk)(_.get)).map: chunkFiber =>
                                             stagingChannel.put(chunkFiber).andThen:
                                                 Loop.continue(cont(()))
                         ).andThen(stagingChannel.put(Fiber.success(false)))
@@ -426,7 +426,7 @@ object StreamCoreExtensions:
                                     case chunk: Chunk[V2] => channelOut.put(Present(chunk)).andThen(Loop.continue)
 
                         // Run stream and staging handlers in background, handling failures (end stream)
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
                                 onFail = {
@@ -488,7 +488,7 @@ object StreamCoreExtensions:
                     Channel.initWith[Fiber[E | Closed, Boolean]](parallel): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork(effect: Any < (Async & Abort[Closed | E] & S2)) =
-                            Fiber.run(effect).map: effectFiber =>
+                            Fiber.init(effect).map: effectFiber =>
                                 effectFiber.map(_ => true).map: signalFiber =>
                                     parChannel.put(signalFiber).andThen:
                                         effectFiber
@@ -510,7 +510,7 @@ object StreamCoreExtensions:
                                     if continue then Loop.continue
                                     else Loop.done
 
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
                                 onFail = {
@@ -579,7 +579,7 @@ object StreamCoreExtensions:
                         val handledStream = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
                                 (input, cont) =>
-                                    Fiber.run(f(input).map(Present(_))).map: fiber =>
+                                    Fiber.init(f(input).map(Present(_))).map: fiber =>
                                         stagingChannel.put(fiber).andThen:
                                             Loop.continue(cont(()))
                         ).andThen(stagingChannel.put(Fiber.success(Absent)).unit)
@@ -593,7 +593,7 @@ object StreamCoreExtensions:
                                         else Loop.continue
 
                         // Run stream handler and staging handler in background, handling errors
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(outputChannel.put(Absent)).unit,
                                 onFail = {
@@ -658,7 +658,7 @@ object StreamCoreExtensions:
                     Channel.initWith[Fiber[E | Closed, Boolean]](parallel - 1): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork[A](task: Any < (Async & Abort[Closed | E] & S2)) =
-                            Fiber.run(task).map: fiber =>
+                            Fiber.init(task).map: fiber =>
                                 fiber.map(_ => true).map: signalFiber =>
                                     parChannel.put(signalFiber).unit
 
@@ -678,7 +678,7 @@ object StreamCoreExtensions:
                                 else Loop.done
 
                         // Run stream handler and par handler in background, handling errors (ensure stream ends)
-                        val background = Fiber.run:
+                        val background = Fiber.init:
                             Abort.fold[E | Closed](
                                 onSuccess = _ => Abort.run(channelOut.put(Absent)).unit,
                                 onFail = {
@@ -984,8 +984,8 @@ object StreamCoreExtensions:
 
                     // Handle loop collecting emitted values and flushing them until completion
                     val push: Fiber[E | Closed, Unit] < (Sync & S) =
-                        Fiber.run[E | Closed, Unit, S]:
-                            Sync.ensure(Fiber.run[Closed, Unit, Any](channel.put(Flush))):
+                        Fiber.init[E | Closed, Unit, S]:
+                            Sync.ensure(Fiber.init[Closed, Unit, Any](channel.put(Flush))):
                                 ArrowEffect.handleLoop(t1, stream.emit)(
                                     handle = [C] =>
                                         (chunk, cont) =>
