@@ -136,7 +136,7 @@ object StreamCoreExtensions:
             Frame
         ): Stream[V, S & Async] =
             Stream:
-                Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
+                Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
                         _ <- Fiber.init[E, Unit, S](Abort.run {
                             Async.foreachDiscard(streams)(
@@ -253,7 +253,7 @@ object StreamCoreExtensions:
             Frame
         ): Stream[V, S & Async] =
             Stream:
-                Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
+                Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
                         _ <- Fiber.init(Abort.run(
                             Async
@@ -333,7 +333,7 @@ object StreamCoreExtensions:
             Frame
         ): Stream[V, Abort[E] & S & Async] =
             Stream:
-                Channel.initLocalWith[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
+                Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
                         _ <- Fiber.init(
                             Async.gather(
@@ -388,10 +388,10 @@ object StreamCoreExtensions:
         ): Stream[V2, Abort[E] & Async & S & S2] =
             given CanEqual[Boolean | Chunk[V2], Boolean | Chunk[V2]] = CanEqual.derived
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initLocalWith[Maybe[Chunk[V2]]](bufferSize): channelOut =>
+                Channel.use[Maybe[Chunk[V2]]](bufferSize): channelOut =>
                     // Staging channel acts as concurrency limiter: contains fibers that either contain a
                     // chunk to be published, or a signal to continue or end
-                    Channel.initLocalWith[Fiber[E | Closed, Boolean | Chunk[V2]]](parallel - 1): stagingChannel =>
+                    Channel.use[Fiber[E | Closed, Boolean | Chunk[V2]]](parallel - 1): stagingChannel =>
                         // Handle original stream by running transformations in parallel, limiting concurrency by
                         // using staging channel as a limiter
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
@@ -477,10 +477,10 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initLocalWith[Maybe[V2]](bufferSize): channelOut =>
+                Channel.use[Maybe[V2]](bufferSize): channelOut =>
                     // Since we don't have to worry about order, the "staging channel" now just holds a signal
                     // determining whether to continue streaming or not
-                    Channel.initLocalWith[Fiber[E | Closed, Boolean]](parallel): parChannel =>
+                    Channel.use[Fiber[E | Closed, Boolean]](parallel): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork(effect: Any < (Async & Abort[Closed | E] & S2)) =
                             Fiber.init(effect).map: effectFiber =>
@@ -561,10 +561,10 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initLocalWith[Maybe[Chunk[V2]]](bufferSize): outputChannel =>
+                Channel.use[Maybe[Chunk[V2]]](bufferSize): outputChannel =>
                     // Staging channel size is one less than parallel because the `handleStaging` loop
                     // will always pull one value out and wait for it to complete
-                    Channel.initLocalWith[Fiber[E | Closed, Maybe[Chunk[V2]]]](parallel - 1): stagingChannel =>
+                    Channel.use[Fiber[E | Closed, Maybe[Chunk[V2]]]](parallel - 1): stagingChannel =>
 
                         // Handle original stream by running transformation asynchronously and publishing resulting *fiber*
                         // to the staging channel. Throttling is enforced by the size of the staging channel. Publish final
@@ -643,10 +643,10 @@ object StreamCoreExtensions:
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
-                Channel.initLocalWith[Maybe[Chunk[V2]]](bufferSize): channelOut =>
+                Channel.use[Maybe[Chunk[V2]]](bufferSize): channelOut =>
                     // Since we don't have to worry about order, the "staging channel" now just holds a signal
                     // determining whether to continue streaming or not
-                    Channel.initLocalWith[Fiber[E | Closed, Boolean]](parallel - 1): parChannel =>
+                    Channel.use[Fiber[E | Closed, Boolean]](parallel - 1): parChannel =>
                         // Handle transformation effect, with signal to continue streaming
                         def throttledFork[A](task: Any < (Async & Abort[Closed | E] & S2)) =
                             Fiber.init(task).map: fiber =>

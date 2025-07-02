@@ -25,8 +25,8 @@ class ChannelTest extends Test:
         }
     }
 
-    "initLocalWith" in run {
-        Channel.initLocalWith[Int](10) { c =>
+    "use" in run {
+        Channel.use[Int](10) { c =>
             for
                 b <- c.put(1)
                 v <- c.take

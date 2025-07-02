@@ -341,7 +341,7 @@ object Channel:
       * @return
       *   The result of applying the function
       */
-    inline def initLocalWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
+    inline def use[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
     )(using inline frame: Frame): B < (S & Sync) =
         Sync.Unsafe:
