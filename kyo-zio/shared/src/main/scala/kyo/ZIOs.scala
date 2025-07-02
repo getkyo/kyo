@@ -61,7 +61,7 @@ object ZIOs:
     def run[A, E](v: => A < (Abort[E] & Async))(using frame: Frame, trace: zio.Trace): ZIO[Any, E, A] =
         ZIO.suspendSucceed {
             import AllowUnsafe.embrace.danger
-            Fiber.run(v).map { fiber =>
+            Fiber.init(v).map { fiber =>
                 ZIO.asyncInterrupt[Any, E, A] { cb =>
                     fiber.unsafe.onComplete {
                         case Result.Success(a) => cb(Exit.succeed(a))

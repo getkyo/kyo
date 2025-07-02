@@ -111,7 +111,7 @@ class ResourceTest extends Test:
 
         "ensure" in run {
             var closes = 0
-            Resource.ensure(Fiber.run(closes += 1).map(_.get).unit)
+            Resource.ensure(Fiber.init(closes += 1).map(_.get).unit)
                 .handle(
                     Resource.run,
                     Abort.run
@@ -126,7 +126,7 @@ class ResourceTest extends Test:
             val acquire = Abort.get(Some(42))
             // only Async in release
             def release(i: Int) =
-                Fiber.run {
+                Fiber.init {
                     assert(i == 42)
                     closes += 1
                 }.map(_.get)
@@ -142,7 +142,7 @@ class ResourceTest extends Test:
 
         "acquire" in run {
             val r = TestResource(1)
-            Resource.acquire(Fiber.run(r).map(_.get))
+            Resource.acquire(Fiber.init(r).map(_.get))
                 .handle(
                     Resource.run,
                     Abort.run
@@ -195,7 +195,7 @@ class ResourceTest extends Test:
             val io =
                 for
                     l <- Latch.init(1)
-                    f <- Fiber.run(l.await.andThen(Resource.ensure { called = true }))
+                    f <- Fiber.init(l.await.andThen(Resource.ensure { called = true }))
                 yield (l, f)
             for
                 (l, f) <- Resource.run(io)
@@ -216,7 +216,7 @@ class ResourceTest extends Test:
                 val resources = Kyo.foreach(1 to 3)(makeResource)
 
                 for
-                    close <- Fiber.run(resources.handle(Resource.run(3)))
+                    close <- Fiber.init(resources.handle(Resource.run(3)))
                     _     <- latch.await
                     ids   <- close.get
                 yield assert(ids == (1 to 3))
@@ -240,7 +240,7 @@ class ResourceTest extends Test:
                 val resources = Kyo.foreach(1 to 10)(makeResource)
 
                 for
-                    close <- Fiber.run(resources.handle(Resource.run(3)))
+                    close <- Fiber.init(resources.handle(Resource.run(3)))
                     ids   <- close.get
                 yield assert(ids == (1 to 10))
                 end for

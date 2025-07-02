@@ -18,7 +18,7 @@ class STMTest extends Test:
                 ref      <- TRef.init(0)
                 start    <- Latch.init(1)
                 continue <- Latch.init(1)
-                fiber <- Fiber.run {
+                fiber <- Fiber.init {
                     STM.run {
                         for
                             _ <- ref.set(42)
@@ -94,7 +94,7 @@ class STMTest extends Test:
                     latch2   <- Latch.init(1)
                     attempts <- AtomicInt.init
                     _ <-
-                        Fiber.run {
+                        Fiber.init {
                             STM.run(latch1.release.andThen(ref.set(42)))
                                 .andThen(latch2.release)
                         }
@@ -121,7 +121,7 @@ class STMTest extends Test:
                 latch2   <- Latch.init(1)
                 attempts <- AtomicInt.init
                 _ <-
-                    Fiber.run {
+                    Fiber.init {
                         STM.run(latch1.release.andThen(ref.set(42)))
                             .andThen(latch2.release)
                     }
@@ -569,10 +569,10 @@ class STMTest extends Test:
                 size  <- sizes
                 ref   <- TRef.init(0)
                 latch <- Latch.init(1)
-                writeFiber <- Fiber.run(
+                writeFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(size, size)(STM.run(ref.update(_ + 1))))
                 )
-                readFiber <- Fiber.run(
+                readFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(size, size)(STM.run(ref.get)))
                 )
                 _     <- latch.release
@@ -748,7 +748,7 @@ class STMTest extends Test:
                     STM.run {
                         for
                             _ <- ref.set(1)
-                            fiber <- Fiber.run {
+                            fiber <- Fiber.init {
                                 STM.run {
                                     for
                                         _ <- ref.set(2)
@@ -776,7 +776,7 @@ class STMTest extends Test:
                 (parentTid, childTid) <-
                     STM.run {
                         TID.useIO { parentTid =>
-                            Fiber.run {
+                            Fiber.init {
                                 STM.run(TID.useIO(identity))
                             }.map(_.get).map { childTid =>
                                 (parentTid, childTid)
@@ -791,7 +791,7 @@ class STMTest extends Test:
         def unsafeToFuture[A](a: => A < (Async & Abort[Throwable])): Future[A] =
             import kyo.AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow(
-                Fiber.run(a).map(_.toFuture)
+                Fiber.init(a).map(_.toFuture)
             )
         end unsafeToFuture
 
@@ -802,7 +802,7 @@ class STMTest extends Test:
             r.get
         }
 
-        val task = Fiber.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
+        val task = Async.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
 
         Abort.run(task).map { result =>
             assert(result == Result.fail(ex))

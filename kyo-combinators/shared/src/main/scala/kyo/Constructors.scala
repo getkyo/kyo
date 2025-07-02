@@ -41,10 +41,10 @@ extension (kyoObject: Kyo.type)
         for
             promise <- Promise.init[E, A]
             registerFn = (eff: A < (Abort[E] & Async)) =>
-                val effFiber = Fiber.run(eff)
+                val effFiber = Fiber.init(eff)
                 val updatePromise =
                     effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
-                val updatePromiseIO = Fiber.run(updatePromise).unit
+                val updatePromiseIO = Fiber.init(updatePromise).unit
                 import AllowUnsafe.embrace.danger
                 Sync.Unsafe.evalOrThrow(updatePromiseIO)
             _ <- register(registerFn)

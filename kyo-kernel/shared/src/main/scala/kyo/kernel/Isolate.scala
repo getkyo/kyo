@@ -23,7 +23,7 @@ import scala.quoted.*
   *
   * ==Operations==
   *
-  * Operations determine which isolation capability they require. Some operations like Fiber.run require Contextual isolation to enable the
+  * Operations determine which isolation capability they require. Some operations like Fiber.init require Contextual isolation to enable the
   * forked computation to execute to completion, while others like Async.parallel allow Stateful isolation given that the return type allows
   * restoring forked effects after the parallel execution finishes. The choice between Contextual and Stateful isolation is made by the
   * operation, not the user.
@@ -142,15 +142,15 @@ object Isolate:
                             |
                             |  ${missing.map(_.show.red).mkString(" & ")}
                             |
-                            |Common mistake: Using operations like Fiber.run with effects that need complex state management.
+                            |Common mistake: Using operations like Fiber.init with effects that need complex state management.
                             |
                             |You have a couple of options, from simplest to most advanced:
                             |
                             |1. Handle these effects before the operation:
-                            |   Fiber.run(MyEffect.run(computation))
+                            |   Fiber.init(MyEffect.run(computation))
                             |
                             |2. Use an operation that supports complex state:
-                            |   Instead of Fiber.run, use Async.parallel 
+                            |   Instead of Fiber.init, use Async.parallel 
                             |""".stripMargin
                     )
                 end if
