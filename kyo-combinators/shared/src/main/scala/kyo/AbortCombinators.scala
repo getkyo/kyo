@@ -59,6 +59,31 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): A < (Abort[E1] & S & S1) =
         effect.recover(e => fn(e).map(Kyo.fail))
 
+    /** Provides a DSL [[ForAbortOps]] for handling a narrower [[Abort]] failure type than the original effect.
+      *
+      * For example, if you an Abort effect with a union of various failure types: val effect1:
+      * ```
+      * Int < (Sync & Abort[Int | String | Boolean]) = ???
+      * ```
+      *
+      * You can recover just the `Int` type as follows:
+      * ```
+      * val effect2: Int < (Sync & Abort[String | Boolean]) = effect1.forAbort[Int].recover(i => i * 3)
+      * ```
+      *
+      * You can retry in just the case of a `String` failure as follows:
+      * ```
+      * val effect3: Int < (Sync & Abort[String | Boolean]) = effect2.forAbort[String].retry(5)
+      * ```
+      *
+      * And you can map a `Boolean` failure to a `String` to get a single failure type:
+      * ```
+      * val effect4: Int < (Sync & Abort[String]) = effect3.forAbort[Boolean].mapAbort(b => s"Boolean failure: $b")
+      * ```
+      *
+      * @see
+      *   [[ForAbortOps]]
+      */
     def forAbort[E1 <: E]: ForAbortOps[A, S, E, E1] = ForAbortOps(effect)
 
     /** Translates the Abort effect to a Choice effect by handling failures as dropped choice.
@@ -315,6 +340,29 @@ extension [A, S, E](effect: A < (Abort[E] & S))
 
 end extension
 
+/** Provides a DSL [[ForAbortOps]] for handling a narrower [[Abort]] failure type than the original effect.
+  * ```
+  * Int < (Sync & Abort[Int | String | Boolean]) = ???
+  * ```
+  *
+  * You can recover just the `Int` type as follows:
+  * ```
+  * val effect2: Int < (Sync & Abort[String | Boolean]) = effect1.forAbort[Int].recover(i => i * 3)
+  * ```
+  *
+  * You can retry in just the case of a `String` failure as follows:
+  * ```
+  * val effect3: Int < (Sync & Abort[String | Boolean]) = effect2.forAbort[String].retry(5)
+  * ```
+  *
+  * And you can map a `Boolean` failure to a `String` to get a single failure type:
+  * ```
+  * val effect4: Int < (Sync & Abort[String]) = effect3.forAbort[Boolean].mapAbort(b => s"Boolean failure: $b")
+  * ```
+  *
+  * @param effect
+  *   The orignal effect with Abort type [[E]] that is being narrowed to [[E1]]
+  */
 class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     /** Handles the partial Abort[E1] effect and returns its result as a `Result[E1, A]`.
       *
