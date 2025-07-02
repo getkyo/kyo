@@ -44,7 +44,7 @@ class PingPongBench extends ArenaBench.ForkOnly(()):
         def iterate(promise: Promise[Nothing, Unit], n: Int): Unit < (Async & Abort[Closed]) =
             for
                 ref  <- AtomicInt.init(n)
-                chan <- Channel.init[Unit](1)
+                chan <- Channel.initUnscoped[Unit](1)
                 effect =
                     for
                         _ <- Fiber.init(chan.put(()))

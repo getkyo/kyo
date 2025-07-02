@@ -2523,14 +2523,15 @@ The `Channel` effect serves as an advanced concurrency primitive, designed to fa
 ```scala    
 import kyo.*
 
-// A 'Channel' is initialized
-// with a fixed capacity
-val a: Channel[Int] < Sync =
+// A 'Channel' is initialized with a fixed capacity
+// Note the `Resource` effect, which ensures the channel
+// will eventually be closed
+val a: Channel[Int] < (Sync & Resource) =
     Channel.init(capacity = 42)
 
 // It's also possible to specify
 // an 'Access' policy
-val b: Channel[Int] < Sync =
+val b: Channel[Int] < (Sync & Resource) =
     Channel.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
@@ -2543,28 +2544,28 @@ While `Channel` share similarities with `Queue`—such as methods for querying s
 import kyo.*
 
 // An example channel
-val a: Channel[Int] < Sync =
+val a: Channel[Int] < (Sync & Resource) =
     Channel.init(capacity = 42)
 
 // Adds a new item to the channel.
 // If there's no capacity, the fiber
 // is automatically suspended until
 // space is made available
-val b: Unit < (Async & Abort[Closed]) =
+val b: Unit < (Async & Abort[Closed] & Resource) =
     a.map(_.put(42))
 
 // Takes an item from the channel.
 // If the channel is empty, the fiber
 // is suspended until a new item is
 // made available
-val c: Int < (Async & Abort[Closed]) =
+val c: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.take)
 
 // Closes the channel. If successful,
 // returns a Some with the drained
 // elements. All pending puts and takes
 // are automatically interrupted
-val f: Maybe[Seq[Int]] < Sync =
+val f: Maybe[Seq[Int]] < (Sync & Resource) =
     a.map(_.close)
 ```
 
