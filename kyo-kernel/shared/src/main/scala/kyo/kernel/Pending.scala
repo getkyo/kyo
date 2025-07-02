@@ -412,14 +412,13 @@ object `<`:
       * @return
       *   A computation in the effect context
       */
-    implicit def lift[A: CanLift, S](v: A): A < S =
-        v match
-            case kyo: Kyo[?, ?] => Nested(kyo)
-            case _              => v.asInstanceOf[A < S]
+    implicit inline def lift[A: CanLift, S](v: A): A < S = ${ LiftMacro.liftMacro[A, S]('v) }
 
     implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
 
     implicit inline def liftUnit[S](inline v: Unit): Unit < S = v.asInstanceOf[Unit < S]
+
+    // ---------
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ abortCastUnitImpl[S1, S2]('v) }
 

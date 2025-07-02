@@ -43,13 +43,15 @@ object CanLiftMacro:
 
     private[internal] def liftImpl[A: Type](using Quotes): Expr[CanLift[A]] =
         import quotes.reflect.*
-        val tpe = TypeRepr.of[A].dealias
-
+        val tpe = TypeRepr.of[A]
         val sym = tpe.typeSymbol
+
         if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
+
         '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
     end liftImpl
+
 end CanLiftMacro
 
 object CanLift:
