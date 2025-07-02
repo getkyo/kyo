@@ -59,6 +59,31 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): A < (Abort[E1] & S & S1) =
         effect.recover(e => fn(e).map(Kyo.fail))
 
+    /** Provides a DSL [[ForAbortOps]] for handling a narrower [[Abort]] failure type than the original effect.
+      *
+      * For example, if you an Abort effect with a union of various failure types: val effect1:
+      * ```
+      * Int < (Sync & Abort[Int | String | Boolean]) = ???
+      * ```
+      *
+      * You can recover just the `Int` type as follows:
+      * ```
+      * val effect2: Int < (Sync & Abort[String | Boolean]) = effect1.forAbort[Int].recover(i => i * 3)
+      * ```
+      *
+      * You can retry in just the case of a `String` failure as follows:
+      * ```
+      * val effect3: Int < (Sync & Abort[String | Boolean]) = effect2.forAbort[String].retry(5)
+      * ```
+      *
+      * And you can map a `Boolean` failure to a `String` to get a single failure type:
+      * ```
+      * val effect4: Int < (Sync & Abort[String]) = effect3.forAbort[Boolean].mapAbort(b => s"Boolean failure: $b")
+      * ```
+      *
+      * @see
+      *   [[ForAbortOps]]
+      */
     def forAbort[E1 <: E]: ForAbortOps[A, S, E, E1] = ForAbortOps(effect)
 
     /** Translates the Abort effect to a Choice effect by handling failures as dropped choice.
@@ -249,8 +274,11 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case panic: Result.Panic            => Abort.error(panic)
     end orPanic
 
-    /** Catches and throws any Abort, wrapping non-Throwable Failures in PanicException
+    /** Handles the Abort effect totally, wrapping non-Throwable Failures in a PanicException
       *
+      * @note
+      *   This only should be used in pure (non-Sync/Async) effects, as [[Sync]] and [[Async]] track panics (`Abort[Nothing]`). See instead
+      *   [[orPanic]]
       * @return
       *   A computation that panics instead of catching Abort effect failures
       */
@@ -312,6 +340,29 @@ extension [A, S, E](effect: A < (Abort[E] & S))
 
 end extension
 
+/** Provides a DSL [[ForAbortOps]] for handling a narrower [[Abort]] failure type than the original effect.
+  * ```
+  * Int < (Sync & Abort[Int | String | Boolean]) = ???
+  * ```
+  *
+  * You can recover just the `Int` type as follows:
+  * ```
+  * val effect2: Int < (Sync & Abort[String | Boolean]) = effect1.forAbort[Int].recover(i => i * 3)
+  * ```
+  *
+  * You can retry in just the case of a `String` failure as follows:
+  * ```
+  * val effect3: Int < (Sync & Abort[String | Boolean]) = effect2.forAbort[String].retry(5)
+  * ```
+  *
+  * And you can map a `Boolean` failure to a `String` to get a single failure type:
+  * ```
+  * val effect4: Int < (Sync & Abort[String]) = effect3.forAbort[Boolean].mapAbort(b => s"Boolean failure: $b")
+  * ```
+  *
+  * @param effect
+  *   The orignal effect with Abort type [[E]] that is being narrowed to [[E1]]
+  */
 class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     /** Handles the partial Abort[E1] effect and returns its result as a `Result[E1, A]`.
       *
@@ -553,7 +604,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     ): A < (S & Async & Abort[E1 | ER]) =
         Retry[E1](schedule)(effect.asInstanceOf[A < (S & Abort[E1 | ER])])
 
-    /** Performs this computation repeatedly with a limit in case of failures.
+    /** Performs this computation repeatedly with a limit in case of failures. Retries only in case of specified failure types, failing
+      * immediately in the case of other failure types or panic.
       *
       * @param limit
       *   The limit to use
@@ -572,14 +624,12 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
                 (result: A) => Loop.done[Int, A](result),
                 err =>
                     if i == 0 then Abort.fail(err)
-                    else Loop.continue(i - 1),
-                thr =>
-                    if i == 0 then Abort.panic(thr)
                     else Loop.continue(i - 1)
             )(retypedEffect)
     end retry
 
-    /** Performs this computation repeatedly until it completes successfully.
+    /** Performs this computation repeatedly until it completes successfully. Retries only in case of specified failure types, failing
+      * immediately in the case of other failure types or panic.
       *
       * @param limit
       *   The limit to use
@@ -597,7 +647,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         Loop.foreach:
             Abort.fold[E1](
                 (result: A) => Loop.done[Unit, A](result),
-                _ => Loop.continue,
                 _ => Loop.continue
             )(retypedEffect)
     end retryForever
