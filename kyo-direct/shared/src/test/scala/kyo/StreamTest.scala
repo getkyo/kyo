@@ -9,17 +9,18 @@ class StreamTest extends Test:
             def f(i: Int): Int < Var[Int] =
                 Var.update[Int](_ + i)
 
-            val newStream1: Stream[Int, Any] < Var[Int] = direct:
-                stream.map(x => f(x).now) //TODO don't support .now
+            typeCheckFailure(
+                """val newStream1: Stream[Int, Any] < Var[Int] = direct(stream.map(x => f(x).now))""".stripMargin
+            )("Effectful computations must explicitly use either .now or .later in a direct block.")
 
             val newStream2: Stream[Int, Var[Int]] < Any = direct:
-                stream.map(x => f(x).later) //TODO remove .later
+                stream.map(x => f(x).later) // TODO remove .later
 
             val newStream3 = direct:
                 stream.map(x =>
                     direct:
                         f(x).now + 1
-                    .later //TODO remove .later
+                    .later // TODO remove .later
                 )
 
             val x = direct:
@@ -30,7 +31,6 @@ class StreamTest extends Test:
                     Stream.unwrap(stream).run.map: chunk =>
                         assert(chunk == expected)
 
-            check(newStream1, Chunk(1, 3, 6))
             check(newStream2, Chunk(1, 3, 6))
 
         }
@@ -41,8 +41,9 @@ class StreamTest extends Test:
             def f(i: Int): Boolean < Var[Int] =
                 Var.update[Int](_ + i).map(_ % 2 == 0)
 
-            val newStream1: Stream[Int, Any] < Var[Int] = direct:
-                stream.filter(x => f(x).now)
+            typeCheckFailure(
+                """val newStream1: Stream[Int, Any] < Var[Int] = direct(stream.filter(x => f(x).now))"""
+            )("Effectful computations must explicitly use either .now or .later in a direct block.")
 
             val newStream2: Stream[Int, Var[Int]] < Any = direct:
                 stream.filter(x => f(x).later)
@@ -52,7 +53,6 @@ class StreamTest extends Test:
                     Stream.unwrap(stream).run.map: chunk =>
                         assert(chunk == expected)
 
-            check(newStream1, Chunk(3))
             check(newStream2, Chunk(3))
         }
     }
