@@ -40,8 +40,7 @@ object ClientCall:
     )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, GrpcRequest] =
         val responses =
             for
-                responseChannel <- StreamChannel.init[Response, GrpcResponse.Errors]
-                // TODO: Do we have to cancel the observer returned here?
+                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]
                 responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
                 _ = ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver)
             yield responseChannel.stream
@@ -56,8 +55,7 @@ object ClientCall:
     )(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): Stream[Response, GrpcRequest] =
         val responses =
             for
-                responseChannel <- StreamChannel.init[Response, GrpcResponse.Errors]
-                // TODO: Do we have to cancel the observer returned here?
+                responseChannel  <- StreamChannel.init[Response, GrpcResponse.Errors]
                 responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
                 requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)
                 _ <- StreamNotifier.notifyObserver(requests, requestObserver)
