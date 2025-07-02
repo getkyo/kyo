@@ -21,7 +21,6 @@ object asyncShift extends asyncShiftLowPriorityImplicit1:
     transparent inline given shiftedChunk[A]: ChunkAsyncShift[A] = new ChunkAsyncShift[A]
     transparent inline given shiftedMaybe: MaybeAsyncShift       = new MaybeAsyncShift
     transparent inline given shiftedResult: ResultAsyncShift     = new ResultAsyncShift
-    transparent inline given shitferStream[V, S]: StreamAsyncShift[V, S] = new StreamAsyncShift
 
 end asyncShift
 
@@ -175,27 +174,6 @@ class MaybeAsyncShift(using Frame) extends AsyncShift[Maybe.type]:
                     case Maybe.Absent     => ifEmpty()
 
 end MaybeAsyncShift
-
-class StreamAsyncShift[V, S] extends AsyncShift[Stream[V, S]]:
-    def map[F[_], V2](stream: Stream[V, S], monad: CpsMonad[F])(f: V => F[V2])(using
-        t1: Tag[Emit[Chunk[V]]],
-        t2: Tag[Emit[Chunk[V2]]],
-        ev: NotGiven[V2 <:< (Any < Nothing)],
-        fr: Frame
-    ): F[Stream[V2, S]] =
-        monad match
-            case _: KyoCpsMonad[?] => monad.pure(stream.map(a => f(a)).asInstanceOf[Stream[V2, S]])
-    end map
-
-    def filter[F[_]](stream: Stream[V, S], monad: CpsMonad[F])(f: V => F[Boolean])(using
-        tag: Tag[Emit[Chunk[V]]],
-        discr: Discriminator,
-        frame: Frame
-    ): F[Stream[V, S]] =
-        monad match
-            case _: KyoCpsMonad[?] => monad.pure(stream.filter(f).asInstanceOf[Stream[V, S]])
-
-end StreamAsyncShift
 
 class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
 
