@@ -2,19 +2,32 @@ package kyo
 
 class FiberCombinatorsTest extends Test:
 
-    "fibers" - {
+    "async" - {
         "construct" - {
-            "should generate fibers effect from async" in run {
+            "should generate Async effect from async" in run {
                 var state: Int = 0
-                val effect = Kyo.async[Int]((continuation) =>
-                    state = state + 1
-                    continuation(state)
+                val effect = Kyo.async[Int, Nothing]((continuation) =>
+                    val cont = Sync.defer { state = state + 1; state }
+                    continuation(cont)
                 )
                 Fiber.run(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(state == 1)
                         assert(v == 1)
                     )
+                }
+            }
+
+            "should generate failing Async effect from async" in run {
+                var state: Int = 0
+                val effect = Kyo.async[Int, String]((continuation) =>
+                    continuation(Abort.fail("failed"))
+                )
+                Fiber.run(Abort.run(effect)).map(_.toFuture).map { handledEffect =>
+                    handledEffect.map:
+                        case Result.Success(value) => fail(s"Unexpectedly succeeded with value $value")
+                        case Result.Failure(err)   => assert(err == "failed")
+                        case Result.Panic(thr)     => fail(s"Unexpectedly panic with exception $thr")
                 }
             }
 
@@ -46,8 +59,8 @@ class FiberCombinatorsTest extends Test:
                 }
             }
 
-            "should construct from traversePar" in run {
-                val effect = Kyo.traversePar(Seq(Sync.defer(1), Sync.defer(2), Sync.defer(3)))
+            "should construct from collectAllPar" in run {
+                val effect = Kyo.collectAllPar(Seq(Sync.defer(1), Sync.defer(2), Sync.defer(3)))
                 Fiber.run(effect).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v => assert(v == Seq(1, 2, 3)))
                 }
@@ -130,7 +143,7 @@ class FiberCombinatorsTest extends Test:
         "forkScoped" - {
             "should fork a fiber and manage its lifecycle" in run {
                 var state = 0
-                val effect = Kyo.async[Int]((continuation) =>
+                val effect = Kyo.async[Int, Nothing]((continuation) =>
                     state = state + 1
                     continuation(state)
                 )
@@ -151,7 +164,7 @@ class FiberCombinatorsTest extends Test:
 
             "should clean up resources when scope is closed" in run {
                 var cleanedUp = false
-                val effect = Kyo.async[Int]((continuation) =>
+                val effect = Kyo.async[Int, Nothing]((continuation) =>
                     continuation(42)
                 )
 
@@ -175,7 +188,7 @@ class FiberCombinatorsTest extends Test:
 
             "should wait for fiber completion without returning result" in run {
                 var completed = false
-                val effect = Kyo.async[Int](continuation =>
+                val effect = Kyo.async[Int, Nothing](continuation =>
                     completed = true
                     continuation(42)
                 )
@@ -194,7 +207,7 @@ class FiberCombinatorsTest extends Test:
             }
 
             "should not propagate fiber result" in run {
-                val effect = Kyo.async[Int]((continuation) =>
+                val effect = Kyo.async[Int, Nothing]((continuation) =>
                     continuation(42)
                 )
 

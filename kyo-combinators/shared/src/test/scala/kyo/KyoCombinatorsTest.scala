@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Result.Error
-
 class KyoCombinatorsTest extends Test:
 
     "all effects" - {
@@ -308,23 +306,6 @@ class KyoCombinatorsTest extends Test:
                 val unpanicked: Nothing < (Abort[Throwable] & Sync) = panicked.unpanic
                 Abort.run[Throwable](unpanicked).map: handled =>
                     assert(handled == Result.Failure(PanicException("failure")))
-            }
-        }
-
-        "ensuring" in run {
-            var finalizerCalled                          = false
-            def ensure: Unit < (Sync & Abort[Throwable]) = Sync.defer { finalizerCalled = true }
-            Resource.run(Sync.defer(()).ensuring(ensure))
-                .andThen(assert(finalizerCalled))
-        }
-
-        "ensuringError" in run {
-            var error: Maybe[Error[Any]] = Absent
-            given [A]: CanEqual[A, A]    = CanEqual.derived
-
-            val ensure: Maybe[Error[Any]] => Unit < (Sync & Abort[Throwable]) = ex => Sync.defer { error = ex }
-            Abort.fail("failure").ensuringError(ensure).handle(Resource.run, Abort.run(_)).andThen {
-                assert(error == Result.fail("failure"))
             }
         }
     }

@@ -249,8 +249,11 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case panic: Result.Panic            => Abort.error(panic)
     end orPanic
 
-    /** Catches and throws any Abort, wrapping non-Throwable Failures in PanicException
+    /** Handles the Abort effect totally, wrapping non-Throwable Failures in a PanicException
       *
+      * @note
+      *   This only should be used in pure (non-Sync/Async) effects, as [[Sync]] and [[Async]] track panics (`Abort[Nothing]`). See instead
+      *   [[orPanic]]
       * @return
       *   A computation that panics instead of catching Abort effect failures
       */
@@ -553,7 +556,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     ): A < (S & Async & Abort[E1 | ER]) =
         Retry[E1](schedule)(effect.asInstanceOf[A < (S & Abort[E1 | ER])])
 
-    /** Performs this computation repeatedly with a limit in case of failures.
+    /** Performs this computation repeatedly with a limit in case of failures. Retries only in case of specified failure types, failing
+      * immediately in the case of other failure types or panic.
       *
       * @param limit
       *   The limit to use
@@ -572,14 +576,12 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
                 (result: A) => Loop.done[Int, A](result),
                 err =>
                     if i == 0 then Abort.fail(err)
-                    else Loop.continue(i - 1),
-                thr =>
-                    if i == 0 then Abort.panic(thr)
                     else Loop.continue(i - 1)
             )(retypedEffect)
     end retry
 
-    /** Performs this computation repeatedly until it completes successfully.
+    /** Performs this computation repeatedly until it completes successfully. Retries only in case of specified failure types, failing
+      * immediately in the case of other failure types or panic.
       *
       * @param limit
       *   The limit to use
@@ -597,7 +599,6 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         Loop.foreach:
             Abort.fold[E1](
                 (result: A) => Loop.done[Unit, A](result),
-                _ => Loop.continue,
                 _ => Loop.continue
             )(retypedEffect)
     end retryForever
