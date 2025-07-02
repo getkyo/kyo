@@ -1386,7 +1386,7 @@ import kyo.*
 
 case class Config(someConfig: String)
 
-val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream(1)
+val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream.init(Seq(1))
 
 val handled: Stream[Int, Async] = original.handle(
     Resource.run(_),
@@ -3524,8 +3524,6 @@ Being more modular than ZIO, Kyo separates effect constructors in the companion 
 1. Factory methods on the `Kyo` object, styled after those found on `ZIO`, for many of the core Kyo effect types.
 2. Extension methods on Kyo effects modeled similarly to ZIO's methods.
 
-Generally speaking, the names of `kyo-combinators` methods are the same as the corresponding methods in ZIO. When this is not possible or doesn't make sense, `kyo-combinators` tries to keep close to ZIO conventions.
-
 ### Simple example
 
 ```scala 3
@@ -3541,7 +3539,7 @@ object HelloService:
 
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (Sync & Abort[Throwable]) =
-            Kyo.suspendAttempt { // Introduces Sync & Abort[Throwable] effect
+            Kyo.deferAttempt { // Introduces Sync & Abort[Throwable] effect
                 println(s"Hello $saluee!")
             }
     end Live
