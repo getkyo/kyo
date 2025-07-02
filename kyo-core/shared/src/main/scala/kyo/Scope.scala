@@ -32,35 +32,42 @@ object Scope:
         run(1, true)(v)
 
     def run[A, S](closeParallelism: Int, awaitClose: Boolean = true)(v: A < (Scope & S))(using Frame): A < (Async & S) =
-        Sync.Unsafe(run(new Finalizer.Unsafe, closeParallelism, awaitClose)(v))
+        Sync.Unsafe {
+            val finalizer = new Finalizer.Unsafe
+            runAndClose(finalizer, closeParallelism, awaitClose) {
+                local.let(Present(finalizer))(v)
+            }
+        }
 
-    def runFinalizer[A, S](closeParallelism: Int, awaitClose: Boolean = true)(v: Finalizer => A < (Scope & S))(
+    def runIsolated[A, S](f: Finalizer => A < (Scope & S))(using Frame): A < (Async & S) =
+        runIsolated(1)(f)
+
+    def runIsolated[A, S](closeParallelism: Int, awaitClose: Boolean = true)(f: Finalizer => A < (Scope & S))(
         using Frame
     ): A < (Async & S) =
         Sync.withLocal(local) { parent =>
             import AllowUnsafe.embrace.danger
             val child = new Finalizer.Unsafe
             parent.foreach(p => discard(p.ensure(child.close(_, closeParallelism))))
-            run(child, closeParallelism, awaitClose)(v(child))
+            runAndClose(child, closeParallelism, awaitClose)(f(child))
         }
 
-    private def run[A, S](finalizer: Finalizer, closeParallelism: Int, awaitClose: Boolean)(v: A < (Scope & S))(
+    private def runAndClose[A, S](finalizer: Finalizer, closeParallelism: Int, awaitClose: Boolean)(v: A < (Scope & S))(
         using Frame
     ): A < (Async & S) =
-        local.let(Present(finalizer))(v)
-            .handle(
-                Sync.ensure { error =>
-                    import AllowUnsafe.embrace.danger
-                    finalizer.close(error, closeParallelism)
-                },
-                Abort.run[Any]
-            ).map { result =>
+        v.handle(
+            Sync.ensure { error =>
                 import AllowUnsafe.embrace.danger
-                finalizer.close(result.error, closeParallelism)
-                Kyo.when(awaitClose)(finalizer.await().safe.get)
-                    .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
-            }
-    end run
+                finalizer.close(error, closeParallelism)
+            },
+            Abort.run[Any]
+        ).map { result =>
+            import AllowUnsafe.embrace.danger
+            finalizer.close(result.error, closeParallelism)
+            Kyo.when(awaitClose)(finalizer.await().safe.get)
+                .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+        }
+    end runAndClose
 
     private def withFinalizerUnsafe[A, S](f: AllowUnsafe ?=> Finalizer => A < S)(using Frame): A < (Scope & S) =
         local.use {
