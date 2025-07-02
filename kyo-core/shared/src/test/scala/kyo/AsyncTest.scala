@@ -29,7 +29,7 @@ class AsyncTest extends Test:
         "nested" in runNotJS {
             val t1 = Thread.currentThread()
             for
-                t2 <- Fiber.init(Sync(Fiber.init(Thread.currentThread()).map(_.get))).map(_.get)
+                t2 <- Fiber.init(Sync.defer(Fiber.run(Thread.currentThread()).map(_.get))).map(_.get)
             yield assert(t1 ne t2)
         }
 
@@ -50,17 +50,17 @@ class AsyncTest extends Test:
 
     "sleep" in run {
         for
-            start <- Sync(java.lang.System.currentTimeMillis())
+            start <- Sync.defer(java.lang.System.currentTimeMillis())
             _     <- Async.sleep(10.millis)
-            end   <- Sync(java.lang.System.currentTimeMillis())
+            end   <- Sync.defer(java.lang.System.currentTimeMillis())
         yield assert(end - start >= 8)
     }
 
     "delay" in run {
         for
-            start <- Sync(java.lang.System.currentTimeMillis())
+            start <- Sync.defer(java.lang.System.currentTimeMillis())
             res   <- Async.delay(5.millis)(42)
-            end   <- Sync(java.lang.System.currentTimeMillis())
+            end   <- Sync.defer(java.lang.System.currentTimeMillis())
         yield
             assert(end - start >= 4)
             assert(res == 42)
@@ -158,7 +158,7 @@ class AsyncTest extends Test:
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < Sync =
-                Sync {
+                Sync.defer {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -215,7 +215,7 @@ class AsyncTest extends Test:
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < Sync =
-                Sync {
+                Sync.defer {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -231,12 +231,12 @@ class AsyncTest extends Test:
         }
         "three arguments" in run {
             for
-                (v1, v2, v3) <- Async.zip(Sync(1), Sync(2), Sync(3))
+                (v1, v2, v3) <- Async.zip(Sync.defer(1), Sync.defer(2), Sync.defer(3))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3)
         }
         "four arguments" in run {
             for
-                (v1, v2, v3, v4) <- Async.zip(Sync(1), Sync(2), Sync(3), Sync(4))
+                (v1, v2, v3, v4) <- Async.zip(Sync.defer(1), Sync.defer(2), Sync.defer(3), Sync.defer(4))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3 && v4 == 4)
         }
     }
@@ -280,7 +280,7 @@ class AsyncTest extends Test:
             val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resource & Async) =
                 for
                     r  <- Resource.acquire(resource1)
-                    v1 <- Sync(r.incrementAndGet())
+                    v1 <- Sync.defer(r.incrementAndGet())
                     v2 <- Fiber.init(r.incrementAndGet()).map(_.get)
                 yield (r, Set(v1, v2))
             Resource.run(io1).map {
@@ -315,7 +315,7 @@ class AsyncTest extends Test:
             val io1: Set[Int] < (Resource & Async) =
                 for
                     r  <- Resource.acquire(resource1)
-                    v1 <- Sync(r.incrementAndGet())
+                    v1 <- Sync.defer(r.incrementAndGet())
                     v2 <- Fiber.init(r.incrementAndGet()).map(_.get)
                     v3 <- Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
                 yield Set(v1, v2, v3)
@@ -858,13 +858,13 @@ class AsyncTest extends Test:
         "sequence" - {
             "delegates to Fiber.gather" in run {
                 for
-                    result <- Async.gather(Seq(Sync(1), Sync(2), Sync(3)))
+                    result <- Async.gather(Seq(Sync.defer(1), Sync.defer(2), Sync.defer(3)))
                 yield assert(result == Chunk(1, 2, 3))
             }
 
             "with max limit delegates to Fiber.gather" in run {
                 for
-                    result <- Async.gather(2)(Seq(Sync(1), Sync(2), Sync(3)))
+                    result <- Async.gather(2)(Seq(Sync.defer(1), Sync.defer(2), Sync.defer(3)))
                 yield
                     assert(result.size == 2)
                     assert(result.forall(Seq(1, 2, 3).contains))
@@ -874,13 +874,13 @@ class AsyncTest extends Test:
         "varargs" - {
             "delegates to sequence-based gather" in run {
                 for
-                    result <- Async.gather(Sync(1), Sync(2), Sync(3))
+                    result <- Async.gather(Sync.defer(1), Sync.defer(2), Sync.defer(3))
                 yield assert(result == Chunk(1, 2, 3))
             }
 
             "with max limit delegates to sequence-based gather" in run {
                 for
-                    result <- Async.gather(2)(Sync(1), Sync(2), Sync(3))
+                    result <- Async.gather(2)(Sync.defer(1), Sync.defer(2), Sync.defer(3))
                 yield
                     assert(result.size == 2)
                     assert(result.forall(Seq(1, 2, 3).contains))
@@ -1281,7 +1281,7 @@ class AsyncTest extends Test:
     "apply" - {
         "suspends computation" in run {
             var counter = 0
-            val computation = Async {
+            val computation = Async.defer {
                 counter += 1
                 counter
             }
@@ -1304,7 +1304,7 @@ class AsyncTest extends Test:
                 done    <- Latch.init(1)
                 fiber <- Fiber.init {
                     started.release.andThen {
-                        Async { executed = true }.andThen {
+                        Async.defer { executed = true }.andThen {
                             done.release
                         }
                     }
@@ -1320,15 +1320,15 @@ class AsyncTest extends Test:
         "executes nine computations in parallel" in run {
             for
                 result <- Async.zip(
-                    Sync(1),
-                    Sync(2),
-                    Sync(3),
-                    Sync(4),
-                    Sync(5),
-                    Sync(6),
-                    Sync(7),
-                    Sync(8),
-                    Sync(9)
+                    Sync.defer(1),
+                    Sync.defer(2),
+                    Sync.defer(3),
+                    Sync.defer(4),
+                    Sync.defer(5),
+                    Sync.defer(6),
+                    Sync.defer(7),
+                    Sync.defer(8),
+                    Sync.defer(9)
                 )
             yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9))
         }
@@ -1336,16 +1336,16 @@ class AsyncTest extends Test:
         "executes ten computations in parallel" in run {
             for
                 result <- Async.zip(
-                    Sync(1),
-                    Sync(2),
-                    Sync(3),
-                    Sync(4),
-                    Sync(5),
-                    Sync(6),
-                    Sync(7),
-                    Sync(8),
-                    Sync(9),
-                    Sync(10)
+                    Sync.defer(1),
+                    Sync.defer(2),
+                    Sync.defer(3),
+                    Sync.defer(4),
+                    Sync.defer(5),
+                    Sync.defer(6),
+                    Sync.defer(7),
+                    Sync.defer(8),
+                    Sync.defer(9),
+                    Sync.defer(10)
                 )
             yield assert(result == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
         }

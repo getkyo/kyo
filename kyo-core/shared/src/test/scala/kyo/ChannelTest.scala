@@ -514,7 +514,7 @@ class ChannelTest extends Test:
         "Sync" in run {
             for
                 channel <- Channel.init[Int < Sync](2)
-                _       <- channel.put(Sync(42))
+                _       <- channel.put(Sync.defer(42))
                 result  <- channel.take.flatten
             yield assert(result == 42)
         }

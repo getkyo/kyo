@@ -48,7 +48,7 @@ object Browser:
       *   The result of the operations
       */
     def run[A, S](timeout: Duration)(v: A < (Browser & S))(using Frame): A < (Sync & S) =
-        Sync {
+        Sync.defer {
             val playwright = Playwright.create()
             Sync.ensure(playwright.close) {
                 run(playwright.chromium().launch().newPage(), timeout)(v)
@@ -67,7 +67,7 @@ object Browser:
       *   The result of the operations
       */
     def run[A, S](page: Page, timeout: Duration = defaultTimeout)(v: A < (Browser & S))(using Frame): A < (Sync & S) =
-        Sync {
+        Sync.defer {
             page.setDefaultTimeout(timeout.toMillis.toDouble)
             page.setDefaultNavigationTimeout(timeout.toMillis.toDouble)
 
@@ -76,7 +76,7 @@ object Browser:
                     (input, cont) =>
                         for
                             _ <- Log.debug(s"Browser: Executing $input")
-                            r <- Sync(cont(input.unsafeRun(page)))
+                            r <- Sync.defer(cont(input.unsafeRun(page)))
                             _ <- Log.debug(s"Browser: Done $input")
                         yield r
             )

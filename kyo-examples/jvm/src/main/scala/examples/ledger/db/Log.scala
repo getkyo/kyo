@@ -22,7 +22,7 @@ object Log:
     val init: Log < (Env[DB.Config] & Sync) = direct {
         val cfg = Env.get[DB.Config].now
         val q   = Queue.Unbounded.init[Entry](Access.MultiProducerSingleConsumer).now
-        val log = Sync(Live(cfg.workingDir + "/log.dat", q)).now
+        val log = Sync.defer(Live(cfg.workingDir + "/log.dat", q)).now
         val _   = Fiber.init(log.flushLoop(cfg.flushInterval)).now
         log
     }
@@ -47,7 +47,7 @@ object Log:
         }
 
         private def append(entries: Seq[Entry]) =
-            Sync {
+            Sync.defer {
                 if entries.nonEmpty then
                     val str =
                         entries.map { e =>
