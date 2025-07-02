@@ -29,7 +29,7 @@ class AsyncTest extends Test:
         "nested" in runNotJS {
             val t1 = Thread.currentThread()
             for
-                t2 <- Fiber.init(Sync.defer(Fiber.run(Thread.currentThread()).map(_.get))).map(_.get)
+                t2 <- Fiber.init(Sync.defer(Fiber.init(Thread.currentThread()).map(_.get))).map(_.get)
             yield assert(t1 ne t2)
         }
 
