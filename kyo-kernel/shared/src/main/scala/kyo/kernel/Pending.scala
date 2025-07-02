@@ -435,40 +435,32 @@ object `<`:
     end abortCastUnitImpl
 
     /** Converts a pure single-argument function to an effectful computation. */
-    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
-        using inline flat: CanLift[B]
-    ): A1 => B < Any =
-        a1 => f(a1)
+    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(using inline canLift: CanLift[B]): A1 => B < Any = f.asInstanceOf
 
     /** Converts a pure two-argument function to an effectful computation. */
     implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2) => B < Any =
-        (a1, a2) => f(a1, a2)
+        using inline canLift: CanLift[B]
+    ): (A1, A2) => B < Any = f.asInstanceOf
 
     /** Converts a pure three-argument function to an effectful computation. */
     implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3) => B < Any =
-        (a1, a2, a3) => f(a1, a2, a3)
+        using inline canLift: CanLift[B]
+    ): (A1, A2, A3) => B < Any = f.asInstanceOf
 
     /** Converts a pure four-argument function to an effectful computation. */
     implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4) => B < Any =
-        (a1, a2, a3, a4) => f(a1, a2, a3, a4)
+        using inline canLift: CanLift[B]
+    ): (A1, A2, A3, A4) => B < Any = f.asInstanceOf
 
     /** Converts a pure five-argument function to an effectful computation. */
     implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B](inline f: (A1, A2, A3, A4, A5) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5) => B < Any =
-        (a1, a2, a3, a4, a5) => f(a1, a2, a3, a4, a5)
+        using inline canLift: CanLift[B]
+    ): (A1, A2, A3, A4, A5) => B < Any = f.asInstanceOf
 
     /** Converts a pure six-argument function to an effectful computation. */
     implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B](inline f: (A1, A2, A3, A4, A5, A6) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5, A6) => B < Any =
-        (a1, a2, a3, a4, a5, a6) => f(a1, a2, a3, a4, a5, a6)
+        using inline canLift: CanLift[B]
+    ): (A1, A2, A3, A4, A5, A6) => B < Any = f.asInstanceOf
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asText(value: APendingS): Text = value match
