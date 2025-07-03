@@ -29,6 +29,31 @@ class HubTest extends Test:
         }
     }
 
+    "use" - {
+        "listen, offer, take" in run {
+            Hub.use[Int](10) { h =>
+                for
+                    l <- h.listen
+                    _ <- h.offer(1)
+                    v <- l.take
+                yield assert(v == 1)
+            }
+        }
+
+        "resource" in run {
+            Hub.use[Int](10) { h =>
+                for
+                    l <- h.listen
+                    _ <- h.offer(1)
+                    v <- l.take
+                yield (v, h)
+            }.map:
+                case (v, h) =>
+                    h.closed.map: isClosed =>
+                        assert(v == 1 && isClosed)
+        }
+    }
+
     "basic operations" - {
 
         "empty/full state" in run {
