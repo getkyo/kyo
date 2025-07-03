@@ -15,7 +15,7 @@ private[kyo] object FindEnclosing:
         else
             val path     = pos.sourceFile.path
             val excluded = (path.contains("src/test/") && testFileSuffixes.exists(fileName.endsWith)) || fileName.endsWith("Bench.scala")
-            apply(sym => sym.fullName.startsWith("kyo") && !excluded).nonEmpty
+            apply(sym => sym.fullName.startsWith("kyo.") && !excluded).nonEmpty
         end if
     end isInternal
 
