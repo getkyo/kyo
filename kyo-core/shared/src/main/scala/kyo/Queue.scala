@@ -339,7 +339,21 @@ object Queue:
           * @warning
           *   The actual capacity may be larger than the specified capacity due to rounding.
           */
-        def initDropping[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Unbounded[A] < Sync =
+        def initDropping[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using
+            Frame
+        ): Unbounded[A] < (Resource & Sync) =
+            initDroppingUnscoped[A](capacity, access).map: queue =>
+                Resource.ensure(Queue.close(queue)).andThen(queue)
+
+        def useDropping[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](f: Unbounded[A] => B < S)(
+            using Frame
+        ): B < (Sync & S) =
+            initDroppingUnscoped[A](capacity, access).map: queue =>
+                Sync.ensure(Queue.close(queue))(f(queue))
+
+        def initDroppingUnscoped[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
+            using Frame
+        ): Unbounded[A] < Sync =
             Sync.Unsafe(Unsafe.initDropping(capacity, access))
 
         /** Initializes a new sliding queue with the specified capacity and access pattern.
@@ -356,7 +370,48 @@ object Queue:
           * @warning
           *   The actual capacity may be larger than the specified capacity due to rounding.
           */
-        def initSliding[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Unbounded[A] < Sync =
+        def initSliding[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using
+            Frame
+        ): Unbounded[A] < (Resource & Sync) =
+            Resource.acquireRelease(initSlidingUnscoped[A](capacity, access))(Queue.close(_))
+
+        /** Uses a new sliding queue with the specified capacity and access pattern, closing queue after usage.
+          *
+          * @param capacity
+          *   the capacity of the queue. Note that this will be rounded up to the next power of two.
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @return
+          *   a new Unbounded Queue instance that slides elements when full
+          *
+          * @note
+          *   The actual capacity will be rounded up to the next power of two.
+          * @warning
+          *   The actual capacity may be larger than the specified capacity due to rounding.
+          */
+        def useSliding[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](f: Unbounded[A] => B < S)(
+            using Frame
+        ): B < (Sync & S) =
+            initSlidingUnscoped[A](capacity, access).map: queue =>
+                Sync.ensure(Queue.close(queue))(f(queue))
+
+        /** Initializes a new sliding queue with the specified capacity and access pattern without guaranteeing cleanup.
+          *
+          * @param capacity
+          *   the capacity of the queue. Note that this will be rounded up to the next power of two.
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @return
+          *   a new Unbounded Queue instance that slides elements when full
+          *
+          * @note
+          *   The actual capacity will be rounded up to the next power of two.
+          * @warning
+          *   The actual capacity may be larger than the specified capacity due to rounding.
+          */
+        def initSlidingUnscoped[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
+            using Frame
+        ): Unbounded[A] < Sync =
             Sync.Unsafe(Unsafe.initSliding(capacity, access))
 
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
