@@ -1,5 +1,5 @@
 /*
-rule = KyoRules
+rule = KyoUpdateToV1_0
 */
 package fix
 
