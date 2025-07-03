@@ -721,3 +721,49 @@ def mimaCheck(failOnProblem: Boolean) =
         mimaBinaryIssueFilters ++= Seq(),
         mimaFailOnProblem := failOnProblem
     )
+
+// --- Scalafix
+
+lazy val V = _root_.scalafix.sbt.BuildInfo
+
+lazy val scalaFixScalaVersion = V.scala213
+
+lazy val `kyo-scalafix` = (project in file("scalafix"))
+    .aggregate(`kyo-rules`, `kyo-scalafix-input`, `kyo-scalafix-output`, `kyo-scalafix-test`)
+    .settings(publish / skip := true)
+
+lazy val `kyo-rules` = (project in file("scalafix/rules"))
+    .settings(
+        moduleName                             := "kyo-rules",
+        libraryDependencies += "ch.epfl.scala" %% "scalafix-core" % V.scalafixVersion,
+        scalaVersion                           := scalaFixScalaVersion
+    )
+
+lazy val `kyo-scalafix-input` = (project in file("scalafix/input"))
+    .settings(
+        publish / skip    := true,
+        scalaVersion      := scala3Version,
+        semanticdbEnabled := true,
+        semanticdbVersion := scalafixSemanticdb.revision
+    )
+
+lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
+    .settings(
+        publish / skip    := true,
+        scalaVersion      := scala3Version,
+        semanticdbEnabled := true,
+        semanticdbVersion := scalafixSemanticdb.revision
+    )
+
+lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
+    .settings(
+        scalaVersion                           := scalaFixScalaVersion,
+        publish / skip                         := true,
+        scalafixTestkitOutputSourceDirectories := (`kyo-scalafix-output` / Compile / unmanagedSourceDirectories).value,
+        scalafixTestkitInputSourceDirectories  := (`kyo-scalafix-input` / Compile / unmanagedSourceDirectories).value,
+        scalafixTestkitInputClasspath          := (`kyo-scalafix-input` / Compile / fullClasspath).value,
+        scalafixTestkitInputScalacOptions      := (`kyo-scalafix-input` / Compile / scalacOptions).value,
+        scalafixTestkitInputScalaVersion       := (`kyo-scalafix-input` / Compile / scalaVersion).value
+    )
+    .dependsOn(`kyo-rules`)
+    .enablePlugins(ScalafixTestkitPlugin)
