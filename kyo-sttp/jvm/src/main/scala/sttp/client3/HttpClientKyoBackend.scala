@@ -60,7 +60,7 @@ class HttpClientKyoBackend private (
         Channel.initUnscopedWith[A](Int.MaxValue)(new KyoSimpleQueue[A](_))
 
     override protected def createSequencer =
-        Meter.initMutex.map(new KyoSequencer(_))
+        Meter.initMutexUnscoped.map(new KyoSequencer(_))
 
     override protected def standardEncoding: (InputStream, String) => InputStream = {
         case (body, "gzip")    => new GZIPInputStream(body)

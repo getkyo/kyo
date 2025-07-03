@@ -2649,22 +2649,22 @@ The `Meter` effect offers utilities to regulate computational execution, be it l
 import kyo.*
 
 // 'mutex': One computation at a time
-val a: Meter < Sync =
+val a: Meter < (Sync & Resource) =
     Meter.initMutex
 
 // 'semaphore': Limit concurrent tasks
-val b: Meter < Sync =
+val b: Meter < (Sync & Resource) =
     Meter.initSemaphore(concurrency = 42)
 
 // 'rateLimiter': Tasks per time window
-val c: Meter < Sync =
+val c: Meter < (Sync & Resource) =
     Meter.initRateLimiter(
         rate = 10,
         period = 1.second
     )
 
 // 'pipeline': Combine multiple 'Meter's
-val d: Meter < Sync =
+val d: Meter < (Sync & Resource) =
     Meter.pipeline(a, b, c)
 ```
 
@@ -2674,25 +2674,25 @@ The `Meter` class comes with a handful of methods designed to provide insights i
 import kyo.*
 
 // An example 'Meter'
-val a: Meter < Sync =
+val a: Meter < (Sync & Resource) =
     Meter.initMutex
 
 // Get the number available permits
-val b: Int < (Async & Abort[Closed]) =
+val b: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.availablePermits)
 
 // Get the number of waiting fibers
-val c: Int < (Async & Abort[Closed]) =
+val c: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.pendingWaiters)
 
 // Use 'run' to execute tasks
 // respecting meter limits
-val d: Int < (Async & Abort[Closed]) =
+val d: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.run(Math.cos(42).toInt))
 
 // 'tryRun' executes if a permit is
 // available; returns 'None' otherwise
-val e: Maybe[Int] < (Async & Abort[Closed]) =
+val e: Maybe[Int] < (Async & Abort[Closed] & Resource) =
     a.map(_.tryRun(Math.cos(42).toInt))
 ```
 
