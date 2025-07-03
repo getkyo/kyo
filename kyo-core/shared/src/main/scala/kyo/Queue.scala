@@ -163,7 +163,7 @@ object Queue:
       * @warning
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
-    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Queue[A] < Sync =
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Queue[A] < (Sync & Resource) =
         initWith[A](capacity, access)(identity)
 
     /** Uses a new Queue with the provided count.
@@ -177,6 +177,57 @@ object Queue:
       *   The result of applying the function
       */
     inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](inline f: Queue[A] => B < S)(
+        using inline frame: Frame
+    ): B < (Sync & S & Resource) =
+        initUnscopedWith[A](capacity, access): queue =>
+            Resource.ensure(Queue.close(queue)).andThen(f(queue))
+
+    /** Uses a new Queue with the provided count, closing the queue after usage.
+      *
+      * @param capacity
+      *   the desired capacity of the queue. Note that this will be rounded up to the next power of two.
+      * @param access
+      *   the access pattern (default is MPMC)
+      * @param f
+      *   The function to apply to the new Queue
+      * @return
+      *   The result of applying the function
+      */
+    def use[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](f: Queue[A] => B < S)(
+        using frame: Frame
+    ): B < (Sync & S) =
+        initUnscopedWith[A](capacity, access): queue =>
+            Sync.ensure(Queue.close(queue))(f(queue))
+
+    /** Initializes a new queue with the specified capacity and access pattern without guaranteeing cleanup. The actual capacity will be
+      * rounded up to the next power of two.
+      *
+      * @param capacity
+      *   the desired capacity of the queue. Note that this will be rounded up to the next power of two.
+      * @param access
+      *   the access pattern (default is MPMC)
+      * @return
+      *   a new Queue instance with a capacity that is the next power of two greater than or equal to the specified capacity
+      *
+      * @note
+      *   The actual capacity will be rounded up to the next power of two.
+      * @warning
+      *   The actual capacity may be larger than the specified capacity due to rounding.
+      */
+    def initUnscoped[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Queue[A] < Sync =
+        initUnscopedWith[A](capacity, access)(identity)
+
+    /** Uses a new Queue with the provided count without guaranteeing cleanup.
+      * @param capacity
+      *   the desired capacity of the queue. Note that this will be rounded up to the next power of two.
+      * @param access
+      *   the access pattern (default is MPMC)
+      * @param f
+      *   The function to apply to the new Queue
+      * @return
+      *   The result of applying the function
+      */
+    inline def initUnscopedWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](inline f: Queue[A] => B < S)(
         using inline frame: Frame
     ): B < (Sync & S) =
         Sync.Unsafe(f(Unsafe.init(capacity, access)))
@@ -209,7 +260,7 @@ object Queue:
           * @return
           *   a new Unbounded Queue instance
           */
-        def init[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < Sync =
+        def init[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < (Sync & Resource) =
             initWith[A](access, chunkSize)(identity)
 
         /** Uses a new unbounded Queue with the provided count.
@@ -221,6 +272,52 @@ object Queue:
           *   The result of applying the function
           */
         inline def initWith[A](
+            access: Access = Access.MultiProducerMultiConsumer,
+            chunkSize: Int = 8
+        )[B, S](inline f: Unbounded[A] => B < S)(
+            using inline frame: Frame
+        ): B < (Sync & S & Resource) =
+            initUnscopedWith[A](access, chunkSize): queue =>
+                Resource.ensure(Queue.close(queue)).andThen(f(queue))
+
+        /** Uses a new unbounded Queue with the provided count, closing the queue after usage.
+          * @param count
+          *   The initial count for the latch
+          * @param f
+          *   The function to apply to the new Queue
+          * @return
+          *   The result of applying the function
+          */
+        def use[A](
+            access: Access = Access.MultiProducerMultiConsumer,
+            chunkSize: Int = 8
+        )[B, S](f: Unbounded[A] => B < S)(
+            using frame: Frame
+        ): B < (Sync & S) =
+            initUnscopedWith[A](access, chunkSize): queue =>
+                Sync.ensure(Queue.close(queue))(f(queue))
+
+        /** Initializes a new unbounded queue with the specified access pattern and chunk size without guaranteeing cleanup.
+          *
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @param chunkSize
+          *   the chunk size for internal array allocation (default is 8)
+          * @return
+          *   a new Unbounded Queue instance
+          */
+        def initUnscoped[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < Sync =
+            initUnscopedWith[A](access, chunkSize)(identity)
+
+        /** Uses a new unbounded Queue with the provided count without guaranteeing cleanup.
+          * @param count
+          *   The initial count for the latch
+          * @param f
+          *   The function to apply to the new Queue
+          * @return
+          *   The result of applying the function
+          */
+        inline def initUnscopedWith[A](
             access: Access = Access.MultiProducerMultiConsumer,
             chunkSize: Int = 8
         )[B, S](inline f: Unbounded[A] => B < S)(
