@@ -427,13 +427,12 @@ object `<`:
         import quotes.reflect.*
         val source = TypeRepr.of[S1].show
         val target = TypeRepr.of[S2].show
+        // Tried printing target, doesn't work since it's always Any
         report.errorAndAbort(
-            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ${target}`).
+            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
                |This may be due to an effect type mismatch.
                |Consider removing or adjusting the type constraint on the left-hand side.
-               |More info : https://github.com/getkyo/kyo/issues/903
-               |Source: ${source}
-               |Target: ${target}""".stripMargin
+               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
         )
     end abortCastUnitImpl
 

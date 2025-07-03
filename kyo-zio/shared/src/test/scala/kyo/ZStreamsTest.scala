@@ -1,19 +1,13 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import kyo.*
-import kyo.internal.LayerMacros.extractEnvs
 import org.scalatest.compatible.Assertion
 import scala.concurrent.Future
 import zio.Cause
 import zio.Runtime
-import zio.Scope
-import zio.Tag as ZTag
 import zio.Task
 import zio.Unsafe
 import zio.ZIO
-import zio.ZLayer
 
 class ZStreamsTest extends Test:
 
@@ -52,7 +46,7 @@ class ZStreamsTest extends Test:
             val zioStream = zio.stream.ZStream
                 .fromIterable(List.tabulate(20)(identity))
                 .mapZIOParUnordered(4) { v =>
-                    zio.Random.nextIntBounded(100)
+                    zio.Random.nextIntBounded(20)
                         .flatMap(t => zio.ZIO.sleep(zio.Duration.fromMillis(t))) *> ZIO.succeed(v)
                 }
             val kyoStream = ZStreams.get(zioStream)
@@ -78,17 +72,32 @@ class ZStreamsTest extends Test:
                 case _                                                                => assert(false)
             }
         }
-        // "convert correctly with parallel kyo's stream" in runZIO {
-        //     val kyoStream = Stream
-        //         .init(1 to 20, 1)
-        //         .mapParUnordered(4) { v =>
-        //             Random.nextInt(100).map: sleep =>
-        //                 Async.sleep(sleep.millis).andThen(v)
-        //         }
+        "convert correctly with parallel kyo's stream" in runZIO {
+            val kyoStream = Stream
+                .init(1 to 20, 1)
+                .mapParUnordered(4) { v =>
+                    Random.nextInt(20).map: sleep =>
+                        Async.sleep(sleep.millis).andThen(v)
+                }
 
-        //     val zioStream = ZStreams.run(kyoStream)
-        //     zioStream.runCollect.map(v => assert(v.toSet == Range(1, 20).toSet))
-        // }
+            val zioStream = ZStreams.run(kyoStream)
+            zioStream.runCollect.map(v => assert(v.toSet == (1 to 20).toSet))
+        }
+        "kyo stream stops when zio stream is interrupted" in runZIO {
+            var counter: Long = 0
+            val kyoStream = Stream.unfold((), 1) { _ =>
+                counter += 1
+                Present(counter -> ())
+            }
+            val zioStream = ZStreams.run(kyoStream)
+            for
+                _          <- ZIO.sleep(zio.Duration.fromMillis(10)).raceFirst(zioStream.runDrain)
+                oldCounter <- ZIO.succeed(counter)
+                _          <- ZIO.sleep(zio.Duration.fromMillis(10))
+                newCounter <- ZIO.succeed(counter)
+            yield assert(oldCounter == newCounter)
+            end for
+        }
     }
 
 end ZStreamsTest

@@ -80,7 +80,7 @@ object ZIOs:
         }
     end run
 
-    extension [E, A](exit: zio.Exit[E, A])
+    extension [E, A](exit: Exit[E, A])
         /** Converts a zio.Exit to a kyo.Result.
           *
           * @return
