@@ -3,6 +3,19 @@ package kyo
 class MeterTest extends Test:
 
     "mutex" - {
+        "init" in run {
+            Resource.run(Meter.initMutex).map: meter =>
+                meter.closed.map: isClosed =>
+                    assert(isClosed)
+        }
+
+        "use" in run {
+            Meter.useMutex(meter => Kyo.zip(meter.closed, meter)).map:
+                case (isClosed1, meter) =>
+                    meter.closed.map: isClosed2 =>
+                        assert(!isClosed1 && isClosed2)
+        }
+
         "ok" in run {
             for
                 t <- Meter.initMutex
@@ -52,6 +65,19 @@ class MeterTest extends Test:
     }
 
     "semaphore" - {
+        "init" in run {
+            Resource.run(Meter.initSemaphore(3)).map: meter =>
+                meter.closed.map: isClosed =>
+                    assert(isClosed)
+        }
+
+        "use" in run {
+            Meter.useSemaphore(3)(meter => Kyo.zip(meter.closed, meter)).map:
+                case (isClosed1, meter) =>
+                    meter.closed.map: isClosed2 =>
+                        assert(!isClosed1 && isClosed2)
+        }
+
         "ok" in run {
             for
                 t  <- Meter.initSemaphore(2)
@@ -195,6 +221,19 @@ class MeterTest extends Test:
     val panic = Result.Panic(new Exception)
 
     "rate limiter" - {
+        "init" in run {
+            Resource.run(Meter.initRateLimiter(2, 1.milli)).map: meter =>
+                meter.closed.map: isClosed =>
+                    assert(isClosed)
+        }
+
+        "use" in run {
+            Meter.useRateLimiter(2, 1.milli)(meter => Kyo.zip(meter.closed, meter)).map:
+                case (isClosed1, meter) =>
+                    meter.closed.map: isClosed2 =>
+                        assert(!isClosed1 && isClosed2)
+        }
+
         "ok" in run {
             for
                 t  <- Meter.initRateLimiter(2, 1.milli)
