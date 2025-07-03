@@ -1,5 +1,7 @@
 package fix
 
-object KyoRules {
-  // Add code that needs fixing here.
-}
+import kyo.*
+
+object KyoRules:
+    val prg = direct:
+        Console.printLine("hello").now
