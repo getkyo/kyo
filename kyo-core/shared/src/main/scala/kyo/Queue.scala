@@ -345,12 +345,40 @@ object Queue:
             initDroppingUnscoped[A](capacity, access).map: queue =>
                 Resource.ensure(Queue.close(queue)).andThen(queue)
 
+        /** Uses a new dropping queue with the specified capacity and access pattern, closing queue after usage.
+          *
+          * @param capacity
+          *   the capacity of the queue. Note that this will be rounded up to the next power of two.
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @return
+          *   a new Unbounded Queue instance that drops elements when full
+          *
+          * @note
+          *   The actual capacity will be rounded up to the next power of two.
+          * @warning
+          *   The actual capacity may be larger than the specified capacity due to rounding.
+          */
         def useDropping[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](f: Unbounded[A] => B < S)(
             using Frame
         ): B < (Sync & S) =
             initDroppingUnscoped[A](capacity, access).map: queue =>
                 Sync.ensure(Queue.close(queue))(f(queue))
 
+        /** Initializes a new dropping queue with the specified capacity and access pattern without guaranteeing cleanup.
+          *
+          * @param capacity
+          *   the capacity of the queue. Note that this will be rounded up to the next power of two.
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @return
+          *   a new Unbounded Queue instance that drops elements when full
+          *
+          * @note
+          *   The actual capacity will be rounded up to the next power of two.
+          * @warning
+          *   The actual capacity may be larger than the specified capacity due to rounding.
+          */
         def initDroppingUnscoped[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
             using Frame
         ): Unbounded[A] < Sync =
