@@ -741,10 +741,11 @@ lazy val `kyo-rules` = (project in file("scalafix/rules"))
 
 lazy val `kyo-scalafix-input` = (project in file("scalafix/input"))
     .settings(
-        publish / skip    := true,
-        scalaVersion      := scala3Version,
-        semanticdbEnabled := true,
-        semanticdbVersion := scalafixSemanticdb.revision
+        publish / skip                     := true,
+        scalaVersion                       := scala3Version,
+        semanticdbEnabled                  := true,
+        semanticdbVersion                  := scalafixSemanticdb.revision,
+        libraryDependencies += "io.getkyo" %% "kyo-direct" % "0.19.0"
     )
 
 lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
@@ -753,7 +754,7 @@ lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
         scalaVersion      := scala3Version,
         semanticdbEnabled := true,
         semanticdbVersion := scalafixSemanticdb.revision
-    )
+    ).dependsOn(`kyo-direct`.projects(JVMPlatform))
 
 lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
     .settings(

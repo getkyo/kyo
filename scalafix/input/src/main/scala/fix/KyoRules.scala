@@ -1,8 +1,10 @@
 /*
 rule = KyoRules
-*/
+ */
 package fix
 
-object KyoRules {
-  // Add code that needs fixing here.
-}
+import kyo.*
+
+object KyoRules:
+    val prg = defer:
+        Console.printLine("hello").now
