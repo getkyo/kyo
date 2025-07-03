@@ -14,7 +14,7 @@ class UnaryResponseStreamObserverTest extends Test:
 
     "onNext puts value" in run {
         for
-            promise  <- Promise.init[Grpc.Errors, String]
+            promise  <- Promise.init[GrpcFailure, String]
             observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
             _        <- Sync.defer(observer.onNext("next"))
             result   <- promise.poll
@@ -26,7 +26,7 @@ class UnaryResponseStreamObserverTest extends Test:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         for
-            promise <- Promise.init[Grpc.Errors, String]
+            promise <- Promise.init[GrpcFailure, String]
             observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
             _ <- Sync.defer(observer.onError(statusException))
             result <- promise.poll
@@ -38,7 +38,7 @@ class UnaryResponseStreamObserverTest extends Test:
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
         for
-            promise  <- Promise.init[Grpc.Errors, String]
+            promise  <- Promise.init[GrpcFailure, String]
             observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
             _        <- Sync.defer(observer.onError(exception))
             result   <- promise.poll
@@ -49,7 +49,7 @@ class UnaryResponseStreamObserverTest extends Test:
         val statusException = StatusException(Status.CANCELLED)
 
         for
-            promise  <- Promise.init[Grpc.Errors, String]
+            promise  <- Promise.init[GrpcFailure, String]
             observer <- Sync.Unsafe(UnaryResponseStreamObserver[String](promise))
             _        <- Sync.defer(observer.onCompleted())
             result   <- promise.poll

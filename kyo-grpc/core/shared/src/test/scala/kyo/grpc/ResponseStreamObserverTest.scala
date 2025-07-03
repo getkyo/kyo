@@ -13,7 +13,7 @@ import scala.util.chaining.*
 class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
 
     "onNext puts value" in run {
-        val channel  = mock[StreamChannel[String, Grpc.Errors]]
+        val channel  = mock[StreamChannel[String, GrpcFailure]]
         val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
 
         (channel.put(_: String)(using _: Frame))
@@ -25,12 +25,12 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
     }
 
     "onError with status exception fails" in run {
-        val channel = mock[StreamChannel[String, Grpc.Errors]]
+        val channel = mock[StreamChannel[String, GrpcFailure]]
         val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
         val exception = new RuntimeException("Test exception")
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
-        (channel.error(_: Grpc.Errors)(using _: Frame))
+        (channel.error(_: GrpcFailure)(using _: Frame))
             .expects(argThat[StatusException](x => {
                 statusExceptionEquality.areEqual(x, statusException)
             }), *)
@@ -41,12 +41,12 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
     }
 
     "onError with other exception fails" in run {
-        val channel         = mock[StreamChannel[String, Grpc.Errors]]
+        val channel         = mock[StreamChannel[String, GrpcFailure]]
         val observer        = Sync.Unsafe(ResponseStreamObserver[String](channel))
         val exception       = new RuntimeException("Test exception")
         val statusException = StreamNotifier.throwableToStatusException(exception)
 
-        (channel.error(_: Grpc.Errors)(using _: Frame))
+        (channel.error(_: GrpcFailure)(using _: Frame))
             .expects(argThat[StatusException](_ === statusException), *)
             .returns(())
             .once()
@@ -55,7 +55,7 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
     }
 
     "onCompleted completes" in run {
-        val channel  = mock[StreamChannel[String, Grpc.Errors]]
+        val channel  = mock[StreamChannel[String, GrpcFailure]]
         val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
 
         (channel.closeProducer(using _: Frame))

@@ -23,7 +23,7 @@ import kyo.Result.*
   */
 class RequestStreamObserver[Request, Response](
     f: Stream[Request, Grpc] => Response < Grpc,
-    requestChannel: StreamChannel[Request, Grpc.Errors],
+    requestChannel: StreamChannel[Request, GrpcFailure],
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]) extends StreamObserver[Request]:
 
@@ -73,7 +73,7 @@ object RequestStreamObserver:
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request, Response] < Sync =
         for
-            requestChannel <- StreamChannel.init[Request, Grpc.Errors]
+            requestChannel <- StreamChannel.init[Request, GrpcFailure]
             observer = RequestStreamObserver(f, requestChannel, responseObserver)
             _ <- Fiber.run(observer.start)
         yield observer

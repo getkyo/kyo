@@ -24,7 +24,7 @@ import scala.language.future
   */
 class BidiRequestStreamObserver[Request, Response] private (
     f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc,
-    requestChannel: StreamChannel[Request, Grpc.Errors],
+    requestChannel: StreamChannel[Request, GrpcFailure],
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]) extends StreamObserver[Request]:
 
@@ -74,7 +74,7 @@ object BidiRequestStreamObserver:
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): BidiRequestStreamObserver[Request, Response] < Sync =
         for
-            requestChannel <- StreamChannel.init[Request, Grpc.Errors]
+            requestChannel <- StreamChannel.init[Request, GrpcFailure]
             observer = BidiRequestStreamObserver(f, requestChannel, responseObserver)
             _ <- Fiber.run(observer.start)
         yield observer

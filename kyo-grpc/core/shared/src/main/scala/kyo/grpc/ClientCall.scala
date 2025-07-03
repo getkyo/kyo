@@ -56,7 +56,7 @@ object ClientCall:
         requests: Stream[Request, Grpc]
     )(using Frame, Tag[Emit[Chunk[Request]]]): Response < Grpc =
         for
-            promise          <- Promise.init[Grpc.Errors, Response]
+            promise          <- Promise.init[GrpcFailure, Response]
             responseObserver <- Sync.Unsafe(UnaryResponseStreamObserver(promise))
             requestObserver = ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver)
             _        <- StreamNotifier.notifyObserver(requests, requestObserver)
@@ -85,7 +85,7 @@ object ClientCall:
     )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
         val responses =
             for
-                responseChannel  <- StreamChannel.init[Response, Grpc.Errors]
+                responseChannel  <- StreamChannel.init[Response, GrpcFailure]
                 responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
                 _ = ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver)
             yield responseChannel.stream
@@ -114,7 +114,7 @@ object ClientCall:
     )(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
         val responses =
             for
-                responseChannel  <- StreamChannel.init[Response, Grpc.Errors]
+                responseChannel  <- StreamChannel.init[Response, GrpcFailure]
                 responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
                 requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)
                 _ <- StreamNotifier.notifyObserver(requests, requestObserver)
