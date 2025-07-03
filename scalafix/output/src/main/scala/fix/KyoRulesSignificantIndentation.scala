@@ -1,5 +1,5 @@
 package fix
 
 object KyoRulesSignificantIndentation:
-  val a = 1
+  val a = 2
   // Add code that needs fixing here.
