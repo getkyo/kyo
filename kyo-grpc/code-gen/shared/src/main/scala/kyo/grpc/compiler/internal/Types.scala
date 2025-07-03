@@ -30,9 +30,9 @@ private[compiler] object Types {
 
     val clientCall = "_root_.kyo.grpc.ClientCall"
 
-    val grpcResponse = "_root_.kyo.grpc.GrpcResponse"
+    val grpcResponse = "_root_.kyo.grpc.Grpc"
 
-    val grpcRequest = "_root_.kyo.grpc.GrpcRequest"
+    val grpcRequest = "_root_.kyo.grpc.Grpc"
 
     val serverHandler = "_root_.kyo.grpc.ServerHandler"
 

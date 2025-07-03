@@ -10,7 +10,7 @@ import kgrpc.bench.TestServiceFs2Grpc
 import kgrpc.bench.ZioBench
 import kyo.*
 import kyo.bench.arena.ArenaBench2.*
-import kyo.grpc.GrpcRequest
+import kyo.grpc.Grpc
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
 import scala.compiletime.uninitialized

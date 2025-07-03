@@ -5,7 +5,7 @@ import kyo.*
 import kyo.Result.*
 
 class ResponseStreamObserver[Response](
-    responseChannel: StreamChannel[Response, GrpcResponse.Errors]
+    responseChannel: StreamChannel[Response, Grpc.Errors]
 )(using Frame, AllowUnsafe) extends StreamObserver[Response]:
 
     override def onNext(response: Response): Unit =

@@ -1,6 +1,6 @@
 package kgrpc
 
-import io.grpc.*
+import io.grpc.Status
 import kgrpc.test.*
 import kgrpc.test.given
 import kyo.*
@@ -8,11 +8,11 @@ import kyo.grpc.*
 
 object TestServiceImpl extends TestService:
 
-    override def oneToOne(request: Request): Response < GrpcResponse =
+    override def oneToOne(request: Request): Response < Grpc =
         requestToResponse(request)
     end oneToOne
 
-    private def requestToResponse(request: Request): Response < GrpcResponse =
+    private def requestToResponse(request: Request): Response < Grpc =
         request match
             case Request.Empty => Abort.fail(Status.INVALID_ARGUMENT.asException)
             case nonEmpty: Request.NonEmpty =>
@@ -24,11 +24,11 @@ object TestServiceImpl extends TestService:
         end match
     end requestToResponse
 
-    override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
+    override def oneToMany(request: Request): Stream[Response, Grpc] < Grpc =
         requestToResponses(request)
     end oneToMany
 
-    private def requestToResponses(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
+    private def requestToResponses(request: Request): Stream[Response, Grpc] < Grpc =
         request match
             case Request.Empty => Stream.empty[Response]
             case nonEmpty: Request.NonEmpty =>
@@ -49,13 +49,13 @@ object TestServiceImpl extends TestService:
         end match
     end requestToResponses
 
-    private def stream(responses: Seq[Response < GrpcResponse]): Stream[Response, GrpcResponse] =
+    private def stream(responses: Seq[Response < Grpc]): Stream[Response, Grpc] =
         Stream:
             Kyo.foldLeft(responses)(()) { (_, response) =>
                 response.map(r => Emit.value(Chunk(r)))
             }
 
-    override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
+    override def manyToOne(requests: Stream[Request, Grpc]): Response < Grpc =
         requests.fold(Maybe.empty[String])((acc, request) =>
             for
                 response <- requestToResponse(request)
@@ -64,7 +64,7 @@ object TestServiceImpl extends TestService:
             yield nextAcc
         ).map(maybeMessage => Echo(maybeMessage.getOrElse("")))
 
-    override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
+    override def manyToMany(requests: Stream[Request, Grpc]): Stream[Response, Grpc] < Grpc =
         requests.flatMap(requestToResponses)
 
 end TestServiceImpl

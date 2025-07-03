@@ -22,8 +22,8 @@ import kyo.Result.*
   *   the type of the response message
   */
 class RequestStreamObserver[Request, Response](
-    f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
-    requestChannel: StreamChannel[Request, GrpcRequest.Errors],
+    f: Stream[Request, Grpc] => Response < Grpc,
+    requestChannel: StreamChannel[Request, Grpc.Errors],
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]) extends StreamObserver[Request]:
 
@@ -69,11 +69,11 @@ object RequestStreamObserver:
       *   an instance of `RequestStreamObserver` pending [[Sync]]
       */
     def init[Request, Response](
-        f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
+        f: Stream[Request, Grpc] => Response < Grpc,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request, Response] < Sync =
         for
-            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
+            requestChannel <- StreamChannel.init[Request, Grpc.Errors]
             observer = RequestStreamObserver(f, requestChannel, responseObserver)
             _ <- Fiber.run(observer.start)
         yield observer

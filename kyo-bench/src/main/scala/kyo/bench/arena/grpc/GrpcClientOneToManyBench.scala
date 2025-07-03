@@ -13,7 +13,7 @@ import kyo.bench.arena.ArenaBench2.*
 import kyo.bench.arena.WarmupJITProfile.CatsForkWarmup
 import kyo.bench.arena.WarmupJITProfile.KyoForkWarmup
 import kyo.bench.arena.WarmupJITProfile.ZIOForkWarmup
-import kyo.grpc.GrpcRequest
+import kyo.grpc.Grpc
 import org.openjdk.jmh.annotations.*
 import scala.compiletime.uninitialized
 import scalapb.zio_grpc

@@ -4,18 +4,16 @@ trait TestService extends _root_.kyo.grpc.Service {
   
   override def definition: _root_.io.grpc.ServerServiceDefinition = TestService.service(this)
   
-  def oneToOne(
-    request: kgrpc.test.Request
-  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcResponse]
+  def oneToOne(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
   def oneToMany(
     request: kgrpc.test.Request
-  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcResponse], _root_.kyo.grpc.GrpcResponse]
+  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc], _root_.kyo.grpc.Grpc]
   def manyToOne(
-    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcResponse]
+    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
   def manyToMany(
-    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcResponse], _root_.kyo.grpc.GrpcResponse]
+    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc], _root_.kyo.grpc.Grpc]
 }
 
 object TestService {
@@ -60,37 +58,35 @@ object TestService {
     _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(TestService.client(_, options))
   
   trait Client {
-    def oneToOne(
-      request: kgrpc.test.Request
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest]
+    def oneToOne(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
     def oneToMany(
       request: kgrpc.test.Request
-    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest]
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
     def manyToOne(
-      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest]
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
     def manyToMany(
-      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest]
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
   }
   
   class ClientImpl(channel: _root_.io.grpc.Channel, options: _root_.io.grpc.CallOptions)
       extends Client {
     override def oneToOne(
       request: kgrpc.test.Request
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest] =
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
       _root_.kyo.grpc.ClientCall.unary(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_ONE_TO_ONE, options, request)
     override def oneToMany(
       request: kgrpc.test.Request
-    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest] =
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
       _root_.kyo.grpc.ClientCall.serverStreaming(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_ONE_TO_MANY, options, request)
     override def manyToOne(
-      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest] =
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
       _root_.kyo.grpc.ClientCall.clientStreaming(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_MANY_TO_ONE, options, requests)
     override def manyToMany(
-      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest] =
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
       _root_.kyo.grpc.ClientCall.bidiStreaming(channel, _root_.kgrpc.test.TestServiceGrpc.METHOD_MANY_TO_MANY, options, requests)
   }
 }

@@ -7,7 +7,7 @@ import kyo.*
 import kyo.Result.*
 import kyo.grpc.*
 
-class UnaryResponseStreamObserver[Response](promise: Promise[GrpcResponse.Errors, Response])(using Frame, AllowUnsafe)
+class UnaryResponseStreamObserver[Response](promise: Promise[Grpc.Errors, Response])(using Frame, AllowUnsafe)
     extends StreamObserver[Response]:
 
     override def onNext(value: Response): Unit =

@@ -5,7 +5,8 @@ import cats.effect.IO.given
 import cats.effect.IO as CIO
 import fs2.grpc.syntax.all.*
 import io.grpc
-import io.grpc.*
+import io.grpc.{Grpc => _, *}
+import io.grpc.StatusException
 import io.grpc.netty.shaded.io.grpc.netty.*
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
@@ -119,13 +120,13 @@ class KyoTestService(size: Int)(using Frame) extends TestService:
     override def oneToOne(request: Request): Response < Any =
         Response(request.message)
 
-    override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
+    override def oneToMany(request: Request): Stream[Response, Grpc] < Grpc =
         Stream.init(Chunk.fill(size)(Response(request.message)))
 
-    override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
+    override def manyToOne(requests: Stream[Request, Grpc]): Response < Grpc =
         Sink.last.drain(requests).map(maybe => Response(maybe.fold("")(_.message)))
 
-    override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
+    override def manyToMany(requests: Stream[Request, Grpc]): Stream[Response, Grpc] < Grpc =
         requests.flatMap(oneToMany)
 
 end KyoTestService
@@ -175,13 +176,13 @@ class StaticKyoTestService(size: Int)(using Frame) extends TestService:
     override def oneToOne(request: Request): Response < Any =
         response
 
-    override def oneToMany(request: Request): Stream[Response, GrpcResponse] < GrpcResponse =
+    override def oneToMany(request: Request): Stream[Response, Grpc] < Grpc =
         Stream.init(responses)
 
-    override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
+    override def manyToOne(requests: Stream[Request, Grpc]): Response < Grpc =
         requests.discard.andThen(response)
 
-    override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] < GrpcResponse =
+    override def manyToMany(requests: Stream[Request, Grpc]): Stream[Response, Grpc] < Grpc =
         requests.flatMap(oneToMany)
 
 end StaticKyoTestService

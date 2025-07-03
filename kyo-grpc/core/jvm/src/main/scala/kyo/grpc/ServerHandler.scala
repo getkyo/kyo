@@ -11,7 +11,7 @@ import kyo.*
   * This object provides methods to create server handlers for all four types of gRPC methods: unary, client streaming, server streaming,
   * and bidirectional streaming. Each handler method converts Kyo effects into gRPC-compatible server handlers.
   *
-  * All handlers are designed to work with the [[GrpcResponse]] effect type and handle exceptions and stream completion appropriately.
+  * All handlers are designed to work with the [[Grpc]] effect type and handle exceptions and stream completion appropriately.
   */
 object ServerHandler:
 
@@ -20,7 +20,7 @@ object ServerHandler:
     /** Creates a server handler for unary gRPC calls.
       *
       * A unary call receives a single request and produces a single response. The handler function `f` takes a request and returns a
-      * response pending the [[GrpcResponse]] effect.
+      * response pending the [[Grpc]] effect.
       *
       * @param f
       *   the handler function that processes the request
@@ -31,7 +31,7 @@ object ServerHandler:
       * @return
       *   a gRPC [[ServerCallHandler]] for unary calls
       */
-    def unary[Request, Response](f: Request => Response < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
+    def unary[Request, Response](f: Request => Response < Grpc)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncUnaryCall { (request, responseObserver) =>
             val completed = StreamNotifier.notifyObserver(f(request), responseObserver)
             KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
@@ -40,7 +40,7 @@ object ServerHandler:
     /** Creates a server handler for client streaming gRPC calls.
       *
       * A client streaming call receives a stream of requests from the client and produces a single response. The handler function `f` takes
-      * a stream of requests and returns a response pending the [[GrpcResponse]] effect.
+      * a stream of requests and returns a response pending the [[Grpc]] effect.
       *
       * @param f
       *   the handler function that processes the request stream
@@ -51,7 +51,7 @@ object ServerHandler:
       * @return
       *   a gRPC [[ServerCallHandler]] for client streaming calls
       */
-    def clientStreaming[Request, Response](f: Stream[Request, GrpcRequest] => Response < GrpcResponse)(using
+    def clientStreaming[Request, Response](f: Stream[Request, Grpc] => Response < Grpc)(using
         Frame,
         Tag[Emit[Chunk[Request]]]
     ): ServerCallHandler[Request, Response] =
@@ -64,7 +64,7 @@ object ServerHandler:
     /** Creates a server handler for server streaming gRPC calls.
       *
       * A server streaming call receives a single request and produces a stream of responses. The handler function `f` takes a request and
-      * returns a stream of responses pending the [[GrpcResponse]] effect.
+      * returns a stream of responses pending the [[Grpc]] effect.
       *
       * @param f
       *   the handler function that processes the request and produces a response stream
@@ -75,7 +75,7 @@ object ServerHandler:
       * @return
       *   a gRPC [[ServerCallHandler]] for server streaming calls
       */
-    def serverStreaming[Request, Response](f: Request => Stream[Response, GrpcResponse] < GrpcResponse)(using
+    def serverStreaming[Request, Response](f: Request => Stream[Response, Grpc] < Grpc)(using
         Frame,
         Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
@@ -87,7 +87,7 @@ object ServerHandler:
     /** Creates a server handler for bidirectional streaming gRPC calls.
       *
       * A bidirectional streaming call receives a stream of requests and produces a stream of responses. The handler function `f` takes a
-      * stream of requests and returns a stream of responses pending the [[GrpcResponse]] effect.
+      * stream of requests and returns a stream of responses pending the [[Grpc]] effect.
       *
       * @param f
       *   the handler function that processes the request stream and produces a response stream
@@ -101,7 +101,7 @@ object ServerHandler:
     def bidiStreaming[
         Request,
         Response
-    ](f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse)(using
+    ](f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc)(using
         Frame,
         Tag[Emit[Chunk[Request]]],
         Tag[Emit[Chunk[Response]]]

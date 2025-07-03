@@ -11,7 +11,7 @@ import scala.concurrent.Future
 
 class BidiRequestStreamObserverTest extends Test with AsyncMockFactory2:
 
-    private def mapRequests(requests: Stream[String, GrpcRequest]): Stream[String, GrpcResponse] =
+    private def mapRequests(requests: Stream[String, Grpc]): Stream[String, Grpc] =
         requests.map(_.toUpperCase(Locale.ENGLISH))
 
     "onComplete puts result of mapped requests" in run {

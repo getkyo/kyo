@@ -4,15 +4,13 @@ trait UtilityService extends _root_.kyo.grpc.Service {
   
   override def definition: _root_.io.grpc.ServerServiceDefinition = UtilityService.service(this)
   
-  def health(
-    request: kgrpc.test.Request
-  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcResponse]
+  def health(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
   def monitor(
     request: kgrpc.test.Request
-  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcResponse], _root_.kyo.grpc.GrpcResponse]
+  ): _root_.kyo.<[_root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc], _root_.kyo.grpc.Grpc]
   def batch(
-    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcResponse]
+    requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+  ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
 }
 
 object UtilityService {
@@ -53,30 +51,28 @@ object UtilityService {
     _root_.kyo.grpc.Client.channel(host, port, timeout)(configure, shutdown).map(UtilityService.client(_, options))
   
   trait Client {
-    def health(
-      request: kgrpc.test.Request
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest]
+    def health(request: kgrpc.test.Request): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
     def monitor(
       request: kgrpc.test.Request
-    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest]
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
     def batch(
-      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest]
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc]
   }
   
   class ClientImpl(channel: _root_.io.grpc.Channel, options: _root_.io.grpc.CallOptions)
       extends Client {
     override def health(
       request: kgrpc.test.Request
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest] =
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
       _root_.kyo.grpc.ClientCall.unary(channel, _root_.kgrpc.test.UtilityServiceGrpc.METHOD_HEALTH, options, request)
     override def monitor(
       request: kgrpc.test.Request
-    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest] =
+    ): _root_.kyo.Stream[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
       _root_.kyo.grpc.ClientCall.serverStreaming(channel, _root_.kgrpc.test.UtilityServiceGrpc.METHOD_MONITOR, options, request)
     override def batch(
-      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.GrpcRequest]
-    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.GrpcRequest] =
+      requests: _root_.kyo.Stream[kgrpc.test.Request, _root_.kyo.grpc.Grpc]
+    ): _root_.kyo.<[kgrpc.test.Response, _root_.kyo.grpc.Grpc] =
       _root_.kyo.grpc.ClientCall.clientStreaming(channel, _root_.kgrpc.test.UtilityServiceGrpc.METHOD_BATCH, options, requests)
   }
 }

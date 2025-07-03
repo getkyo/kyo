@@ -11,7 +11,7 @@ import scala.concurrent.Future
 
 class RequestStreamObserverTest extends Test with AsyncMockFactory2:
 
-    private def foldRequests(requests: Stream[String, GrpcRequest]): String < GrpcResponse =
+    private def foldRequests(requests: Stream[String, Grpc]): String < Grpc =
         requests.into(Sink.collect.map(_.mkString(" ")))
 
     "onComplete puts result of folded requests" in run {

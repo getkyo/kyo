@@ -23,8 +23,8 @@ import scala.language.future
   *   the type of the response messages
   */
 class BidiRequestStreamObserver[Request, Response] private (
-    f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
-    requestChannel: StreamChannel[Request, GrpcRequest.Errors],
+    f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc,
+    requestChannel: StreamChannel[Request, Grpc.Errors],
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]) extends StreamObserver[Request]:
 
@@ -70,11 +70,11 @@ object BidiRequestStreamObserver:
       *   an instance of `BidiRequestStreamObserver` pending [[Sync]]
       */
     def init[Request, Response](
-        f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
+        f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): BidiRequestStreamObserver[Request, Response] < Sync =
         for
-            requestChannel <- StreamChannel.init[Request, GrpcRequest.Errors]
+            requestChannel <- StreamChannel.init[Request, Grpc.Errors]
             observer = BidiRequestStreamObserver(f, requestChannel, responseObserver)
             _ <- Fiber.run(observer.start)
         yield observer

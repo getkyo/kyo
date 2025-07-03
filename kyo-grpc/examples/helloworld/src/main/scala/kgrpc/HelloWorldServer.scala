@@ -6,7 +6,7 @@ import kyo.grpc.*
 
 object GreeterService extends Greeter:
 
-    override def sayHello(request: HelloRequest): HelloReply < GrpcResponse =
+    override def sayHello(request: HelloRequest): HelloReply < Grpc =
         for
             _ <- Console.println(s"Got request: $request")
         yield HelloReply(s"Hello, ${request.name}")

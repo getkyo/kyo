@@ -4,7 +4,7 @@ import io.grpc.CallOptions
 import io.grpc.Channel
 import io.grpc.MethodDescriptor
 import kyo.*
-import scalapb.grpc.*
+import scalapb.grpc.ClientCalls
 
 /** Provides client-side gRPC call implementations for different RPC patterns.
   *
@@ -23,16 +23,16 @@ object ClientCall:
       * @param request the request message to send
       * @tparam Request the type of the request message
       * @tparam Response the type of the response message
-      * @return the response message pending [[GrpcRequest]]
+      * @return the response message pending [[Grpc]]
       */
     def unary[Request, Response](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         request: Request
-    )(using Frame): Response < GrpcRequest =
+    )(using Frame): Response < Grpc =
         val future = ClientCalls.asyncUnaryCall(channel, method, options, request)
-        GrpcRequest.fromFuture(future)
+        Grpc.fromFuture(future)
     end unary
 
     /** Executes a client streaming gRPC call.
@@ -47,14 +47,14 @@ object ClientCall:
       * @param requests a stream of request messages to send
       * @tparam Request the type of the request messages
       * @tparam Response the type of the response message
-      * @return the response message pending [[GrpcRequest]]
+      * @return the response message pending [[Grpc]]
       */
     def clientStreaming[Request: Tag, Response](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
-        requests: Stream[Request, GrpcRequest]
-    )(using Frame, Tag[Emit[Chunk[Request]]]): Response < GrpcRequest =
+        requests: Stream[Request, Grpc]
+    )(using Frame, Tag[Emit[Chunk[Request]]]): Response < Grpc =
         for
             promise          <- Promise.init[Grpc.Errors, Response]
             responseObserver <- Sync.Unsafe(UnaryResponseStreamObserver(promise))
@@ -75,14 +75,14 @@ object ClientCall:
       * @param request the request message to send
       * @tparam Request the type of the request message
       * @tparam Response the type of the response messages
-      * @return a stream of response messages pending [[GrpcRequest]]
+      * @return a stream of response messages pending [[Grpc]]
       */
     def serverStreaming[Request, Response: Tag](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         request: Request
-    )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, GrpcRequest] =
+    )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
         val responses =
             for
                 responseChannel  <- StreamChannel.init[Response, Grpc.Errors]
@@ -104,14 +104,14 @@ object ClientCall:
       * @param requests a stream of request messages to send
       * @tparam Request the type of the request messages
       * @tparam Response the type of the response messages
-      * @return a stream of response messages pending [[GrpcRequest]]
+      * @return a stream of response messages pending [[Grpc]]
       */
     def bidiStreaming[Request: Tag, Response: Tag](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
-        requests: Stream[Request, GrpcRequest]
-    )(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): Stream[Response, GrpcRequest] =
+        requests: Stream[Request, Grpc]
+    )(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
         val responses =
             for
                 responseChannel  <- StreamChannel.init[Response, Grpc.Errors]

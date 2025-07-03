@@ -1,13 +1,12 @@
 package kyo.bench.arena.grpc
 
 import GrpcService.*
-import io.grpc.Grpc
 import io.grpc.Metadata
 import kgrpc.*
 import kgrpc.bench.*
 import kyo.*
 import kyo.bench.arena.ArenaBench
-import kyo.grpc.GrpcRequest
+import kyo.grpc.Grpc
 import org.openjdk.jmh.annotations.*
 import scala.compiletime.uninitialized
 import scalapb.zio_grpc.Server
@@ -34,7 +33,7 @@ class GrpcE2EManyToOneBench extends ArenaBench.ForkOnly(response):
                 client.manyToOne(requestStream, Metadata())
     end catsBench
 
-    override def kyoBenchFiber(): Response < GrpcRequest =
+    override def kyoBenchFiber(): Response < Grpc =
         Resource.run:
             for
                 _      <- createKyoServer(port, static = false)
