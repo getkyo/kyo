@@ -2414,46 +2414,46 @@ import kyo.*
 
 // A bounded queue that rejects new
 // elements once full
-val a: Queue[Int] < Sync =
+val a: Queue[Int] < (Sync & Resource) =
     Queue.init(capacity = 42)
 
 // Obtain the number of items in the queue
 // via the method 'size' in 'Queue'
-val b: Int < (Sync & Abort[Closed]) =
+val b: Int < (Sync & Abort[Closed] & Resource) =
     a.map(_.size)
 
 // Get the queue capacity
-val c: Int < Sync =
+val c: Int < (Sync & Resource) =
     a.map(_.capacity)
 
 // Try to offer a new item
-val d: Boolean < (Sync & Abort[Closed]) =
+val d: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.offer(42))
 
 // Try to poll an item
-val e: Maybe[Int] < (Sync & Abort[Closed]) =
+val e: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.poll)
 
 // Try to 'peek' an item without removing it
-val f: Maybe[Int] < (Sync & Abort[Closed]) =
+val f: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.peek)
 
 // Check if the queue is empty
-val g: Boolean < (Sync & Abort[Closed]) =
+val g: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.empty)
 
 // Check if the queue is full
-val h: Boolean < (Sync & Abort[Closed]) =
+val h: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.full)
 
 // Drain the queue items
-val i: Seq[Int] < (Sync & Abort[Closed]) =
+val i: Seq[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.drain)
 
 // Close the queue. If successful,
 // returns a Some with the drained
 // elements
-val j: Maybe[Seq[Int]] < Sync =
+val j: Maybe[Seq[Int]] < (Sync & Resource) =
     a.map(_.close)
 ```
 
@@ -2464,25 +2464,25 @@ import kyo.*
 // Avoid `Queue.unbounded` since if queues can
 // grow without limits, the GC overhead can make
 // the system fail
-val a: Queue.Unbounded[Int] < Sync =
+val a: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.init()
 
 // A 'dropping' queue discards new entries
 // when full
-val b: Queue.Unbounded[Int] < Sync =
+val b: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.initDropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new
 // entries
-val c: Queue.Unbounded[Int] < Sync =
+val c: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.initSliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queue.Unbounded`. It provides
 // an additional method to 'add' new items
 // unconditionally
-val d: Unit < Sync =
+val d: Unit < (Sync & Resource) =
     c.map(_.add(42))
 ```
 
@@ -2507,7 +2507,7 @@ import kyo.*
 // Initialize a bounded queue with a
 // Multiple Producers, Multiple
 // Consumers policy
-val a: Queue[Int] < Sync =
+val a: Queue[Int] < (Sync & Resource) =
     Queue.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
