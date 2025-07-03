@@ -73,10 +73,10 @@ private[kyo] object TagMacro:
                         case tpe if tpe =:= TypeRepr.of[Null]    => NullEntry
 
                         case tpe @ AndType(_, _) =>
-                            IntersectionEntry(KArray.from(flattenAnd(tpe).map(visit)))
+                            IntersectionEntry(Span.from(flattenAnd(tpe).map(visit)))
 
                         case tpe @ OrType(_, _) =>
-                            UnionEntry(KArray.from(flattenOr(tpe).map(visit)))
+                            UnionEntry(Span.from(flattenOr(tpe).map(visit)))
 
                         case tpe @ ConstantType(const) =>
                             LiteralEntry(visit(tpe.widen), const.value.toString())
@@ -93,9 +93,9 @@ private[kyo] object TagMacro:
                                 case TypeBounds(low, high) => visit(high)
                             }
                             LambdaEntry(
-                                KArray.from(params),
-                                KArray.from(lowerBounds),
-                                KArray.from(higherBounds),
+                                Span.from(params),
+                                Span.from(lowerBounds),
+                                Span.from(higherBounds),
                                 visit(body)
                             )
 
@@ -114,9 +114,9 @@ private[kyo] object TagMacro:
                             require(params.size == variances.size)
                             ClassEntry(
                                 name,
-                                KArray.from(variances),
-                                KArray.from(params),
-                                KArray.from(immediateParents(tpe).map(visit))
+                                Span.from(variances),
+                                Span.from(params),
+                                Span.from(immediateParents(tpe).map(visit))
                             )
 
                         case tpe if tpe.typeSymbol.flags.is(Flags.Opaque) && tpe.typeSymbol.isTypeDef =>
@@ -134,7 +134,7 @@ private[kyo] object TagMacro:
                                             end if
                                         }
                                     require(params.size == variances.size)
-                                    OpaqueEntry(name, visit(lower), visit(upper), KArray.from(variances), KArray.from(params))
+                                    OpaqueEntry(name, visit(lower), visit(upper), Span.from(variances), Span.from(params))
                             end match
 
                         case tpe =>
