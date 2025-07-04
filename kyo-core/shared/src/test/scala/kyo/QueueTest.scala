@@ -10,12 +10,34 @@ class QueueTest extends Test:
         access.foreach { access =>
             access.toString() - {
                 "initWith" in runNotNative {
-                    Queue.initWith[Int](2, access) { q =>
+                    val effect = Queue.initWith[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
                             v <- q.poll
-                        yield assert(b && v == Maybe(1))
+                        yield (q, b, v)
+                        end for
                     }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.use[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
                 }
                 "isEmpty" in runNotNative {
                     for
@@ -112,6 +134,36 @@ class QueueTest extends Test:
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {
+                "initWith" in runNotNative {
+                    val effect = Queue.Unbounded.initWith[Int](access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.Unbounded.use[Int](access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
                 "isEmpty" in runNotNative {
                     for
                         q <- Queue.Unbounded.init[Int](access)
@@ -145,32 +197,97 @@ class QueueTest extends Test:
 
     "dropping" - {
         access.foreach { access =>
-            access.toString() in runNotNative {
-                for
-                    q <- Queue.Unbounded.initDropping[Int](2)
-                    _ <- q.add(1)
-                    _ <- q.add(2)
-                    _ <- q.add(3)
-                    a <- q.poll
-                    b <- q.poll
-                    c <- q.poll
-                yield assert(a == Maybe(1) && b == Maybe(2) && c.isEmpty)
+            access.toString() - {
+                "initWith" in runNotNative {
+                    val effect = Queue.Unbounded.initDropping[Int](2, access).map { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.Unbounded.useDropping[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "add/poll" in runNotNative {
+                    for
+                        q <- Queue.Unbounded.initDropping[Int](2)
+                        _ <- q.add(1)
+                        _ <- q.add(2)
+                        _ <- q.add(3)
+                        a <- q.poll
+                        b <- q.poll
+                        c <- q.poll
+                    yield assert(a == Maybe(1) && b == Maybe(2) && c.isEmpty)
+                    end for
+                }
             }
         }
     }
 
     "sliding" - {
         access.foreach { access =>
-            access.toString() in runNotNative {
-                for
-                    q <- Queue.Unbounded.initSliding[Int](2)
-                    _ <- q.add(1)
-                    _ <- q.add(2)
-                    _ <- q.add(3)
-                    a <- q.poll
-                    b <- q.poll
-                    c <- q.poll
-                yield assert(a == Maybe(2) && b == Maybe(3) && c.isEmpty)
+            access.toString() - {
+                "initWith" in runNotNative {
+                    val effect = Queue.Unbounded.initSliding[Int](2, access).map { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.Unbounded.useSliding[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "add/poll" in runNotNative {
+                    for
+                        q <- Queue.Unbounded.initSliding[Int](2, access)
+                        _ <- q.add(1)
+                        _ <- q.add(2)
+                        _ <- q.add(3)
+                        a <- q.poll
+                        b <- q.poll
+                        c <- q.poll
+                    yield assert(a == Maybe(2) && b == Maybe(3) && c.isEmpty)
+                }
             }
         }
     }
