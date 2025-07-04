@@ -33,7 +33,7 @@ object Grpc:
       * If the `Future` fails with a [[StatusException]] then the computation will fail with a [[StatusException]]. A
       * [[StatusRuntimeException]] will be converted to a [[StatusException]].
       *
-      * If the `Future`` fails with some other `Throwable` then the computation will panic with that `Throwable`.
+      * If the `Future` fails with some other `Throwable` then the computation will panic with that `Throwable`.
       *
       * @param f
       *   The `Future` that produces the computation result
