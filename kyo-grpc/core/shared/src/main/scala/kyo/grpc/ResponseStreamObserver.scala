@@ -13,7 +13,7 @@ import kyo.Result.*
   * @tparam Response
   *   the type of the response messages
   */
-class ResponseStreamObserver[Response](
+private[kyo] class ResponseStreamObserver[Response](
     responseChannel: StreamChannel[Response, GrpcFailure]
 )(using Frame, AllowUnsafe) extends StreamObserver[Response]:
 

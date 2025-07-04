@@ -22,7 +22,7 @@ import kyo.kernel.Loop.Outcome
   * @param emitTag
   *   implicit tag for emitting chunks of values
   */
-class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initFrame: Frame)(using emitTag: Tag[Emit[Chunk[A]]]):
+private[kyo] class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initFrame: Frame)(using emitTag: Tag[Emit[Chunk[A]]]):
 
     /** Puts an element into the channel, asynchronously blocking if necessary.
       *
@@ -151,7 +151,7 @@ end StreamChannel
 
 /** Companion object for [[StreamChannel]] providing factory methods.
   */
-object StreamChannel:
+private[kyo] object StreamChannel:
 
     // TODO: Set the capacity to something else that matches how we backpressure.
     final private[kyo] val Capacity = 42

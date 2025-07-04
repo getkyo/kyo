@@ -16,7 +16,7 @@ import kyo.grpc.*
   * @tparam Response
   *   the type of the response message
   */
-class UnaryResponseStreamObserver[Response](promise: Promise[GrpcFailure, Response])(using Frame, AllowUnsafe)
+private[kyo] class UnaryResponseStreamObserver[Response](promise: Promise[GrpcFailure, Response])(using Frame, AllowUnsafe)
     extends StreamObserver[Response]:
 
     override def onNext(value: Response): Unit =

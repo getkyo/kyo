@@ -33,7 +33,8 @@ object ServerHandler:
       */
     def unary[Request, Response](f: Request => Response < Grpc)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncUnaryCall { (request, responseObserver) =>
-            val completed = StreamNotifier.notifyObserver(f(request), responseObserver)
+            val response = f(request)
+            val completed = StreamNotifier.notifyObserver(response, responseObserver)
             KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
         }
 
@@ -57,7 +58,7 @@ object ServerHandler:
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncClientStreamingCall(responseObserver =>
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-            val requestObserver        = RequestStreamObserver.init(f, serverResponseObserver)
+            val requestObserver        = RequestStreamObserver.one(f, serverResponseObserver)
             Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
         )
 
@@ -80,7 +81,8 @@ object ServerHandler:
         Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
-            val completed = StreamNotifier.notifyObserver(Stream.unwrap(f(request)), responseObserver)
+            val responses = Stream.unwrap(f(request))
+            val completed = StreamNotifier.notifyObserver(responses, responseObserver)
             KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
         }
 
@@ -98,17 +100,10 @@ object ServerHandler:
       * @return
       *   a gRPC [[ServerCallHandler]] for bidirectional streaming calls
       */
-    def bidiStreaming[
-        Request,
-        Response
-    ](f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc)(using
-        Frame,
-        Tag[Emit[Chunk[Request]]],
-        Tag[Emit[Chunk[Response]]]
-    ): ServerCallHandler[Request, Response] =
+    def bidiStreaming[Request, Response](f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc)(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): ServerCallHandler[Request, Response] =
         ServerCalls.asyncBidiStreamingCall(responseObserver =>
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-            val requestObserver        = BidiRequestStreamObserver.init(f, serverResponseObserver)
+            val requestObserver        = RequestStreamObserver.many(f, serverResponseObserver)
             Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
         )
 
