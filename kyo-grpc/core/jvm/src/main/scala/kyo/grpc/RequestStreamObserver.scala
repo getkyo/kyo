@@ -7,6 +7,9 @@ import kyo.*
 import kyo.Result.*
 
 /** An 'inbound', server-side observer that receives a stream of requests and sends a single response.
+  * 
+  * This creates a stream from the `requestChannel` and provides that to the function. Requests are forwarded to the channel.
+  * Once it receives the response it forwards it on to the `responseObserver`.
   *
   * @param f
   *   a function that takes a stream of requests and returns a single response
@@ -31,9 +34,18 @@ class RequestStreamObserver[Request, Response](
       */
     private val start: Unit < Async =
         StreamNotifier.notifyObserver(response, responseObserver)
+            // Make sure to close the channel explicitly in case the function produced a result without consuming the entire stream.
+            .andThen(requestChannel.close)
 
     override def onNext(request: Request): Unit =
-        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(requestChannel.put(request)).getOrThrow
+        KyoApp.Unsafe.runAndBlock(Duration.Infinity)(
+            // In cases where the channel was closed early we ignore additional elements since they will never be consumed.
+            // The StreamNotifier will have called onNext and onComplete on the responseObserver so the caller should detect this and stop
+            // invoking onNext but there could be a delay so ignore additional requests until that happens.
+            Abort.recover[Closed](_ => ())(
+                requestChannel.put(request)
+            )
+        ).getOrThrow
 
     // onError will be the last method called. There will be no call to onCompleted.
     override def onError(throwable: Throwable): Unit =

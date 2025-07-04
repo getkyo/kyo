@@ -99,4 +99,39 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
         yield succeed
     }
 
+    "when function returns early, channel is closed and onNext silently discards request" in run {
+        val serverObserver = mock[ServerCallStreamObserver[String]]
+
+        def immediateReturn(requests: Stream[String, Grpc]): String < Grpc =
+            "immediate result"
+
+        def setupExpectations(latch: Latch) =
+            Sync.Unsafe {
+                serverObserver.onNext
+                    .expects("immediate result")
+                    .onCall { _ =>
+                        Sync.Unsafe.evalOrThrow(latch.release)
+                    }
+                    .once()
+
+                (() => serverObserver.onCompleted())
+                    .expects()
+                    .onCall { _ =>
+                        Sync.Unsafe.evalOrThrow(latch.release)
+                    }
+                    .once()
+            }
+
+        for
+            latch    <- Latch.init(2)
+            _        <- setupExpectations(latch)
+            observer <- Sync.Unsafe(RequestStreamObserver.init(immediateReturn, serverObserver))
+            _        <- latch.await
+            result   <- Abort.run(Sync.defer(observer.onNext("this disappears into the either")))
+        yield
+            // This isn't much of a test. It would pass even the channel wasn't closed.
+            // You can change the implementation of onNext to not recover the Closed failure and observe that this will panic as expected.
+            assert(result === Result.Success(()))
+    }
+
 end RequestStreamObserverTest

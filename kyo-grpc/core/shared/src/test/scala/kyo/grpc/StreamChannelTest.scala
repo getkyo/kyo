@@ -141,6 +141,70 @@ class StreamChannelTest extends Test:
         }
     }
 
+    "close" - {
+        "closes immediately when empty" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.close
+                closed  <- channel.closed
+            yield assert(closed)
+        }
+
+        "closes immediately when not empty" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.put(1)
+                _       <- channel.put(2)
+                _       <- channel.close
+                closed  <- channel.closed
+            yield assert(closed)
+        }
+
+        "discards elements" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.put(1)
+                _       <- channel.put(2)
+                _       <- channel.close
+                result  <- Abort.run[Closed](channel.take)
+            yield assert(result.isFailure)
+        }
+
+        "fails put after close" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.close
+                result  <- Abort.run[Closed](channel.put(1))
+            yield assert(result.isFailure)
+        }
+
+        "fails error after close" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                _       <- channel.close
+                result  <- Abort.run[Closed](channel.error("error"))
+            yield assert(result.isFailure)
+        }
+
+        "interrupts take" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                fiber   <- Fiber.run(channel.take)
+                _       <- Async.delay(delay)(channel.close)
+                result  <- Abort.run[Closed](fiber.get)
+            yield assert(result.isFailure)
+        }
+
+        "interrupts stream" in run {
+            for
+                channel <- StreamChannel.init[Int, String]
+                fiber   <- Fiber.run(channel.stream.run)
+                _       <- Async.delay(delay)(channel.close)
+                result  <- fiber.get
+            yield assert(result == Chunk.empty)
+        }
+    }
+
     "take" - {
         "not empty" in run {
             for

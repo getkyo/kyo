@@ -89,6 +89,11 @@ class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initF
     def closeProducer(using Frame): Unit < Sync =
         channel.closeAwaitEmptyFiber.unit
 
+    /** Closes the channel immediately and discards any elements or error that have yet to be consumed.
+     */
+    def close(using Frame): Unit < Sync =
+        channel.close.unit
+
     /** Checks if the channel is completely closed.
       *
       * A channel is considered completely closed when the underlying channel is closed, which happens when the producer was closed and the
@@ -99,7 +104,7 @@ class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initF
       */
     def closed(using Frame): Boolean < Sync =
         channel.closed.map: isClosed =>
-          if isClosed then true else error.get.map(_.isEmpty)
+          if !isClosed then false else error.get.map(_.isEmpty)
 
     /** Creates a stream from this channel.
       *

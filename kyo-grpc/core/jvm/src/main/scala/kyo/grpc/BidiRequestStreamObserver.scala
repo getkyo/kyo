@@ -8,6 +8,8 @@ import kyo.Result.*
 import scala.language.future
 
 /** An 'inbound', server-side observer that receives a stream of requests and sends a stream of responses.
+  * 
+  * This creates a stream from the `requestChannel` and provides that to the function. When. Each response is then forwarded on to the `responseObserver`.
   *
   * @param f
   *   a function that takes a stream of requests and returns a stream of responses
