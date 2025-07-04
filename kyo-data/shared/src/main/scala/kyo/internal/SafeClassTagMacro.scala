@@ -1,40 +1,40 @@
 package kyo.internal
 
 import kyo.Chunk
-import kyo.SafeClassTag
-import kyo.SafeClassTag.*
+import kyo.ConcreteTag
+import kyo.ConcreteTag.*
 import scala.quoted.*
 
 private[kyo] object SafeClassTagMacro:
 
-    def derive[A: Type](using Quotes): Expr[SafeClassTag[A]] =
+    def derive[A: Type](using Quotes): Expr[ConcreteTag[A]] =
         import quotes.reflect.*
 
         def checkType(tpe: TypeRepr) =
             if !tpe.dealias.typeSymbol.isClassDef then
                 report.errorAndAbort(
-                    s"""This method requires a SafeClassTag, but the type ${tpe.show} is not a class.
+                    s"""This method requires a ConcreteTag, but the type ${tpe.show} is not a class.
                        |Consider using a concrete class instead of an abstract type or type parameter.
-                       |For generic types, you can provide an evidence of SafeClassTag explicitly.
-                       |Example: def method[A](a: A)(using SafeClassTag[A]) = ???""".stripMargin
+                       |For generic types, you can provide an evidence of ConcreteTag explicitly.
+                       |Example: def method[A](a: A)(using ConcreteTag[A]) = ???""".stripMargin
                 )
             end if
             if tpe.typeArgs.nonEmpty then
                 report.errorAndAbort(
-                    s"""This method requires a SafeClassTag, but the type ${tpe.show} has type parameters.
+                    s"""This method requires a ConcreteTag, but the type ${tpe.show} has type parameters.
                        |This is a current limitation that may be lifted in future versions.
                        |For now, use a non-generic type.""".stripMargin
                 )
             end if
             if tpe =:= TypeRepr.of[Null] then
                 report.errorAndAbort(
-                    s"""This method requires a SafeClassTag, but Null is not a valid type for SafeClassTag.
-                       |SafeClassTag does not support Null to prevent runtime errors.""".stripMargin
+                    s"""This method requires a ConcreteTag, but Null is not a valid type for ConcreteTag.
+                       |ConcreteTag does not support Null to prevent runtime errors.""".stripMargin
                 )
             end if
         end checkType
 
-        def create(tpe: TypeRepr): Expr[SafeClassTag[Any]] =
+        def create(tpe: TypeRepr): Expr[ConcreteTag[Any]] =
             tpe match
                 case OrType(_, _) =>
                     def flatten(tpe: TypeRepr): Chunk[TypeRepr] =
@@ -54,7 +54,7 @@ private[kyo] object SafeClassTagMacro:
             end match
         end create
 
-        def createSingle(tpe: TypeRepr): Expr[SafeClassTag[Any]] =
+        def createSingle(tpe: TypeRepr): Expr[ConcreteTag[Any]] =
             checkType(tpe)
             tpe match
                 case ConstantType(const) =>
@@ -87,11 +87,11 @@ private[kyo] object SafeClassTagMacro:
                             val classOfExpr = Select(Ref(Symbol.requiredModule("scala.Predef")), classOfSym)
                                 .appliedToType(TypeRepr.of[t])
                             val expr = classOfExpr.asExprOf[Any]
-                            '{ $expr.asInstanceOf[SafeClassTag[Any]] }
+                            '{ $expr.asInstanceOf[ConcreteTag[Any]] }
             end match
         end createSingle
 
         val result = create(TypeRepr.of[A].dealias)
-        '{ $result.asInstanceOf[SafeClassTag[A]] }
+        '{ $result.asInstanceOf[ConcreteTag[A]] }
     end derive
 end SafeClassTagMacro
