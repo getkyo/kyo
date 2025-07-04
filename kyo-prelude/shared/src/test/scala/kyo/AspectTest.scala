@@ -204,7 +204,6 @@ class AspectTest extends Test:
         case class Wrapped[+A, B](value: A, meta: B) derives CanEqual
         case class Container[+A](value: A, meta: String) derives CanEqual
 
-        // TODO SIGSEGV in Scala Native
         "with same input/output wrapper" in run {
             val aspect = Aspect.init[Wrapped[*, String], Wrapped[*, String], Any]
 

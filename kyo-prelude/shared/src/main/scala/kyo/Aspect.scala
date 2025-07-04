@@ -34,7 +34,7 @@ import Aspect.*
   */
 final class Aspect[Input[_], Output[_], S] private[kyo] (
     using
-    tag: Tag[(Input[Any], Output[Any], S)],
+    tag: Tag[(Input[Any], Output[Any])],
     frame: Frame
 ) extends Serializable:
 
@@ -165,7 +165,7 @@ object Aspect:
       * @tparam S
       *   The effect type
       */
-    def init[I[_], O[_], S](using Frame, Tag[(I[Any], O[Any], S)]): Aspect[I, O, S] =
+    def init[I[_], O[_], S](using Frame, Tag[(I[Any], O[Any])]): Aspect[I, O, S] =
         new Aspect[I, O, S]
 
 end Aspect
