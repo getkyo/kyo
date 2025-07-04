@@ -9,8 +9,6 @@ import scala.language.future
 
 /** An 'inbound', server-side observer that receives a stream of requests and sends a stream of responses.
   *
-  * This implementation is not thread-safe but is thread-compatible as per the [[StreamObserver]] requirements.
-  *
   * @param f
   *   a function that takes a stream of requests and returns a stream of responses
   * @param requestChannel

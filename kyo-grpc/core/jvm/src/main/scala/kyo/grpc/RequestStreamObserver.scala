@@ -8,8 +8,6 @@ import kyo.Result.*
 
 /** An 'inbound', server-side observer that receives a stream of requests and sends a single response.
   *
-  * This implementation is not thread-safe but is thread-compatible as per the [[StreamObserver]] requirements.
-  *
   * @param f
   *   a function that takes a stream of requests and returns a single response
   * @param requestChannel

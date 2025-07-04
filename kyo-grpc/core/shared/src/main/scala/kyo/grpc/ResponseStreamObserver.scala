@@ -4,6 +4,15 @@ import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*
 
+/** An 'outbound', client-side observer that receives a stream of responses from the server.
+  * 
+  * It forwards responses to a [[StreamChannel]] for consumption by the client.
+  *
+  * @param responseChannel
+  *   a channel for forwarding received responses
+  * @tparam Response
+  *   the type of the response messages
+  */
 class ResponseStreamObserver[Response](
     responseChannel: StreamChannel[Response, GrpcFailure]
 )(using Frame, AllowUnsafe) extends StreamObserver[Response]:

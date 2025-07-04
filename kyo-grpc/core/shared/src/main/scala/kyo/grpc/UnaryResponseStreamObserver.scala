@@ -7,6 +7,15 @@ import kyo.*
 import kyo.Result.*
 import kyo.grpc.*
 
+/** A client-side observer that receives a single response from the server.
+  * 
+  * It completes a [[Promise]] with the received response or error for consumption by the client.
+  *
+  * @param promise
+  *   a promise that will be completed with the response or error
+  * @tparam Response
+  *   the type of the response message
+  */
 class UnaryResponseStreamObserver[Response](promise: Promise[GrpcFailure, Response])(using Frame, AllowUnsafe)
     extends StreamObserver[Response]:
 
