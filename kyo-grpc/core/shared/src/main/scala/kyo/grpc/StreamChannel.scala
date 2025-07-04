@@ -98,11 +98,8 @@ class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initF
       *   a pending computation that produces `true` if the channel is closed, `false` otherwise
       */
     def closed(using Frame): Boolean < Sync =
-        for
-            channelClosed <- channel.closed
-            // TODO: It'd be better if this was a lazy operation.
-            noErrors <- error.get.map(_.isEmpty)
-        yield channelClosed && noErrors
+        channel.closed.map: isClosed =>
+          if isClosed then true else error.get.map(_.isEmpty)
 
     /** Creates a stream from this channel.
       *
@@ -112,7 +109,6 @@ class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initF
       * @return
       *   a stream that emits values from the channel
       */
-    // This can only be called once and mutually exclusive with take.
     def stream(using Frame): Stream[A, Abort[E] & Async] =
         Stream(emitChunks())
 
