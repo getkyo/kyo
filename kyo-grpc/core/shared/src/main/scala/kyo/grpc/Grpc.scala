@@ -3,11 +3,7 @@ package kyo.grpc
 import io.grpc.StatusException
 import io.grpc.StatusRuntimeException
 import kyo.*
-import kyo.Result.Panic
-import kyo.scheduler.IOPromise
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.util.*
 
 /**
  * Effect of sending or receiving a gRPC message.
@@ -48,8 +44,7 @@ object Grpc:
     */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
         Fiber.fromFuture(f).map(_.getResult).map:
-            // TODO: Why is this unchecked?
-            case Success(a: A) => a
+            case Result.Success(a: A) => a
             case Result.Error(ex: StatusException) => Abort.fail(ex)
             case Result.Error(ex: StatusRuntimeException) => Abort.fail(StreamNotifier.throwableToStatusException(ex))
             case Result.Error(t) => Abort.panic(t)
