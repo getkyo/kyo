@@ -53,8 +53,8 @@ object Parse:
       * @return
       *   An Aspect that transforms from Const[Text] to Maybe[(Text, C)]
       */
-    def readAspect[A]: Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]] =
-        localReadAspect.asInstanceOf[Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]]]
+    def readAspect[A](using Tag[(Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)])]): Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]] =
+        Aspect.init(using Frame.internal)
 
     /** Attempts to parse input using the provided parsing function
       *
