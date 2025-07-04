@@ -184,7 +184,7 @@ final class Stat(private val registryScope: StatsRegistry.Scope) extends Seriali
         name: String,
         attributes: Attributes = Attributes.empty
     )(v: => A < S)(using Frame): A < (Sync & S) =
-        Stat.traceReceiver.use(internal.Span.trace(_, registryScope.path, name, attributes)(v))
+        Stat.traceReceiver.use(internal.TraceSpan.trace(_, registryScope.path, name, attributes)(v))
 end Stat
 
 object Stat:

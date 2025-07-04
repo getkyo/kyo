@@ -7,124 +7,124 @@ import scala.reflect.ClassTag
 
 /** An efficient, immutable array-backed sequence of elements.
   *
-  * KArray is similar to Scala's built-in IArray (immutable array), but provides optimized methods for common operations and additional
+  * Span is similar to Scala's built-in IArray (immutable array), but provides optimized methods for common operations and additional
   * utility functions. It offers better performance characteristics than standard Scala collections for many use cases while maintaining
-  * immutability semantics. In practice, using KArray is akin to using Array directly but with a richer and safer immutable API.
+  * immutability semantics. In practice, using Span is akin to using Array directly but with a richer and safer immutable API.
   *
-  * KArray is essentially a thin wrapper around arrays, making it ideal for scenarios where you need predictable, array-like performance
-  * with O(1) indexing and iteration. It excels in memory-sensitive contexts due to its minimal overhead.
+  * Span is essentially a thin wrapper around arrays, making it ideal for scenarios where you need predictable, array-like performance with
+  * O(1) indexing and iteration. It excels in memory-sensitive contexts due to its minimal overhead.
   *
-  * A key advantage of KArray over Chunk is that KArray doesn't box primitive types, while Chunk does. This makes KArray more
-  * memory-efficient when working with primitive values like Int, Long, Double, etc.
+  * A key advantage of Span over Chunk is that Span doesn't box primitive types, while Chunk does. This makes Span more memory-efficient
+  * when working with primitive values like Int, Long, Double, etc.
   *
-  * Important: Unlike Chunk, KArray is NOT part of Scala's collection hierarchy. It doesn't extend Seq or any other collection trait, which
+  * Important: Unlike Chunk, Span is NOT part of Scala's collection hierarchy. It doesn't extend Seq or any other collection trait, which
   * means it won't work with methods expecting standard Scala collections. Consider using Chunk instead when you need compatibility with
   * Scala's collection library or when you require efficient structural operations like slicing without copying data.
   *
   * @tparam A
-  *   the type of elements in this KArray
+  *   the type of elements in this Span
   */
-opaque type KArray[A] = Array[A]
+opaque type Span[A] = Array[A]
 
-object KArray:
+object Span:
 
     import internal.*
 
-    /** Creates a new KArray containing the given elements.
+    /** Creates a new Span containing the given elements.
       *
       * @param values
-      *   the elements to include in the KArray
+      *   the elements to include in the Span
       * @return
-      *   a new KArray containing the specified elements
+      *   a new Span containing the specified elements
       */
-    def apply[A: ClassTag](values: A*): KArray[A] =
+    def apply[A: ClassTag](values: A*): Span[A] =
         values match
             case values: ArraySeq[A] => values.unsafeArray.asInstanceOf[Array[A]]
             case values              => values.toArray
 
-    /** Returns an empty KArray.
+    /** Returns an empty Span.
       *
       * @return
-      *   an empty KArray of type A
+      *   an empty Span of type A
       */
-    def empty[A: ClassTag as ct]: KArray[A] =
+    def empty[A: ClassTag as ct]: Span[A] =
         if cachedEmpty.contains(ct) then
             cachedEmpty(ct).asInstanceOf[Array[A]]
         else
             Array.empty
 
-    /** Creates a KArray from an Array without copying the array.
+    /** Creates a Span from an Array without copying the array.
       *
-      * Note: This method does not create a defensive copy of the array, so changes to the original array will be reflected in the KArray.
-      * Use with caution.
+      * Note: This method does not create a defensive copy of the array, so changes to the original array will be reflected in the Span. Use
+      * with caution.
       *
       * @param array
-      *   the Array to create the KArray from
+      *   the Array to create the Span from
       * @return
-      *   a new KArray sharing the same underlying array
+      *   a new Span sharing the same underlying array
       */
-    def fromUnsafe[A](array: Array[A]): KArray[A] = array
+    def fromUnsafe[A](array: Array[A]): Span[A] = array
 
-    /** Creates a KArray from an IArray.
+    /** Creates a Span from an IArray.
       *
       * Since IArray is already immutable, this operation is safe.
       *
       * @param array
-      *   the IArray to create the KArray from
+      *   the IArray to create the Span from
       * @return
-      *   a new KArray containing the elements from the IArray
+      *   a new Span containing the elements from the IArray
       */
-    def from[A](array: IArray[A])(using Discriminator): KArray[A] =
+    def from[A](array: IArray[A])(using Discriminator): Span[A] =
         array.unsafeArray.asInstanceOf[Array[A]]
 
-    /** Creates a KArray from an IterableOnce.
+    /** Creates a Span from an IterableOnce.
       *
       * @param seq
-      *   the IterableOnce to create the KArray from
+      *   the IterableOnce to create the Span from
       * @return
-      *   a new KArray containing the elements from the IterableOnce
+      *   a new Span containing the elements from the IterableOnce
       */
-    def fromUnsafe[A: ClassTag](seq: IterableOnce[A]): KArray[A] =
+    def fromUnsafe[A: ClassTag](seq: IterableOnce[A]): Span[A] =
         seq.iterator.toArray
 
-    /** Creates a KArray from an Array by copying the array.
+    /** Creates a Span from an Array by copying the array.
       *
       * @param array
-      *   the Array to create the KArray from
+      *   the Array to create the Span from
       * @return
-      *   a new KArray containing a copy of the elements from the Array
+      *   a new Span containing a copy of the elements from the Array
       */
-    def from[A: ClassTag](array: Array[A]): KArray[A] =
+    def from[A: ClassTag](array: Array[A]): Span[A] =
         val copy = new Array[A](array.length)
         System.arraycopy(array, 0, copy, 0, array.length)
         copy
     end from
 
-    /** Creates a KArray from an IterableOnce. This method is identical to fromUnsafe for IterableOnce since it always creates a new array.
+    /** Creates a Span from an IterableOnce. This method is identical to fromUnsafe for IterableOnce since it always creates a new array.
       *
       * @param seq
-      *   the IterableOnce to create the KArray from
+      *   the IterableOnce to create the Span from
       * @return
-      *   a new KArray containing the elements from the IterableOnce
+      *   a new Span containing the elements from the IterableOnce
       */
-    def from[A: ClassTag](seq: IterableOnce[A]): KArray[A] =
+    def from[A: ClassTag](seq: IterableOnce[A]): Span[A] =
         seq.iterator.toArray
 
-    extension [A](self: KArray[A])
+    extension [A](self: Span[A])
 
-        /** Returns the number of elements in this KArray.
+        /** Returns the number of elements in this Span.
           *
           * @return
-          *   the number of elements in this KArray
+          *   the number of elements in this Span
           */
         def size: Int = self.length
 
         inline def length: Int = size
 
-        /** Checks if this KArray is empty.
+        /** Checks if this Span is empty.
           *
           * @return
-          *   true if the KArray contains no elements, false otherwise
+          *   true if the Span contains no elements, false otherwise
           */
         def isEmpty: Boolean = size == 0
 
@@ -137,21 +137,21 @@ object KArray:
           */
         inline def apply(idx: Int): A = self(idx)
 
-        /** Checks if this KArray is equal to another KArray.
+        /** Checks if this Span is equal to another Span.
           *
           * @param other
-          *   the KArray to compare with
+          *   the Span to compare with
           * @return
           *   true if the KArrays contain the same elements in the same order, false otherwise
           */
-        inline def is(other: KArray[A])(using CanEqual[A, A]): Boolean =
+        inline def is(other: Span[A])(using CanEqual[A, A]): Boolean =
             val size = self.length
             @tailrec def loop(idx: Int): Boolean =
                 idx == size || (self(idx) == other(idx) && loop(idx + 1))
             loop(0)
         end is
 
-        /** Checks if all elements in this KArray satisfy the given predicate.
+        /** Checks if all elements in this Span satisfy the given predicate.
           *
           * @param f
           *   the predicate to test each element with
@@ -165,7 +165,7 @@ object KArray:
             loop(0)
         end forall
 
-        /** Checks if at least one element in this KArray satisfies the given predicate.
+        /** Checks if at least one element in this Span satisfies the given predicate.
           *
           * @param f
           *   the predicate to test each element with
@@ -179,14 +179,14 @@ object KArray:
             loop(0)
         end exists
 
-        /** Applies a function to each element of this KArray and returns a new KArray with the results.
+        /** Applies a function to each element of this Span and returns a new Span with the results.
           *
           * @param f
           *   the function to apply to each element
           * @return
-          *   a new KArray containing the results of applying the function to each element
+          *   a new Span containing the results of applying the function to each element
           */
-        inline def map[B: ClassTag](inline f: A => B): KArray[B] =
+        inline def map[B: ClassTag](inline f: A => B): Span[B] =
             val size = self.length
             val r    = new Array[B](self.length)
             @tailrec def loop(idx: Int): Unit =
@@ -197,12 +197,12 @@ object KArray:
             r
         end map
 
-        /** Converts this KArray to a String with the given separator between elements.
+        /** Converts this Span to a String with the given separator between elements.
           *
           * @param separator
           *   the string to insert between each element
           * @return
-          *   a string representation of this KArray
+          *   a string representation of this Span
           */
         def mkString(separator: String): String =
             val r = new java.lang.StringBuilder
@@ -219,7 +219,7 @@ object KArray:
         /** Returns a copy of the underlying array.
           *
           * @return
-          *   a new array containing all elements of this KArray
+          *   a new array containing all elements of this Span
           */
         def toArray(using ClassTag[A]): Array[A] =
             val copy = new Array[A](self.length)
@@ -229,11 +229,11 @@ object KArray:
 
         /** Returns the underlying array without copying.
           *
-          * Note: This method does not create a defensive copy of the array, so changes to the returned array will be reflected in the
-          * KArray. Use with caution.
+          * Note: This method does not create a defensive copy of the array, so changes to the returned array will be reflected in the Span.
+          * Use with caution.
           *
           * @return
-          *   the underlying array of this KArray
+          *   the underlying array of this Span
           */
         def toArrayUnsafe: Array[A] = self
 
@@ -244,9 +244,9 @@ object KArray:
       * Both KArrays must have the same size. This method will throw an exception if the KArrays have different lengths.
       *
       * @param a
-      *   the first KArray
+      *   the first Span
       * @param b
-      *   the second KArray
+      *   the second Span
       * @param f
       *   the predicate to test each pair of elements with
       * @return
@@ -254,7 +254,7 @@ object KArray:
       * @throws IllegalArgumentException
       *   if the KArrays have different lengths
       */
-    inline def existsZip[A, B](a: KArray[A], b: KArray[B])(inline f: (A, B) => Boolean) =
+    inline def existsZip[A, B](a: Span[A], b: Span[B])(inline f: (A, B) => Boolean) =
         val size = a.length
         require(size == b.length)
         @tailrec def loop(idx: Int): Boolean =
@@ -267,11 +267,11 @@ object KArray:
       * All KArrays must have the same size. This method will throw an exception if the KArrays have different lengths.
       *
       * @param a
-      *   the first KArray
+      *   the first Span
       * @param b
-      *   the second KArray
+      *   the second Span
       * @param c
-      *   the third KArray
+      *   the third Span
       * @param f
       *   the predicate to test each triplet of elements with
       * @return
@@ -279,7 +279,7 @@ object KArray:
       * @throws IllegalArgumentException
       *   if the KArrays have different lengths
       */
-    inline def existsZip[A, B, C](a: KArray[A], b: KArray[B], c: KArray[C])(inline f: (A, B, C) => Boolean) =
+    inline def existsZip[A, B, C](a: Span[A], b: Span[B], c: Span[C])(inline f: (A, B, C) => Boolean) =
         val size = a.length
         require(size == b.length)
         @tailrec def loop(idx: Int): Boolean =
@@ -292,9 +292,9 @@ object KArray:
       * Both KArrays must have the same size. This method will throw an exception if the KArrays have different lengths.
       *
       * @param a
-      *   the first KArray
+      *   the first Span
       * @param b
-      *   the second KArray
+      *   the second Span
       * @param f
       *   the predicate to test each pair of elements with
       * @return
@@ -302,7 +302,7 @@ object KArray:
       * @throws IllegalArgumentException
       *   if the KArrays have different lengths
       */
-    inline def forallZip[A, B](a: KArray[A], b: KArray[B])(inline f: (A, B) => Boolean) =
+    inline def forallZip[A, B](a: Span[A], b: Span[B])(inline f: (A, B) => Boolean) =
         val size = a.length
         require(size == b.length)
         @tailrec def loop(idx: Int): Boolean =
@@ -315,11 +315,11 @@ object KArray:
       * All KArrays must have the same size. This method will throw an exception if the KArrays have different lengths.
       *
       * @param a
-      *   the first KArray
+      *   the first Span
       * @param b
-      *   the second KArray
+      *   the second Span
       * @param c
-      *   the third KArray
+      *   the third Span
       * @param f
       *   the predicate to test each triplet of elements with
       * @return
@@ -327,7 +327,7 @@ object KArray:
       * @throws IllegalArgumentException
       *   if the KArrays have different lengths
       */
-    inline def forallZip[A, B, C](a: KArray[A], b: KArray[B], c: KArray[C])(inline f: (A, B, C) => Boolean) =
+    inline def forallZip[A, B, C](a: Span[A], b: Span[B], c: Span[C])(inline f: (A, B, C) => Boolean) =
         val size = a.length
         require(size == b.length)
         @tailrec def loop(idx: Int): Boolean =
@@ -349,4 +349,4 @@ object KArray:
             )
     end internal
 
-end KArray
+end Span

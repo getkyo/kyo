@@ -11,9 +11,9 @@ trait TraceReceiver extends Serializable:
     def startSpan(
         scope: List[String],
         name: String,
-        parent: Maybe[Span] = Maybe.empty,
+        parent: Maybe[TraceSpan] = Maybe.empty,
         attributes: Attributes = Attributes.empty
-    )(using Frame): Span < Sync
+    )(using Frame): TraceSpan < Sync
 end TraceReceiver
 
 object TraceReceiver:
@@ -23,10 +23,10 @@ object TraceReceiver:
             def startSpan(
                 scope: List[String],
                 name: String,
-                parent: Maybe[Span] = Maybe.empty,
+                parent: Maybe[TraceSpan] = Maybe.empty,
                 attributes: Attributes = Attributes.empty
             )(using Frame) =
-                Span.noop
+                TraceSpan.noop
 
     val get: TraceReceiver =
         ServiceLoader.load(classOf[TraceReceiver]).iterator().asScala.toList match
@@ -42,9 +42,9 @@ object TraceReceiver:
             def startSpan(
                 scope: List[String],
                 name: String,
-                parent: Maybe[Span] = Maybe.empty,
+                parent: Maybe[TraceSpan] = Maybe.empty,
                 a: Attributes = Attributes.empty
             )(using Frame) =
                 Kyo.foreach(receivers)(_.startSpan(scope, name, Maybe.empty, a))
-                    .map(Span.all)
+                    .map(TraceSpan.all)
 end TraceReceiver
