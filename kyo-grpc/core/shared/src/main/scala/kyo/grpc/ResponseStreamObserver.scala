@@ -5,7 +5,7 @@ import kyo.*
 import kyo.Result.*
 
 /** An 'outbound', client-side observer that receives a stream of responses from the server.
-  * 
+  *
   * It forwards responses to the `responseChannel` for consumption by the client.
   *
   * @param responseChannel

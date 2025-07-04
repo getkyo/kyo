@@ -5,7 +5,7 @@ import cats.effect.IO.given
 import cats.effect.IO as CIO
 import fs2.grpc.syntax.all.*
 import io.grpc
-import io.grpc.{Grpc => _, *}
+import io.grpc.{Grpc as _, *}
 import io.grpc.StatusException
 import io.grpc.netty.shaded.io.grpc.netty.*
 import java.net.ServerSocket

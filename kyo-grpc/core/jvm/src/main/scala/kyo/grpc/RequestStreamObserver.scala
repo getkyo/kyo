@@ -7,7 +7,7 @@ import kyo.*
 import kyo.Result.*
 
 private[kyo] class RequestStreamObserver[Request](
-    requestChannel: StreamChannel[Request, GrpcFailure],
+    requestChannel: StreamChannel[Request, GrpcFailure]
 )(using Frame, AllowUnsafe) extends StreamObserver[Request]:
 
     override def onNext(request: Request): Unit =
@@ -35,43 +35,43 @@ end RequestStreamObserver
 private[kyo] object RequestStreamObserver:
 
     /** An 'inbound', server-side observer that receives a stream of requests and sends a single response.
-     *
-     * This creates a stream from the `requestChannel` and provides that to the function. Requests are forwarded to the channel.
-     * Once it receives the response it forwards it on to the `responseObserver`.
-     *
-     * @param f
-     * a function that takes a stream of requests and returns a single response
-     * @param requestChannel
-     * a channel for receiving requests
-     * @param responseObserver
-     * the observer that will receive the response
-     * @tparam Request
-     * the type of the request messages
-     * @tparam Response
-     * the type of the response message
-     */
+      *
+      * This creates a stream from the `requestChannel` and provides that to the function. Requests are forwarded to the channel. Once it
+      * receives the response it forwards it on to the `responseObserver`.
+      *
+      * @param f
+      *   a function that takes a stream of requests and returns a single response
+      * @param requestChannel
+      *   a channel for receiving requests
+      * @param responseObserver
+      *   the observer that will receive the response
+      * @tparam Request
+      *   the type of the request messages
+      * @tparam Response
+      *   the type of the response message
+      */
 
     /** Initializes a [[RequestStreamObserver]].
-     *
-     * When the pending [[Sync]] is run, it will start the background processing of requests and sending of the response. It will complete
-     * when the response has been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while
-     * processing the requests or sending the response and the `responseObserver` will receive the error.
-     *
-     * @param f
-     *   the function that processes the stream of requests and produces a single response
-     * @param responseObserver
-     *   the observer that will receive the response
-     * @tparam Request
-     *   the type of the request messages
-     * @tparam Response
-     *   the type of the response message
-     * @return
-     *   an instance of `RequestStreamObserver` pending `Sync`
-     */
+      *
+      * When the pending [[Sync]] is run, it will start the background processing of requests and sending of the response. It will complete
+      * when the response has been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while
+      * processing the requests or sending the response and the `responseObserver` will receive the error.
+      *
+      * @param f
+      *   the function that processes the stream of requests and produces a single response
+      * @param responseObserver
+      *   the observer that will receive the response
+      * @tparam Request
+      *   the type of the request messages
+      * @tparam Response
+      *   the type of the response message
+      * @return
+      *   an instance of `RequestStreamObserver` pending `Sync`
+      */
     def one[Request, Response](
-                                   f: Stream[Request, Grpc] => Response < Grpc,
-                                   responseObserver: ServerCallStreamObserver[Response]
-                               )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request] < Sync =
+        f: Stream[Request, Grpc] => Response < Grpc,
+        responseObserver: ServerCallStreamObserver[Response]
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request] < Sync =
         for
             requestChannel <- StreamChannel.init[Request, GrpcFailure]
             response = f(requestChannel.stream)
@@ -84,43 +84,43 @@ private[kyo] object RequestStreamObserver:
     end one
 
     /** An 'inbound', server-side observer that receives a stream of requests and sends a stream of responses.
-     *
-     * This creates a stream from the `requestChannel` and provides that to the function. Requests are forwarded to the channel.
-     * Each response is then forwarded on to the `responseObserver`.
-     *
-     * @param f
-     * a function that takes a stream of requests and returns a stream of responses
-     * @param requestChannel
-     * a channel for receiving requests
-     * @param responseObserver
-     * the observer that will receive the responses
-     * @tparam Request
-     * the type of the request messages
-     * @tparam Response
-     * the type of the response messages
-     */
+      *
+      * This creates a stream from the `requestChannel` and provides that to the function. Requests are forwarded to the channel. Each
+      * response is then forwarded on to the `responseObserver`.
+      *
+      * @param f
+      *   a function that takes a stream of requests and returns a stream of responses
+      * @param requestChannel
+      *   a channel for receiving requests
+      * @param responseObserver
+      *   the observer that will receive the responses
+      * @tparam Request
+      *   the type of the request messages
+      * @tparam Response
+      *   the type of the response messages
+      */
 
     /** Initializes a [[RequestStreamObserver]].
-     *
-     * When the pending [[Sync]] is run, it will start the background processing of requests and sending of responses. It will complete when
-     * all responses have been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while processing
-     * the requests or sending the responses and the `responseObserver` will receive the error.
-     *
-     * @param f
-     *   the function that processes the stream of requests and produces a stream of responses
-     * @param responseObserver
-     *   the observer that will receive the responses
-     * @tparam Request
-     *   the type of the request messages
-     * @tparam Response
-     *   the type of the response messages
-     * @return
-     *   an instance of `RequestStreamObserver` pending `Sync`
-     */
+      *
+      * When the pending [[Sync]] is run, it will start the background processing of requests and sending of responses. It will complete
+      * when all responses have been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while
+      * processing the requests or sending the responses and the `responseObserver` will receive the error.
+      *
+      * @param f
+      *   the function that processes the stream of requests and produces a stream of responses
+      * @param responseObserver
+      *   the observer that will receive the responses
+      * @tparam Request
+      *   the type of the request messages
+      * @tparam Response
+      *   the type of the response messages
+      * @return
+      *   an instance of `RequestStreamObserver` pending `Sync`
+      */
     def many[Request, Response](
-                                   f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc,
-                                   responseObserver: ServerCallStreamObserver[Response]
-                               )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): RequestStreamObserver[Request] < Sync =
+        f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc,
+        responseObserver: ServerCallStreamObserver[Response]
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): RequestStreamObserver[Request] < Sync =
         for
             requestChannel <- StreamChannel.init[Request, GrpcFailure]
             responses = Stream.unwrap(f(requestChannel.stream))

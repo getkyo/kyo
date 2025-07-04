@@ -22,7 +22,9 @@ import kyo.kernel.Loop.Outcome
   * @param emitTag
   *   implicit tag for emitting chunks of values
   */
-private[kyo] class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initFrame: Frame)(using emitTag: Tag[Emit[Chunk[A]]]):
+private[kyo] class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[Maybe[E]], initFrame: Frame)(using
+    emitTag: Tag[Emit[Chunk[A]]]
+):
 
     /** Puts an element into the channel, asynchronously blocking if necessary.
       *
@@ -90,7 +92,7 @@ private[kyo] class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[May
         channel.closeAwaitEmptyFiber.unit
 
     /** Closes the channel immediately and discards any elements or error that have yet to be consumed.
-     */
+      */
     def close(using Frame): Unit < Sync =
         channel.close.unit
 
@@ -104,7 +106,7 @@ private[kyo] class StreamChannel[A, E](channel: Channel[A], error: AtomicRef[May
       */
     def closed(using Frame): Boolean < Sync =
         channel.closed.map: isClosed =>
-          if !isClosed then false else error.get.map(_.isEmpty)
+            if !isClosed then false else error.get.map(_.isEmpty)
 
     /** Creates a stream from this channel.
       *

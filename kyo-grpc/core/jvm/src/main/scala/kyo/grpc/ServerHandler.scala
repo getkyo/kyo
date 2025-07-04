@@ -33,7 +33,7 @@ object ServerHandler:
       */
     def unary[Request, Response](f: Request => Response < Grpc)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncUnaryCall { (request, responseObserver) =>
-            val response = f(request)
+            val response  = f(request)
             val completed = StreamNotifier.notifyObserver(response, responseObserver)
             KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
         }
@@ -100,7 +100,11 @@ object ServerHandler:
       * @return
       *   a gRPC [[ServerCallHandler]] for bidirectional streaming calls
       */
-    def bidiStreaming[Request, Response](f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc)(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): ServerCallHandler[Request, Response] =
+    def bidiStreaming[Request, Response](f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc)(using
+        Frame,
+        Tag[Emit[Chunk[Request]]],
+        Tag[Emit[Chunk[Response]]]
+    ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncBidiStreamingCall(responseObserver =>
             val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
             val requestObserver        = RequestStreamObserver.many(f, serverResponseObserver)

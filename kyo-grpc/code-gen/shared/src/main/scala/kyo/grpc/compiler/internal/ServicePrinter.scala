@@ -128,7 +128,7 @@ private[compiler] case class ServicePrinter(
             .addParameterList( //
                 "host" :- Types.string,
                 "port" :- Types.int,
-                "timeout" :- Types.duration := s"${Types.duration}.fromUnits(30, ${Types.duration}.Units.Millis)",
+                "timeout" :- Types.duration    := s"${Types.duration}.fromUnits(30, ${Types.duration}.Units.Millis)",
                 "options" :- Types.callOptions := (Types.callOptions + ".DEFAULT")
             )
             .addParameterList( //

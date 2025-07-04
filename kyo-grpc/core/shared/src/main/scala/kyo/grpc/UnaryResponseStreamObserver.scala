@@ -8,7 +8,7 @@ import kyo.Result.*
 import kyo.grpc.*
 
 /** A client-side observer that receives a single response from the server.
-  * 
+  *
   * It completes a [[Promise]] with the received response or error for consumption by the client.
   *
   * @param promise

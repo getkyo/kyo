@@ -52,20 +52,11 @@ object Server:
     /** Waits indefinitely for an interrupt signal (SIGINT or SIGTERM).
       *
       * Use this to keep the server running until an interrupt signal is received.
-      * 
-      * @example {{{
-      *   for
-      *     _ <- Console.println(s"Server is running on port $port. Press Ctrl-C to stop.")
-      *     server <- Server.start(port)(_.addService(GreeterService), { server =>
-      *       for
-      *         _ <- Console.print("Shutting down...")
-      *         _ <- Server.shutdown(server)
-      *         _ <- Console.println("Done.")
-      *       yield ()
-      *     })
-      *     _ <- Server.waitForInterrupt
-      *   yield ()
-      * }}}
+      *
+      * @example
+      *   {{{ for _ <- Console.println(s"Server is running on port $port. Press Ctrl-C to stop.") server <-
+      *   Server.start(port)(_.addService(GreeterService), { server => for _ <- Console.print("Shutting down...") _ <-
+      *   Server.shutdown(server) _ <- Console.println("Done.") yield () }) _ <- Server.waitForInterrupt yield () }}}
       *
       * @return
       *   [[Unit]] pending [[Async]] that completes when an interrupt signal is received
