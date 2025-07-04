@@ -16,6 +16,8 @@ addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.1.4")
 
 addSbtPlugin("com.timushev.sbt" % "sbt-updates" % "0.6.3")
 
+addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.11.1")
+
 // addSbtPlugin("com.gradle" % "sbt-develocity" % "1.0.1")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
