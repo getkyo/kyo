@@ -69,7 +69,11 @@ object STM:
       */
     def run[E: ConcreteTag, A, S](
         using Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
-    )(v: A < (STM & Abort[E] & Async & S))(using frame: Frame): A < (S & Async & Abort[E | FailedTransaction]) =
+    )(v: A < (STM & Abort[E] & Async & S))(using
+        Frame,
+        Tag[Abort[E]],
+        Tag[Abort[E | FailedTransaction]]
+    ): A < (S & Async & Abort[E | FailedTransaction]) =
         run(defaultRetrySchedule)(v)
 
     /** Executes a transactional computation with state isolation and the a custom retry schedule.
@@ -84,14 +88,20 @@ object STM:
     def run[E: ConcreteTag, A, S](
         using isolate: Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
     )(retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async & S))(
-        using frame: Frame
+        using
+        Frame,
+        Tag[Abort[E | FailedTransaction]],
+        Tag[Abort[E]]
     ): A < (S & Async & Abort[E | FailedTransaction]) =
         isolate.capture { st =>
             isolate.restore(run(retrySchedule)(isolate.isolate(st, v)))
         }
 
     private def run[E: ConcreteTag, A](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
-        using Frame
+        using
+        Frame,
+        Tag[Abort[E]],
+        Tag[Abort[E | FailedTransaction]]
     ): A < (Async & Abort[E | FailedTransaction]) =
         TID.useIO {
             case -1L =>

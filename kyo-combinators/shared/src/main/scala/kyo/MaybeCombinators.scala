@@ -39,14 +39,14 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
         yield res match
             case Result.Failure(_) => Abort.catching(Absent.get)
             case Result.Success(a) => Abort.get(Result.succeed(a))
-            case res: Result.Panic => Abort.get(res)
+            case res: Result.Panic => Abort.error(res)
 
     /** Handles the Abort[Absent] effect translating it to an Abort[E] effect.
       *
       * @return
       *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Abort[E]
       */
-    def absentToFailure(failure: => E)(using Frame): A < (S & Abort[E]) =
+    def absentToFailure(failure: => E)(using Frame, Tag[Abort[E]]): A < (S & Abort[E]) =
         for
             res <- effect.forAbort[Absent].result
         yield res match

@@ -127,7 +127,7 @@ object Fiber:
           * @return
           *   The result of the Fiber
           */
-        def get(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
+        def get(using reduce: Reducible[Abort[E]], frame: Frame, tag: Tag[Abort[E]]): A < (reduce.SReduced & Async) =
             Async.get(self.asPromise)
 
         /** Uses the result of the Fiber to compute a new value.
@@ -137,7 +137,11 @@ object Fiber:
           * @return
           *   The result of applying the function to the Fiber's result
           */
-        def use[B, S](f: A => B < S)(using reduce: Reducible[Abort[E]], frame: Frame): B < (reduce.SReduced & Async & S) =
+        def use[B, S](f: A => B < S)(using
+            reduce: Reducible[Abort[E]],
+            frame: Frame,
+            tag: Tag[Abort[E]]
+        ): B < (reduce.SReduced & Async & S) =
             Async.use(self.asPromise)(f)
 
         /** Gets the result of the Fiber as a Result.

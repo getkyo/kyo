@@ -51,7 +51,7 @@ object Routes:
       */
     def add[A: Tag, I, E: ConcreteTag, O](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Async & Env[A] & Abort[E])
-    )(using Frame): Unit < Routes =
+    )(using Frame, Tag[Abort[E]]): Unit < Routes =
         Emit.value(
             Route(
                 e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic((a: A) =>
@@ -78,7 +78,7 @@ object Routes:
         e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[A, I, E, O, Any]
     )(
         f: I => O < (Async & Env[A] & Abort[E])
-    )(using Frame): Unit < Routes =
+    )(using Frame, Tag[Abort[E]]): Unit < Routes =
         add(e(endpoint))(f)
 
     /** Collects multiple route initializations into a single Routes effect.
