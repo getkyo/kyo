@@ -84,7 +84,7 @@ object StreamCoreExtensions:
             using
             i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Abort[E] & Async],
-            t1: SafeClassTag[E],
+            t1: ConcreteTag[E],
             t2: Tag[Emit[Chunk[A]]],
             fr: Frame
         ): Unit < (Async & S & Resource) =
@@ -125,7 +125,7 @@ object StreamCoreExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        def collectAll[V, E: SafeClassTag, S](
+        def collectAll[V, E: ConcreteTag, S](
             streams: Seq[Stream[V, Abort[E] & S & Async]],
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
@@ -197,7 +197,7 @@ object StreamCoreExtensions:
             frame: Frame
         )[V](v: => Iterator[V], chunkSize: Int = Stream.DefaultChunkSize)(using
             tag: Tag[Emit[Chunk[V]]],
-            ct: SafeClassTag[E],
+            ct: ConcreteTag[E],
             @implicitNotFound(
                 "Missing *explicit* type param on `fromIteratorCatching[E = SomeException](iterator, chunkSize)`." +
                     "\n - Cannot catch Exceptions as `Failure[E]` using `E = Nothing`, they are turned into `Panic`." +
@@ -242,7 +242,7 @@ object StreamCoreExtensions:
           * @param bufferSize
           *   Size of the buffer that source streams will write to and outputs stream will read from
           */
-        def collectAllHalting[V, E: SafeClassTag, S](
+        def collectAllHalting[V, E: ConcreteTag, S](
             streams: Seq[Stream[V, S & Abort[E] & Async]],
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
@@ -284,7 +284,7 @@ object StreamCoreExtensions:
             using
             Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
-            SafeClassTag[E],
+            ConcreteTag[E],
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Abort[E] & S & Async] =
@@ -306,7 +306,7 @@ object StreamCoreExtensions:
             using
             Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
-            SafeClassTag[E],
+            ConcreteTag[E],
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Abort[E] & S & S2 & Async] =
@@ -328,7 +328,7 @@ object StreamCoreExtensions:
             using
             Isolate.Contextual[S, Sync],
             Isolate.Stateful[S, Abort[E] & Async],
-            SafeClassTag[E],
+            ConcreteTag[E],
             Tag[Emit[Chunk[V]]],
             Frame
         ): Stream[V, Abort[E] & S & Async] =
@@ -361,7 +361,7 @@ object StreamCoreExtensions:
             using
             i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Stateful[S, Abort[E] & Async],
-            sct: SafeClassTag[E],
+            sct: ConcreteTag[E],
             t: Tag[Emit[Chunk[V]]],
             f: Frame
         ): Stream[V, Abort[E] & S & Async] =
@@ -383,7 +383,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             given CanEqual[Boolean | Chunk[V2], Boolean | Chunk[V2]] = CanEqual.derived
@@ -451,7 +451,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
@@ -473,7 +473,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
@@ -533,7 +533,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
@@ -557,7 +557,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
@@ -614,7 +614,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
@@ -639,7 +639,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
@@ -696,7 +696,7 @@ object StreamCoreExtensions:
             t3: Tag[V2],
             i1: Isolate.Contextual[S & S2, Sync],
             i2: Isolate.Stateful[S & S2, Abort[E] & Async],
-            ev: SafeClassTag[E | Closed],
+            ev: ConcreteTag[E | Closed],
             frame: Frame
         ): Stream[V2, Abort[E] & Async & S & S2] =
             mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i1, i2, ev, frame)
@@ -716,7 +716,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): (Stream[V, Abort[E] & Async], Stream[V, Abort[E] & Resource & Async]) < (Resource & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
@@ -735,7 +735,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): (
             Stream[V, Abort[E] & Async],
@@ -759,7 +759,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): (
             Stream[V, Abort[E] & Async],
@@ -785,7 +785,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): (
             Stream[V, Abort[E] & Async],
@@ -820,7 +820,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): Chunk[Stream[V, Abort[E] & Resource & Async]] < (Resource & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
@@ -853,7 +853,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): Stream[V, Abort[E] & Async & Resource] < (Resource & Async & S) =
             broadcastDynamic(bufferSize).map: streamHub =>
@@ -880,7 +880,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): StreamHub[V, E] < (Resource & Async & S) =
             Latch.initWith(1): latch =>
@@ -907,7 +907,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): A < (Resource & Async & S & S1) =
             StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
@@ -932,7 +932,7 @@ object StreamCoreExtensions:
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
-            t4: SafeClassTag[E],
+            t4: ConcreteTag[E],
             fr: Frame
         ): A < (Resource & Async & S & S1) =
             StreamHubImpl.init[V, E](defaultAsyncStreamBufferSize).map: streamHub =>
@@ -957,7 +957,7 @@ object StreamCoreExtensions:
             t2: Tag[Emit[Chunk[Chunk[V]]]],
             i1: Isolate.Contextual[S, Sync],
             i2: Isolate.Contextual[S, Abort[E] & Async],
-            ct: SafeClassTag[Closed | E],
+            ct: ConcreteTag[Closed | E],
             fr: Frame
         ): Stream[Chunk[V], S & Abort[E] & Async] =
             import Event.*

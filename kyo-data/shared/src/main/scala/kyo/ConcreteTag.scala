@@ -6,8 +6,8 @@ import scala.quoted.*
 
 /** An alternative to ClassTag that supports union and intersection types.
   *
-  * SafeClassTag provides runtime type information and type checking capabilities for both simple and complex types, including unions and
-  * intersections. Unlike ClassTag, SafeClassTag can represent and check against union and intersection types, making it safer for complex
+  * ConcreteTag provides runtime type information and type checking capabilities for both simple and complex types, including unions and
+  * intersections. Unlike ClassTag, ConcreteTag can represent and check against union and intersection types, making it safer for complex
   * type scenarios. It also properly handles special types like AnyVal and Nothing instead of falling back to java.lang.Object like
   * ClassTag.
   *
@@ -16,18 +16,18 @@ import scala.quoted.*
   *   - Cannot represent Null type
   *
   * @tparam A
-  *   The type for which this SafeClassTag is defined
+  *   The type for which this ConcreteTag is defined
   */
-opaque type SafeClassTag[A] >: SafeClassTag.Element = Class[?] | SafeClassTag.Element
+opaque type ConcreteTag[A] >: ConcreteTag.Element = Class[?] | ConcreteTag.Element
 
-object SafeClassTag:
-    inline given [A, B]: CanEqual[SafeClassTag[A], SafeClassTag[B]] = CanEqual.derived
+object ConcreteTag:
+    inline given [A, B]: CanEqual[ConcreteTag[A], ConcreteTag[B]] = CanEqual.derived
 
     sealed trait Element
 
-    case class Union(elements: Set[SafeClassTag[Any]])        extends Element
-    case class Intersection(elements: Set[SafeClassTag[Any]]) extends Element
-    case class LiteralTag(value: Any)                         extends Element
+    case class Union(elements: Set[ConcreteTag[Any]])        extends Element
+    case class Intersection(elements: Set[ConcreteTag[Any]]) extends Element
+    case class LiteralTag(value: Any)                        extends Element
 
     sealed trait Primitive extends Element
     case object IntTag     extends Primitive
@@ -42,11 +42,11 @@ object SafeClassTag:
     case object AnyValTag  extends Element
     case object NothingTag extends Element
 
-    inline given apply[A]: SafeClassTag[A] = ${ SafeClassTagMacro.derive[A] }
+    inline given apply[A]: ConcreteTag[A] = ${ SafeClassTagMacro.derive[A] }
 
-    extension [A](self: SafeClassTag[A])
+    extension [A](self: ConcreteTag[A])
 
-        /** Checks if the given value is accepted by this SafeClassTag
+        /** Checks if the given value is accepted by this ConcreteTag
           *
           * @param value
           *   The value to check
@@ -95,14 +95,14 @@ object SafeClassTag:
         def unapply(value: Any): Maybe.Ops[A] =
             if accepts(value) then Maybe(value.asInstanceOf[A]) else Maybe.empty
 
-        /** Combines this SafeClassTag with another to form an intersection type
+        /** Combines this ConcreteTag with another to form an intersection type
           *
           * @param that
-          *   The SafeClassTag to intersect with
+          *   The ConcreteTag to intersect with
           * @return
-          *   A new SafeClassTag representing the intersection of this and that
+          *   A new ConcreteTag representing the intersection of this and that
           */
-        infix def &[B](that: SafeClassTag[B]): SafeClassTag[A & B] =
+        infix def &[B](that: ConcreteTag[B]): ConcreteTag[A & B] =
             self match
                 case Intersection(e1) => that match
                         case Intersection(e2) => Intersection(e1 ++ e2)
@@ -111,14 +111,14 @@ object SafeClassTag:
                         case Intersection(e2) => Intersection(e2 + self)
                         case _                => Intersection(Set(self, that))
 
-        /** Combines this SafeClassTag with another to form a union type
+        /** Combines this ConcreteTag with another to form a union type
           *
           * @param that
-          *   The SafeClassTag to union with
+          *   The ConcreteTag to union with
           * @return
-          *   A new SafeClassTag representing the union of this and that
+          *   A new ConcreteTag representing the union of this and that
           */
-        infix def |[B](that: SafeClassTag[B]): SafeClassTag[A | B] =
+        infix def |[B](that: ConcreteTag[B]): ConcreteTag[A | B] =
             self match
                 case Union(e1) => that match
                         case Union(e2) => Union(e1 ++ e2)
@@ -127,14 +127,14 @@ object SafeClassTag:
                         case Union(e2) => Union(e2 + self)
                         case _         => Union(Set(self, that))
 
-        /** Checks if this SafeClassTag is a subtype of another SafeClassTag
+        /** Checks if this ConcreteTag is a subtype of another ConcreteTag
           *
           * @param that
-          *   The SafeClassTag to check against
+          *   The ConcreteTag to check against
           * @return
           *   true if this is a subtype of that, false otherwise
           */
-        infix def <:<[B](that: SafeClassTag[B]): Boolean =
+        infix def <:<[B](that: ConcreteTag[B]): Boolean =
             given CanEqual[Any, Any] = CanEqual.derived
             self match
                 case NothingTag             => true
@@ -161,13 +161,13 @@ object SafeClassTag:
             end match
         end <:<
 
-        /** Returns a string representation of this SafeClassTag
+        /** Returns a string representation of this ConcreteTag
           *
           * @return
-          *   A string describing the structure of this SafeClassTag
+          *   A string describing the structure of this ConcreteTag
           */
         def show: String =
-            def showInner(tag: SafeClassTag[Any]): String =
+            def showInner(tag: ConcreteTag[Any]): String =
                 given CanEqual[Any, Any] = CanEqual.derived
                 tag match
                     case Union(elements)        => s"(${elements.map(showInner).mkString(" | ")})"
@@ -188,8 +188,8 @@ object SafeClassTag:
                 end match
             end showInner
 
-            s"SafeClassTag[${showInner(self)}]"
+            s"ConcreteTag[${showInner(self)}]"
         end show
     end extension
 
-end SafeClassTag
+end ConcreteTag

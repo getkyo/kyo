@@ -194,7 +194,7 @@ object Abort:
         continue: Result[E, A] => B < S2
     )(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         reduce: Reducible[Abort[ER]]
     ): B < (S & reduce.SReduced & S2) =
         reduce {
@@ -217,7 +217,7 @@ object Abort:
                             input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
                 handle = [C] => (input, _) => input,
                 recover =
-                    case ct(fail) if ct <:< SafeClassTag[Throwable] =>
+                    case ct(fail) if ct <:< ConcreteTag[Throwable] =>
                         continue(Result.Failure(fail))
                     case fail =>
                         continue(Result.Panic(fail)),
@@ -242,7 +242,7 @@ object Abort:
         using Frame
     )[A, S, ER](v: => A < (Abort[E | ER] & S))(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         reduce: Reducible[Abort[ER]]
     ): Result[E, A] < (S & reduce.SReduced) =
         runWith[E](v)(identity)
@@ -263,7 +263,7 @@ object Abort:
     def runPartial[E](
         using Frame
     )[A, S, ER](v: => A < (Abort[E | ER] & S))(
-        using ct: SafeClassTag[E]
+        using ct: ConcreteTag[E]
     ): Result.Partial[E, A] < (S & Abort[ER]) =
         Abort.runWith[E](v):
             case panic: Panic                    => Abort.error(panic)
@@ -284,7 +284,7 @@ object Abort:
       */
     def runPartialOrThrow[E, A, S](v: => A < (Abort[E] & S))(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         frame: Frame
     ): Result.Partial[E, A] < S =
         Abort.runWith[E](v):
@@ -307,7 +307,7 @@ object Abort:
         using Frame
     )[A, B, S, ER](onFail: E => B < S)(v: => A < (Abort[E | ER] & S))(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         reduce: Reducible[Abort[ER]]
     ): (A | B) < (S & reduce.SReduced & Abort[Nothing]) =
         runWith[E](v):
@@ -333,7 +333,7 @@ object Abort:
         using Frame
     )[A, B, S, ER](onFail: E => B < S, onPanic: Throwable => B < S)(v: => A < (Abort[E | ER] & S))(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         reduce: Reducible[Abort[ER]]
     ): (A | B) < (S & reduce.SReduced) =
         runWith[E](v):
@@ -354,7 +354,7 @@ object Abort:
     def recoverOrThrow[A, E, B, S](onFail: E => B < S)(v: => A < (Abort[E] & S))(
         using
         frame: Frame,
-        ct: SafeClassTag[E]
+        ct: ConcreteTag[E]
     ): (A | B) < S =
         runWith[E](v):
             case Success(a) => a
@@ -377,7 +377,7 @@ object Abort:
         using Frame
     )[A, B, S, ER](onError: Error[E] => B < S)(v: => A < (Abort[E | ER] & S))(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         reduce: Reducible[Abort[ER]]
     ): (A | B) < (S & reduce.SReduced & Abort[Nothing]) =
         runWith[E](v)(_.foldError(identity, onError))
@@ -401,7 +401,7 @@ object Abort:
     )[A, B, S, ER](
         onSuccess: A => B < S,
         onFail: E => B < S
-    )(v: => A < (Abort[E | ER] & S))(using ct: SafeClassTag[E]): B < (S & Abort[ER]) =
+    )(v: => A < (Abort[E | ER] & S))(using ct: ConcreteTag[E]): B < (S & Abort[ER]) =
         runWith[E](v):
             case Success(a)   => onSuccess(a)
             case Failure(e)   => onFail(e)
@@ -430,7 +430,7 @@ object Abort:
         onPanic: Throwable => B < S
     )(v: => A < (Abort[E | ER] & S))(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         reduce: Reducible[Abort[ER]]
     ): B < (S & reduce.SReduced) =
         runWith[E](v):
@@ -455,7 +455,7 @@ object Abort:
     def foldOrThrow[A, B, E, S](onSuccess: A => B < S, onFail: E => B < S)(v: => A < (Abort[E] & S))(
         using
         frame: Frame,
-        ct: SafeClassTag[E]
+        ct: ConcreteTag[E]
     ): B < S =
         runWith[E](v):
             case Success(a) => onSuccess(a)
@@ -483,7 +483,7 @@ object Abort:
         onError: Error[E] => B < S
     )(v: => A < (Abort[E | ER] & S))(
         using
-        ct: SafeClassTag[E],
+        ct: ConcreteTag[E],
         reduce: Reducible[Abort[ER]]
     ): B < (S & reduce.SReduced) =
         runWith[E](v)(_.foldError(onSuccess, onError))
@@ -501,7 +501,7 @@ object Abort:
       */
     def catching[E](
         using Frame
-    )[A, S](v: => A < S)(using ct: SafeClassTag[E]): A < (Abort[E] & S) =
+    )[A, S](v: => A < S)(using ct: ConcreteTag[E]): A < (Abort[E] & S) =
         Effect.catching(v) {
             case ct(ex) => Abort.fail(ex)
             case ex     => Abort.panic(ex)
@@ -521,7 +521,7 @@ object Abort:
     def catching[E](
         using Frame
     )[A, S, E1](f: E => E1)(v: => A < S)(
-        using ct: SafeClassTag[E]
+        using ct: ConcreteTag[E]
     ): A < (Abort[E1] & S) =
         Effect.catching(v) {
             case ct(ex) => Abort.fail(f(ex))

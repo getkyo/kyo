@@ -12,8 +12,6 @@ import scala.quoted.{Type as SType, *}
 
 private[kyo] object TagMacro:
 
-    private val compactNames = true
-
     def deriveImpl[A: SType](using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
         val (staticDB, dynamicDB) = deriveDB[A]
