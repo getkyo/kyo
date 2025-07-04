@@ -17,8 +17,13 @@ import Aspect.*
   * all. This enables powerful control flow modifications like retry logic, fallback behavior, or conditional execution.
   *
   * Internally, aspects function as a form of reified ArrowEffect that can be stored, passed around, and modified at runtime. They maintain
-  * state through a `Local` map of active implementations, allowing them to be dynamically activated and deactivated through operations like
-  * `let` and `sandbox`.
+  * state through a `Local` map of active implementations keyed by their (tag, frame) identity, allowing them to be dynamically activated
+  * and deactivated through operations like `let` and `sandbox`.
+  *
+  * The identity of an aspect is determined by its type signature (captured via Tag) and its allocation site (captured via Frame). This
+  * design enables generic aspects where different type instantiations maintain separate cuts. For example, when defining a generic aspect
+  * like `def myAspect[A: Tag] = Aspect.init[Const[A], Const[A], Any]`, each call with different type parameters creates a distinct aspect
+  * with its own state, preventing interference between `myAspect[Int]` and `myAspect[String]`.
   *
   * @tparam Input
   *   The input type constructor - what values the aspect can process
@@ -28,8 +33,12 @@ import Aspect.*
   *   The effect type - what effects the aspect can perform
   */
 final class Aspect[Input[_], Output[_], S] private[kyo] (
-    default: Cut[Input, Output, S]
-)(using Frame) extends Serializable:
+    using
+    tag: Tag[(Input[Any], Output[Any], S)],
+    frame: Frame
+) extends Serializable:
+
+    private val key = (tag.erased, frame)
 
     /** Applies this aspect to transform a computation.
       *
@@ -45,13 +54,13 @@ final class Aspect[Input[_], Output[_], S] private[kyo] (
       */
     def apply[C](input: Input[C])(cont: Input[C] => Output[C] < S) =
         local.use { map =>
-            map.get(this) match
+            map.get(key) match
                 case Some(cut) =>
-                    local.let(map - this) {
+                    local.let(map - key) {
                         cut.asInstanceOf[Cut[Input, Output, S]](input, cont)
                     }
                 case _ =>
-                    default(input, cont)
+                    cont(input)
         }
 
     /** Executes a computation in a sandboxed environment where this aspect's modifications are temporarily disabled.
@@ -63,9 +72,9 @@ final class Aspect[Input[_], Output[_], S] private[kyo] (
       */
     def sandbox[A, S](v: A < S)(using Frame): A < S =
         local.use { map =>
-            map.get(this) match
+            map.get(key) match
                 case Some(_) =>
-                    local.let(map - this) {
+                    local.let(map - key) {
                         v
                     }
                 case _ =>
@@ -86,12 +95,12 @@ final class Aspect[Input[_], Output[_], S] private[kyo] (
     def let[A, S2](a: Cut[Input, Output, S])(v: A < S2)(using Frame): A < (S & S2) =
         local.use { map =>
             val cut =
-                map.get(this) match
+                map.get(key) match
                     case Some(b: Cut[Input, Output, S] @unchecked) =>
                         Cut.andThen[Input, Output, S](b, a)
                     case _ =>
                         a
-            local.let(map + (this -> cut.asInstanceOf[Cut[Const[Any], Const[Any], Any]]))(v)
+            local.let(map + (key -> cut.asInstanceOf[Cut[Const[Any], Const[Any], Any]]))(v)
         }
 
     /** Converts this aspect into a Cut.
@@ -109,7 +118,7 @@ end Aspect
 
 object Aspect:
 
-    private[kyo] val local = Local.init(Map.empty[Aspect[?, ?, ?], Cut[Const[Any], Const[Any], Any]])
+    private[kyo] val local = Local.init(Map.empty[(Tag[Any], Frame), Cut[Const[Any], Const[Any], Any]])
 
     /** Represents a cut in the aspect-oriented programming model.
       *
@@ -156,15 +165,7 @@ object Aspect:
       * @tparam S
       *   The effect type
       */
-    def init[I[_], O[_], S](using Frame): Aspect[I, O, S] =
-        init([C] => (input: I[C], cont: I[C] => O[C] < S) => cont(input))
-
-    /** Initializes a new aspect with a custom default behavior.
-      *
-      * @param default
-      *   The default cut to use when no other cut is active
-      */
-    def init[I[_], O[_], S](default: Cut[I, O, S])(using Frame): Aspect[I, O, S] =
-        new Aspect[I, O, S](default)
+    def init[I[_], O[_], S](using Frame, Tag[(I[Any], O[Any], S)]): Aspect[I, O, S] =
+        new Aspect[I, O, S]
 
 end Aspect
