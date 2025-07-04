@@ -19,8 +19,8 @@ import kyo.grpc.*
 private[kyo] class UnaryResponseStreamObserver[Response](promise: Promise[GrpcFailure, Response])(using Frame, AllowUnsafe)
     extends StreamObserver[Response]:
 
-    override def onNext(value: Response): Unit =
-        val complete = promise.completeDiscard(Success(value))
+    override def onNext(response: Response): Unit =
+        val complete = promise.completeDiscard(Success(response))
         Abort.run(Sync.Unsafe.run(complete)).eval.getOrThrow
     end onNext
 
