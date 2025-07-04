@@ -28,19 +28,19 @@ type GrpcFailure = StatusException
 
 object Grpc:
 
-    /*
+    /**
     * Creates a computation pending the [[Grpc]] effect from a [[Future]].
     * 
     * If the `Future` fails with a [[StatusException]] then the computation will fail with a [[StatusException]]. A [[StatusRuntimeException]] will be converted to a [[StatusException]].
     * 
     * If the `Future`` fails with some other `Throwable` then the computation will panic with that `Throwable`.
     * 
-      * @param f
-      *   The `Future` that produces the computation result
-      * @tparam A
-      *   The type of the successful result
-      * @return
-      *   A computation that completes with the result of the Future
+    * @param f
+    *   The `Future` that produces the computation result
+    * @tparam A
+    *   The type of the successful result
+    * @return
+    *   A computation that completes with the result of the Future
     */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
         Fiber.fromFuture(f).map(_.getResult).map:
