@@ -6,7 +6,7 @@ package fix
 import kyo.*
 
 object KyoUpdateToV1_0:
-    val init: Unit < IO = IO(println("hello"))
+    val init: Unit < IO = IO(println("hello")).andThen(IO.apply(println(" world")))
 
     val prg = defer:
         init.now
