@@ -1,16 +1,20 @@
 package kyo
 
 import kyo.Result.*
+import scala.reflect.ClassTag
 import zio.Cause
 import zio.Chunk
 import zio.Exit
 import zio.FiberId
 import zio.Runtime
+import zio.Scope
 import zio.StackTrace
 import zio.Trace
 import zio.Unsafe
 import zio.ZEnvironment
 import zio.ZIO
+import zio.stream.ZChannel
+import zio.stream.ZStream
 
 object ZIOs:
 

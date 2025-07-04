@@ -832,6 +832,8 @@ object Stream:
         new Stream[V, S]:
             def emit: Unit < (Emit[Chunk[V]] & S) = v
 
+    abstract private[kyo] class StreamLike[+V, -S] extends Stream[V, S]
+
     private val _empty = Stream(())
 
     /** A stream that emits no elements and does nothing * */
