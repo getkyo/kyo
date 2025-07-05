@@ -1,8 +1,8 @@
-scalaVersion := "3.5.0"
+scalaVersion := "3.7.0"
 
 libraryDependencies ++= Seq(
     "io.getkyo" %% "kyo-grpc-core" % kyo.grpc.compiler.BuildInfo.version,
-    "io.grpc" % "grpc-netty" % "1.65.1"
+    "io.grpc" % "grpc-netty-shaded" % "1.72.0"
 )
 
 Compile / PB.targets := Seq(

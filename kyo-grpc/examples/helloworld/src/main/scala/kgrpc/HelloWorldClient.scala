@@ -14,7 +14,9 @@ object HelloWorldClient extends KyoApp:
         for
             client <- createClient
             request = HelloRequest(name = "World")
+            _        <- Console.printLine(s"Sending request: $request")
             response <- client.sayHello(request)
+            _        <- Console.printLine(s"Got response: $response")
         yield ()
     }
 

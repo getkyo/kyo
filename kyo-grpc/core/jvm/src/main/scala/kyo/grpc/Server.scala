@@ -5,6 +5,28 @@ import java.util.concurrent.TimeUnit
 import kyo.*
 import sun.misc.Signal
 
+/** Server utilities for managing gRPC servers in Kyo.
+  *
+  * Provides functionality to start and gracefully shutdown gRPC servers with proper resource management.
+  *
+  * @example
+  *   {{{
+  *   for
+  *       _ <- Console.printLine(s"Server is running on port $port. Press Ctrl-C to stop.")
+  *       server <- Server.start(port)(
+  *           _.addService(GreeterService),
+  *           { (server, duration) =>
+  *               for
+  *                   _ <- Console.print("Shutting down...")
+  *                   _ <- Server.shutdown(server, duration)
+  *                   _ <- Console.printLine("Done.")
+  *               yield ()
+  *           }
+  *       )
+  *       _ <- Async.never
+  *   yield ()
+  *   }}}
+  */
 object Server:
 
     /** Attempts an orderly shut down of the [[io.grpc.Server]] within a timeout.
@@ -47,27 +69,5 @@ object Server:
         Resource.acquireRelease(
             Sync.defer(configure(ServerBuilder.forPort(port)).build().start())
         )(shutdown(_, timeout))
-
-    // This is required until https://github.com/getkyo/kyo/issues/491 is done.
-    /** Waits indefinitely for an interrupt signal (SIGINT or SIGTERM).
-      *
-      * Use this to keep the server running until an interrupt signal is received.
-      *
-      * @example
-      *   {{{ for _ <- Console.println(s"Server is running on port $port. Press Ctrl-C to stop.") server <-
-      *   Server.start(port)(_.addService(GreeterService), { server => for _ <- Console.print("Shutting down...") _ <-
-      *   Server.shutdown(server) _ <- Console.println("Done.") yield () }) _ <- Server.waitForInterrupt yield () }}}
-      *
-      * @return
-      *   [[Unit]] pending [[Async]] that completes when an interrupt signal is received
-      */
-    def waitForInterrupt(using Frame, AllowUnsafe): Unit < Async =
-        for
-            promise <- Promise.init[Nothing, Unit]
-            complete = promise.complete(Result.succeed(())).unit
-            _ <- Sync.defer(Signal.handle(new Signal("INT"), _ => Abort.run(Sync.Unsafe.run(complete)).eval.getOrThrow))
-            _ <- Sync.defer(Signal.handle(new Signal("TERM"), _ => Abort.run(Sync.Unsafe.run(complete)).eval.getOrThrow))
-            _ <- promise.get
-        yield ()
 
 end Server
