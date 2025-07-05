@@ -7,12 +7,10 @@ import io.grpc.ManagedChannelProvider.ProviderNotFoundException
 import io.grpc.ManagedChannelRegistry
 import io.grpc.Status
 import io.grpc.stub.StreamObserver
-
 import java.net.SocketAddress
+import java.util.concurrent.TimeUnit
 import kyo.*
 import org.scalamock.scalatest.AsyncMockFactory
-
-import java.util.concurrent.TimeUnit
 
 class ClientTest extends Test with AsyncMockFactory:
 

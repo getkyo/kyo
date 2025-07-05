@@ -15,9 +15,10 @@ end statusEquality
 given metadataEquality: Equality[Metadata] with
     def areEqual(a: Metadata, b: Any): Boolean =
         if Maybe(a).isEmpty then Maybe(b).isEmpty
-        else b match
-            case b: Metadata => a.toString === b.toString
-            case _ => false
+        else
+            b match
+                case b: Metadata => a.toString === b.toString
+                case _           => false
     end areEqual
 end metadataEquality
 

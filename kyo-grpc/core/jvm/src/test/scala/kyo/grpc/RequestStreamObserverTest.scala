@@ -35,20 +35,21 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(2)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(2)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.one(foldRequests, serverObserver))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onCompleted())
-                _ <- latch.await
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onCompleted())
+                _        <- latch.await
             yield succeed
+            end for
         }
 
         "onError with status exception puts error of folded requests" in run {
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
-            val exception = new RuntimeException("Test exception")
+            val exception       = new RuntimeException("Test exception")
             val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
@@ -62,20 +63,21 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(1)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(1)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.one(foldRequests, serverObserver))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onError(statusException))
-                _ <- latch.await
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onError(statusException))
+                _        <- latch.await
             yield succeed
+            end for
         }
 
         "onError with other exception puts error of folded requests" in run {
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
-            val exception = new RuntimeException("Test exception")
+            val exception       = new RuntimeException("Test exception")
             val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
@@ -89,14 +91,15 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(1)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(1)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.one(foldRequests, serverObserver))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onError(exception))
-                _ <- latch.await
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onError(exception))
+                _        <- latch.await
             yield succeed
+            end for
         }
 
         "when function returns early, channel is closed and onNext silently discards request" in run {
@@ -123,15 +126,16 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(2)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(2)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.one(immediateReturn, serverObserver))
-                _ <- latch.await
-                result <- Abort.run(Sync.defer(observer.onNext("this disappears into the either")))
+                _        <- latch.await
+                result   <- Abort.run(Sync.defer(observer.onNext("this disappears into the either")))
             yield
                 // This isn't much of a test. It would pass even the channel wasn't closed.
                 // You can change the implementation of onNext to not recover the Closed failure and observe that this will panic as expected.
                 assert(result === Result.Success(()))
+            end for
         }
     }
 
@@ -157,20 +161,21 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(3)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(3)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.many(mapRequests, serverObserver))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onCompleted())
-                _ <- latch.await
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onCompleted())
+                _        <- latch.await
             yield succeed
+            end for
         }
 
         "onError with status exception puts error of mapped requests" in run {
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
-            val exception = new RuntimeException("Test exception")
+            val exception       = new RuntimeException("Test exception")
             val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
@@ -191,20 +196,21 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(3)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(3)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.many(mapRequests, serverObserver))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onError(statusException))
-                _ <- latch.await
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onError(statusException))
+                _        <- latch.await
             yield succeed
+            end for
         }
 
         "onError with other exception puts error of mapped requests" in run {
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
-            val exception = new RuntimeException("Test exception")
+            val exception       = new RuntimeException("Test exception")
             val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
@@ -225,14 +231,15 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(3)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(3)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.many(mapRequests, serverObserver))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onNext("next"))
-                _ <- Sync.defer(observer.onError(exception))
-                _ <- latch.await
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onNext("next"))
+                _        <- Sync.defer(observer.onError(exception))
+                _        <- latch.await
             yield succeed
+            end for
         }
 
         "when function returns early, channel is closed and onNext silently discards request" in run {
@@ -259,15 +266,16 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory:
                 }
 
             for
-                latch <- Latch.init(2)
-                _ <- setupExpectations(latch)
+                latch    <- Latch.init(2)
+                _        <- setupExpectations(latch)
                 observer <- Sync.Unsafe(RequestStreamObserver.many(immediateReturn, serverObserver))
-                _ <- latch.await
-                result <- Abort.run(Sync.defer(observer.onNext("this disappears into the either")))
+                _        <- latch.await
+                result   <- Abort.run(Sync.defer(observer.onNext("this disappears into the either")))
             yield
                 // This isn't much of a test. It would pass even the channel wasn't closed.
                 // You can change the implementation of onNext to not recover the Closed failure and observe that this will panic as expected.
                 assert(result === Result.Success(()))
+            end for
         }
     }
 

@@ -25,15 +25,18 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory:
     }
 
     "onError with status exception fails" in run {
-        val channel = mock[StreamChannel[String, GrpcFailure]]
-        val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
-        val exception = new RuntimeException("Test exception")
+        val channel         = mock[StreamChannel[String, GrpcFailure]]
+        val observer        = Sync.Unsafe(ResponseStreamObserver[String](channel))
+        val exception       = new RuntimeException("Test exception")
         val statusException = GrpcFailure.fromThrowable(exception)
 
         (channel.error(_: GrpcFailure)(using _: Frame))
-            .expects(argThat[StatusException](x => {
-                statusExceptionEquality.areEqual(x, statusException)
-            }), *)
+            .expects(
+                argThat[StatusException](x =>
+                    statusExceptionEquality.areEqual(x, statusException)
+                ),
+                *
+            )
             .returns(())
             .once()
 

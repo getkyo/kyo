@@ -435,7 +435,7 @@ class QueueTest extends Test:
                 queue   <- Queue.init[Int](10)
                 _       <- queue.offer(1)
                 _       <- queue.offer(2)
-                fiber  <- Fiber.run(queue.closeAwaitEmpty)
+                fiber   <- Fiber.run(queue.closeAwaitEmpty)
                 closed1 <- queue.closed
                 _       <- queue.poll
                 _       <- queue.poll

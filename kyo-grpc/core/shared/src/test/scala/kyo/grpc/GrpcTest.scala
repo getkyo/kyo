@@ -1,8 +1,8 @@
 package kyo.grpc
 
+import io.grpc.Metadata
 import io.grpc.Status
 import io.grpc.StatusException
-import io.grpc.Metadata
 import kyo.*
 import org.scalactic.TripleEquals.*
 import scala.concurrent.Future
@@ -14,7 +14,7 @@ class GrpcTest extends Test:
 
     "fromFuture" - {
         "successful Future" in run {
-            val future = Future.successful("test result")
+            val future          = Future.successful("test result")
             val grpcComputation = Grpc.fromFuture(future)
 
             Abort.run[GrpcFailure](grpcComputation).map: result =>
@@ -23,7 +23,7 @@ class GrpcTest extends Test:
 
         "failed Future with StatusException" in run {
             val statusException = Status.INVALID_ARGUMENT.withDescription("Invalid input").asException()
-            val future = Future.failed(statusException)
+            val future          = Future.failed(statusException)
             val grpcComputation = Grpc.fromFuture(future)
 
             Abort.run[GrpcFailure](grpcComputation).map: result =>
@@ -31,12 +31,12 @@ class GrpcTest extends Test:
         }
 
         "failed Future with StatusRuntimeException" in run {
-            val status = Status.UNAVAILABLE.withDescription("Service unavailable")
+            val status   = Status.UNAVAILABLE.withDescription("Service unavailable")
             val metadata = new Metadata()
             metadata.put(Metadata.Key.of("retry-after", Metadata.ASCII_STRING_MARSHALLER), "30")
             val runtimeException = status.asRuntimeException(metadata)
-            val future = Future.failed(runtimeException)
-            val grpcComputation = Grpc.fromFuture(future)
+            val future           = Future.failed(runtimeException)
+            val grpcComputation  = Grpc.fromFuture(future)
 
             Abort.run[GrpcFailure](grpcComputation).map: result =>
                 assert(result.isFailure)
@@ -48,8 +48,8 @@ class GrpcTest extends Test:
 
         "failed Future with other exception" in run {
             val originalException = new IllegalArgumentException("Custom error")
-            val future = Future.failed(originalException)
-            val grpcComputation = Grpc.fromFuture(future)
+            val future            = Future.failed(originalException)
+            val grpcComputation   = Grpc.fromFuture(future)
 
             Abort.run[GrpcFailure](grpcComputation).map: result =>
                 assert(result.isFailure)
@@ -60,9 +60,9 @@ class GrpcTest extends Test:
 
         "failed Future with nested StatusException" in run {
             val innerStatusException = Status.PERMISSION_DENIED.withDescription("Access denied").asException()
-            val wrapperException = new RuntimeException("Wrapper", innerStatusException)
-            val future = Future.failed(wrapperException)
-            val grpcComputation = Grpc.fromFuture(future)
+            val wrapperException     = new RuntimeException("Wrapper", innerStatusException)
+            val future               = Future.failed(wrapperException)
+            val grpcComputation      = Grpc.fromFuture(future)
 
             Abort.run[GrpcFailure](grpcComputation).map: result =>
                 assert(result.isFailure)
@@ -74,9 +74,9 @@ class GrpcTest extends Test:
 
     "type verification" - {
         "Grpc type alias" in {
-            val grpcEffect: String < Grpc = "test"
+            val grpcEffect: String < Grpc                          = "test"
             val asyncEffect: String < (Async & Abort[GrpcFailure]) = grpcEffect
-            val _: String < Grpc = asyncEffect
+            val _: String < Grpc                                   = asyncEffect
             succeed
         }
     }

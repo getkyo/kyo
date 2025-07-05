@@ -2,7 +2,6 @@ package kyo.grpc
 
 import io.grpc.{Server as _, *}
 import io.grpc.internal.GrpcUtil
-
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import kgrpc.*
@@ -12,7 +11,6 @@ import kyo.grpc.*
 import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.Inspectors.*
-
 import scala.concurrent.Future
 import scala.util.chaining.scalaUtilChainingOps
 
@@ -22,7 +20,7 @@ class ServiceTest extends Test:
     private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
 
     private val emptyTrailers = Metadata()
-    private val trailers = Metadata().tap(_.put(GrpcUtil.CONTENT_TYPE_KEY, GrpcUtil.CONTENT_TYPE_GRPC))
+    private val trailers      = Metadata().tap(_.put(GrpcUtil.CONTENT_TYPE_KEY, GrpcUtil.CONTENT_TYPE_GRPC))
 
     private val notOKStatusCodes = Status.Code.values().filterNot(_ === Status.Code.OK)
 
@@ -40,9 +38,9 @@ class ServiceTest extends Test:
         "fail" in {
             forEvery(notOKStatusCodes) { code =>
                 run {
-                    val message = "Yeah nah bro"
-                    val status  = code.toStatus.withDescription(message)
-                    val request = Fail(message, status.getCode.value)
+                    val message  = "Yeah nah bro"
+                    val status   = code.toStatus.withDescription(message)
+                    val request  = Fail(message, status.getCode.value)
                     val expected = status.asException(trailers)
                     for
                         client <- createClientAndServer
@@ -54,8 +52,8 @@ class ServiceTest extends Test:
         }
 
         "panic" in run {
-            val message = "Oh no!"
-            val request = Panic(message)
+            val message  = "Oh no!"
+            val request  = Panic(message)
             val expected = Status.UNKNOWN.asException(trailers)
             for
                 client <- createClientAndServer
@@ -86,9 +84,9 @@ class ServiceTest extends Test:
             "producing stream" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
-                        val status  = code.toStatus.withDescription(message)
-                        val request = Fail(message, status.getCode.value, outside = true)
+                        val message  = "Yeah nah bro"
+                        val status   = code.toStatus.withDescription(message)
+                        val request  = Fail(message, status.getCode.value, outside = true)
                         val expected = status.asException(trailers)
                         for
                             client   <- createClientAndServer
@@ -102,9 +100,9 @@ class ServiceTest extends Test:
             "first element" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
-                        val status  = code.toStatus.withDescription(message)
-                        val request = Fail(message, status.getCode.value)
+                        val message  = "Yeah nah bro"
+                        val status   = code.toStatus.withDescription(message)
+                        val request  = Fail(message, status.getCode.value)
                         val expected = status.asException(trailers)
                         for
                             client <- createClientAndServer
@@ -173,9 +171,9 @@ class ServiceTest extends Test:
             }
 
             "after some elements" in run {
-                val message  = "Oh no!"
-                val after    = 5
-                val request  = Panic(message, after)
+                val message = "Oh no!"
+                val after   = 5
+                val request = Panic(message, after)
                 // For some reason, the trailers are empty here.
                 val expected = Status.UNKNOWN.asException(emptyTrailers)
                 for
@@ -220,12 +218,12 @@ class ServiceTest extends Test:
             "first element" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
+                        val message   = "Yeah nah bro"
                         val status    = code.toStatus.withDescription(message)
                         val fail      = Fail(message, status.getCode.value)
                         val successes = Chunk.from((1 to 5).map(n => Success(n.toString): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
-                        val expected = status.asException(trailers)
+                        val expected  = status.asException(trailers)
                         for
                             client <- createClientAndServer
                             result <- Abort.run[StatusException](client.manyToOne(requests))
@@ -238,13 +236,13 @@ class ServiceTest extends Test:
             "after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
+                        val message   = "Yeah nah bro"
                         val status    = code.toStatus.withDescription(message)
                         val after     = 5
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString): Request))
                         val fail      = Fail(message, status.getCode.value)
                         val requests  = Stream(Emit.value(successes.append(fail)))
-                        val expected = status.asException(trailers)
+                        val expected  = status.asException(trailers)
                         for
                             client <- createClientAndServer
                             result <- Abort.run[StatusException](client.manyToOne(requests))
@@ -323,16 +321,17 @@ class ServiceTest extends Test:
             "producing stream on first element" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
+                        val message   = "Yeah nah bro"
                         val status    = code.toStatus.withDescription(message)
                         val fail      = Fail(message, status.getCode.value, outside = true)
                         val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
-                        val expected = status.asException(trailers)
+                        val expected  = status.asException(trailers)
                         for
                             client   <- createClientAndServer
                             response <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
                         yield assertStatusException(response, expected)
+                        end for
                     }
                 }
             }
@@ -340,7 +339,7 @@ class ServiceTest extends Test:
             "producing stream after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
+                        val message   = "Yeah nah bro"
                         val status    = code.toStatus.withDescription(message)
                         val after     = 5
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
@@ -349,7 +348,7 @@ class ServiceTest extends Test:
                         // For some reason, the trailers are empty here.
                         val expected = status.asException(emptyTrailers)
                         for
-                            client <- createClientAndServer
+                            client            <- createClientAndServer
                             (responses, tail) <- client.manyToMany(requests).splitAt(5)
                             failedResponse    <- Abort.run[StatusException](tail.run)
                         yield
@@ -363,16 +362,17 @@ class ServiceTest extends Test:
             "first element" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
+                        val message   = "Yeah nah bro"
                         val status    = code.toStatus.withDescription(message)
                         val fail      = Fail(message, status.getCode.value)
                         val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                         val requests  = Stream(Emit.value(Chunk(fail).concat(successes)))
-                        val expected = status.asException(trailers)
+                        val expected  = status.asException(trailers)
                         for
                             client <- createClientAndServer
                             result <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
                         yield assertStatusException(result, expected)
+                        end for
                     }
                 }
             }
@@ -380,18 +380,18 @@ class ServiceTest extends Test:
             "after some elements" in {
                 forEvery(notOKStatusCodes) { code =>
                     run {
-                        val message = "Yeah nah bro"
+                        val message   = "Yeah nah bro"
                         val status    = code.toStatus.withDescription(message)
-                        val after = 5
+                        val after     = 5
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
-                        val fail = Fail(message, status.getCode.value)
-                        val requests = Stream(Emit.value(successes.append(fail)))
+                        val fail      = Fail(message, status.getCode.value)
+                        val requests  = Stream(Emit.value(successes.append(fail)))
                         // For some reason, the trailers are empty here.
                         val expected = status.asException(emptyTrailers)
                         for
-                            client <- createClientAndServer
+                            client            <- createClientAndServer
                             (responses, tail) <- client.manyToMany(requests).splitAt(5)
-                            failedResponse <- Abort.run[StatusException](tail.run)
+                            failedResponse    <- Abort.run[StatusException](tail.run)
                         yield
                             assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
                             assertStatusException(failedResponse, expected)
@@ -408,7 +408,7 @@ class ServiceTest extends Test:
                     val panic     = Panic(message)
                     val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                     val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
-                    val expected = Status.UNKNOWN.asException(trailers)
+                    val expected  = Status.UNKNOWN.asException(trailers)
                     for
                         client   <- createClientAndServer
                         response <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
@@ -419,6 +419,7 @@ class ServiceTest extends Test:
                         assert(actual.getMessage === "UNKNOWN")
                         assert(actual.getCause === null)
                         assert(actual.getStatus().getCause === null)
+                    end for
                 }
             }
 
@@ -432,7 +433,7 @@ class ServiceTest extends Test:
                     // For some reason, the trailers are empty here?
                     val expected = Status.UNKNOWN.asException(emptyTrailers)
                     for
-                        client <- createClientAndServer
+                        client            <- createClientAndServer
                         (responses, tail) <- client.manyToMany(requests).splitAt(after)
                         failedResponse    <- Abort.run[StatusException](tail.run)
                     yield
@@ -453,7 +454,7 @@ class ServiceTest extends Test:
                     val panic     = Panic(message)
                     val successes = Chunk.from((1 to 5).map(n => Success(n.toString, count = 1): Request))
                     val requests  = Stream(Emit.value(Chunk(panic).concat(successes)))
-                    val expected = Status.UNKNOWN.asException(trailers)
+                    val expected  = Status.UNKNOWN.asException(trailers)
                     for
                         client <- createClientAndServer
                         result <- Abort.run[StatusException](client.manyToMany(requests).take(1).run)
@@ -464,12 +465,13 @@ class ServiceTest extends Test:
                         assert(actual.getMessage === "UNKNOWN")
                         assert(actual.getCause === null)
                         assert(actual.getStatus().getCause === null)
+                    end for
                 }
             }
 
             "after some elements" in {
                 run {
-                    val after = 5
+                    val after     = 5
                     val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                     val message   = "Oh no!"
                     val panic     = Panic(message)
@@ -477,9 +479,9 @@ class ServiceTest extends Test:
                     // For some reason, the trailers are empty here?
                     val expected = Status.UNKNOWN.asException(emptyTrailers)
                     for
-                        client <- createClientAndServer
+                        client            <- createClientAndServer
                         (responses, tail) <- client.manyToMany(requests).splitAt(5)
-                        failedResponse <- Abort.run[StatusException](tail.run)
+                        failedResponse    <- Abort.run[StatusException](tail.run)
                     yield
                         assert(responses == Chunk.from((1 to after).map(n => Echo(s"$n 1"))))
                         assertStatusException(failedResponse, expected)

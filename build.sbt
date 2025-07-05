@@ -57,8 +57,7 @@ lazy val `kyo-settings` = Seq(
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
-//    scalafmtOnCompile := true,
-    scalafmtOnCompile := false,
+    scalafmtOnCompile := true,
     scalacOptions += compilerOptionFailDiscard,
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
@@ -655,7 +654,8 @@ lazy val `kyo-grpc-e2e` =
             Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
-                kyo.grpc.gen() -> (Compile / sourceManaged).value / "scalapb"
+                // Users of the plugin can use: kyo.grpc.gen() -> (Compile / sourceManaged).value / "scalapb"
+                genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
             ),
             Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value
         ).jvmSettings(
@@ -789,27 +789,27 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.3",
+            libraryDependencies += "dev.zio"              %% "izumi-reflect"        % "3.0.3",
             libraryDependencies += "org.typelevel"        %% "cats-effect"          % catsVersion,
-            libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.7.1",
-            libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.7.1",
+            libraryDependencies += "org.typelevel"        %% "log4cats-core"        % "2.7.1",
+            libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"       % "2.7.1",
             libraryDependencies += "org.typelevel"        %% "cats-mtl"             % "1.5.0",
             libraryDependencies += "io.github.timwspence" %% "cats-stm"             % "0.13.5",
-            libraryDependencies += "com.47deg"            %% "fetch"               % "3.2.0",
+            libraryDependencies += "com.47deg"            %% "fetch"                % "3.2.0",
             libraryDependencies += "dev.zio"              %% "zio-logging"          % "2.5.0",
             libraryDependencies += "dev.zio"              %% "zio-logging-slf4j2"   % "2.5.0",
             libraryDependencies += "dev.zio"              %% "zio"                  % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-concurrent"       % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-query"            % "0.7.7",
-            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC41",
+            libraryDependencies += "dev.zio"              %% "zio-prelude"          % "1.0.0-RC41",
             libraryDependencies += "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
             libraryDependencies += "co.fs2"               %% "fs2-core"             % "3.12.0",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client"  % "1.0.0-M44",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"           % "1.0.0-M44",
-            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.3.3",
+            libraryDependencies += "dev.zio"              %% "zio-http"             % "3.3.3",
             libraryDependencies += "io.grpc"               % "grpc-netty-shaded"    % "1.72.0",
-            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0"
+            libraryDependencies += "io.vertx"              % "vertx-core"           % "5.0.0",
+            libraryDependencies += "io.vertx"              % "vertx-web"            % "5.0.0"
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
