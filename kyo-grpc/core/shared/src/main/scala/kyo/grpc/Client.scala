@@ -4,6 +4,19 @@ import io.grpc.*
 import java.util.concurrent.TimeUnit
 import kyo.*
 
+/** Utilities for creating and managing gRPC client channels.
+  *
+  * This object provides functionality for creating managed gRPC channels with automatic resource cleanup and proper shutdown handling.
+  *
+  * Consider using the `managedClient` method on service companion objects for a more concise way to create both the channel and the client
+  * in one step.
+  *
+  * Key features:
+  *   - Automatic resource cleanup via [[Resource]] effect
+  *   - Graceful shutdown with fallback to forced shutdown
+  *   - Configurable channel settings through builder pattern
+  *   - Integration with generated gRPC service clients
+  */
 object Client:
 
     /** Attempts an orderly shut down of the [[ManagedChannel]] within a timeout.
