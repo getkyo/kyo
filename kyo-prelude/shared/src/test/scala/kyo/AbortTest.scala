@@ -669,7 +669,7 @@ class AbortTest extends Test:
                 }
                 "subclass" in {
                     assert(
-                        Abort.run[RuntimeException](Abort.catching[RuntimeException](test(0))).eval ==
+                        Abort.run[RuntimeException](Abort.catching[Ex1](test(0))).eval ==
                             Result.fail(ex1)
                     )
                 }
