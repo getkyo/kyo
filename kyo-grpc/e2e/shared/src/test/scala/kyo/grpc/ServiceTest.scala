@@ -122,7 +122,7 @@ class ServiceTest extends Test:
                         val status  = code.toStatus.withDescription(message)
                         val after   = 5
                         val request = Fail(message, status.getCode.value, after)
-                        // TODO: Why are the trailers empty here?
+                        // For some reason, the trailers are empty here.
                         val expected = status.asException(emptyTrailers)
                         for
                             client            <- createClientAndServer
@@ -176,7 +176,7 @@ class ServiceTest extends Test:
                 val message  = "Oh no!"
                 val after    = 5
                 val request  = Panic(message, after)
-                // TODO: Why are the trailers empty here?
+                // For some reason, the trailers are empty here.
                 val expected = Status.UNKNOWN.asException(emptyTrailers)
                 for
                     client            <- createClientAndServer
@@ -346,7 +346,7 @@ class ServiceTest extends Test:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail      = Fail(message, status.getCode.value, outside = true)
                         val requests  = Stream(Emit.value(successes.append(fail)))
-                        // TODO: Why are the trailers empty here?
+                        // For some reason, the trailers are empty here.
                         val expected = status.asException(emptyTrailers)
                         for
                             client <- createClientAndServer
@@ -386,7 +386,7 @@ class ServiceTest extends Test:
                         val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                         val fail = Fail(message, status.getCode.value)
                         val requests = Stream(Emit.value(successes.append(fail)))
-                        // TODO: Why are the trailers empty here?
+                        // For some reason, the trailers are empty here.
                         val expected = status.asException(emptyTrailers)
                         for
                             client <- createClientAndServer
@@ -429,7 +429,7 @@ class ServiceTest extends Test:
                     val message   = "Oh no!"
                     val panic     = Panic(message)
                     val requests  = Stream(Emit.value(successes.append(panic)))
-                    // TODO: Why are the trailers empty here?
+                    // For some reason, the trailers are empty here?
                     val expected = Status.UNKNOWN.asException(emptyTrailers)
                     for
                         client <- createClientAndServer
@@ -473,8 +473,8 @@ class ServiceTest extends Test:
                     val successes = Chunk.from((1 to after).map(n => Success(n.toString, count = 1): Request))
                     val message   = "Oh no!"
                     val panic     = Panic(message)
-                    val requests = Stream(Emit.value(successes.append(panic)))
-                    // TODO: Why are the trailers empty here?
+                    val requests  = Stream(Emit.value(successes.append(panic)))
+                    // For some reason, the trailers are empty here?
                     val expected = Status.UNKNOWN.asException(emptyTrailers)
                     for
                         client <- createClientAndServer
