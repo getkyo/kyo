@@ -10,17 +10,17 @@ import scala.util.control.NonFatal
 
 /** Helpers for notifying gRPC [[StreamObserver]]s with Kyo computation results.
   *
-  * This provides methods to bridge between Kyo's effect system and gRPC's streaming interface,
-  * handling both single values and streams while properly managing errors and exceptions.
+  * This provides methods to bridge between Kyo's effect system and gRPC's streaming interface, handling both single values and streams
+  * while properly managing errors and exceptions.
   */
 private[kyo] object StreamNotifier:
 
     /** Notifies a gRPC [[StreamObserver]] with the result of a single Kyo computation.
-      * 
+      *
       * When the computation completes with:
-      * - `Success`: It calls [[[StreamObserver#onNext]] and then [[StreamObserver#onCompleted]]
-      * - `Error`: Converts the exception to a [[StatusException]] and calls [[StreamObserver#onError]]
-      * 
+      *   - `Success`: It calls [[[StreamObserver#onNext]] and then [[StreamObserver#onCompleted]]
+      *   - `Error`: Converts the exception to a [[StatusException]] and calls [[StreamObserver#onError]]
+      *
       * If `onNext` throws an exception then this is handled in the same way as an `Error`. It is not propagated any further.
       *
       * @param value
@@ -46,12 +46,13 @@ private[kyo] object StreamNotifier:
     /** Notifies a gRPC [[StreamObserver]] with the elements of a Kyo [[Stream]].
       *
       * This method consumes all elements in the stream and forwards them to the observer by calling [[StreamObserver#onNext]].
-      * 
+      *
       * When the stream completes with:
-      * - `Success`: It calls [[StreamObserver#onCompleted]]
-      * - `Error`: Converts the exception to a [[StatusException]] and calls [[StreamObserver#onError]]
-      * 
-      * If `onNext` throws an exception then it aborts consuming the stream and is then handled in the same way as an `Error`. It is not propagated any further.
+      *   - `Success`: It calls [[StreamObserver#onCompleted]]
+      *   - `Error`: Converts the exception to a [[StatusException]] and calls [[StreamObserver#onError]]
+      *
+      * If `onNext` throws an exception then it aborts consuming the stream and is then handled in the same way as an `Error`. It is not
+      * propagated any further.
       *
       * @param values
       *   The Kyo `Stream` containing values to send to the observer
@@ -82,6 +83,6 @@ private[kyo] object StreamNotifier:
     )(using Frame): Unit < Sync =
         result match
             case _: Result.Success[Unit] @unchecked => Sync.defer(observer.onCompleted())
-            case Result.Error(t) => Sync.defer(observer.onError(GrpcFailure.fromThrowable(t)))
+            case Result.Error(t)                    => Sync.defer(observer.onError(GrpcFailure.fromThrowable(t)))
 
 end StreamNotifier

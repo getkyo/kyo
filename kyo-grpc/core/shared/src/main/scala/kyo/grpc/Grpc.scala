@@ -21,8 +21,9 @@ object Grpc:
 
     /** Creates a computation pending the [[Grpc]] effect from a [[Future]].
       *
-      * If the `Future` fails with an exception, it will be converted to a [[GrpcFailure]] using [[GrpcFailure.fromThrowable]] and the computation will abort.
-      * 
+      * If the `Future` fails with an exception, it will be converted to a [[GrpcFailure]] using [[GrpcFailure.fromThrowable]] and the
+      * computation will abort.
+      *
       * @param f
       *   The `Future` that produces the computation result
       * @tparam A
@@ -32,8 +33,8 @@ object Grpc:
       */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
         Fiber.fromFuture(f)
-          .map(_.getResult)
-          .map(_.mapError(e => GrpcFailure.fromThrowable(e.failureOrPanic)))
-          .map(Abort.get)
+            .map(_.getResult)
+            .map(_.mapError(e => GrpcFailure.fromThrowable(e.failureOrPanic)))
+            .map(Abort.get)
 
 end Grpc

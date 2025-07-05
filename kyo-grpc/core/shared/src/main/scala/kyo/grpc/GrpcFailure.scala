@@ -17,10 +17,10 @@ object GrpcFailure:
     /** Converts a [[Throwable]] to a [[GrpcFailure]].
       *
       * Conversions are handled as follows:
-      * - [[StatusException]]: Returns the exception unchanged.
-      * - [[StatusRuntimeException]]: Converts to `StatusException` while preserving status, trailers, and stack trace.
-      * - Other exceptions: Uses [[Status#fromThrowable(java.lang.Throwable)]] which attempts to find a gRPC status from nested causes,
-      *   defaulting to [[Status.UNKNOWN]] status if none is found.
+      *   - [[StatusException]]: Returns the exception unchanged.
+      *   - [[StatusRuntimeException]]: Converts to `StatusException` while preserving status, trailers, and stack trace.
+      *   - Other exceptions: Uses [[Status#fromThrowable(java.lang.Throwable)]] which attempts to find a gRPC status from nested causes,
+      *     defaulting to [[Status.UNKNOWN]] status if none is found.
       *
       * @param t
       *   The `Throwable` to convert
