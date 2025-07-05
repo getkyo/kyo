@@ -17,9 +17,9 @@ object TestServiceImpl extends TestService:
             case Request.Empty => Abort.fail(Status.INVALID_ARGUMENT.asException)
             case nonEmpty: Request.NonEmpty =>
                 nonEmpty match
-                    case Success(message, _, _)  => Kyo.lift(Echo(message))
-                    case Fail(code, _, _, _)     => Abort.fail(Status.fromCodeValue(code).asException)
-                    case Panic(message, _, _, _) => Abort.panic(new Exception(message))
+                    case Success(message, _, _)       => Kyo.lift(Echo(message))
+                    case Fail(message, code, _, _, _) => Abort.fail(Status.fromCodeValue(code).withDescription(message).asException)
+                    case Panic(message, _, _, _)      => Abort.panic(new Exception(message))
                 end match
         end match
     end requestToResponse
@@ -35,11 +35,11 @@ object TestServiceImpl extends TestService:
                 nonEmpty match
                     case Success(message, count, _) =>
                         stream((1 to count).map(n => Echo(s"$message $n")))
-                    case Fail(code, _, true, _) =>
-                        Abort.fail(Status.fromCodeValue(code).asException)
-                    case Fail(code, after, _, _) =>
+                    case Fail(message, code, _, true, _) =>
+                        Abort.fail(Status.fromCodeValue(code).withDescription(message).asException)
+                    case Fail(message, code, after, _, _) =>
                         val echos = (after to 1 by -1).map(n => Kyo.lift(Echo(s"Failing in $n")))
-                        stream(echos :+ Abort.fail(Status.fromCodeValue(code).asException))
+                        stream(echos :+ Abort.fail(Status.fromCodeValue(code).withDescription(message).asException))
                     case Panic(message, _, true, _) =>
                         Abort.panic(new Exception(message))
                     case Panic(message, after, _, _) =>
