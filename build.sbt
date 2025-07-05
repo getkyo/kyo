@@ -655,7 +655,7 @@ lazy val `kyo-grpc-e2e` =
             Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
-                genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
+                kyo.grpc.gen() -> (Compile / sourceManaged).value / "scalapb"
             ),
             Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value
         ).jvmSettings(
