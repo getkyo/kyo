@@ -23,7 +23,7 @@ class UnaryResponseStreamObserverTest extends Test:
 
     "onError with status exception fails" in run {
         val exception = new RuntimeException("Test exception")
-        val statusException = StreamNotifier.throwableToStatusException(exception)
+        val statusException = GrpcFailure.fromThrowable(exception)
 
         for
             promise <- Promise.init[GrpcFailure, String]
@@ -35,7 +35,7 @@ class UnaryResponseStreamObserverTest extends Test:
 
     "onError with other exception fails" in run {
         val exception       = new RuntimeException("Test exception")
-        val statusException = StreamNotifier.throwableToStatusException(exception)
+        val statusException = GrpcFailure.fromThrowable(exception)
 
         for
             promise  <- Promise.init[GrpcFailure, String]

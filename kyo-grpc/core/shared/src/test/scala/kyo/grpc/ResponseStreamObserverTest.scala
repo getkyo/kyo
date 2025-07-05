@@ -28,7 +28,7 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
         val channel = mock[StreamChannel[String, GrpcFailure]]
         val observer = Sync.Unsafe(ResponseStreamObserver[String](channel))
         val exception = new RuntimeException("Test exception")
-        val statusException = StreamNotifier.throwableToStatusException(exception)
+        val statusException = GrpcFailure.fromThrowable(exception)
 
         (channel.error(_: GrpcFailure)(using _: Frame))
             .expects(argThat[StatusException](x => {
@@ -44,7 +44,7 @@ class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
         val channel         = mock[StreamChannel[String, GrpcFailure]]
         val observer        = Sync.Unsafe(ResponseStreamObserver[String](channel))
         val exception       = new RuntimeException("Test exception")
-        val statusException = StreamNotifier.throwableToStatusException(exception)
+        val statusException = GrpcFailure.fromThrowable(exception)
 
         (channel.error(_: GrpcFailure)(using _: Frame))
             .expects(argThat[StatusException](_ === statusException), *)

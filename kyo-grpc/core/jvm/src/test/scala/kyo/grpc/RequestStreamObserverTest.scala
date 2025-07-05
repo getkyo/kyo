@@ -49,7 +49,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
             val exception = new RuntimeException("Test exception")
-            val statusException = StreamNotifier.throwableToStatusException(exception)
+            val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
                 Sync.Unsafe {
@@ -76,7 +76,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
             val exception = new RuntimeException("Test exception")
-            val statusException = StreamNotifier.throwableToStatusException(exception)
+            val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
                 Sync.Unsafe {
@@ -171,7 +171,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
             val exception = new RuntimeException("Test exception")
-            val statusException = StreamNotifier.throwableToStatusException(exception)
+            val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
                 Sync.Unsafe {
@@ -205,7 +205,7 @@ class RequestStreamObserverTest extends Test with AsyncMockFactory2:
             val serverObserver = mock[ServerCallStreamObserver[String]]
 
             val exception = new RuntimeException("Test exception")
-            val statusException = StreamNotifier.throwableToStatusException(exception)
+            val statusException = GrpcFailure.fromThrowable(exception)
 
             def setupExpectations(latch: Latch) =
                 Sync.Unsafe {

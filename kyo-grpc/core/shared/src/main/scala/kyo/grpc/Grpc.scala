@@ -17,24 +17,12 @@ import scala.concurrent.Future
   */
 type Grpc = Async & Abort[GrpcFailure]
 
-/** A failure that occurred while sending or receiving a gRPC message.
-  *
-  * These are typically created from a [[io.grpc.Status]] via `asException`.
-  *
-  * @see
-  *   [[StatusException]]
-  */
-type GrpcFailure = StatusException
-
 object Grpc:
 
     /** Creates a computation pending the [[Grpc]] effect from a [[Future]].
       *
-      * If the `Future` fails with a [[StatusException]] then the computation will fail with a [[StatusException]]. A
-      * [[StatusRuntimeException]] will be converted to a [[StatusException]].
-      *
-      * If the `Future` fails with some other `Throwable` then the computation will panic with that `Throwable`.
-      *
+      * If the `Future` fails with an exception, it will be converted to a [[GrpcFailure]] using [[GrpcFailure.fromThrowable]] and the computation will abort.
+      * 
       * @param f
       *   The `Future` that produces the computation result
       * @tparam A
@@ -43,10 +31,9 @@ object Grpc:
       *   A computation that completes with the result of the Future
       */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
-        Fiber.fromFuture(f).map(_.getResult).map:
-            case Result.Success(a: A)                     => a
-            case Result.Error(ex: StatusException)        => Abort.fail(ex)
-            case Result.Error(ex: StatusRuntimeException) => Abort.fail(StreamNotifier.throwableToStatusException(ex))
-            case Result.Error(t)                          => Abort.panic(t)
+        Fiber.fromFuture(f)
+          .map(_.getResult)
+          .map(_.mapError(e => GrpcFailure.fromThrowable(e.failureOrPanic)))
+          .map(Abort.get)
 
 end Grpc
