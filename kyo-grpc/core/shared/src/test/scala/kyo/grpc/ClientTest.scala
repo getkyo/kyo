@@ -10,11 +10,11 @@ import io.grpc.stub.StreamObserver
 
 import java.net.SocketAddress
 import kyo.*
-import org.scalamock.scalatest.AsyncMockFactory2
+import org.scalamock.scalatest.AsyncMockFactory
 
 import java.util.concurrent.TimeUnit
 
-class ClientTest extends Test with AsyncMockFactory2:
+class ClientTest extends Test with AsyncMockFactory:
 
     private val host = "localhost"
     private val port = 50051

@@ -6,7 +6,7 @@ import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*
 import org.scalactic.TripleEquals.*
-import org.scalamock.scalatest.AsyncMockFactory2
+import org.scalamock.scalatest.AsyncMockFactory
 import org.scalatest.EitherValues.*
 import scala.util.chaining.*
 

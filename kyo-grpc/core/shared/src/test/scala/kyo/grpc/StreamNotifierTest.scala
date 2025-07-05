@@ -4,9 +4,9 @@ import io.grpc.*
 import io.grpc.stub.StreamObserver
 import kyo.*
 import org.scalactic.TripleEquals.*
-import org.scalamock.scalatest.AsyncMockFactory2
+import org.scalamock.scalatest.AsyncMockFactory
 
-class StreamNotifierTest extends Test with AsyncMockFactory2:
+class StreamNotifierTest extends Test with AsyncMockFactory:
 
     "notifyObserver with single value success" in run {
         val observer = mock[StreamObserver[Int]]

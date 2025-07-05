@@ -582,7 +582,7 @@ lazy val `kyo-grpc-core` =
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .settings(
-            libraryDependencies += "org.scalamock" %% "scalamock" % "7.3.1" % Test
+            libraryDependencies += "org.scalamock" %% "scalamock" % "7.4.0" % Test
         )
         .jvmSettings(
             libraryDependencies ++= Seq(

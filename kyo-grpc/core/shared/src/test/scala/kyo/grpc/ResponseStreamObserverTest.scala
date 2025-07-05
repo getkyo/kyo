@@ -6,11 +6,11 @@ import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*
 import org.scalactic.TripleEquals.*
-import org.scalamock.scalatest.AsyncMockFactory2
+import org.scalamock.scalatest.AsyncMockFactory
 import org.scalatest.EitherValues.*
 import scala.util.chaining.*
 
-class ResponseStreamObserverTest extends Test with AsyncMockFactory2:
+class ResponseStreamObserverTest extends Test with AsyncMockFactory:
 
     "onNext puts value" in run {
         val channel  = mock[StreamChannel[String, GrpcFailure]]

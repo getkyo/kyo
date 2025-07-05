@@ -7,10 +7,10 @@ import io.grpc.stub.StreamObserver
 import java.util.Locale
 import kyo.*
 import org.scalactic.TripleEquals.*
-import org.scalamock.scalatest.AsyncMockFactory2
+import org.scalamock.scalatest.AsyncMockFactory
 import scala.concurrent.Future
 
-class RequestStreamObserverTest extends Test with AsyncMockFactory2:
+class RequestStreamObserverTest extends Test with AsyncMockFactory:
 
     "one" - {
 
