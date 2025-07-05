@@ -22,7 +22,7 @@ object ZLayers:
       * @return
       *   A Kyo Layer that, when run, will instantiate the resource from the ZLayer
       */
-    def get[E, A: ZTag: Tag](layer: => ZLayer[Any, E, A])(using Frame, Trace): Layer[A, Abort[E] & Async & Resource] =
+    def get[E, A: ZTag: Tag](layer: => ZLayer[Any, E, A])(using Frame, Trace, Tag[Abort[E]]): Layer[A, Abort[E] & Async & Resource] =
         Layer {
             Sync.Unsafe {
                 val scope = Unsafe.unsafely(Scope.unsafe.make)

@@ -50,7 +50,7 @@ extension [A, S](effect: A < (S & Choice))
       * @return
       *   A computation that produces the result of this computation with dropped Choice translated to Abort[E]
       */
-    def choiceDropToFailure[E](error: => E)(using Frame): A < (Choice & Abort[E] & S) =
+    def choiceDropToFailure[E](error: => E)(using Frame, Tag[Abort[E]]): A < (Choice & Abort[E] & S) =
         Choice.run(effect).map:
             case seq if seq.isEmpty => Abort.fail(error)
             case other              => Choice.evalSeq(other)
