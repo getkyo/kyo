@@ -184,9 +184,9 @@ class FiberCombinatorsTest extends Test:
             }
         }
 
-        "awaitCompletion" - {
+        "await" - {
 
-            "should wait for fiber completion without returning result" in run {
+            "should wait for fiber completion" in run {
                 var completed = false
                 val effect = Kyo.async[Int, Nothing](continuation =>
                     completed = true
@@ -195,31 +195,13 @@ class FiberCombinatorsTest extends Test:
 
                 val program =
                     for
-                        fiber <- effect.fork
-                        _     <- fiber.awaitCompletion
-                    yield completed
+                        fiber  <- effect.fork
+                        result <- fiber.await
+                    yield result
 
                 Fiber.init(program).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
-                        assert(v)
-                    )
-                }
-            }
-
-            "should not propagate fiber result" in run {
-                val effect = Kyo.async[Int, Nothing]((continuation) =>
-                    continuation(42)
-                )
-
-                val program =
-                    for
-                        fiber <- effect.fork
-                        _     <- fiber.awaitCompletion
-                    yield ()
-
-                Fiber.init(program).map(_.toFuture).map { handledEffect =>
-                    handledEffect.map(v =>
-                        assert(v == ())
+                        assert(v == Result.succeed(42) && completed)
                     )
                 }
             }
