@@ -206,7 +206,7 @@ class KyoCombinatorsTest extends Test:
                 "repeat with custom policy" in run {
                     var count    = 0
                     val schedule = Schedule.repeat(3)
-                    val effect   = Sync.defer { count += 1; count }.repeatAtInterval(schedule)
+                    val effect   = Sync.defer { count += 1; count }.repeat(schedule)
                     Fiber.init(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)
