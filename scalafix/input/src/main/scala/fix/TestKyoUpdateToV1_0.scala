@@ -5,11 +5,12 @@ package fix
 
 import kyo.*
 
-object KyoUpdateToV1_0:
+object TestKyoUpdateToV1_0:
     val init: Unit < IO = IO(println("hello")).andThen(IO.apply(println(" world")))
 
     val prg = defer:
         init.now
         Console.printLine("hello").now
 
-end KyoUpdateToV1_0
+    val async: Fiber[Nothing, Unit] < Async = Async.run(Async.apply(Async(Kyo.unit)))
+end TestKyoUpdateToV1_0

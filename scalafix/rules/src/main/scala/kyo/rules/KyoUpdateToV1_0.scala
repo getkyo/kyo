@@ -30,6 +30,15 @@ class KyoUpdateToV1_0 extends SemanticRule("KyoUpdateToV1_0") {
 
             case io @ Type.Name("IO") if io matches "kyo.IO" =>
                 Patch.replaceTree(io, "Sync")
+
+            case asyncRun @ Term.Select(Term.Name("Async"), Term.Name("run")) if asyncRun matches "kyo.Async.run" =>
+                Patch.replaceTree(asyncRun, "Fiber.init")
+
+            case Term.Apply.After_4_6_0(async @ Term.Name("Async"), _) if async matches "kyo.Async" =>
+                Patch.replaceTree(async, "Async.defer")
+
+            case apply @ Term.Select(Term.Name("Async"), Term.Name("apply")) if apply matches "kyo.Async.apply" =>
+                Patch.replaceTree(apply, "Async.defer")
         }).asPatch
 
     }
