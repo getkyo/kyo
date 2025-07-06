@@ -63,14 +63,14 @@ private[kyo] object Validate:
                     qualifier.tpe <:< TypeRepr.of[Option[?]] |
                     qualifier.tpe <:< TypeRepr.of[scala.util.Try[?]] |
                     qualifier.tpe <:< TypeRepr.of[Either[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]] |
-                    qualifier.tpe <:< TypeRepr.of[kyo.Stream[?, ?]]
+                    qualifier.tpe <:< TypeRepr.of[Either.LeftProjection[?, ?]]
 
             inline def validName: Boolean = validMethodNamesForAsyncShift.contains(methodName)
 
             validType && validName
         end validAsyncShift
 
+        @tailrec
         def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
             qualifiers match
                 case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
@@ -83,6 +83,41 @@ private[kyo] object Validate:
                     asyncShiftDive(xs)
 
                 case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
+
+        extension (term: Term)
+            def children: List[Tree] =
+                term match
+                    case Apply(fun, args)           => fun :: args
+                    case TypeApply(fun, targs)      => fun :: targs
+                    case Select(qualifier, _)       => List(qualifier)
+                    case Ident(_)                   => Nil
+                    case Block(stats, expr)         => stats.collect { case t: Term => t } :+ expr
+                    case Inlined(_, bindings, expr) => bindings.collect { case t: Term => t } :+ expr
+                    case If(cond, thenp, elsep)     => List(cond, thenp, elsep)
+                    case Lambda(meth, _)            => meth
+                    case _                          => Nil // Other cases (Literal, Closure, etc.)
+        end extension
+
+        @tailrec
+        def skipDive(qualifiers: List[Tree])(using Trees.Step): Unit =
+            qualifiers match
+                case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
+                    // TODO, check for misuse of .now in the body, here
+                    body match
+                        case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), y, z) =>
+                        case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                            Trees.Step.goto(x)
+
+                        case tree: Term if tree.tpe.typeSymbol.name == "<" =>
+                            tree.children.foreach(Trees.Step.goto)
+
+                        case _ => Trees.Step.goto(body)
+                    end match
+
+                    skipDive(xs)
+                case x :: xs =>
+                    Trees.Step.goto(x); skipDive(xs)
+                case Nil =>
 
         Trees.traverseGoto(expr.asTerm) {
             case Apply(
@@ -113,6 +148,11 @@ private[kyo] object Validate:
             case Apply(TypeApply(select: Select, _), argGroup0) if validAsyncShift(select) =>
                 Trees.Step.goto(select.qualifier)
                 asyncShiftDive(argGroup0)
+
+            case Apply(Apply(TypeApply(Select(qual, _), _), argGroup0), argGroup1) if qual.tpe <:< TypeRepr.of[kyo.Stream[?, ?]] =>
+                Trees.Step.goto(qual)
+                skipDive(argGroup0)
+                skipDive(argGroup1)
 
             case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
                 @tailrec
