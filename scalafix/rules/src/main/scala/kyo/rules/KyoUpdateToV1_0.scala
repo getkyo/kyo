@@ -15,26 +15,29 @@ class KyoUpdateToV1_0 extends SemanticRule("KyoUpdateToV1_0") {
         }
 
         doc.tree.collect({
-            case defer @ Term.Name("defer") if defer matches "kyo.Direct.defer" =>
+            case defer @ q"defer" if defer.matches("kyo.Direct.defer") =>
                 Patch.replaceTree(defer, "direct")
 
-            case apply @ Term.Select(Term.Name("IO"), Term.Name("apply")) if apply matches "kyo.IO.apply" =>
+            // IO
+            case apply @ q"IO.apply" if apply.matches("kyo.IO.apply") =>
                 Patch.replaceTree(apply, "Sync.defer")
 
-            case Term.Apply.After_4_6_0(io @ Term.Name("IO"), _) if io matches "kyo.IO" =>
+            case q"$io($_)" if io.matches("kyo.IO") =>
                 Patch.replaceTree(io, "Sync.defer")
 
-            case io @ Type.Name("IO") if io matches "kyo.IO" =>
+            case io @ t"IO" if io matches "kyo.IO" =>
                 Patch.replaceTree(io, "Sync")
 
-            case asyncRun @ Term.Select(Term.Name("Async"), Term.Name("run")) if asyncRun matches "kyo.Async.run" =>
+            // Async
+            case asyncRun @ q"Async.run" if asyncRun.matches("kyo.Async.run") =>
                 Patch.replaceTree(asyncRun, "Fiber.init")
 
-            case Term.Apply.After_4_6_0(async @ Term.Name("Async"), _) if async matches "kyo.Async" =>
+            case apply @ q"Async.apply" if apply.matches("kyo.Async.apply") =>
+                Patch.replaceTree(apply, "Async.defer")
+
+            case q"$async($_)" if async.matches("kyo.Async") =>
                 Patch.replaceTree(async, "Async.defer")
 
-            case apply @ Term.Select(Term.Name("Async"), Term.Name("apply")) if apply matches "kyo.Async.apply" =>
-                Patch.replaceTree(apply, "Async.defer")
         }).asPatch
 
     }
