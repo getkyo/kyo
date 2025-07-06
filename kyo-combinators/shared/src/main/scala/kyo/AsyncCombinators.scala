@@ -100,7 +100,7 @@ extension [A, E, S](fiber: Fiber[E, A] < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def join(using frame: Frame, reduce: Reducible[Abort[E]]): A < (S & reduce.SReduced & Async) =
+    def join(using Frame): A < (S & Abort[E] & Async) =
         fiber.map(_.get)
 
     /** Awaits the completion of the fiber and returns its result as a `Unit`.
