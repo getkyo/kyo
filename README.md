@@ -352,6 +352,46 @@ abortExceptionFirst(Abort.fail("test")) // Result.Fail("test")
 abortExceptionFirst(Abort.fail(ex))     // Result.Success(Result.Fail(ex))
 ```
 
+### Testing effects
+
+Testing Kyo effects is currently done using the `KyoSpecDefault` trait, found under `kyo.test` package in the `kyo-zio-test` library.
+
+You need to define the following in your `build.sbt`:
+
+```scala
+lazy val libraryDependencies ++= Seq(
+  // We need this to run the kyo tests with sbt
+  "dev.zio" %% "zio-test-sbt" % <zioVersion> % Test,
+  "io.getkyo" %% "kyo-zio-test" % <kyoVersion> % Test
+)
+
+lazy val testFrameworksSettings = Seq(
+  // configure the test framework with sbt
+  Test / testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+)
+```
+
+Then you can create a test like this:
+
+```scala
+import kyo.*
+import kyo.test.*
+// We use Kyo's Result type, ignoring zio.test.Result
+import zio.test.{Result as _, *}
+
+object SimpleTest extends KyoSpecDefault:
+
+  def spec: Spec[Any, Any] =
+    suite("test suite")(
+
+      test("simple test") {
+        for
+          result <- Abort.run(42)
+        yield assertTrue(result == Result.succeed(42))
+      }
+    )
+```
+
 ### Direct Syntax
 
 Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages three constructs: `direct`, `.now`, and `.later`.
