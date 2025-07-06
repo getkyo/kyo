@@ -163,8 +163,7 @@ object Async extends AsyncPlatformSpecific:
     def timeout[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        if after == Duration.Zero then Abort.fail(Timeout(Present(after)))
-        else if !after.isFinite then v
+        if !after.isFinite then v
         else
             isolate.capture { state =>
                 Fiber.init(isolate.isolate(state, v)).map { task =>
