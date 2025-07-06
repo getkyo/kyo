@@ -32,46 +32,46 @@ Kyo is structured as a monorepo, published to Maven Central:
 
 #### Core Libraries
 
-| Module          | JVM | JS | Native | Description                         |
-|-----------------|-----|----| ------ |-------------------------------------|
-| kyo-data        | ✅  | ✅ | ✅     | Efficient `Maybe`, `Result`, `Duration`, and other data types |
-| kyo-kernel      | ✅  | ✅ | ✅     | Core algebraic effects engine and type-level effect tracking |
-| kyo-prelude     | ✅  | ✅ | ✅     | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc. |
-| kyo-core        | ✅  | ✅ | ✅     | Side-effectful computations: `Sync`, `Async`, `Resource`, etc. |
-| kyo-direct      | ✅  | ✅ | ✅     | Direct-style syntax using `.await` and control flow |
-| kyo-combinators | ✅  | ✅ | ✅     | ZIO-like effect combinators and utility methods |
-| kyo-actor       | ✅  | ✅ | ✅     | Type-safe actor system with supervision and messaging |
-| kyo-stm         | ✅  | ✅ | ✅     | Software transactional memory for managing state |
-| kyo-offheap     | ✅  | ❌ | ✅     | Direct memory allocation and off-heap data structures |
+| Module          | JVM | JS  | Native | Description                                                    |
+| --------------- | --- | --- | ------ | -------------------------------------------------------------- |
+| kyo-data        | ✅   | ✅   | ✅      | Efficient `Maybe`, `Result`, `Duration`, and other data types  |
+| kyo-kernel      | ✅   | ✅   | ✅      | Core algebraic effects engine and type-level effect tracking   |
+| kyo-prelude     | ✅   | ✅   | ✅      | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc.    |
+| kyo-core        | ✅   | ✅   | ✅      | Side-effectful computations: `Sync`, `Async`, `Resource`, etc. |
+| kyo-direct      | ✅   | ✅   | ✅      | Direct-style syntax using `.await` and control flow            |
+| kyo-combinators | ✅   | ✅   | ✅      | ZIO-like effect combinators and utility methods                |
+| kyo-actor       | ✅   | ✅   | ✅      | Type-safe actor system with supervision and messaging          |
+| kyo-stm         | ✅   | ✅   | ✅      | Software transactional memory for managing state               |
+| kyo-offheap     | ✅   | ❌   | ✅      | Direct memory allocation and off-heap data structures          |
 
 #### Integrations
 
-| Module               | JVM | JS | Native | Description                         |
-|----------------------|-----|----| ------ |-------------------------------------|
-| kyo-sttp             | ✅  | ✅ | ✅     | HTTP client using Sttp with automatic effect management |
-| kyo-tapir            | ✅  | ❌ | ❌     | HTTP server endpoints using Tapir with Netty backend |
-| kyo-caliban          | ✅  | ❌ | ❌     | GraphQL server using Caliban with schema derivation |
-| kyo-zio              | ✅  | ✅ | ❌     | Bidirectional ZIO interop with fiber and effect conversion |
-| kyo-zio-test         | ✅  | ✅ | ❌     | ZIO Test framework integration for testing Kyo effects |
-| kyo-cats             | ✅  | ✅ | ❌     | Cats Effect interop with `Sync` and fiber conversion |
-| kyo-cache            | ✅  | ❌ | ❌     | High-performance caching using Caffeine with memoization |
-| kyo-stats-registry   | ✅  | ✅ | ✅     | Metrics collection with counters, histograms, and gauges |
-| kyo-stats-otel       | ✅  | ❌ | ❌     | OpenTelemetry integration for metrics and tracing export |
-| kyo-playwright       | ✅  | ❌ | ❌     | Browser automation testing using Microsoft Playwright |
-| kyo-reactive-streams | ✅  | ❌ | ❌     | Reactive Streams interop implementation |
-| kyo-aeron            | ✅  | ❌ | ❌     | High-performance messaging using Aeron transport |
+| Module               | JVM | JS  | Native | Description                                                |
+| -------------------- | --- | --- | ------ | ---------------------------------------------------------- |
+| kyo-sttp             | ✅   | ✅   | ✅      | HTTP client using Sttp with automatic effect management    |
+| kyo-tapir            | ✅   | ❌   | ❌      | HTTP server endpoints using Tapir with Netty backend       |
+| kyo-caliban          | ✅   | ❌   | ❌      | GraphQL server using Caliban with schema derivation        |
+| kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with fiber and effect conversion |
+| kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects     |
+| kyo-cats             | ✅   | ✅   | ❌      | Cats Effect interop with `Sync` and fiber conversion       |
+| kyo-cache            | ✅   | ❌   | ❌      | High-performance caching using Caffeine with memoization   |
+| kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges   |
+| kyo-stats-otel       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export   |
+| kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright      |
+| kyo-reactive-streams | ✅   | ❌   | ❌      | Reactive Streams interop implementation                    |
+| kyo-aeron            | ✅   | ❌   | ❌      | High-performance messaging using Aeron transport           |
 
 #### Scheduler
 
 > These modules are designed to be used independently, without requiring the Kyo effect system. These modules provide specific functionalities that can be integrated into any Scala project, regardless of whether it uses Kyo's effect system or not. They are also compiled with support for Scala 2, enabling adoption without needing to update to Scala 3.
 
-| Module                | JVM | JS | Native | Description                         |
-|-----------------------|-----|----| ------ |-------------------------------------|
-| kyo-scheduler         | ✅  | ✅ | ✅     | Adaptive work-stealing scheduler with automatic parallelism |
-| kyo-scheduler-cats    | ✅  | ❌ | ❌     | Drop-in Cats Effect `ExecutionContext` replacement |
-| kyo-scheduler-finagle | ✅  | ❌ | ❌     | Twitter Finagle integration for improved performance |
-| kyo-scheduler-pekko   | ✅  | ❌ | ❌     | Apache Pekko actor system integration |
-| kyo-scheduler-zio     | ✅  | ❌ | ❌     | ZIO `Executor` implementation for better ZIO performance |
+| Module                | JVM | JS  | Native | Description                                                 |
+| --------------------- | --- | --- | ------ | ----------------------------------------------------------- |
+| kyo-scheduler         | ✅   | ✅   | ✅      | Adaptive work-stealing scheduler with automatic parallelism |
+| kyo-scheduler-cats    | ✅   | ❌   | ❌      | Drop-in Cats Effect `ExecutionContext` replacement          |
+| kyo-scheduler-finagle | ✅   | ❌   | ❌      | Twitter Finagle integration for improved performance        |
+| kyo-scheduler-pekko   | ✅   | ❌   | ❌      | Apache Pekko actor system integration                       |
+| kyo-scheduler-zio     | ✅   | ❌   | ❌      | ZIO `Executor` implementation for better ZIO performance    |
 
 Add Kyo modules to your `build.sbt`:
 
@@ -86,16 +86,17 @@ Use `%%` for JVM/Scala Native, or `%%%` for ScalaJS cross-compilation. See the m
 ## Talks
 > These talks are listed in reverse chronological order, as Kyo has grown and transformed significantly in preparation for 1.0.
 
-| Title | Speaker(s) | Host | Date |
-|-------|------------|------|------|
-| [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY) | Flavio Brasil | Func Prog Sweden | May, 2025 |
-| [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0) | Adam Hearn | LambdaConf | May, 2025 |
-| [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4) | Flavio Brasil & Adam Hearn | Scala for Fun & Profit | February, 2025 |
-| [The Actor Model Beyond Akka With Kyo](https://www.youtube.com/watch?v=VU31k3lQ8yU) | Damian Reeves | Functional Scala | December, 2024 |
-| [Building Robust Applications with Kyo: A Hands on Introduction](https://www.youtube.com/watch?v=QW8mAJr0Wso) | Adam Hearn | ScalaIO | November, 2024 |
-| [Comparing Approaches to Structured Concurrency](https://www.youtube.com/watch?v=g6dyLhAublQ) | James Ward & Adam Hearn | LambdaConf | May, 2024 |
-| [ Algebraic Effects from Scratch](https://www.youtube.com/watch?v=qPvPdRbTF-E) | Kit Langton | Func Prog Sweden | April, 2024 |
-| [Releasing Kyo: When Performance Meets Elegance In Scala](https://www.youtube.com/watch?v=FXkYKQRC9LI) | Flavio Brasil | Functional Scala | December, 2023 |
+| Title                                                                                                          | Speaker(s)                 | Host                   | Date           |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------- | ---------------------- | -------------- |
+| [Suspension: the magic behind composability (or "The Kyo Monad")](https://www.youtube.com/watch?v=y3KiuFczOFE) | Flavio Brasil              | Lambda Days            | June, 2025     |
+| [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY)              | Flavio Brasil              | Func Prog Sweden       | May, 2025      |
+| [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0)            | Adam Hearn                 | LambdaConf             | May, 2025      |
+| [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4)              | Flavio Brasil & Adam Hearn | Scala for Fun & Profit | February, 2025 |
+| [The Actor Model Beyond Akka With Kyo](https://www.youtube.com/watch?v=VU31k3lQ8yU)                            | Damian Reeves              | Functional Scala       | December, 2024 |
+| [Building Robust Applications with Kyo: A Hands on Introduction](https://www.youtube.com/watch?v=QW8mAJr0Wso)  | Adam Hearn                 | ScalaIO                | November, 2024 |
+| [Comparing Approaches to Structured Concurrency](https://www.youtube.com/watch?v=g6dyLhAublQ)                  | James Ward & Adam Hearn    | LambdaConf             | May, 2024      |
+| [ Algebraic Effects from Scratch](https://www.youtube.com/watch?v=qPvPdRbTF-E)                                 | Kit Langton                | Func Prog Sweden       | April, 2024    |
+| [Releasing Kyo: When Performance Meets Elegance In Scala](https://www.youtube.com/watch?v=FXkYKQRC9LI)         | Flavio Brasil              | Functional Scala       | December, 2023 |
 
 
 ## IDE Support
@@ -2490,12 +2491,12 @@ val d: Unit < (Sync & Resource) =
 
 It's also possible to specify a concurrent `Access` policy as the second parameter of the `Queue.init` methods. This configuration has an effect only on the JVM and is ignored in ScalaJS.
 
-| Policy | Full Form                              | Description                                                                                                                                                                                                          |
-| ------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy                       | Full Form                              | Description                                                                                                                                                                                                          |
+| ---------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MultiProducerMultiConsumer   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
-| MultiProducerSingleConsumer   | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
-| SingleProducerMultiConsumer   | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
-| SingleProducerSingleConsumer   | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
+| MultiProducerSingleConsumer  | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
+| SingleProducerMultiConsumer  | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
+| SingleProducerSingleConsumer | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
 
 Each policy is suitable for different scenario and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenario.
 
