@@ -6,10 +6,6 @@ import scalafix.v1._
 class KyoUpdateToV1_0 extends SemanticRule("KyoUpdateToV1_0") {
 
     override def fix(implicit doc: SemanticDocument): Patch = {
-        println("Tree.syntax: " + doc.tree.syntax)
-        println("Tree.structure: " + doc.tree.structure)
-        println("Tree.structureLabeled: " + doc.tree.structureLabeled)
-
         implicit class TreeOps(tree: Tree) {
             def matches(symbol: String): Boolean = {
                 tree.symbol.normalized.value.matches("^" + symbol.flatMap(c =>
