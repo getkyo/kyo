@@ -86,17 +86,17 @@ Use `%%` for JVM/Scala Native, or `%%%` for ScalaJS cross-compilation. See the m
 ## Talks
 > These talks are listed in reverse chronological order, as Kyo has grown and transformed significantly in preparation for 1.0.
 
-| Title                                                                                                          | Speaker(s)                 | Host                   | Date           |
-| -------------------------------------------------------------------------------------------------------------- | -------------------------- | ---------------------- | -------------- |
-| [Suspension: the magic behind composability (or "The Kyo Monad")](https://www.youtube.com/watch?v=y3KiuFczOFE) | Flavio Brasil              | Lambda Days            | June, 2025     |
-| [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY)              | Flavio Brasil              | Func Prog Sweden       | May, 2025      |
-| [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0)            | Adam Hearn                 | LambdaConf             | May, 2025      |
-| [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4)              | Flavio Brasil & Adam Hearn | Scala for Fun & Profit | February, 2025 |
-| [The Actor Model Beyond Akka With Kyo](https://www.youtube.com/watch?v=VU31k3lQ8yU)                            | Damian Reeves              | Functional Scala       | December, 2024 |
-| [Building Robust Applications with Kyo: A Hands on Introduction](https://www.youtube.com/watch?v=QW8mAJr0Wso)  | Adam Hearn                 | ScalaIO                | November, 2024 |
-| [Comparing Approaches to Structured Concurrency](https://www.youtube.com/watch?v=g6dyLhAublQ)                  | James Ward & Adam Hearn    | LambdaConf             | May, 2024      |
-| [ Algebraic Effects from Scratch](https://www.youtube.com/watch?v=qPvPdRbTF-E)                                 | Kit Langton                | Func Prog Sweden       | April, 2024    |
-| [Releasing Kyo: When Performance Meets Elegance In Scala](https://www.youtube.com/watch?v=FXkYKQRC9LI)         | Flavio Brasil              | Functional Scala       | December, 2023 |
+| Title                                                                                                          | Speaker(s)                 | Host                   | Date           | Resources                                                                                             |
+|----------------------------------------------------------------------------------------------------------------|----------------------------|------------------------|----------------|-------------------------------------------------------------------------------------------------------|
+| [Suspension: the magic behind composability (or "The Kyo Monad")](https://www.youtube.com/watch?v=y3KiuFczOFE) | Flavio Brasil              | Lambda Days            | June, 2025     | [slides](https://speakerdeck.com/fwbrasil/suspension-the-magic-behind-composability-or-the-kyo-monad) |
+| [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY)              | Flavio Brasil              | Func Prog Sweden       | May, 2025      |                                                                                                       |
+| [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0)            | Adam Hearn                 | LambdaConf             | May, 2025      |                                                                                                       |
+| [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4)              | Flavio Brasil & Adam Hearn | Scala for Fun & Profit | February, 2025 |                                                                                                       |
+| [The Actor Model Beyond Akka With Kyo](https://www.youtube.com/watch?v=VU31k3lQ8yU)                            | Damian Reeves              | Functional Scala       | December, 2024 |                                                                                                       |
+| [Building Robust Applications with Kyo: A Hands on Introduction](https://www.youtube.com/watch?v=QW8mAJr0Wso)  | Adam Hearn                 | ScalaIO                | November, 2024 |                                                                                                       |
+| [Comparing Approaches to Structured Concurrency](https://www.youtube.com/watch?v=g6dyLhAublQ)                  | James Ward & Adam Hearn    | LambdaConf             | May, 2024      |                                                                                                       |
+| [ Algebraic Effects from Scratch](https://www.youtube.com/watch?v=qPvPdRbTF-E)                                 | Kit Langton                | Func Prog Sweden       | April, 2024    |                                                                                                       |
+| [Releasing Kyo: When Performance Meets Elegance In Scala](https://www.youtube.com/watch?v=FXkYKQRC9LI)         | Flavio Brasil              | Functional Scala       | December, 2023 |                                                                                                       |
 
 
 ## IDE Support
