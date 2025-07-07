@@ -154,6 +154,9 @@ private[kyo] object Validate:
                 skipDive(argGroup0)
                 skipDive(argGroup1)
 
+            // direct: in direct:
+            case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) =>
+
             case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
                 @tailrec
                 def dive(qual: Tree): Unit =
