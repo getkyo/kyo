@@ -356,7 +356,9 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2"
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2",
+            libraryDependencies += "com.eed3si9n.eval" % "eval_3.7.1" % "0.3.0-SNAPSHOT" % Test
+
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
