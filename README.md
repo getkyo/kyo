@@ -362,8 +362,8 @@ You need to define the following in your `build.sbt`:
 ```scala mdoc:skip
 lazy val libraryDependencies ++= Seq(
   // We need this to run the kyo tests with sbt
-  "dev.zio" %% "zio-test-sbt" % <zioVersion> % Test,
-  "io.getkyo" %% "kyo-zio-test" % <kyoVersion> % Test
+  "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+  "io.getkyo" %% "kyo-zio-test" % kyoVersion % Test
 )
 
 lazy val testFrameworksSettings = Seq(
