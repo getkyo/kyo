@@ -14,9 +14,10 @@ class StreamTest extends Test:
             def f(i: Int): Int < Var[Int] =
                 Var.update[Int](_ + i)
 
+            val magicStream = stream
             typeCheckFailure(
-                """val newStream1: Stream[Int, Any] < Var[Int] = direct(stream.map(x => f(x).now))""".stripMargin
-            )("Effectful computations must explicitly use either .now or .later in a direct block.")
+                """val newStream1: Stream[Int, Any] < Var[Int] = direct(magicStream.map(x => f(x).now))""".stripMargin
+            )("Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.")
 
             val newStream2: Stream[Int, Var[Int]] < Any = direct:
                 stream.map(x => f(x))
@@ -45,7 +46,7 @@ class StreamTest extends Test:
 
             typeCheckFailure(
                 """val newStream1: Stream[Int, Any] < Var[Int] = direct(stream.filter(x => f(x).now))"""
-            )("Effectful computations must explicitly use either .now or .later in a direct block.")
+            )("Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.")
 
             val newStream2: Stream[Int, Var[Int]] < Any = direct:
                 stream.filter(x => f(x).later)

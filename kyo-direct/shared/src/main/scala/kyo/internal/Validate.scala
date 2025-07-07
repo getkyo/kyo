@@ -98,26 +98,61 @@ private[kyo] object Validate:
                     case _                          => Nil // Other cases (Literal, Closure, etc.)
         end extension
 
-        @tailrec
+        object DirectBlock:
+            def unapply(t: Term): Boolean =
+                t match
+                    case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) => true
+                    case _                                                            => false
+        end DirectBlock
+
         def skipDive(qualifiers: List[Tree])(using Trees.Step): Unit =
-            qualifiers match
-                case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
-                    // TODO, check for misuse of .now in the body, here
-                    body match
-                        case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), y, z) =>
-                        case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
-                            Trees.Step.goto(x)
 
-                        case tree: Term if tree.tpe.typeSymbol.name == "<" =>
-                            tree.children.foreach(Trees.Step.goto)
+            def skipDive(tree: Tree): Unit =
+                tree match
+                    case Block(List(DefDef(_, _, _, Some(body))), _) =>
 
-                        case _ => Trees.Step.goto(body)
-                    end match
+                        val hasNow: Boolean = Trees.exists(body)({
+                            case t @ (Apply(TypeApply(Ident("now"), _), List(_)) | Select(_, "now")) => true
+                            case DirectBlock()                                                       => false
+                        })
 
-                    skipDive(xs)
-                case x :: xs =>
-                    Trees.Step.goto(x); skipDive(xs)
-                case Nil =>
+                        if hasNow then
+                            fail(
+                                body,
+                                """
+                                  |Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.
+                                  |You have two options:
+                                  | - calling .now before building the structure :
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |        y = f(1).now
+                                  |        stream.map(x => x + y)
+                                  |
+                                  | - using the effect
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |       stream.map(x => f(x + 1))
+                                  |
+                                  |""".stripMargin
+                            )
+                        else
+                            body match
+                                case DirectBlock() =>
+                                case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                                    Trees.Step.goto(x)
+
+                                case tree: Term if tree.tpe.typeSymbol.name == "<" =>
+                                    tree.children.foreach(Trees.Step.goto)
+
+                                case _ =>
+                                    Trees.Step.goto(body)
+                        end if
+
+                    case x =>
+                        Trees.Step.goto(x)
+
+            qualifiers.foreach(skipDive)
+        end skipDive
 
         Trees.traverseGoto(expr.asTerm) {
             case Apply(
@@ -155,7 +190,7 @@ private[kyo] object Validate:
                 skipDive(argGroup1)
 
             // direct: in direct:
-            case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) =>
+            case DirectBlock() =>
 
             case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
                 @tailrec
