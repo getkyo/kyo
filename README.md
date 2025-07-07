@@ -359,7 +359,7 @@ Testing Kyo effects is currently done using the `KyoSpecDefault` trait, found un
 
 You need to define the following in your `build.sbt`:
 
-```scala
+```scala mdoc:skip
 lazy val libraryDependencies ++= Seq(
   // We need this to run the kyo tests with sbt
   "dev.zio" %% "zio-test-sbt" % <zioVersion> % Test,
