@@ -1,6 +1,7 @@
 package kyo
 
 import com.eed3si9n.eval.Eval
+import scala.annotation.nowarn
 import scala.quoted.*
 
 object Overloaded:
@@ -11,6 +12,7 @@ object Overloaded:
     def resolveEachMacro[A: Type](asExpr: Expr[Seq[A]], bodyExpr: Expr[A => Unit])(using Quotes): Expr[Unit] =
         import quotes.reflect.*
 
+        @nowarn
         val (paramSymbol, bodyTree) = bodyExpr.asTerm.underlyingArgument match
             case Block(List(DefDef(_, List(List(param: ValDef)), _, Some(body))), _) =>
                 (param.symbol, body)
@@ -24,7 +26,7 @@ object Overloaded:
                     val sub = new TreeMap:
                         override def transformTerm(tree: Term)(owner: Symbol): Term =
                             tree match
-                                case Ident(name) if tree.symbol.eq(paramSymbol) =>
+                                case Ident(_) if tree.symbol.eq(paramSymbol) =>
                                     arg.asTerm.changeOwner(owner)
                                 case other => super.transformTerm(tree)(owner)
 
@@ -33,9 +35,9 @@ object Overloaded:
 
                 val calls: Seq[Expr[Any]] = args.map { arg =>
 
-                    val inlinedBody: Tree = substituted(arg)
-
-                    val code: Expr[String] = Expr(inlinedBody.asExpr.show)
+                    val inlinedBody        = substituted(arg).asExpr
+                    val codeStr            = inlinedBody.show
+                    val code: Expr[String] = Expr(codeStr)
 
                     '{ Eval[Any]($code) }
                 }

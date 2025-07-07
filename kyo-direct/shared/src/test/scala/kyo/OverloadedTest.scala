@@ -10,25 +10,21 @@ object OverloadedTest:
 
     var faCall = 0
 
-    def f(a: A) =
+    def f(a: A): Unit =
         faCall += 1
-        println("hello A")
 
     var fbCall = 0
 
     @targetName("fB")
-    def f(b: A.B.type) =
+    def f(b: A.B.type): Unit =
         fbCall += 1
-        println("hello B")
-    end f
+
 end OverloadedTest
 
 class OverloadedTest extends AnyFreeSpec with Assertions:
 
     import OverloadedTest.*
-
-    "hello" in {
-
+    "basic" in {
         assert((faCall, fbCall) == (0, 0))
 
         f(A.B)
