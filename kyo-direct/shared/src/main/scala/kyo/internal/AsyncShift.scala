@@ -7,7 +7,6 @@ import kyo.*
 import kyo.kernel.internal.Safepoint
 import scala.annotation.targetName
 import scala.collection.IterableOps
-import scala.util.NotGiven
 
 trait asyncShiftLowPriorityImplicit1:
 
