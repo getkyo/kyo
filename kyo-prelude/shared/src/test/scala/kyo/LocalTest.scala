@@ -116,7 +116,7 @@ class LocalTest extends Test:
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val isolate = Isolate.Contextual[Any, Any]
+            val isolate = Isolate[Any, Any, Any]
 
             val context =
                 noninheritableLocal.let(20)(inheritableLocal.let("modified")(isolate.runInternal { (trace, context) => context })).eval
@@ -132,7 +132,7 @@ class LocalTest extends Test:
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val isolate = Isolate.Contextual[Any, Any]
+            val isolate = Isolate[Any, Any, Any]
 
             val context =
                 noninheritableLocal.let(20)(

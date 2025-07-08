@@ -211,7 +211,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                     Loop(0)(cur => Emit.valueWith(Chunk(cur))(Loop.continue(cur + 1)))
                 )
             for
-                promise    <- Fiber.Promise.init[Throwable, Unit]
+                promise    <- Fiber.Promise.init[Unit, Abort[Throwable]]
                 subscriber <- streamSubscriber
                 subscription <- Sync.Unsafe {
                     StreamSubscription.Unsafe.subscribe(
@@ -226,7 +226,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                 }
                 _      <- Resource.run(subscriber.stream.map(_.take(10).discard))
                 result <- promise.getResult
-            yield assert(result == Success(()))
+            yield assert(result.map(_.eval) == Success(()))
             end for
         }
     }

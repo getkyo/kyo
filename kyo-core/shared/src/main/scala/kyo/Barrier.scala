@@ -61,7 +61,7 @@ object Barrier:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
-        def await()(using AllowUnsafe): Fiber.Unsafe[Nothing, Unit]
+        def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Any]
         def pending()(using AllowUnsafe): Int
         def safe: Barrier = Barrier(this)
     end Unsafe
@@ -77,15 +77,15 @@ object Barrier:
             if n <= 0 then noop
             else
                 new Unsafe:
-                    val promise = Promise.Unsafe.init[Nothing, Unit]()
+                    val promise = Promise.Unsafe.init[Unit, Any]()
                     val count   = AtomicInt.Unsafe.init(n)
 
                     def await()(using AllowUnsafe) =
-                        @tailrec def loop(c: Int): Fiber.Unsafe[Nothing, Unit] =
+                        @tailrec def loop(c: Int): Fiber.Unsafe[Unit, Any] =
                             if c > 0 && !count.compareAndSet(c, c - 1) then
                                 loop(count.get())
                             else
-                                if c == 1 then promise.completeDiscard(Result.unit)
+                                if c == 1 then promise.completeDiscard(Result.succeed(()))
                                 promise
                         loop(count.get())
                     end await

@@ -1858,26 +1858,26 @@ val a: Unit < Sync =
 
 // Recurring task with a delay between
 // executions
-val b: Fiber[Nothing, Unit] < Sync =
+val b: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatWithDelay(
         startAfter = 1.minute,
         delay = 1.minute
     )(a)
 
 // Without an initial delay
-val c: Fiber[Nothing, Unit] < Sync =
+val c: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatWithDelay(1.minute)(a)
 
 // Schedule at a specific interval, regardless
 // of the duration of each execution
-val d: Fiber[Nothing, Unit] < Sync =
+val d: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatAtInterval(
         startAfter = 1.minute,
         interval = 1.minute
     )(a)
 
 // Without an initial delay
-val e: Fiber[Nothing, Unit] < Sync =
+val e: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatAtInterval(1.minute)(a)
 ```
 
@@ -1887,15 +1887,15 @@ Use the returned `Fiber` to control scheduled tasks.
 import kyo.*
 
 // Example task
-val a: Fiber[Nothing, Unit] < Sync =
+val a: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatAtInterval(1.second)(())
 
 // Try to cancel a task
-def b(task: Fiber[Nothing, Unit]): Boolean < Sync =
+def b(task: Fiber[Unit, Any]): Boolean < Sync =
     task.interrupt
 
 // Check if a task is done
-def c(task: Fiber[Nothing, Unit]): Boolean < Sync =
+def c(task: Fiber[Unit, Any]): Boolean < Sync =
     task.done
 ```
 
@@ -2201,7 +2201,7 @@ import kyo.*
 // Fork a computation. The parameter is
 // taken by reference and automatically
 // suspended with 'Sync'
-val a: Fiber[Nothing, Int] < Sync =
+val a: Fiber[Int, Any] < Sync =
     Fiber.init(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a
@@ -2285,7 +2285,7 @@ import scala.concurrent.Future
 val a: Future[Int] = Future.successful(42)
 
 // Transform a 'Future' into a 'Fiber'
-val b: Fiber[Throwable, Int] < Sync =
+val b: Fiber[Int, Any] < Sync =
     Fiber.fromFuture(a)
 ```
 
@@ -2298,7 +2298,7 @@ import kyo.*
 import scala.concurrent.*
 
 // An example fiber
-val a: Fiber[Nothing, Int] = Fiber.success(42)
+val a: Fiber[Int, Any] = Fiber.success(42)
 
 // Check if the fiber is done
 val b: Boolean < Sync =
@@ -2328,7 +2328,7 @@ val h: Future[Int] < Sync =
 
 // 'Fiber' provides a monadic API with both
 // 'map' and 'flatMap'
-val i: Fiber[Nothing, Int] < Sync =
+val i: Fiber[Int, Any] < Sync =
     a.flatMap(v => Fiber.success(v + 1))
 ```
 
@@ -2345,7 +2345,7 @@ val a: Int < Async =
     Fiber.init(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Async' directly
-val b: Fiber[Nothing, Int] < Sync =
+val b: Fiber[Int, Any] < Sync =
     Fiber.init(a)
 
 // The 'runAndBlock' method accepts

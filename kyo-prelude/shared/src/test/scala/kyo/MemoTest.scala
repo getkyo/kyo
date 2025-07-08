@@ -287,7 +287,7 @@ class MemoTest extends Test:
             val result = Memo.run {
                 for
                     a <- f(5)
-                    b <- Isolate.Stateful[Memo, Any].run {
+                    b <- Isolate[Memo, Any, Memo].run {
                         for
                             c <- f(6)
                             d <- f(5)
@@ -311,11 +311,11 @@ class MemoTest extends Test:
             val result = Memo.run {
                 for
                     start <- f(1)
-                    v1 <- Isolate.Stateful[Memo, Any].run {
+                    v1 <- Isolate[Memo, Any, Memo].run {
                         f(2)
                     }
                     middle <- f(3)
-                    v2 <- Isolate.Stateful[Memo, Any].run {
+                    v2 <- Isolate[Memo, Any, Memo].run {
                         f(4)
                     }
                     end <- f(5)
@@ -333,7 +333,7 @@ class MemoTest extends Test:
                     x * 2
                 }
 
-                val isolate = Isolate.Stateful[Memo, Any].andThen(Emit.isolate.merge[Int])
+                val isolate = Isolate[Memo, Any, Memo].andThen(Emit.isolate.merge[Int])
 
                 val result = Memo.run {
                     Emit.run {
@@ -358,7 +358,7 @@ class MemoTest extends Test:
                     x * 2
                 }
 
-                val i1 = Isolate.Stateful[Memo, Any]
+                val i1 = Isolate[Memo, Any, Memo]
                 val i2 = Emit.isolate.merge[Int]
 
                 val result = Memo.run {

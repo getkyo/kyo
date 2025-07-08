@@ -805,7 +805,7 @@ class STMTest extends Test:
         val task = Async.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
 
         Abort.run(task).map { result =>
-            assert(result == Result.fail(ex))
+            assert(result == Result.panic(ex))
         }
     }
     "bug #1172" in runJVM {

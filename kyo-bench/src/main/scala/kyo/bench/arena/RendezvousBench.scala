@@ -65,11 +65,11 @@ class RendezvousBench extends ArenaBench.ForkOnly(10000 * (10000 + 1) / 2):
 
         def produce(waiting: AtomicRef[Any], n: Int = 0): Unit < Async =
             if n <= depth then
-                Promise.init[Nothing, Unit].flatMap { p =>
+                Promise.init[Unit, Any].flatMap { p =>
                     waiting.compareAndSet(null, (p, n)).flatMap {
                         case false =>
                             waiting.getAndSet(null).flatMap {
-                                _.asInstanceOf[Promise[Nothing, Int]].complete(Result.succeed(n))
+                                _.asInstanceOf[Promise[Int, Any]].complete(Result.succeed(n))
                             }
                         case true =>
                             p.get
@@ -82,12 +82,12 @@ class RendezvousBench extends ArenaBench.ForkOnly(10000 * (10000 + 1) / 2):
 
         def consume(waiting: AtomicRef[Any], n: Int = 0, acc: Int = 0): Int < Async =
             if n <= depth then
-                Promise.init[Nothing, Int].flatMap { p =>
+                Promise.init[Int, Any].flatMap { p =>
                     waiting.compareAndSet(null, p).flatMap {
                         case false =>
                             waiting.getAndSet(null).flatMap {
-                                case (p2: Promise[Nothing, Unit] @unchecked, i: Int) =>
-                                    p2.complete(Result.unit).map(_ => i)
+                                case (p2: Promise[Unit, Any] @unchecked, i: Int) =>
+                                    p2.complete(Result.succeed(())).map(_ => i)
                             }
                         case true =>
                             p.get

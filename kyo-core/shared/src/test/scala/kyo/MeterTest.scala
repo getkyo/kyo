@@ -26,14 +26,14 @@ class MeterTest extends Test:
         "run" in run {
             for
                 t  <- Meter.initMutex
-                p  <- Promise.init[Nothing, Int]
-                b1 <- Promise.init[Nothing, Unit]
-                f1 <- Fiber.init(t.run(b1.complete(Result.unit).map(_ => p.getResult)))
+                p  <- Promise.init[Int, Any]
+                b1 <- Promise.init[Unit, Any]
+                f1 <- Fiber.init(t.run(b1.complete(Result.succeed(())).map(_ => p.getResult)))
                 _  <- b1.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
-                b2 <- Promise.init[Nothing, Unit]
-                f2 <- Fiber.init(b2.complete(Result.unit).map(_ => t.run(2)))
+                b2 <- Promise.init[Unit, Any]
+                f2 <- Fiber.init(b2.complete(Result.succeed(())).map(_ => t.run(2)))
                 _  <- b2.get
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
@@ -44,15 +44,17 @@ class MeterTest extends Test:
                 v2 <- f2.get
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
-            yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1 == Result.succeed(1) && v2 == 2 && a3 == 1 && w3 == 0)
+            yield assert(
+                a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1.map(_.eval).contains(1) && v2 == 2 && a3 == 1 && w3 == 0
+            )
         }
 
         "tryRun" in run {
             for
                 sem <- Meter.initMutex
-                p   <- Promise.init[Nothing, Int]
-                b1  <- Promise.init[Nothing, Unit]
-                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.unit).map(_ => p.getResult)))
+                p   <- Promise.init[Int, Any]
+                b1  <- Promise.init[Unit, Any]
+                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.succeed(())).map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
@@ -60,7 +62,7 @@ class MeterTest extends Test:
                 b2  <- f1.done
                 _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
-            yield assert(a1 == 0 && w1 == 0 && b1.isEmpty && !b2 && v1.contains(Result.succeed(1)))
+            yield assert(a1 == 0 && w1 == 0 && b1.isEmpty && !b2 && v1.map(_.map(_.eval)).contains(Result.succeed(1)))
         }
     }
 
@@ -89,17 +91,17 @@ class MeterTest extends Test:
         "run" in run {
             for
                 t  <- Meter.initSemaphore(2)
-                p  <- Promise.init[Nothing, Int]
-                b1 <- Promise.init[Nothing, Unit]
-                f1 <- Fiber.init(t.run(b1.complete(Result.unit).map(_ => p.getResult)))
+                p  <- Promise.init[Int, Any]
+                b1 <- Promise.init[Unit, Any]
+                f1 <- Fiber.init(t.run(b1.complete(Result.succeed(())).map(_ => p.getResult)))
                 _  <- b1.get
-                b2 <- Promise.init[Nothing, Unit]
-                f2 <- Fiber.init(t.run(b2.complete(Result.unit).map(_ => p.getResult)))
+                b2 <- Promise.init[Unit, Any]
+                f2 <- Fiber.init(t.run(b2.complete(Result.succeed(())).map(_ => p.getResult)))
                 _  <- b2.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
-                b3 <- Promise.init[Nothing, Unit]
-                f3 <- Fiber.init(b3.complete(Result.unit).map(_ => t.run(2)))
+                b3 <- Promise.init[Unit, Any]
+                f3 <- Fiber.init(b3.complete(Result.succeed(())).map(_ => t.run(2)))
                 _  <- b3.get
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
@@ -113,20 +115,20 @@ class MeterTest extends Test:
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
             yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && !d3 && a2 == 0 && w2 == 1 &&
-                v1 == Result.succeed(1) && v2 == Result.succeed(1) && v3 == 2 && a3 == 2 && w3 == 0)
+                v1.map(_.eval).contains(1) && v2.map(_.eval).contains(1) && v3 == 2 && a3 == 2 && w3 == 0)
         }
 
         "tryRun" in run {
             for
                 sem <- Meter.initSemaphore(2)
-                p   <- Promise.init[Nothing, Int]
-                b1  <- Promise.init[Nothing, Unit]
-                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.unit).map(_ => p.getResult)))
+                p   <- Promise.init[Int, Any]
+                b1  <- Promise.init[Unit, Any]
+                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.succeed(())).map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
-                b2  <- Promise.init[Nothing, Unit]
-                f2  <- Fiber.init(sem.tryRun(b2.complete(Result.unit).map(_ => p.getResult)))
+                b2  <- Promise.init[Unit, Any]
+                f2  <- Fiber.init(sem.tryRun(b2.complete(Result.succeed(())).map(_ => p.getResult)))
                 _   <- b2.get
                 a2  <- sem.availablePermits
                 w2  <- sem.pendingWaiters
@@ -136,7 +138,8 @@ class MeterTest extends Test:
                 _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
                 v2  <- f2.get
-            yield assert(a1 == 1 && w1 == 0 && b3.isEmpty && !b4 && !b5 && v1.contains(Result.succeed(1)) && v2.contains(Result.succeed(1)))
+            yield assert(a1 == 1 && w1 == 0 && b3.isEmpty && !b4 && !b5 &&
+                v1.map(_.map(_.eval)).contains(Result.succeed(1)) && v2.map(_.map(_.eval)).contains(Result.succeed(1)))
         }
 
         "concurrency" - {
@@ -313,7 +316,7 @@ class MeterTest extends Test:
             "non-reentrant" in run {
                 for
                     meter  <- Meter.initMutex(reentrant = false)
-                    p      <- Promise.init[Nothing, Int]
+                    p      <- Promise.init[Int, Any]
                     f      <- Fiber.init(meter.run(meter.run(42)))
                     _      <- Async.sleep(5.millis)
                     done   <- f.done
@@ -355,7 +358,7 @@ class MeterTest extends Test:
             "non-reentrant" in run {
                 for
                     meter  <- Meter.initSemaphore(1, reentrant = false)
-                    p      <- Promise.init[Nothing, Int]
+                    p      <- Promise.init[Int, Any]
                     f      <- Fiber.init(meter.run(meter.run(42)))
                     _      <- Async.sleep(5.millis)
                     done   <- f.done
@@ -397,7 +400,7 @@ class MeterTest extends Test:
             "non-reentrant" in run {
                 for
                     meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
-                    p      <- Promise.init[Nothing, Int]
+                    p      <- Promise.init[Int, Any]
                     f      <- Fiber.init(meter.run(meter.run(42)))
                     _      <- Async.sleep(5.millis)
                     done   <- f.done
@@ -445,7 +448,7 @@ class MeterTest extends Test:
                     sem         <- Meter.initSemaphore(1, reentrant = false)
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
-                    p           <- Promise.init[Nothing, Int]
+                    p           <- Promise.init[Int, Any]
                     f <- Fiber.init(pipeline.run {
                         pipeline.run(42)
                     })

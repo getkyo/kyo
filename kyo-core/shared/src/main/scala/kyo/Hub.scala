@@ -20,7 +20,7 @@ import java.util.concurrent.CopyOnWriteArraySet
   */
 final class Hub[A] private[kyo] (
     ch: Channel[A],
-    fiber: Fiber[Closed, Unit],
+    fiber: Fiber[Unit, Abort[Closed]],
     listeners: CopyOnWriteArraySet[Listener[A]]
 )(using initFrame: Frame):
 

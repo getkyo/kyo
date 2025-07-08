@@ -15,12 +15,12 @@ abstract class KyoApp extends KyoAppPlatformSpecific:
 
     private val awaitInterrupt =
         given AllowUnsafe = AllowUnsafe.embrace.danger
-        val promise       = Promise.Unsafe.init[Nothing, Nothing]()
+        val promise       = Promise.Unsafe.init[Nothing, Any]()
 
         val interrupt = (signal: String) =>
             () =>
                 promise
-                    .completeDiscard(Result.panic(Fiber.Interrupted(Frame.internal, s"Interrupt Signal Reached: $signal")))
+                    .completeDiscard(Result.panic(Interrupted(Frame.internal, s"Interrupt Signal Reached: $signal")))
 
         if System.live.unsafe.operatingSystem() != System.OS.Windows then
             OsSignal.handle("INT", interrupt("INT"))

@@ -43,7 +43,7 @@ class AsyncTest extends Test:
         }
         "non Sync-based effect" in run {
             typeCheckFailure("Fiber.init(Var.get[Int])")(
-                "This operation requires Contextual isolation for effects"
+                "This operation requires isolation for effects"
             )
         }
     }
@@ -371,7 +371,7 @@ class AsyncTest extends Test:
             val future: Future[Int] = Future.failed(exception)
             for
                 result <- Abort.run(Async.fromFuture(future))
-            yield assert(result.failure.contains(exception))
+            yield assert(result.panic.contains(exception))
             end for
         }
     }
@@ -413,7 +413,7 @@ class AsyncTest extends Test:
     "boundary inference with Abort" - {
         "same failures" in {
             val v: Int < Abort[Int]                            = 1
-            val _: Fiber[Int, Int] < Sync                      = Fiber.init(v)
+            val _: Fiber[Int, Abort[Int]] < Sync               = Fiber.init(v)
             val _: Int < (Abort[Int | Timeout] & Sync)         = Async.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
@@ -427,7 +427,7 @@ class AsyncTest extends Test:
         }
         "additional failure" in {
             val v: Int < Abort[Int]                                     = 1
-            val _: Fiber[Int | String, Int] < Sync                      = Fiber.init(v)
+            val _: Fiber[Int, Abort[Int | String]] < Sync               = Fiber.init(v)
             val _: Int < (Abort[Int | Timeout | String] & Sync)         = Async.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
@@ -443,23 +443,23 @@ class AsyncTest extends Test:
             "run" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Nothing, Fiber[Int, Int]] < Sync  = Fiber.init(Fiber.init(v))
-                val _: Fiber[Int | Timeout, Int] < Sync        = Fiber.init(Async.runAndBlock(1.second)(v))
-                val _: Fiber[Int, Int] < Sync                  = Fiber.init(Async.mask(v))
-                val _: Fiber[Int | Timeout, Int] < Sync        = Fiber.init(Async.timeout(1.second)(v))
-                val _: Fiber[Int, Int] < Sync                  = Fiber.init(Async.race(Seq(v)))
-                val _: Fiber[Int, Int] < Sync                  = Fiber.init(Async.race(v, v))
-                val x: Fiber[Int, Seq[Int]] < Sync             = Fiber.init(Async.collectAll(Seq(v)))
-                val _: Fiber[Int, (Int, Int)] < Sync           = Fiber.init(Async.zip(v, v))
-                val _: Fiber[Int, (Int, Int, Int)] < Sync      = Fiber.init(Async.zip(v, v, v))
-                val _: Fiber[Int, (Int, Int, Int, Int)] < Sync = Fiber.init(Async.zip(v, v, v, v))
+                val _: Fiber[Fiber[Int, Abort[Int]], Any] < Sync      = Fiber.init(Fiber.init(v))
+                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.init(Async.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.init(Async.mask(v))
+                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.init(Async.timeout(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.init(Async.race(Seq(v)))
+                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.init(Async.race(v, v))
+                val x: Fiber[Seq[Int], Abort[Int]] < Sync             = Fiber.init(Async.collectAll(Seq(v)))
+                val _: Fiber[(Int, Int), Abort[Int]] < Sync           = Fiber.init(Async.zip(v, v))
+                val _: Fiber[(Int, Int, Int), Abort[Int]] < Sync      = Fiber.init(Async.zip(v, v, v))
+                val _: Fiber[(Int, Int, Int, Int), Abort[Int]] < Sync = Fiber.init(Async.zip(v, v, v, v))
                 succeed
             }
 
             "zip" in run {
                 val v: Int < Abort[Int] = 1
 
-                val _: (Fiber[Int, Int], Fiber[Int, Int]) < Async = Async.zip(Fiber.init(v), Fiber.init(v))
+                val _: (Fiber[Int, Abort[Int]], Fiber[Int, Abort[Int]]) < Async = Async.zip(Fiber.init(v), Fiber.init(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async) =
                     Async.zip(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
                 val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.mask(v), Async.mask(v))
@@ -472,7 +472,7 @@ class AsyncTest extends Test:
             "race" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < Async              = Async.race(Fiber.init(v), Fiber.init(v))
+                val _: Fiber[Int, Abort[Int]] < Async       = Async.race(Fiber.init(v), Fiber.init(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.mask(v), Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
@@ -484,7 +484,7 @@ class AsyncTest extends Test:
             "mask" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < Async              = Async.mask(Fiber.init(v))
+                val _: Fiber[Int, Abort[Int]] < Async       = Async.mask(Fiber.init(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.runAndBlock(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.mask(Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.timeout(1.second)(v))
@@ -496,24 +496,24 @@ class AsyncTest extends Test:
             "timeout" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < (Abort[Timeout] & Async)  = Async.timeout(1.second)(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.mask(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.timeout(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Async) = Async.timeout(1.second)(Async.zip(v, v))
+                val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Async) = Async.timeout(1.second)(Fiber.init(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async)       = Async.timeout(1.second)(Async.zip(v, v))
                 succeed
             }
 
             "runAndBlock" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < (Abort[Timeout] & Sync)  = Async.runAndBlock(1.second)(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.mask(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Sync) = Async.runAndBlock(1.second)(Async.zip(v, v))
+                val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Sync) = Async.runAndBlock(1.second)(Fiber.init(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Sync)       = Async.runAndBlock(1.second)(Async.zip(v, v))
                 succeed
             }
         }
@@ -547,7 +547,7 @@ class AsyncTest extends Test:
         "interrupts computation" in runNotJS {
             for
                 flag   <- AtomicBoolean.init(false)
-                fiber  <- Promise.init[Nothing, Int]
+                fiber  <- Promise.init[Int, Any]
                 _      <- fiber.onInterrupt(_ => flag.set(true))
                 result <- Fiber.init(Async.timeout(1.millis)(fiber.get))
                 result <- fiber.getResult
@@ -1358,7 +1358,7 @@ class AsyncTest extends Test:
                 exit <- Latch.init(1)
                 fiber <- Fiber.init {
                     Kyo.fill(100) {
-                        Promise.init[Nothing, Int].map { p2 =>
+                        Promise.init[Int, Any].map { p2 =>
                             p2.completeDiscard(Result.succeed(1)).andThen(p2.get)
                         }
                     }.andThen(done.release).andThen(exit.await)

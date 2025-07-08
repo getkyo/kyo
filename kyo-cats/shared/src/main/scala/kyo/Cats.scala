@@ -18,7 +18,7 @@ object Cats:
     def get[A](io: => CatsIO[A])(using Frame): A < (Abort[Nothing] & Async) =
         Sync.Unsafe {
             import cats.effect.unsafe.implicits.global
-            val p                = Promise.Unsafe.init[Nothing, A]()
+            val p                = Promise.Unsafe.init[A, Any]()
             val (future, cancel) = io.unsafeToFutureCancelable()
             future.onComplete {
                 case Success(v)  => p.complete(Result.succeed(v))
@@ -43,8 +43,8 @@ object Cats:
             Fiber.init(v).map { fiber =>
                 CatsIO.async[A] { cb =>
                     CatsIO {
-                        fiber.unsafe.onComplete(r => cb(r.toEither))
-                        Some(CatsIO(fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))).void)
+                        fiber.unsafe.onComplete(r => cb(r.map(_.eval).toEither))
+                        Some(CatsIO(fiber.unsafe.interrupt(Result.Panic(Interrupted(frame)))).void)
                     }
                 }
             }.handle(Sync.Unsafe.evalOrThrow)

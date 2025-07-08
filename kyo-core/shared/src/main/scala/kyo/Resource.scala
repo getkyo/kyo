@@ -141,8 +141,6 @@ object Resource:
                 }
         }
 
-    given Isolate.Contextual[Resource, Any] = Isolate.Contextual.derive[Resource, Any]
-
     /** Represents a finalizer for a resource. */
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
@@ -159,7 +157,7 @@ object Resource:
                         val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
                             Access.MultiProducerSingleConsumer
                         )
-                        val promise = Promise.Unsafe.init[Nothing, Unit]().safe
+                        val promise = Promise.Unsafe.init[Unit, Any]().safe
 
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                             Sync.Unsafe {
@@ -179,13 +177,13 @@ object Resource:
                                     case Absent => ()
                                     case Present(tasks) =>
                                         if tasks.isEmpty then
-                                            promise.completeDiscard(Result.unit)
+                                            promise.completeDiscard(Result.succeed(()))
                                         else
                                             Async.foreachDiscard(tasks, parallelism) { task =>
                                                 Abort.run[Throwable](task(ex))
                                                     .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                                             }
-                                                .handle(Fiber.init[Nothing, Unit, Any])
+                                                .handle(Fiber.init[Nothing, Unit, Any, Any])
                                                 .map(promise.becomeDiscard)
                             }
 

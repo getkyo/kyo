@@ -29,7 +29,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
         handleWrappedError(rt)(h)
 
     def ensure[A](f: M[A], e: => M[Unit]) =
-        Promise.initWith[Nothing, Unit] { p =>
+        Promise.initWith[Unit, Any] { p =>
             def run =
                 Fiber.init(e).map(p.become).unit
             Sync.ensure(run)(f).map(r => p.get.andThen(r))
@@ -49,7 +49,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
 
     def async[A](register: (Either[Throwable, A] => Unit) => Canceler): M[A] =
         Sync.Unsafe {
-            val p = Promise.Unsafe.init[Nothing, A]()
+            val p = Promise.Unsafe.init[A, Any]()
             val canceller =
                 register {
                     case Left(t)  => discard(p.complete(Result.panic(t)))

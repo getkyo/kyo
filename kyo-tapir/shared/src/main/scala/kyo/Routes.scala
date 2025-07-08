@@ -91,9 +91,9 @@ object Routes:
     def collect(init: (Unit < Routes)*)(using Frame): Unit < Routes =
         Kyo.collectAllDiscard(init)
 
-    given isolate: Isolate.Stateful[Routes, Async] =
+    given isolate: Isolate[Routes, Async, Emit[Route]] =
         Emit.isolate.merge[Route].use {
-            Isolate.Stateful.derive[Routes, Async]
+            Isolate[Emit[Route] & Async, Async, Emit[Route]]
         }
 
 end Routes

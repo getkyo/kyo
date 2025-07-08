@@ -366,8 +366,8 @@ object Meter:
         // >= 0     => # of permits
         // < 0      => # of waiters
         val state   = AtomicInt.Unsafe.init(permits)
-        val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, Unit]](8)
-        val closed  = Promise.Unsafe.init[Closed, Nothing]()
+        val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Unit, Abort[Closed]]](8)
+        val closed  = Promise.Unsafe.init[Nothing, Abort[Closed]]()
 
         protected def dispatch[A, S](v: => A < S): A < (S & Sync)
         protected def onClose(): Unit
@@ -400,7 +400,7 @@ object Meter:
                             dispatch(withAcquiredMeter(v))
                         else
                             // No permit available, add to waiters queue
-                            val p = Promise.Unsafe.init[Closed, Unit]()
+                            val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
                             waiters.add(p)
                             dispatch(p.safe.use(_ => withAcquiredMeter(v)))
                     else
@@ -480,7 +480,7 @@ object Meter:
             else if !state.compareAndSet(st, st + 1) then
                 // CAS failed, retry
                 release()
-            else if st < 0 && !pollWaiter().complete(Result.unit) then
+            else if st < 0 && !pollWaiter().complete(Result.succeed(())) then
                 // Waiter is already complete due to interruption, retry
                 release()
             else
@@ -489,7 +489,7 @@ object Meter:
             end if
         end release
 
-        @tailrec final private def pollWaiter(): Promise.Unsafe[Closed, Unit] =
+        @tailrec final private def pollWaiter(): Promise.Unsafe[Unit, Abort[Closed]] =
             val waiter = waiters.poll()
             if !isNull(waiter) then waiter
             else

@@ -3,7 +3,6 @@ package kyo.scheduler
 import IOPromise.*
 import java.util.concurrent.locks.LockSupport
 import kyo.*
-import kyo.Fiber.Interrupted
 import kyo.Result.Error
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec

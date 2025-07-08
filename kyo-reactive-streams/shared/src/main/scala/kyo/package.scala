@@ -5,7 +5,7 @@ import kyo.*
 import kyo.interop.flow.*
 
 object StreamReactiveStreamsExtensions:
-    extension [T, S](stream: Stream[T, S & Sync])(using Isolate.Contextual[S, Sync])
+    extension [T, S](stream: Stream[T, S & Sync])(using Isolate[S, Sync, Any])
         def subscribe(
             subscriber: Subscriber[? >: T]
         )(

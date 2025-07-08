@@ -27,7 +27,7 @@ class ChannelBench extends BaseBench:
                 count   <- channel.streamUntilClosed(maxChunkSize).into(Sink.count)
             yield count
         val count = Sync.Unsafe.evalOrThrow(Fiber.init(x).flatMap(_.block(Duration.Infinity))).getOrThrow
-        assert(count == size, s"Expected $size, got $count")
+        assert(count.eval == size, s"Expected $size, got $count")
     end streamChunks
 
 end ChannelBench
