@@ -1899,26 +1899,26 @@ val a: Unit < Sync =
 
 // Recurring task with a delay between
 // executions
-val b: Fiber[Unit, Abort[Nothing]] < Sync =
+val b: Fiber[Unit, Any] < Sync =
     Clock.repeatWithDelay(
         startAfter = 1.minute,
         delay = 1.minute
     )(a)
 
 // Without an initial delay
-val c: Fiber[Unit, Abort[Nothing]] < Sync =
+val c: Fiber[Unit, Any] < Sync =
     Clock.repeatWithDelay(1.minute)(a)
 
 // Schedule at a specific interval, regardless
 // of the duration of each execution
-val d: Fiber[Unit, Abort[Nothing]] < Sync =
+val d: Fiber[Unit, Any] < Sync =
     Clock.repeatAtInterval(
         startAfter = 1.minute,
         interval = 1.minute
     )(a)
 
 // Without an initial delay
-val e: Fiber[Unit, Abort[Nothing]] < Sync =
+val e: Fiber[Unit, Any] < Sync =
     Clock.repeatAtInterval(1.minute)(a)
 ```
 
@@ -1928,7 +1928,7 @@ Use the returned `Fiber` to control scheduled tasks.
 import kyo.*
 
 // Example task
-val a: Fiber[Unit, Abort[Nothing]] < Sync =
+val a: Fiber[Unit, Any] < Sync =
     Clock.repeatAtInterval(1.second)(())
 
 // Try to cancel a task
@@ -2339,7 +2339,7 @@ import kyo.*
 import scala.concurrent.*
 
 // An example fiber
-val a: Fiber[Int, Any] = Fiber.success(42)
+val a: Fiber[Int, Any] = Fiber.succeed(42)
 
 // Check if the fiber is done
 val b: Boolean < Sync =
@@ -2356,7 +2356,7 @@ val d: Unit < Sync =
 
 // A variant of `get` that returns a `Result`
 // with the failed or successful result
-val e: Result[Nothing, Int] < Async =
+val e: Result[Nothing, Int < Any] < Async =
     a.getResult
 
 // Try to interrupt/cancel a fiber
@@ -2370,7 +2370,7 @@ val h: Future[Int] < Sync =
 // 'Fiber' provides a monadic API with both
 // 'map' and 'flatMap'
 val i: Fiber[Int, Any] < Sync =
-    a.flatMap(v => Fiber.success(v + 1))
+    a.flatMap(v => Fiber.succeed(v.eval + 1))
 ```
 
 Similarly to `Sync`, users should avoid handling the `Async` effect directly and rely on `KyoApp` instead. If strictly necessary, there are two methods to handle the `Async` effect:
@@ -2404,8 +2404,8 @@ The `Async` effect also offers a low-level API to create `Promise`s as way to in
 import kyo.*
 
 // Initialize a promise
-val a: Promise[Nothing, Int] < Sync =
-    Promise.init[Nothing, Int]
+val a: Promise[Int, Any] < Sync =
+    Promise.init[Int, Any]
 
 // Try to fulfill a promise
 val b: Boolean < Sync =

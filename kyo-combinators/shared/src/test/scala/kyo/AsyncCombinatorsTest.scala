@@ -201,7 +201,7 @@ class FiberCombinatorsTest extends Test:
 
                 Fiber.init(program).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
-                        assert(v == Result.succeed(42) && completed)
+                        assert(v.map(_.eval) == Result.succeed(42) && completed)
                     )
                 }
             }

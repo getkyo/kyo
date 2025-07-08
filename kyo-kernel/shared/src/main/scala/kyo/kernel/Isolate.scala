@@ -38,12 +38,6 @@ abstract class Isolate[Remove, -Keep, Restore]:
                 def restore[A, S](v: Transform[A] < S)(using Frame) =
                     next.restore(self.restore(v))
 
-    @nowarn("msg=anonymous")
-    private[kyo] inline def runInternal[A, S](inline f: (Trace, Context) => A < S)(using inline _frame: Frame): A < (S & Keep) =
-        new KyoDefer[A, S & Keep]:
-            def frame = _frame
-            def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
-                f(safepoint.saveTrace(), context.inherit)
 end Isolate
 
 object Isolate:
@@ -53,6 +47,21 @@ object Isolate:
     inline given derive[Remove, Keep, Restore]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
 
     private[kyo] object internal:
+
+        @nowarn("msg=anonymous")
+        private[kyo] inline def runDetached[A, S](inline f: (Trace, Context) => A < S)(using inline _frame: Frame): A < S =
+            new KyoDefer[A, S]:
+                def frame = _frame
+                def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
+                    f(safepoint.saveTrace(), context.inherit)
+
+        inline def restoring[Ctx, A, S](
+            trace: Trace,
+            interceptor: Safepoint.Interceptor
+        )(
+            inline v: => A < (Ctx & S)
+        )(using frame: Frame, safepoint: Safepoint): A < (Ctx & S) =
+            Safepoint.immediate(interceptor)(safepoint.withTrace(trace)(v))
 
         object noop extends Isolate[Any, Any, Any]:
             type State        = Unit
@@ -130,11 +139,4 @@ object Isolate:
         end deriveImpl
     end internal
 
-    private[kyo] inline def restoring[Ctx, A, S](
-        trace: Trace,
-        interceptor: Safepoint.Interceptor
-    )(
-        inline v: => A < (Ctx & S)
-    )(using frame: Frame, safepoint: Safepoint): A < (Ctx & S) =
-        Safepoint.immediate(interceptor)(safepoint.withTrace(trace)(v))
 end Isolate

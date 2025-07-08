@@ -116,10 +116,10 @@ class LocalTest extends Test:
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val isolate = Isolate[Any, Any, Any]
-
             val context =
-                noninheritableLocal.let(20)(inheritableLocal.let("modified")(isolate.runInternal { (trace, context) => context })).eval
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate.internal.runDetached { (trace, context) =>
+                    context
+                })).eval
 
             val inheritableContext = context.get(Tag[Local.internal.State])
             assert(!inheritableContext.contains(noninheritableLocal))
@@ -132,15 +132,13 @@ class LocalTest extends Test:
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val isolate = Isolate[Any, Any, Any]
-
             val context =
                 noninheritableLocal.let(20)(
                     inheritableLocal.let("outer")(
-                        isolate.runInternal { (outerTrace, outerContext) =>
+                        Isolate.internal.runDetached { (outerTrace, outerContext) =>
                             noninheritableLocal.let(30)(
                                 inheritableLocal.let("inner")(
-                                    isolate.runInternal { (innerTrace, innerContext) => innerContext }
+                                    Isolate.internal.runDetached { (innerTrace, innerContext) => innerContext }
                                 )
                             )
                         }

@@ -87,7 +87,7 @@ class RendezvousBench extends ArenaBench.ForkOnly(10000 * (10000 + 1) / 2):
                         case false =>
                             waiting.getAndSet(null).flatMap {
                                 case (p2: Promise[Unit, Any] @unchecked, i: Int) =>
-                                    p2.complete(Result.succeed(())).map(_ => i)
+                                    p2.completeUnit.map(_ => i)
                             }
                         case true =>
                             p.get

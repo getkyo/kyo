@@ -36,8 +36,14 @@ object Fiber:
 
     def init[E, A, S, S2](
         using isolate: Isolate[S, Sync, S2]
-    )(v: => A < (Abort[E] & Async & S))(using reduce: Reducible[Abort[E]], frame: Frame): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
-        isolate.runInternal((trace, context) =>
+    )(
+        v: => A < (Abort[E] & Async & S)
+    )(
+        using
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
+        Isolate.internal.runDetached((trace, context) =>
             isolate.capture { state =>
                 val io = isolate.isolate(state, v).map(r => Kyo.lift(isolate.restore(r)))
                 IOTask(io, trace, context).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
@@ -62,10 +68,10 @@ object Fiber:
     extension [E, A, S](self: Fiber[A, Abort[E] & S])
         private[kyo] def lower: IOPromise[E, A < S] = self.asInstanceOf[IOPromise[E, A < S]]
 
-        def get(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async & S) =
+        def get(using Frame): A < (Abort[E] & Async & S) =
             Async.use(self.lower)(identity)
 
-        def use[B, S2](f: A => B < S2)(using reduce: Reducible[Abort[E]], frame: Frame): B < (reduce.SReduced & Async & S & S2) =
+        def use[B, S2](f: A => B < S2)(using Frame): B < (Abort[E] & Async & S & S2) =
             Async.use(self.lower)(_.map(f))
 
         def getResult(using Frame): Result[E, A < S] < Async =
@@ -189,6 +195,12 @@ object Fiber:
             def completeDiscard(v: Result[Nothing, A < S])(using Frame): Unit < Sync =
                 Sync.Unsafe(Unsafe.completeDiscard(self)(v))
 
+            def completeUnit(using frame: Frame, ev: Unit =:= A): Boolean < Sync =
+                Sync.Unsafe(Unsafe.complete(self)(Result.succeed(ev(()))))
+
+            def completeUnitDiscard(using frame: Frame, ev: Unit =:= A): Unit < Sync =
+                Sync.Unsafe(Unsafe.completeDiscard(self)(Result.succeed(ev(()))))
+
             def become(other: Fiber[A, S])(using Frame): Boolean < Sync =
                 Sync.Unsafe(Unsafe.become(self)(other))
 
@@ -211,6 +223,12 @@ object Fiber:
 
             def completeDiscard(v: Result[E, A < S])(using Frame): Unit < Sync =
                 Sync.Unsafe(Unsafe.completeDiscard(self)(v))
+
+            def completeUnit(using frame: Frame, ev: Unit =:= A): Boolean < Sync =
+                Sync.Unsafe(Unsafe.complete(self)(Result.succeed(ev(()))))
+
+            def completeUnitDiscard(using frame: Frame, ev: Unit =:= A): Unit < Sync =
+                Sync.Unsafe(Unsafe.completeDiscard(self)(Result.succeed(ev(()))))
 
             def become(other: Fiber[A, Abort[E] & S])(using Frame): Boolean < Sync =
                 Sync.Unsafe(Unsafe.become(self)(other))
@@ -258,6 +276,13 @@ object Fiber:
                 def safe: Promise[A, S] = self
             end extension
 
+            extension [S](self: Unsafe[Unit, S])
+                def completeUnit(using AllowUnsafe): Boolean =
+                    self.lower.complete(Result.succeed(()))
+                def completeUnitDiscard(using AllowUnsafe): Unit =
+                    self.lower.completeDiscard(Result.succeed(()))
+            end extension
+
             extension [E, A, S](self: Unsafe[A, Abort[E] & S])
                 private def lower: IOPromise[E, A < S] =
                     self.asInstanceOf[IOPromise[E, A < S]]
@@ -302,7 +327,7 @@ object Fiber:
                                 )
                         end State
                         val state = new State
-                        Isolate.internal.noop.runInternal { (trace, context) =>
+                        Isolate.internal.runDetached { (trace, context) =>
                             val safepoint = Safepoint.get
                             foreach(iterable) { (idx, v) =>
                                 val fiber = IOTask(f(idx, v), safepoint.copyTrace(trace), context)
@@ -326,7 +351,7 @@ object Fiber:
             private inline def apply[E, A](state: Race[E, A], iterable: Iterable[A < (Abort[E] & Async)])(
                 using frame: Frame
             ): Fiber[A, Abort[E]] < Sync =
-                Isolate.internal.noop.runInternal { (trace, context) =>
+                Isolate.internal.runDetached { (trace, context) =>
                     val safepoint = Safepoint.get
                     foreach(iterable) { (_, v) =>
                         val fiber = IOTask(v, safepoint.copyTrace(trace), context)
@@ -433,7 +458,7 @@ object Fiber:
                         end apply
                     end State
                     val state = new State
-                    Isolate.internal.noop.runInternal { (trace, context) =>
+                    Isolate.internal.runDetached { (trace, context) =>
                         val safepoint             = Safepoint.get
                         inline def interruptPanic = Result.Panic(Interrupted(frame))
                         foreach(iterable) { (idx, v) =>

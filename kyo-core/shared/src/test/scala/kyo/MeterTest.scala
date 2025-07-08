@@ -28,12 +28,12 @@ class MeterTest extends Test:
                 t  <- Meter.initMutex
                 p  <- Promise.init[Int, Any]
                 b1 <- Promise.init[Unit, Any]
-                f1 <- Fiber.init(t.run(b1.complete(Result.succeed(())).map(_ => p.getResult)))
+                f1 <- Fiber.init(t.run(b1.completeUnit.map(_ => p.getResult)))
                 _  <- b1.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
                 b2 <- Promise.init[Unit, Any]
-                f2 <- Fiber.init(b2.complete(Result.succeed(())).map(_ => t.run(2)))
+                f2 <- Fiber.init(b2.completeUnit.map(_ => t.run(2)))
                 _  <- b2.get
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
@@ -54,7 +54,7 @@ class MeterTest extends Test:
                 sem <- Meter.initMutex
                 p   <- Promise.init[Int, Any]
                 b1  <- Promise.init[Unit, Any]
-                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.succeed(())).map(_ => p.getResult)))
+                f1  <- Fiber.init(sem.tryRun(b1.completeUnit.map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
@@ -93,15 +93,15 @@ class MeterTest extends Test:
                 t  <- Meter.initSemaphore(2)
                 p  <- Promise.init[Int, Any]
                 b1 <- Promise.init[Unit, Any]
-                f1 <- Fiber.init(t.run(b1.complete(Result.succeed(())).map(_ => p.getResult)))
+                f1 <- Fiber.init(t.run(b1.completeUnit.map(_ => p.getResult)))
                 _  <- b1.get
                 b2 <- Promise.init[Unit, Any]
-                f2 <- Fiber.init(t.run(b2.complete(Result.succeed(())).map(_ => p.getResult)))
+                f2 <- Fiber.init(t.run(b2.completeUnit.map(_ => p.getResult)))
                 _  <- b2.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
                 b3 <- Promise.init[Unit, Any]
-                f3 <- Fiber.init(b3.complete(Result.succeed(())).map(_ => t.run(2)))
+                f3 <- Fiber.init(b3.completeUnit.map(_ => t.run(2)))
                 _  <- b3.get
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
@@ -123,12 +123,12 @@ class MeterTest extends Test:
                 sem <- Meter.initSemaphore(2)
                 p   <- Promise.init[Int, Any]
                 b1  <- Promise.init[Unit, Any]
-                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.succeed(())).map(_ => p.getResult)))
+                f1  <- Fiber.init(sem.tryRun(b1.completeUnit.map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
                 b2  <- Promise.init[Unit, Any]
-                f2  <- Fiber.init(sem.tryRun(b2.complete(Result.succeed(())).map(_ => p.getResult)))
+                f2  <- Fiber.init(sem.tryRun(b2.completeUnit.map(_ => p.getResult)))
                 _   <- b2.get
                 a2  <- sem.availablePermits
                 w2  <- sem.pendingWaiters

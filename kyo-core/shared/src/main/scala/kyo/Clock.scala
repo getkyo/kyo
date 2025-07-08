@@ -422,7 +422,17 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delay: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[Unit, Abort[E]] < Sync =
+    def repeatWithDelay[E, S](
+        delay: Duration
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatWithDelay(Duration.Zero, delay)(f)
 
     /** Repeatedly executes a task with a fixed delay between completions, starting after an initial delay.
@@ -440,8 +450,14 @@ object Clock:
         startAfter: Duration,
         delay: Duration
     )(
-        f: => Any < (Async & Abort[E])
-    )(using Frame): Fiber[Unit, Abort[E]] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatWithDelay(startAfter, delay, ())(_ => f.unit)
 
     /** Repeatedly executes a task with a fixed delay between completions, maintaining state between executions.
@@ -464,8 +480,14 @@ object Clock:
         delay: Duration,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[A, Abort[E]] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         repeatWithDelay(Schedule.delay(startAfter).andThen(Schedule.fixed(delay)), state)(f)
 
     /** Repeatedly executes a task with delays determined by a custom schedule.
@@ -477,8 +499,18 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[Unit, Abort[E]] < Sync =
-        repeatWithDelay(delaySchedule, ())(_ => f.unit)
+    def repeatWithDelay[E, S](
+        delaySchedule: Schedule
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        repeatWithDelay[E, Unit, S](delaySchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with delays determined by a custom schedule, maintaining state between executions.
       *
@@ -497,8 +529,14 @@ object Clock:
         delaySchedule: Schedule,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[A, Abort[E]] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         Fiber.init {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
@@ -524,7 +562,17 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](interval: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[Unit, Abort[E]] < Sync =
+    def repeatAtInterval[E, S](
+        interval: Duration
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(Duration.Zero, interval)(f)
 
     /** Repeatedly executes a task at fixed time intervals, starting after an initial delay.
@@ -542,8 +590,14 @@ object Clock:
         startAfter: Duration,
         interval: Duration
     )(
-        f: => Any < (Async & Abort[E])
-    )(using Frame): Fiber[Unit, Abort[E]] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(startAfter, interval, ())(_ => f.unit)
 
     /** Repeatedly executes a task at fixed time intervals, maintaining state between executions.
@@ -566,8 +620,14 @@ object Clock:
         interval: Duration,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[A, Abort[E]] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(Schedule.delay(startAfter).andThen(Schedule.fixed(interval)), state)(f)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule.
@@ -579,7 +639,17 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[Unit, Abort[E]] < Sync =
+    def repeatAtInterval[E, S](
+        intervalSchedule: Schedule
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(intervalSchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule, maintaining state between executions.
@@ -599,8 +669,14 @@ object Clock:
         intervalSchedule: Schedule,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[A, Abort[E]] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         Fiber.init {
             Clock.use { clock =>
                 clock.now.map { now =>

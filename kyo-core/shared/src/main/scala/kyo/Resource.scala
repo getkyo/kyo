@@ -177,7 +177,7 @@ object Resource:
                                     case Absent => ()
                                     case Present(tasks) =>
                                         if tasks.isEmpty then
-                                            promise.completeDiscard(Result.succeed(()))
+                                            promise.completeUnitDiscard
                                         else
                                             Async.foreachDiscard(tasks, parallelism) { task =>
                                                 Abort.run[Throwable](task(ex))

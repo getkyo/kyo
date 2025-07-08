@@ -480,7 +480,7 @@ object Meter:
             else if !state.compareAndSet(st, st + 1) then
                 // CAS failed, retry
                 release()
-            else if st < 0 && !pollWaiter().complete(Result.succeed(())) then
+            else if st < 0 && !pollWaiter().completeUnit then
                 // Waiter is already complete due to interruption, retry
                 release()
             else

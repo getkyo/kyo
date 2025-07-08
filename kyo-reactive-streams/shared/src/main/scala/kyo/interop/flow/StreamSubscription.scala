@@ -67,11 +67,13 @@ final private[kyo] class StreamSubscription[V, S](
     ): Fiber[StreamComplete, Abort[StreamCanceled]] < (Sync & S) =
         Fiber.init[StreamCanceled, StreamComplete, S, Any](Poll.runEmit(stream.emit)(poll).map(_._2))
             .map { fiber =>
-                fiber.onComplete {
-                    _.map(_.eval) match
+                fiber.onComplete { r =>
+                    val x = r.map(_.eval)
+                    x match
                         case Result.Success(StreamComplete) => Sync.defer(subscriber.onComplete())
                         case Result.Panic(e)                => Sync.defer(subscriber.onError(e))
                         case Result.Failure(StreamCanceled) => Kyo.unit
+                    end match
                 }.andThen(fiber)
             }
     end consume

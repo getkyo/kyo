@@ -801,21 +801,11 @@ object Async extends AsyncPlatformSpecific:
     def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
         Fiber.fromFuture(f).map(_.get)
 
-    private[kyo] def get[E, A](v: IOPromise[? <: E, ? <: A])(
-        using
-        reduce: Reducible[Abort[E]],
-        frame: Frame
-    ): A < (reduce.SReduced & Async) =
+    private[kyo] def get[E, A](v: IOPromise[? <: E, ? <: A])(using Frame): A < (Abort[E] & Async) =
         use(v)(identity)
 
-    private[kyo] def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(
-        using
-        reduce: Reducible[Abort[E]],
-        frame: Frame
-    ): B < (S & reduce.SReduced & Async) =
-        val x = useResult(v)(_.fold(f, Abort.fail, Abort.panic))
-        reduce(x)
-    end use
+    private[kyo] def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(using Frame): B < (Abort[E] & Async & S) =
+        useResult(v)(_.fold(f, Abort.fail, Abort.panic))
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
 
