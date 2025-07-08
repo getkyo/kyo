@@ -117,15 +117,14 @@ private[kyo] object Validate:
                         })
 
                         if hasNow then
-                            fail(
-                                body,
+                            report.errorAndAbort(
                                 """
                                   |Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.
                                   |You have two options:
                                   | - calling .now before building the structure :
                                   |     def f(x: Int): Int < S
                                   |     direct:
-                                  |        y = f(1).now
+                                  |        val y = f(1).now
                                   |        stream.map(x => x + y)
                                   |
                                   | - using the effect
@@ -133,7 +132,8 @@ private[kyo] object Validate:
                                   |     direct:
                                   |       stream.map(x => f(x + 1))
                                   |
-                                  |""".stripMargin
+                                  |""".stripMargin,
+                                body.pos
                             )
                         else
                             body match
