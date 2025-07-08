@@ -44,7 +44,7 @@ object Cats:
                 CatsIO.async[A] { cb =>
                     CatsIO {
                         fiber.unsafe.onComplete(r => cb(r.map(_.eval).toEither))
-                        Some(CatsIO(fiber.unsafe.interrupt(Result.Panic(Interrupted(frame)))).void)
+                        Some(CatsIO(fiber.unsafe.interrupt()).void)
                     }
                 }
             }.handle(Sync.Unsafe.evalOrThrow)

@@ -70,6 +70,7 @@ private[kyo] object Validate:
             validType && validName
         end validAsyncShift
 
+        @tailrec
         def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
             qualifiers match
                 case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
@@ -82,6 +83,76 @@ private[kyo] object Validate:
                     asyncShiftDive(xs)
 
                 case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
+
+        extension (term: Term)
+            def children: List[Tree] =
+                term match
+                    case Apply(fun, args)           => fun :: args
+                    case TypeApply(fun, targs)      => fun :: targs
+                    case Select(qualifier, _)       => List(qualifier)
+                    case Ident(_)                   => Nil
+                    case Block(stats, expr)         => stats.collect { case t: Term => t } :+ expr
+                    case Inlined(_, bindings, expr) => bindings.collect { case t: Term => t } :+ expr
+                    case If(cond, thenp, elsep)     => List(cond, thenp, elsep)
+                    case Lambda(meth, _)            => meth
+                    case _                          => Nil // Other cases (Literal, Closure, etc.)
+        end extension
+
+        object DirectBlock:
+            def unapply(t: Term): Boolean =
+                t match
+                    case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) => true
+                    case _                                                            => false
+        end DirectBlock
+
+        def skipDive(qualifiers: List[Tree])(using Trees.Step): Unit =
+
+            def skipDive(tree: Tree): Unit =
+                tree match
+                    case Block(List(DefDef(_, _, _, Some(body))), _) =>
+
+                        val hasNow: Boolean = Trees.exists(body)({
+                            case t @ (Apply(TypeApply(Ident("now"), _), List(_)) | Select(_, "now")) => true
+                            case DirectBlock()                                                       => false
+                        })
+
+                        if hasNow then
+                            report.errorAndAbort(
+                                """
+                                  |Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.
+                                  |You have two options:
+                                  | - calling .now before building the structure :
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |        val y = f(1).now
+                                  |        stream.map(x => x + y)
+                                  |
+                                  | - using the effect
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |       stream.map(x => f(x + 1))
+                                  |
+                                  |""".stripMargin,
+                                body.pos
+                            )
+                        else
+                            body match
+                                case DirectBlock() =>
+                                case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                                    Trees.Step.goto(x)
+
+                                case tree: Term if tree.tpe.typeSymbol.name == "<" =>
+                                    tree.children.foreach(Trees.Step.goto)
+
+                                case _ =>
+                                    Trees.Step.goto(body)
+                        end if
+
+                    case x =>
+                        Trees.Step.goto(x)
+
+            qualifiers.foreach(skipDive)
+        end skipDive
 
         Trees.traverseGoto(expr.asTerm) {
             case Apply(
@@ -112,6 +183,14 @@ private[kyo] object Validate:
             case Apply(TypeApply(select: Select, _), argGroup0) if validAsyncShift(select) =>
                 Trees.Step.goto(select.qualifier)
                 asyncShiftDive(argGroup0)
+
+            case Apply(Apply(TypeApply(Select(qual, _), _), argGroup0), argGroup1) if qual.tpe <:< TypeRepr.of[kyo.Stream[?, ?]] =>
+                Trees.Step.goto(qual)
+                skipDive(argGroup0)
+                skipDive(argGroup1)
+
+            // direct: in direct:
+            case DirectBlock() =>
 
             case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
                 @tailrec

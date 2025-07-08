@@ -1,4 +1,6 @@
 package kyo
 
-final case class Interrupted(at: Frame, message: Text = "")
-    extends KyoException(message + " Fiber interrupted at " + at.position.show)(using at)
+final case class Interrupted(at: Frame, by: Maybe[Text] = Absent)
+    extends KyoException("Fiber interrupted at " + at.position.show + by.fold("")(" by " + _))(using at)
+object Interrupted:
+    def apply(at: Frame, by: Text): Interrupted = Interrupted(at, Present(by))
