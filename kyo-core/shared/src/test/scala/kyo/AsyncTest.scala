@@ -549,7 +549,7 @@ class AsyncTest extends Test:
                 flag   <- AtomicBoolean.init(false)
                 fiber  <- Promise.init[Int, Any]
                 _      <- fiber.onInterrupt(_ => flag.set(true))
-                result <- Fiber.init(Async.timeout(1.millis)(fiber.get))
+                result <- Fiber.init(Async.timeout(0.millis)(fiber.get))
                 result <- fiber.getResult
                 _      <- untilTrue(flag.get)
             yield assert(result.isPanic)

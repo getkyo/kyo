@@ -27,7 +27,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that ensures the finalizer is executed when the effect is completed
       */
-    def addFinalizer(finalizer: => Any < Async)(using Frame): Unit < (Resource & Sync) =
+    def addFinalizer(finalizer: => Any < (Async & Abort[Throwable]))(using Frame): Unit < (Resource & Sync) =
         Resource.ensure(finalizer)
 
     /** Creates an asynchronous effect that can be completed by the given register function.
@@ -128,13 +128,13 @@ extension (kyoObject: Kyo.type)
 
     /** Creates an effect from an AutoCloseable resource.
       *
-      * @param closeable
+      * @param resource
       *   The AutoCloseable resource to create an effect from
       * @return
       *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
-    def fromAutoCloseable[A <: AutoCloseable, S](closeable: => A < S)(using Frame): A < (S & Resource & Sync) =
-        acquireRelease(closeable)(c => Sync.defer(c.close()))
+    def fromAutoCloseable[A <: AutoCloseable, S](resource: => A < S)(using Frame): A < (S & Resource & Sync) =
+        Resource.acquire(resource)
 
     /** Creates an effect from an Either[E, A] and handles Left[E] to Abort[E].
       *
@@ -400,16 +400,6 @@ extension (kyoObject: Kyo.type)
       */
     def defer[A, S](effect: => A < S)(using Frame): A < (S & Sync) =
         Sync.defer(effect)
-
-    /** Suspends an effect using Sync and handles any exceptions that occur to Abort[Throwable].
-      *
-      * @param effect
-      *   The effect to suspend
-      * @return
-      *   An effect that suspends the given effect and handles any exceptions that occur to Abort[Throwable]
-      */
-    def deferAttempt[A, S](effect: => A < S)(using Frame): A < (S & Sync & Abort[Throwable]) =
-        Sync.defer(Abort.catching[Throwable](effect))
 
     /** Traverses a sequence of effects in parallel and collects the results.
       *
