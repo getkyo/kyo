@@ -69,7 +69,7 @@ object ZIOs:
                         case Result.Panic(e)   => cb(Exit.die(e))
                     }
                     Left(ZIO.succeed {
-                        fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))
+                        fiber.unsafe.interrupt(Result.Panic(Interrupted(frame)))
                     })
                 }
             }.handle(Sync.Unsafe.evalOrThrow)
@@ -102,7 +102,7 @@ object ZIOs:
                 cause match
                     case Fail(e, trace)            => Maybe(Result.Failure(e))
                     case Die(e, trace)             => Maybe(Result.Panic(e))
-                    case Interrupt(fiberId, trace) => Maybe(Result.Panic(Fiber.Interrupted(frame)))
+                    case Interrupt(fiberId, trace) => Maybe(Result.Panic(Interrupted(frame, fiberId.threadName)))
                     case Then(left, right)         => loop(left).orElse(loop(right))
                     case Both(left, right)         => loop(left).orElse(loop(right))
                     case Stackless(e, trace)       => loop(e)

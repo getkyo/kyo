@@ -220,6 +220,28 @@ class SyncPromiseTest extends Test:
             val result = p.block(deadline(10.millis))
             assert(result.isFailure)
         }
+
+        "thread interruption" in runNotJS {
+            val p                       = new IOPromise[Nothing, Int]()
+            @volatile var threadStarted = false
+            val thread = new Thread:
+                override def run(): Unit =
+                    threadStarted = true
+                    discard(p.block(deadline(Duration.Infinity)))
+                end run
+            thread.start()
+
+            // wait for parking
+            while !threadStarted do Thread.sleep(10)
+            Thread.sleep(10)
+
+            thread.interrupt()
+            thread.join(1000)
+
+            val result = p.block(deadline())
+            println(result.show)
+            assert(result.isPanic)
+        }
     }
 
     "stack safety" - {

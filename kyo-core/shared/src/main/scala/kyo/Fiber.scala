@@ -293,9 +293,6 @@ object Fiber:
 
     end extension
 
-    final case class Interrupted(at: Frame, message: Text = "")
-        extends KyoException(message + " Fiber interrupted at " + at.position.show)(using at)
-
     /** Races multiple Fibers and returns a Fiber that completes with the result of the first to complete. When one Fiber completes, all
       * other Fibers are interrupted.
       *
@@ -322,7 +319,7 @@ object Fiber:
         protected inline given AllowUnsafe = AllowUnsafe.embrace.danger
 
         final def interrupts(fiber: Fiber.Unsafe[E, A]): Unit =
-            this.onComplete(_ => Unsafe.interruptDiscard(fiber)(Result.Panic(Fiber.Interrupted(frame))))
+            this.onComplete(_ => Unsafe.interruptDiscard(fiber)(Result.Panic(Interrupted(frame))))
     end Race
     private[Fiber] object Race:
         private inline def apply[E, A, S](using
@@ -452,7 +449,7 @@ object Fiber:
                 import state.*
                 isolate.runInternal { (trace, context) =>
                     val safepoint             = Safepoint.get
-                    inline def interruptPanic = Result.Panic(Fiber.Interrupted(frame))
+                    inline def interruptPanic = Result.Panic(Interrupted(frame))
                     foreach(iterable) { (idx, v) =>
                         val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                         state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
