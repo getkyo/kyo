@@ -44,16 +44,13 @@ object Parse:
 
     type StateTag[A] = Tag[Var[State[A]]]
 
-    private val localReadAspect: Aspect[Const[Chunk[Any]], [C] =>> Maybe[(Chunk[?], C)], Parse[Any]] =
-        Aspect.init(using Frame.internal)
-
     /** Aspect that modifies how text is read and parsed. This is the core parsing aspect that other parsing operations build upon. It takes
       * the current text input and a parsing function, allowing for preprocessing of input or postprocessing of results.
       *
       * @return
       *   An Aspect that transforms from Const[Text] to Maybe[(Text, C)]
       */
-    def readAspect[A](using Tag[(Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)])]): Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]] =
+    def readAspect[A](using Tag[A]): Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]] =
         Aspect.init(using Frame.internal)
 
     /** Attempts to parse input using the provided parsing function
@@ -65,9 +62,9 @@ object Parse:
       * @return
       *   Parsed value if successful, drops the current parse branch if unsuccessful
       */
-    def read[A, In](f: Chunk[In] => Maybe[(Chunk[In], A)])(using Frame, StateTag[In]): A < Parse[In] =
+    def read[A, In](f: Chunk[In] => Maybe[(Chunk[In], A)])(using Frame, Tag[In], StateTag[In]): A < Parse[In] =
         Var.use[State[In]] { state =>
-            readAspect(state.remaining)(f).map {
+            readAspect[In](state.remaining)(f).map {
                 case Present((remaining, result)) =>
                     val consumed = state.remaining.length - remaining.length
                     Var.set(state.advance(consumed)).andThen(result)
