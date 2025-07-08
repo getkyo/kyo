@@ -318,8 +318,9 @@ class RecordTest extends Test:
             inline def stage[Name <: String, Value](field: Field[Name, Value]): Column[Value] =
                 Column[Value](field.name)(using summonInline[AsColumn[Value]])
 
-        "build record if all inlined" pending {
-            assertCompiles("""
+        "build record if all inlined" in {
+            pendingUntilFixed:
+                assertCompiles("""
             type Person = "name" ~ String & "age" ~ Int
 
             val columns = Record.stage[Person](ColumnInline)
