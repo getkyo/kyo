@@ -17,7 +17,7 @@ jobs:
         target:
           - { name: "JVM", command: "sbt '+kyoJVM/testQuick'" }
           - { name: "JS", command: "sbt '+kyoJS/testQuick'" }
-          - { name: "Native", command: "sbt '+kyoNative/testQuick'" }
+          - { name: "Native", command: "sbt '+kyoNative/Test/compile'" }
     env:
       JAVA_OPTS: -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
       JVM_OPTS:  -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
@@ -29,9 +29,10 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libcurl4-openssl-dev libidn2-0-dev
-    - uses: olafurpg/setup-scala@v14
+    - uses: coursier/setup-action@v1
       with:
-        java-version: openjdk@21.0.2=tgz+https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz
+        jvm: corretto:24
+        apps: sbt
 
     - name: Build ${{ matrix.target.name }}
       run: ${{ matrix.target.command }}

@@ -21,12 +21,12 @@ class ChannelBench extends BaseBench:
     @Benchmark def streamChunks() =
         val x =
             for
-                channel <- Channel.init[Int](size)
+                channel <- Channel.initUnscoped[Int](size)
                 _       <- channel.putBatch(Seq.fill(size)(intFillFn))
-                _       <- Fiber.run(channel.closeAwaitEmpty)
+                _       <- Fiber.init(channel.closeAwaitEmpty)
                 count   <- channel.streamUntilClosed(maxChunkSize).into(Sink.count)
             yield count
-        val count = Sync.Unsafe.evalOrThrow(Fiber.run(x).flatMap(_.block(Duration.Infinity))).getOrThrow
+        val count = Sync.Unsafe.evalOrThrow(Fiber.init(x).flatMap(_.block(Duration.Infinity))).getOrThrow
         assert(count == size, s"Expected $size, got $count")
     end streamChunks
 

@@ -45,9 +45,9 @@ class SemaphoreContentionBench extends ArenaBench.ForkOnly(()):
                 sem.run(()).flatMap(_ => loop(sem, cdl, i + 1))
 
         for
-            sem <- Meter.initSemaphore(permits)
+            sem <- Meter.initSemaphoreUnscoped(permits)
             cdl <- Latch.init(parallism)
-            _   <- repeat(parallism)(Fiber.run(loop(sem, cdl)))
+            _   <- repeat(parallism)(Fiber.init(loop(sem, cdl)))
             _   <- cdl.await
         yield {}
         end for

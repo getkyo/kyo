@@ -18,13 +18,13 @@ case class Process(private val process: JProcess):
     def stdin: OutputStream                                                 = process.getOutputStream
     def stdout: InputStream                                                 = process.getInputStream
     def stderr: InputStream                                                 = process.getErrorStream
-    def waitFor(using Frame): Int < Sync                                    = Sync(process.waitFor())
-    def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < Sync = Sync(process.waitFor(timeout, unit))
-    def exitValue(using Frame): Int < Sync                                  = Sync(process.exitValue())
-    def destroy(using Frame): Unit < Sync                                   = Sync(process.destroy())
-    def destroyForcibly(using Frame): JProcess < Sync                       = Sync(process.destroyForcibly())
-    def isAlive(using Frame): Boolean < Sync                                = Sync(process.isAlive())
-    def pid(using Frame): Long < Sync                                       = Sync(process.pid())
+    def waitFor(using Frame): Int < Sync                                    = Sync.defer(process.waitFor())
+    def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < Sync = Sync.defer(process.waitFor(timeout, unit))
+    def exitValue(using Frame): Int < Sync                                  = Sync.defer(process.exitValue())
+    def destroy(using Frame): Unit < Sync                                   = Sync.defer(process.destroy())
+    def destroyForcibly(using Frame): JProcess < Sync                       = Sync.defer(process.destroyForcibly())
+    def isAlive(using Frame): Boolean < Sync                                = Sync.defer(process.isAlive())
+    def pid(using Frame): Long < Sync                                       = Sync.defer(process.pid())
 end Process
 
 object Process:
@@ -39,7 +39,7 @@ object Process:
           * command, use `spawn` or use directly `jvm.spawn`.
           */
         def command(clazz: Class[?], args: List[String] = Nil)(using Frame): Process.Command < Sync =
-            Sync {
+            Sync.defer {
                 val javaHome  = JSystem.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
                 val classPath = JSystem.getProperty("java.class.path")
                 val command   = javaHome :: "-cp" :: classPath :: clazz.getName().init :: args
@@ -167,7 +167,7 @@ object Process:
             self =>
             override def spawn(using Frame): Process < Sync =
                 for
-                    process <- Sync {
+                    process <- Sync.defer {
                         val builder = new ProcessBuilder(command*)
 
                         builder.redirectErrorStream(redirectErrorStream)
@@ -194,7 +194,7 @@ object Process:
                                 ()
                             }
                             for
-                                _ <- Fiber.run(Resource.run(resources))
+                                _ <- Fiber.init(Resource.run(resources))
                             yield ()
                         case _ => Kyo.unit
                 yield process
@@ -214,7 +214,7 @@ object Process:
         case class Piped(commands: List[Simple]) extends Command:
             self =>
             def spawnAll(using Frame): List[Process] < Sync =
-                if commands.isEmpty then Sync(List.empty)
+                if commands.isEmpty then Sync.defer(List.empty)
                 else
                     commands.tail.foldLeft(commands.head.spawn.map(p => (p :: Nil, p.stdout))) { case (acc, nextCommand) =>
                         for

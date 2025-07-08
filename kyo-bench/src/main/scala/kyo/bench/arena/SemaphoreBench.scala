@@ -26,7 +26,7 @@ class SemaphoreBench extends ArenaBench.ForkOnly(()):
             else
                 s.run(()).flatMap(_ => loop(s, i + 1))
 
-        Meter.initSemaphore(1).flatMap(loop(_, 0))
+        Meter.initSemaphoreUnscoped(1).flatMap(loop(_, 0))
     end kyoBenchFiber
 
     def zioBench() =

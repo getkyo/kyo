@@ -9,7 +9,7 @@ class SyncTest extends Test:
         "execution" in run {
             var called = false
             val v =
-                Sync {
+                Sync.defer {
                     called = true
                     1
                 }
@@ -24,7 +24,7 @@ class SyncTest extends Test:
             var called = false
             val v =
                 Env.get[Int].map { i =>
-                    Sync {
+                    Sync.defer {
                         called = true
                         i
                     }
@@ -44,10 +44,10 @@ class SyncTest extends Test:
             def fail: Int = throw ex
 
             val ios = List(
-                Sync(fail),
-                Sync(fail).map(_ + 1),
-                Sync(1).map(_ => fail),
-                Sync(Sync(1)).map(_ => fail)
+                Sync.defer(fail),
+                Sync.defer(fail).map(_ + 1),
+                Sync.defer(1).map(_ => fail),
+                Sync.defer(Sync.defer(1)).map(_ => fail)
             )
             ios.foreach { io =>
                 assert(Try(Sync.Unsafe.evalOrThrow(io)) == Try(fail))
@@ -57,7 +57,7 @@ class SyncTest extends Test:
         "stack-safe" in run {
             val frames = 10000
             def loop(i: Int): Int < Sync =
-                Sync {
+                Sync.defer {
                     if i < frames then
                         loop(i + 1)
                     else
@@ -72,7 +72,7 @@ class SyncTest extends Test:
         "execution" in run {
             var called = false
             val v: Int < Sync =
-                Sync {
+                Sync.defer {
                     called = true
                     1
                 }
@@ -85,7 +85,7 @@ class SyncTest extends Test:
         "stack-safe" in run {
             val frames = 100000
             def loop(i: Int): Assertion < Sync =
-                Sync {
+                Sync.defer {
                     if i < frames then
                         loop(i + 1)
                     else
@@ -99,10 +99,10 @@ class SyncTest extends Test:
             def fail: Int = throw ex
 
             val ios = List(
-                Sync(fail),
-                Sync(fail).map(_ + 1),
-                Sync(1).map(_ => fail),
-                Sync(Sync(1)).map(_ => fail)
+                Sync.defer(fail),
+                Sync.defer(fail).map(_ + 1),
+                Sync.defer(1).map(_ => fail),
+                Sync.defer(Sync.defer(1)).map(_ => fail)
             )
             ios.foreach { io =>
                 assert(Try(Sync.Unsafe.evalOrThrow(io)) == Try(fail))
@@ -123,7 +123,7 @@ class SyncTest extends Test:
             val ex     = new Exception
             var called = false
             Abort.run[Any](Sync.ensure { called = true } {
-                Sync[Int, Any](throw ex)
+                Sync.defer[Int, Any](throw ex)
             }).map { result =>
                 assert(result == Result.panic(ex))
                 assert(called)
@@ -145,13 +145,13 @@ class SyncTest extends Test:
     "evalOrThrow" - {
         import AllowUnsafe.embrace.danger
         "success" in run {
-            val result = Sync.Unsafe.evalOrThrow(Sync(42))
+            val result = Sync.Unsafe.evalOrThrow(Sync.defer(42))
             assert(result == 42)
         }
 
         "throws exceptions" in run {
             val ex = new Exception("test error")
-            val io = Sync[Int, Any](throw ex)
+            val io = Sync.defer[Int, Any](throw ex)
 
             val caught = intercept[Exception] {
                 Sync.Unsafe.evalOrThrow(io)
@@ -161,7 +161,7 @@ class SyncTest extends Test:
 
         "propagates nested exceptions" in run {
             val ex = new Exception("nested error")
-            val io = Sync(Sync(throw ex))
+            val io = Sync.defer(Sync.defer(throw ex))
 
             val caught = intercept[Exception] {
                 Sync.Unsafe.evalOrThrow(io)
@@ -170,7 +170,7 @@ class SyncTest extends Test:
         }
 
         "works with mapped values" in run {
-            val result = Sync.Unsafe.evalOrThrow(Sync(21).map(_ * 2))
+            val result = Sync.Unsafe.evalOrThrow(Sync.defer(21).map(_ * 2))
             assert(result == 42)
         }
     }
@@ -193,7 +193,7 @@ class SyncTest extends Test:
 
         "preserves Nothing as most specific error type" in {
             typeCheckFailure("""
-                val io: Int < Sync = Sync {
+                val io: Int < Sync = Sync.defer {
                     Abort.fail[String]("error")
                 }
             """)(

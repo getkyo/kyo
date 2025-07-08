@@ -594,12 +594,12 @@ object Loop:
       * @return
       *   Nothing, as this loop runs forever unless interrupted
       */
-    inline def forever[S](inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
+    inline def forever[S](inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Nothing < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Any < S)(using Safepoint): Unit < S =
+        @tailrec def loop(v: Any < S)(using Safepoint): Nothing < S =
             v match
-                case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                case kyo: KyoSuspend[IX, OX, EX, Any, Nothing, S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, Nothing, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             loop(kyo(v, context))

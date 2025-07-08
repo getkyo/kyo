@@ -254,17 +254,17 @@ object Tag:
                 case object NothingEntry extends Entry
                 case object NullEntry    extends Entry
 
-                final case class IntersectionEntry(set: KArray[Id]) extends Entry
+                final case class IntersectionEntry(set: Span[Id]) extends Entry
 
-                final case class UnionEntry(set: KArray[Id]) extends Entry
+                final case class UnionEntry(set: Span[Id]) extends Entry
 
                 final case class LiteralEntry(widened: Id, value: String) extends Entry
 
                 final case class ClassEntry(
                     className: String,
-                    variances: KArray[Variance],
-                    params: KArray[Id],
-                    parents: KArray[Id]
+                    variances: Span[Variance],
+                    params: Span[Id],
+                    parents: Span[Id]
                 ) extends Entry:
                     require(variances.size == params.size)
                 end ClassEntry
@@ -276,9 +276,9 @@ object Tag:
                 end Variance
 
                 final case class LambdaEntry(
-                    params: KArray[String],
-                    lowerBounds: KArray[Id],
-                    upperBounds: KArray[Id],
+                    params: Span[String],
+                    lowerBounds: Span[Id],
+                    upperBounds: Span[Id],
                     body: Id
                 ) extends Entry
 
@@ -286,8 +286,8 @@ object Tag:
                     name: String,
                     lowerBound: Id,
                     upperBound: Id,
-                    variances: KArray[Variance],
-                    params: KArray[Id]
+                    variances: Span[Variance],
+                    params: Span[Id]
                 ) extends Entry
 
             end Entry
@@ -409,10 +409,10 @@ object Tag:
                             case AnyEntry => true
                             case LambdaEntry(bParams, bLower, bUpper, bBody) =>
                                 aParams.size == bParams.size &&
-                                KArray.forallZip(aLower, bLower) { (aLowerId, bLowerId) =>
+                                Span.forallZip(aLower, bLower) { (aLowerId, bLowerId) =>
                                     isSubType(bOwner, aOwner, bLowerId, aLowerId)
                                 } &&
-                                KArray.forallZip(aUpper, bUpper) { (aUpperId, bUpperId) =>
+                                Span.forallZip(aUpper, bUpper) { (aUpperId, bUpperId) =>
                                     isSubType(aOwner, bOwner, aUpperId, bUpperId)
                                 } &&
                                 isSubType(aOwner, bOwner, aBody, bBody)
@@ -422,7 +422,7 @@ object Tag:
                         bEntry match
                             case OpaqueEntry(bName, bLower, _, bVariances, bParams) if aName == bName =>
                                 aParams.size == bParams.size &&
-                                KArray.forallZip(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
+                                Span.forallZip(aVariances, aParams, bParams) { (variance, aParamId, bParamId) =>
                                     variance match
                                         case Variance.Invariant =>
                                             isSubType(aOwner, bOwner, aParamId, bParamId) &&
@@ -457,7 +457,7 @@ object Tag:
 
                             case OpaqueEntry(_, lower, upper, variances, params) =>
                                 isSubType(aOwner, bOwner, aId, lower) && {
-                                    KArray.forallZip(variances, params) { (variance, paramId) =>
+                                    Span.forallZip(variances, params) { (variance, paramId) =>
                                         isSameType(aOwner, bOwner, aId, paramId)
                                     }
                                 }
@@ -465,7 +465,7 @@ object Tag:
                             case bClass: ClassEntry =>
                                 if isSameString(aClass.className, bClass.className) then
                                     aClass.params.size == bClass.params.size &&
-                                    KArray.forallZip(aClass.variances, aClass.params, bClass.params) { (variance, aParam, bParam) =>
+                                    Span.forallZip(aClass.variances, aClass.params, bClass.params) { (variance, aParam, bParam) =>
                                         variance match
                                             case Variance.Invariant =>
                                                 isSubType(aOwner, bOwner, aParam, bParam) &&
@@ -504,13 +504,13 @@ object Tag:
                     case IntersectionEntry(aSet) =>
                         bEntry match
                             case IntersectionEntry(bSet) =>
-                                aSet.size == bSet.size && KArray.forallZip(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
+                                aSet.size == bSet.size && Span.forallZip(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
 
                     case UnionEntry(aSet) =>
                         bEntry match
                             case UnionEntry(bSet) =>
-                                aSet.size == bSet.size && KArray.forallZip(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
+                                aSet.size == bSet.size && Span.forallZip(aSet, bSet)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
 
                     case LiteralEntry(aId, value) =>
@@ -522,8 +522,8 @@ object Tag:
                         bEntry match
                             case LambdaEntry(bParams, bLower, bUpper, bBody) =>
                                 aParams.size == bParams.size &&
-                                KArray.forallZip(aLower, bLower)(isSameType(aOwner, bOwner, _, _)) &&
-                                KArray.forallZip(aUpper, bUpper)(isSameType(aOwner, bOwner, _, _))
+                                Span.forallZip(aLower, bLower)(isSameType(aOwner, bOwner, _, _)) &&
+                                Span.forallZip(aUpper, bUpper)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
 
                     case OpaqueEntry(name, aLower, aUpper, aVariances, aParams) =>
@@ -532,14 +532,14 @@ object Tag:
                                 aParams.size == bParams.size &&
                                 isSameType(aOwner, bOwner, aLower, bLower) &&
                                 isSameType(aOwner, bOwner, aUpper, bUpper) &&
-                                KArray.forallZip(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
+                                Span.forallZip(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
                             case _ =>
                                 false
 
                     case ClassEntry(name, aVariances, aParams, aParents) =>
                         bEntry match
                             case ClassEntry(`name`, bVariances, bParams, bParents) if aVariances.is(bVariances) =>
-                                aParams.size == bParams.size && KArray.forallZip(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
+                                aParams.size == bParams.size && Span.forallZip(aParams, bParams)(isSameType(aOwner, bOwner, _, _))
                             case _ => false
                 end match
 
@@ -608,17 +608,17 @@ object Tag:
                 case "N" :: Nil                     => NothingEntry
                 case "U" :: Nil                     => NullEntry
                 case "L" :: widened :: value :: Nil => LiteralEntry(widened, value)
-                case "I" :: set                     => IntersectionEntry(KArray.from(set))
-                case "U" :: set                     => UnionEntry(KArray.from(set))
+                case "I" :: set                     => IntersectionEntry(Span.from(set))
+                case "U" :: set                     => UnionEntry(Span.from(set))
 
                 case "M" :: body :: size :: rest =>
                     val n  = size.toInt
                     val it = rest.iterator
                     LambdaEntry(
                         body = body,
-                        params = KArray.from(it.take(n)),
-                        lowerBounds = KArray.from(it.take(n)),
-                        upperBounds = KArray.from(it.take(n))
+                        params = Span.from(it.take(n)),
+                        lowerBounds = Span.from(it.take(n)),
+                        upperBounds = Span.from(it.take(n))
                     )
 
                 case "O" :: name :: lower :: upper :: size :: rest =>
@@ -628,8 +628,8 @@ object Tag:
                         name = name,
                         lowerBound = lower,
                         upperBound = upper,
-                        variances = KArray.from(it.take(n).map(v => Variance.fromOrdinal(v.toInt))),
-                        params = KArray.from(it.take(n))
+                        variances = Span.from(it.take(n).map(v => Variance.fromOrdinal(v.toInt))),
+                        params = Span.from(it.take(n))
                     )
 
                 case "C" :: name :: size :: rest =>
@@ -637,17 +637,17 @@ object Tag:
                         case 0 =>
                             ClassEntry(
                                 className = name,
-                                variances = KArray.empty,
-                                params = KArray.empty,
-                                parents = KArray.from(rest.drop(2).filter(_.nonEmpty))
+                                variances = Span.empty,
+                                params = Span.empty,
+                                parents = Span.from(rest.drop(2).filter(_.nonEmpty))
                             )
                         case size =>
                             val it = rest.iterator
                             ClassEntry(
                                 className = name,
-                                variances = KArray.from(it.take(size).map(v => Variance.fromOrdinal(v.toInt))),
-                                params = KArray.from(it.take(size)),
-                                parents = KArray.from(it)
+                                variances = Span.from(it.take(size).map(v => Variance.fromOrdinal(v.toInt))),
+                                params = Span.from(it.take(size)),
+                                parents = Span.from(it)
                             )
 
                 case fields =>

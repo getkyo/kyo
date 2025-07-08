@@ -11,8 +11,6 @@ import kyo.internal.OsSignal
   * Note: This class and its methods are unsafe and should only be used as the entrypoint of an application.
   */
 abstract class KyoApp extends KyoAppPlatformSpecific:
-    override def timeout: Duration = Duration.Infinity
-
     private val awaitInterrupt =
         given AllowUnsafe = AllowUnsafe.embrace.danger
         val promise       = Promise.Unsafe.init[Nothing, Nothing]()
@@ -35,6 +33,9 @@ abstract class KyoApp extends KyoAppPlatformSpecific:
 end KyoApp
 
 object KyoApp:
+    def apply[A](v: => A < (Async & Resource & Abort[Throwable]))(using Frame, Render[A]): KyoApp =
+        new KyoApp:
+            run(v)
 
     /** An abstract base class for Kyo applications.
       *
@@ -44,25 +45,49 @@ object KyoApp:
       *   The effect type used by the application.
       */
     abstract class Base[S]:
-        protected def timeout: Duration
-
-        protected def handle[A](v: A < S)(using Frame): A < (Async & Abort[Throwable])
-
-        final protected def args: Array[String] = _args
-
-        private var _args: Array[String] = null
-
+        private var _args: Array[String]          = null
         protected var initCode: Chunk[() => Unit] = Chunk.empty
 
         final def main(args: Array[String]) =
             this._args = args
-            for proc <- initCode do proc()
+            if initCode.isEmpty then
+                import AllowUnsafe.embrace.danger
+                onResult(Result.fail(Ansi.highlight(
+                    header = "KyoApp: nothing to execute. Did you forget to use a run block?",
+                    code = """|
+                              | object Example extends KyoApp:
+                              |   run {
+                              |     Console.printLine("Hello, world!")
+                              |   }
+                              |""".stripMargin,
+                    trailer = ""
+                )))
+            else for proc <- initCode do proc()
+            end if
         end main
 
+        /** The argument(s) this application was started with. */
+        final protected def args: Chunk[String] =
+            if _args eq null then Chunk.empty
+            else Chunk.fromNoCopy(_args)
+
+        /** Unsafely exits the application. */
+        protected def exit(code: Int)(using AllowUnsafe): Unit =
+            kernel.Platform.exit(code)
+
+        /** Unified handling logic for supporting arbitrary effects. */
+        protected def handle[A](v: A < S)(using Frame): A < (Async & Abort[Throwable])
+
+        /** The timeout for each [[run]] block. */
+        protected def runTimeout: Duration = Duration.Infinity
+
+        /** The main entrypoint to this application. */
         protected def run[A](v: => A < S)(using Frame, Render[A]): Unit
 
-        protected def exit(code: Int)(using AllowUnsafe): Unit = kernel.Platform.exit(code)
-
+        /** Handles the result of the [[run]] block computation.
+          *
+          * Override this method to control how the result is handled.
+          */
         protected def onResult[E, A](result: Result[E, A])(using Render[Result[E, A]], AllowUnsafe): Unit =
             if !result.exists(().equals(_)) then println(result.show)
             result match
@@ -92,7 +117,7 @@ object KyoApp:
         def runAndBlock[A](timeout: Duration)(
             v: A < (Async & Resource & Abort[Throwable])
         )(using Frame, AllowUnsafe): Result[Throwable, A] =
-            Abort.run(Sync.Unsafe.run(Fiber.runAndBlock(timeout)(Resource.run(v)))).eval
+            Abort.run(Sync.Unsafe.run(Async.runAndBlock(timeout)(Resource.run(v)))).eval
     end Unsafe
 
 end KyoApp

@@ -461,6 +461,53 @@ class PendingTest extends Test:
             val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
             assert(result2.eval == 15)
         }
+
+        "nested effect suspension lifted function" in {
+            def f(str: String): Int < TestEffect2 = TestEffect2(str)
+
+            def g[B](f: String => B): B < TestEffect1 =
+                TestEffect1(1).map(f)
+
+            val nested: Int < TestEffect2 < TestEffect1 = g(f)
+
+            val result = TestEffect1.run(nested.map(TestEffect2.run))
+            assert(result.eval == 19)
+
+            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
+            assert(result2.eval == 19)
+        }
+
+        "nested effect suspension widened lifted function" in {
+            def f(str: String): Int < TestEffect2 = TestEffect2(str)
+
+            def g[B](f: String => B): B < TestEffect1 =
+                val liftedF: String => B < Any = f
+                TestEffect1(1).map(liftedF)
+
+            val nested: Int < TestEffect2 < TestEffect1 = g(f)
+
+            val result = TestEffect1.run(nested.map(TestEffect2.run))
+            assert(result.eval == 19)
+
+            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
+            assert(result2.eval == 19)
+        }
+
+        "generic lifted functions" in {
+            def f(str: String): Int < TestEffect2 = TestEffect2(str)
+
+            def g[B](f: String => B): B < TestEffect1 =
+                TestEffect1(1).map(f).flatMap(_ => f("a")).andThen(f("b"))
+
+            val nested: Int < TestEffect2 < TestEffect1 = g(f)
+
+            val result = TestEffect1.run(nested.map(TestEffect2.run))
+            assert(result.eval == 11)
+
+            val result2 = TestEffect1.run(TestEffect2.run(nested.flatten))
+            assert(result2.eval == 11)
+        }
+
     }
 
     "show" - {

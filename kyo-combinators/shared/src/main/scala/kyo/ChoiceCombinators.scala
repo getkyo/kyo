@@ -13,8 +13,8 @@ extension [A, S](effect: A < (S & Choice))
       * @return
       *   A computation that produces the result of this computation with Choice effect
       */
-    def filterChoice[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1 & Choice) =
-        effect.map(a => fn(a).map(b => Choice.dropIf(!b)).andThen(a))
+    def filterChoice[S1](predicate: A => Boolean < S1)(using Frame): A < (S & S1 & Choice) =
+        effect.map(a => predicate(a).map(b => Choice.dropIf(!b)).andThen(a))
 
     /** Handles the Choice effect and returns its result as a `Seq[A]`.
       *

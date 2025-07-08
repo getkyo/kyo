@@ -19,51 +19,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && Sync(True).now
+                    True && Sync.defer(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    True && Sync(False).now
+                    True && Sync.defer(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    False && Sync(NotExpected).now
+                    False && Sync.defer(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    Sync(True).now && True
+                    Sync.defer(True).now && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    Sync(True).now && False
+                    Sync.defer(True).now && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    Sync(False).now && NotExpected
+                    Sync.defer(False).now && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    Sync(True).now && Sync(True).now
+                    Sync.defer(True).now && Sync.defer(True).now
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    Sync(True).now && Sync(False).now
+                    Sync.defer(True).now && Sync.defer(False).now
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    Sync(False).now && Sync(NotExpected).now
+                    Sync.defer(False).now && Sync.defer(NotExpected).now
                 }
             }
         }
@@ -77,51 +77,51 @@ class BooleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || Sync(False).now
+                    False || Sync.defer(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || Sync(True).now
+                    False || Sync.defer(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || Sync(NotExpected).now
+                    True || Sync.defer(NotExpected).now
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    Sync(False).now || False
+                    Sync.defer(False).now || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    Sync(False).now || True
+                    Sync.defer(False).now || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    Sync(True).now || NotExpected
+                    Sync.defer(True).now || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    Sync(False).now || Sync(False).now
+                    Sync.defer(False).now || Sync.defer(False).now
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    Sync(False).now || Sync(True).now
+                    Sync.defer(False).now || Sync.defer(True).now
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    Sync(True).now || Sync(NotExpected).now
+                    Sync.defer(True).now || Sync.defer(NotExpected).now
                 }
             }
         }

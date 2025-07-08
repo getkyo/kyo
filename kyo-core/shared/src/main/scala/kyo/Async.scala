@@ -22,10 +22,17 @@ import scala.util.control.NonFatal
   * Most application code can work exclusively with Async, with the Sync/Async distinction becoming relevant primarily in library code or
   * performance-critical sections where precise control over execution characteristics is needed.
   *
+  * Unlike other effects, Async doesn't have a run method - it's typically handled by KyoApp at the application boundary. While
+  * Async.runAndBlock exists for blocking execution, it should be avoided as it defeats the purpose of asynchronous computation. For
+  * advanced use cases requiring manual fiber handling, Fiber.init can be used.
+  *
   * Note: For collection operations, Async provides concurrent execution variants of the `Kyo` companion object sequential operations. These
   * operations use a bounded concurrency model to prevent resource exhaustion, defaulting to twice the number of available processors. This
-  * can be overridden per operation when needed. On platforms like the JVM, these operations may execute in parallel using multiple threads.
-  * On single-threaded platforms like JavaScript, operations will be interleaved concurrently but not execute in parallel.
+  * can be overridden per operation when needed.
+  *
+  * The methods in Async that take computations (like race, gather, foreach) automatically manage forking execution - there's no need for
+  * explicit forking. On platforms like the JVM, these operations may execute in parallel using multiple threads. On single-threaded
+  * platforms like JavaScript, operations will be interleaved concurrently but not execute in parallel.
   *
   * This effect includes Sync in its effect set to handle both async and sync execution in a single effect.
   *
@@ -69,14 +76,14 @@ object Async extends AsyncPlatformSpecific:
         Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
     end defaultConcurrency
 
-    /** Convenience method for suspending computations in an Async effect.
+    /** Convenience method for suspending side effects in an Async effect.
       *
       * While Sync is specifically designed to suspend side effects without handling asynchronicity, Async provides both side effect
       * suspension and asynchronous execution capabilities (fibers, async scheduling). Since Async includes Sync in its effect set, this
       * method allows users to work with a single unified effect that handles both concerns.
       *
       * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use
-      * Fiber.run or combinators like Async.parallel instead.
+      * Fiber.init or combinators like Async.parallel instead.
       *
       * This is particularly useful in application code where the distinction between pure side effects and asynchronous execution is less
       * important than having a simple, consistent way to handle effects. The underlying effects are typically managed together at the
@@ -93,8 +100,8 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   The suspended computation wrapped in an Async effect
       */
-    inline def apply[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
-        Sync(v)
+    inline def defer[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
+        Sync.defer(v)
 
     /** Runs an asynchronous computation with interrupt masking.
       *
@@ -113,7 +120,7 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         isolate.capture { state =>
-            Fiber.run(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
+            Fiber.init(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
         }
 
     /** Creates a computation that never completes.
@@ -156,11 +163,10 @@ object Async extends AsyncPlatformSpecific:
     def timeout[E, A, S](
         using isolate: Isolate.Stateful[S, Abort[E] & Async]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        if after == Duration.Zero then Abort.fail(Timeout(Present(after)))
-        else if !after.isFinite then v
+        if !after.isFinite then v
         else
             isolate.capture { state =>
-                Fiber.run(isolate.isolate(state, v)).map { task =>
+                Fiber.init(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
                         Sync.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
@@ -761,7 +767,25 @@ object Async extends AsyncPlatformSpecific:
                         else
                             loop()
                         end if
-            Kyo.lift(Sync(loop()))
+            Kyo.lift(Sync.defer(loop()))
+        }
+
+    /** Runs an asynchronous computation in a new fiber and blocks until completion or timeout.
+      *
+      * @param timeout
+      *   The maximum duration to wait
+      * @param v
+      *   The computation to run
+      * @return
+      *   The result of the computation, or a Timeout error
+      */
+    def runAndBlock[E, A, S](
+        using isolate: Isolate.Contextual[S, Sync]
+    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
+        using frame: Frame
+    ): A < (Abort[E | Timeout] & Sync & S) =
+        Fiber.init(v).map { fiber =>
+            fiber.block(timeout).map(Abort.get(_))
         }
 
     /** Converts a Future to an asynchronous computation.

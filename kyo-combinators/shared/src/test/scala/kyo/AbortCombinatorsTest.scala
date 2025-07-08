@@ -58,11 +58,11 @@ class AbortCombinatorsTest extends Test:
 
             "should construct from an Sync" in {
                 import AllowUnsafe.embrace.danger
-                val effect = Kyo.attempt(Sync(throw new Exception("failure")))
+                val effect = Kyo.attempt(Sync.defer(throw new Exception("failure")))
                 assert(Sync.Unsafe.evalOrThrow(
                     Abort.run[Throwable](effect)
                 ).failure.get.getMessage == "failure")
-                val effect1 = Kyo.attempt(Sync(1))
+                val effect1 = Kyo.attempt(Sync.defer(1))
                 assert(Sync.Unsafe.evalOrThrow(
                     Abort.run[Throwable](effect1)
                 ).getOrElse(-1) == 1)
@@ -757,6 +757,21 @@ class AbortCombinatorsTest extends Test:
                         }
                     }
 
+                    "failing" in run {
+                        val effect: Unit < (Var[Int] & Abort[String | Int]) =
+                            for
+                                _ <- Var.update[Int](_ + 1)
+                                i <- Var.get[Int]
+                                _ <- Abort.fail(i)
+                            yield ()
+
+                        Var.run(0) {
+                            Abort.run(effect.retry(5)).map: result =>
+                                Var.get[Int].map: i =>
+                                    assert(result == Result.Failure(6) && i == 6)
+                        }
+                    }
+
                     "failing retried type" in run {
                         val effect: Unit < (Var[Int] & Abort[String | Int]) =
                             for
@@ -785,6 +800,39 @@ class AbortCombinatorsTest extends Test:
                             Abort.run(effect.forAbort[Int].retry(5)).map: result =>
                                 Var.get[Int].map: i =>
                                     assert(result == Result.Failure("fail") && i == 3)
+                        }
+                    }
+
+                    "failing panic without forAbort" in run {
+                        val exception = Exception("failure")
+                        val effect: Unit < (Var[Int] & Abort[Nothing]) =
+                            for
+                                _ <- Var.update[Int](_ + 1)
+                                i <- Var.get[Int]
+                                _ <- Abort.panic(exception)
+                            yield ()
+
+                        Var.run(0) {
+                            Abort.run(effect.retry(5)).map: result =>
+                                Var.get[Int].map: i =>
+                                    assert(result == Result.Panic(exception) && i == 6)
+                        }
+                    }
+
+                    "failing panic with forAbort" in run {
+                        val exception = Exception("failure")
+                        val effect: Unit < (Var[Int] & Abort[Int]) =
+                            for
+                                _ <- Var.update[Int](_ + 1)
+                                i <- Var.get[Int]
+                                _ <- if i < 2 then Abort.fail(i) else Kyo.unit
+                                _ <- Abort.panic(exception)
+                            yield ()
+
+                        Var.run(0) {
+                            Abort.run(effect.forAbort[Int].retry(5)).map: result =>
+                                Var.get[Int].map: i =>
+                                    assert(result == Result.Panic(exception) && i == 2)
                         }
                     }
 
