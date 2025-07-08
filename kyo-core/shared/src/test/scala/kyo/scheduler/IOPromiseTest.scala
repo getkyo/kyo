@@ -4,7 +4,7 @@ import kyo.*
 import org.scalatest.compatible.Assertion
 import scala.annotation.tailrec
 
-class SyncPromiseTest extends Test:
+class IOPromiseTest extends Test:
 
     def deadline(after: Duration = timeout) =
         import AllowUnsafe.embrace.danger
@@ -198,49 +198,6 @@ class SyncPromiseTest extends Test:
             p.onComplete(_ => called = true)
             p.complete(Result.succeed(42))
             assert(called)
-        }
-    }
-
-    "block" - {
-        "immediate completion" in {
-            val p = new IOPromise[Nothing, Int]()
-            p.complete(Result.succeed(42))
-            val result = p.block(deadline())
-            assert(result == Result.succeed(42))
-        }
-
-        "timeout" in runNotJS {
-            val p      = new IOPromise[Nothing, Int]()
-            val result = p.block(deadline(10.millis))
-            assert(result.isFailure)
-        }
-
-        "block with very short timeout" in runNotJS {
-            val p      = new IOPromise[Nothing, Int]()
-            val result = p.block(deadline(10.millis))
-            assert(result.isFailure)
-        }
-
-        "thread interruption" in runNotJS {
-            val p                       = new IOPromise[Nothing, Int]()
-            @volatile var threadStarted = false
-            val thread = new Thread:
-                override def run(): Unit =
-                    threadStarted = true
-                    discard(p.block(deadline(Duration.Infinity)))
-                end run
-            thread.start()
-
-            // wait for parking
-            while !threadStarted do Thread.sleep(10)
-            Thread.sleep(10)
-
-            thread.interrupt()
-            thread.join(1000)
-
-            val result = p.block(deadline())
-            println(result.show)
-            assert(result.isPanic)
         }
     }
 
@@ -1037,4 +994,4 @@ class SyncPromiseTest extends Test:
         }
     }
 
-end SyncPromiseTest
+end IOPromiseTest
