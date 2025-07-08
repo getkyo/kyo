@@ -68,9 +68,7 @@ object ZIOs:
                         case Result.Failure(e) => cb(Exit.fail(e))
                         case Result.Panic(e)   => cb(Exit.die(e))
                     }
-                    Left(ZIO.succeed {
-                        fiber.unsafe.interrupt(Result.Panic(Interrupted(frame)))
-                    })
+                    Left(ZIO.succeed(fiber.unsafe.interrupt()))
                 }
             }.handle(Sync.Unsafe.evalOrThrow)
         }
