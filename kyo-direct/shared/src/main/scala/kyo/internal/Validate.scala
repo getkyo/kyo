@@ -70,6 +70,7 @@ private[kyo] object Validate:
             validType && validName
         end validAsyncShift
 
+        @tailrec
         def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
             qualifiers match
                 case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
@@ -82,6 +83,76 @@ private[kyo] object Validate:
                     asyncShiftDive(xs)
 
                 case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
+
+        extension (term: Term)
+            def children: List[Tree] =
+                term match
+                    case Apply(fun, args)           => fun :: args
+                    case TypeApply(fun, targs)      => fun :: targs
+                    case Select(qualifier, _)       => List(qualifier)
+                    case Ident(_)                   => Nil
+                    case Block(stats, expr)         => stats.collect { case t: Term => t } :+ expr
+                    case Inlined(_, bindings, expr) => bindings.collect { case t: Term => t } :+ expr
+                    case If(cond, thenp, elsep)     => List(cond, thenp, elsep)
+                    case Lambda(meth, _)            => meth
+                    case _                          => Nil // Other cases (Literal, Closure, etc.)
+        end extension
+
+        object DirectBlock:
+            def unapply(t: Term): Boolean =
+                t match
+                    case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) => true
+                    case _                                                            => false
+        end DirectBlock
+
+        def skipDive(qualifiers: List[Tree])(using Trees.Step): Unit =
+
+            def skipDive(tree: Tree): Unit =
+                tree match
+                    case Block(List(DefDef(_, _, _, Some(body))), _) =>
+
+                        val hasNow: Boolean = Trees.exists(body)({
+                            case t @ (Apply(TypeApply(Ident("now"), _), List(_)) | Select(_, "now")) => true
+                            case DirectBlock()                                                       => false
+                        })
+
+                        if hasNow then
+                            report.errorAndAbort(
+                                """
+                                  |Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.
+                                  |You have two options:
+                                  | - calling .now before building the structure :
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |        val y = f(1).now
+                                  |        stream.map(x => x + y)
+                                  |
+                                  | - using the effect
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |       stream.map(x => f(x + 1))
+                                  |
+                                  |""".stripMargin,
+                                body.pos
+                            )
+                        else
+                            body match
+                                case DirectBlock() =>
+                                case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                                    Trees.Step.goto(x)
+
+                                case tree: Term if tree.tpe.typeSymbol.name == "<" =>
+                                    tree.children.foreach(Trees.Step.goto)
+
+                                case _ =>
+                                    Trees.Step.goto(body)
+                        end if
+
+                    case x =>
+                        Trees.Step.goto(x)
+
+            qualifiers.foreach(skipDive)
+        end skipDive
 
         Trees.traverseGoto(expr.asTerm) {
             case Apply(
@@ -112,6 +183,14 @@ private[kyo] object Validate:
             case Apply(TypeApply(select: Select, _), argGroup0) if validAsyncShift(select) =>
                 Trees.Step.goto(select.qualifier)
                 asyncShiftDive(argGroup0)
+
+            case Apply(Apply(TypeApply(Select(qual, _), _), argGroup0), argGroup1) if qual.tpe <:< TypeRepr.of[kyo.Stream[?, ?]] =>
+                Trees.Step.goto(qual)
+                skipDive(argGroup0)
+                skipDive(argGroup1)
+
+            // direct: in direct:
+            case DirectBlock() =>
 
             case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
                 @tailrec
@@ -157,7 +236,7 @@ private[kyo] object Validate:
                             |direct {
                             |    val value = counter.get.now    // OK - get value first
                             |    val incr = value + 1           // OK - pure operation
-                            |    Sync(incr).now                   // OK - single .now
+                            |    Sync.defer(incr).now                   // OK - single .now
                             |}""".stripMargin)}""".stripMargin
                         )
                 }
@@ -172,16 +251,16 @@ private[kyo] object Validate:
                        |${bold("1. Use .now when you need the effect's result immediately:")}
                        |${highlight("""
                        |direct {
-                       |  val x: Int = Sync(1).now      // Get result here
-                       |  val y: Int = x + Sync(2).now  // Use result in next computation
+                       |  val x: Int = Sync.defer(1).now      // Get result here
+                       |  val y: Int = x + Sync.defer(2).now  // Use result in next computation
                        |  y * 2                       // Use final result
                        |}""".stripMargin)}
                        |
                        |${bold("2. Use .later (advanced) when you want to preserve the effect:")}
                        |${highlight("""
                        |direct {
-                       |  val x: Int < Sync = Sync(1).later    // Keep effect for later
-                       |  val y: Int < Sync = Sync(2).later    // Keep another effect
+                       |  val x: Int < Sync = Sync.defer(1).later    // Keep effect for later
+                       |  val y: Int < Sync = Sync.defer(2).later    // Keep another effect
                        |  x.now + y.now                    // Sequence effects
                        |}""".stripMargin)}
                        |""".stripMargin
@@ -209,13 +288,13 @@ private[kyo] object Validate:
                     |${highlight("""
                     |// Instead of lazy declarations in direct:
                     |direct {
-                    |  lazy val x = Sync(1).now  // NOT OK - lazy val
+                    |  lazy val x = Sync.defer(1).now  // NOT OK - lazy val
                     |  object A               // NOT OK - object
                     |  x + 1
                     |}
                     |
                     |// Define outside direct:
-                    |lazy val x = Sync(1)       // OK - outside
+                    |lazy val x = Sync.defer(1)       // OK - outside
                     |object A                 // OK - outside
                     |
                     |// Use inside direct:
@@ -241,13 +320,13 @@ private[kyo] object Validate:
                        |${highlight("""
                        |// Instead of method in direct:
                        |direct {
-                       |  def process(x: Int) = Sync(x).now  // NOT OK
+                       |  def process(x: Int) = Sync.defer(x).now  // NOT OK
                        |  process(10)
                        |}
                        |
                        |// Define outside:
                        |def process(x: Int): Int < Sync = direct {
-                       |  Sync(x).now
+                       |  Sync.defer(x).now
                        |}
                        |
                        |direct {
@@ -265,7 +344,7 @@ private[kyo] object Validate:
                        |// Instead of try/catch:
                        |direct {
                        |  try {
-                       |    Sync(1).now    // NOT OK
+                       |    Sync.defer(1).now    // NOT OK
                        |  } catch {
                        |    case e => handleError(e)
                        |  }
@@ -273,7 +352,7 @@ private[kyo] object Validate:
                        |
                        |// Define the effectful computation:
                        |def computation = direct {
-                       |  Sync(1).now
+                       |  Sync.defer(1).now
                        |}
                        |
                        |// Handle the effect direct block:
@@ -323,14 +402,14 @@ private[kyo] object Validate:
                     |direct {
                     |  if condition then
                     |    throw new Exception("error")  // NOT OK - throws exception
-                    |  Sync(1).now
+                    |  Sync.defer(1).now
                     |}
                     |
                     |// Use Abort effect:
                     |direct {
                     |  if condition then
                     |    Abort.fail("error").now       // OK - proper error handling
-                    |  else Sync(1).now
+                    |  else Sync.defer(1).now
                     |}""".stripMargin)}""".stripMargin
                 )
 

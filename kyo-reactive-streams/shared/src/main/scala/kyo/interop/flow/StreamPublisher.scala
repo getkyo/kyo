@@ -55,7 +55,7 @@ object StreamPublisher:
                     for
                         subscription <- publisher.getSubscription(subscriber)
                         fiber        <- subscription.subscribe.andThen(subscription.consume)
-                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupt())))
+                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))))
                     yield ()
             )
 
@@ -74,7 +74,7 @@ object StreamPublisher:
                             case _                    => discardSubscriber(subscriber)
             }
             supervisor <- Resource.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt)
-            _          <- Resource.acquireRelease(Fiber.run(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
+            _          <- Resource.acquireRelease(Fiber.init(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
         yield publisher
         end for
     end apply

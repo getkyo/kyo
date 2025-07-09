@@ -9,7 +9,7 @@ class TraceReceiverTest extends Test:
         val noopReceiver = TraceReceiver.noop
         val span         = noopReceiver.startSpan(Nil, "noopSpan", Maybe.empty, Attributes.empty)
         span.map { span =>
-            assert(span.unsafe eq Span.noop.unsafe)
+            assert(span.unsafe eq TraceSpan.noop.unsafe)
         }
     }
 
@@ -28,11 +28,11 @@ class TraceReceiverTest extends Test:
         def startSpan(
             scope: List[String],
             name: String,
-            parent: Maybe[Span],
+            parent: Maybe[TraceSpan],
             attributes: Attributes
-        )(using Frame): Span < Sync =
+        )(using Frame): TraceSpan < Sync =
             spanStarted = true
-            Span.noop
+            TraceSpan.noop
         end startSpan
     end TestTraceReceiver
 end TraceReceiverTest

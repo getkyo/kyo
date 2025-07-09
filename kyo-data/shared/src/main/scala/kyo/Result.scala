@@ -24,7 +24,7 @@ import scala.util.control.NonFatal
   *   - Query operations (`isSuccess`, `isError`, `isFailure`, `isPanic`, `contains`, `exists`, `forall`)
   *   - Conversion operations (`toEither`, `toMaybe`, `toTry`)
   *
-  * The implementation supports handling specific error types through `SafeClassTag`, allowing precise error handling for union types. This
+  * The implementation supports handling specific error types through `ConcreteTag`, allowing precise error handling for union types. This
   * enables handling specific failures while maintaining other error types in the result:
   *
   * {{{
@@ -153,7 +153,7 @@ object Result:
       *   A Result containing either the successful value, a Failure with the caught exception, or a Panic for other exceptions
       */
     inline def catching[E <: Throwable](
-        using inline ct: SafeClassTag[E]
+        using inline ct: ConcreteTag[E]
     )[A](inline expr: => A): Result[E, A] =
         try
             Success(expr)
@@ -513,7 +513,7 @@ object Result:
           *   A new Result after applying the recovery function
           */
         inline def flatMapError[E2 <: E](
-            using ct: SafeClassTag[E2]
+            using ct: ConcreteTag[E2]
         )[B >: A, E3 <: E, E4](f: (E2 | Throwable) => Result[E4, B])(using E <:< (E2 | E3)): Result[E3 | E4, B] =
             try
                 self match
@@ -533,7 +533,7 @@ object Result:
           *   A new Result after applying the recovery function
           */
         inline def flatMapFailure[E2 <: E](
-            using ct: SafeClassTag[E2]
+            using ct: ConcreteTag[E2]
         )[B >: A, E3 <: E, E4](inline f: E2 => Result[E4, B])(using E <:< (E2 | E3)): Result[E3 | E4, B] =
             try
                 self match

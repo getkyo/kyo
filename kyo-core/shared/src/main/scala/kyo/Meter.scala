@@ -106,7 +106,7 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(using Frame): Meter < Sync =
+    def initMutex(using Frame): Meter < (Sync & Resource) =
         initMutex(true)
 
     /** Creates a Meter that acts as a mutex (binary semaphore).
@@ -116,8 +116,44 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(reentrant: Boolean)(using Frame): Meter < Sync =
+    def initMutex(reentrant: Boolean)(using Frame): Meter < (Sync & Resource) =
         initSemaphore(1, reentrant)
+
+    /** Use a **reentrant** Meter that acts as a mutex (binary semaphore). Meter is closed automatically after usage.
+      *
+      * @return
+      *   A Meter effect that represents a mutex.
+      */
+    def useMutex[A, S](f: Meter => A < S)(using Frame): A < (Sync & S) =
+        initMutexUnscoped.map: meter =>
+            Sync.ensure(meter.close)(f(meter))
+
+    /** Use a **reentrant** Meter that acts as a mutex (binary semaphore). Meter is closed automatically after usage.
+      *
+      * @return
+      *   A Meter effect that represents a mutex.
+      */
+    def useMutex(reentrant: Boolean)[A, S](f: Meter => A < S)(using Frame): A < (Sync & S) =
+        initMutexUnscoped(reentrant).map: meter =>
+            Sync.ensure(meter.close)(f(meter))
+
+    /** Creates a **reentrant** Meter that acts as a mutex (binary semaphore). Does not ensure meter is cleaned up.
+      *
+      * @return
+      *   A Meter effect that represents a mutex.
+      */
+    def initMutexUnscoped(using Frame): Meter < Sync =
+        initMutexUnscoped(true)
+
+    /** Creates a Meter that acts as a mutex (binary semaphore). Does not ensure meter is cleaned up.
+      *
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a mutex.
+      */
+    def initMutexUnscoped(reentrant: Boolean)(using Frame): Meter < Sync =
+        initSemaphoreUnscoped(1, reentrant)
 
     /** Creates a Meter that acts as a semaphore with the specified concurrency.
       *
@@ -128,7 +164,32 @@ object Meter:
       * @return
       *   A Meter effect that represents a semaphore.
       */
-    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < Sync =
+    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < (Sync & Resource) =
+        Resource.acquireRelease(initSemaphoreUnscoped(concurrency, reentrant))(_.close)
+
+    /** Use a Meter that acts as a semaphore with the specified concurrency. Meter is closed automatically after usage.
+      *
+      * @param concurrency
+      *   The number of concurrent operations allowed.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a semaphore.
+      */
+    def useSemaphore(concurrency: Int, reentrant: Boolean = true)[A, S](f: Meter => A < S)(using Frame): A < (Sync & S) =
+        initSemaphoreUnscoped(concurrency, reentrant).map: meter =>
+            Sync.ensure(meter.close)(f(meter))
+
+    /** Creates a Meter that acts as a semaphore with the specified concurrency. Does not ensure meter is cleaned up.
+      *
+      * @param concurrency
+      *   The number of concurrent operations allowed.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a semaphore.
+      */
+    def initSemaphoreUnscoped(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < Sync =
         Sync.Unsafe {
             new Base(concurrency, reentrant):
                 def dispatch[A, S](v: => A < S) =
@@ -137,7 +198,7 @@ object Meter:
                 def onClose(): Unit = ()
         }
 
-    /** Creates a Meter that acts as a rate limiter.
+    /** Creates a Meter that acts as a rate limiter. Does not ensure meter is cleaned up.
       *
       * @param rate
       *   The number of operations allowed per period.
@@ -148,7 +209,38 @@ object Meter:
       * @return
       *   A Meter effect that represents a rate limiter.
       */
-    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < Sync =
+    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < (Sync & Resource) =
+        Resource.acquireRelease(initRateLimiterUnscoped(rate, period, reentrant))(_.close)
+
+    /** Use a Meter that acts as a rate limiter. Meter is closed automatically after usage
+      *
+      * @param rate
+      *   The number of operations allowed per period.
+      * @param period
+      *   The duration of each period.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a rate limiter.
+      */
+    def useRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)[A, S](f: Meter => A < S)(using
+        initFrame: Frame
+    ): A < (Sync & S) =
+        initRateLimiterUnscoped(rate, period, reentrant).map: meter =>
+            Sync.ensure(meter.close)(f(meter))
+
+    /** Creates a Meter that acts as a rate limiter. Does not ensure meter is cleaned up.
+      *
+      * @param rate
+      *   The number of operations allowed per period.
+      * @param period
+      *   The duration of each period.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a rate limiter.
+      */
+    def initRateLimiterUnscoped(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < Sync =
         Sync.Unsafe {
             new Base(rate, reentrant):
                 val timerTask =
@@ -378,7 +470,7 @@ object Meter:
             }
         end close
 
-        final def closed(using Frame) = Sync(state.get() == Int.MinValue)
+        final def closed(using Frame) = Sync.defer(state.get() == Int.MinValue)
 
         @tailrec final protected def release(): Boolean =
             val st = state.get()

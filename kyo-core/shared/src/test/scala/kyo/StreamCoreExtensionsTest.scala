@@ -133,7 +133,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12, par, Int.MaxValue)
-                        s2 = stream.mapPar(par, buf)(i => Sync(i + 1))
+                        s2 = stream.mapPar(par, buf)(i => Sync.defer(i + 1))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -168,7 +168,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapParUnordered(par, buf)(i => Sync(i + 1))
+                        s2 = stream.mapParUnordered(par, buf)(i => Sync.defer(i + 1))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet
@@ -205,7 +205,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkPar(par, buf)(c => Sync(c.map(_ + 1)))
+                        s2 = stream.mapChunkPar(par, buf)(c => Sync.defer(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res == (2 to 13)
@@ -447,7 +447,7 @@ class StreamCoreExtensionsTest extends Test:
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
                         buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync(c.map(_ + 1)))
+                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync.defer(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 13).toSet
@@ -533,9 +533,9 @@ class StreamCoreExtensionsTest extends Test:
                         val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                         lazyStream.broadcasted().map: reusableStream =>
                             Latch.initWith(10): latch =>
-                                Fiber.run(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
+                                Fiber.init(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
                                     latch.await.andThen:
-                                        Fiber.run(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                        Fiber.init(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
                                             runFiber.get.map: resultChunks =>
                                                 assert(
                                                     resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
@@ -562,11 +562,11 @@ class StreamCoreExtensionsTest extends Test:
                         val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                         lazyStream.broadcastDynamic().map: streamHub =>
                             Latch.initWith(10): latch =>
-                                Fiber.run(
+                                Fiber.init(
                                     Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
                                 ).map: runFiber =>
                                     latch.await.andThen:
-                                        Fiber.run(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                        Fiber.init(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
                                             runFiber.get.map: resultChunks =>
                                                 assert(
                                                     resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)

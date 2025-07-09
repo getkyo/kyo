@@ -32,46 +32,46 @@ Kyo is structured as a monorepo, published to Maven Central:
 
 #### Core Libraries
 
-| Module          | JVM | JS | Native | Description                         |
-|-----------------|-----|----| ------ |-------------------------------------|
-| kyo-data        | ✅  | ✅ | ✅     | Efficient `Maybe`, `Result`, `Duration`, and other data types |
-| kyo-kernel      | ✅  | ✅ | ✅     | Core algebraic effects engine and type-level effect tracking |
-| kyo-prelude     | ✅  | ✅ | ✅     | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc. |
-| kyo-core        | ✅  | ✅ | ✅     | Side-effectful computations: `Sync`, `Async`, `Resource`, etc. |
-| kyo-direct      | ✅  | ✅ | ✅     | Direct-style syntax using `.await` and control flow |
-| kyo-combinators | ✅  | ✅ | ✅     | ZIO-like effect combinators and utility methods |
-| kyo-actor       | ✅  | ✅ | ✅     | Type-safe actor system with supervision and messaging |
-| kyo-stm         | ✅  | ✅ | ✅     | Software transactional memory for managing state |
-| kyo-offheap     | ✅  | ❌ | ✅     | Direct memory allocation and off-heap data structures |
+| Module          | JVM | JS  | Native | Description                                                    |
+| --------------- | --- | --- | ------ | -------------------------------------------------------------- |
+| kyo-data        | ✅   | ✅   | ✅      | Efficient `Maybe`, `Result`, `Duration`, and other data types  |
+| kyo-kernel      | ✅   | ✅   | ✅      | Core algebraic effects engine and type-level effect tracking   |
+| kyo-prelude     | ✅   | ✅   | ✅      | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc.    |
+| kyo-core        | ✅   | ✅   | ✅      | Side-effectful computations: `Sync`, `Async`, `Resource`, etc. |
+| kyo-direct      | ✅   | ✅   | ✅      | Direct-style syntax using `.await` and control flow            |
+| kyo-combinators | ✅   | ✅   | ✅      | ZIO-like effect combinators and utility methods                |
+| kyo-actor       | ✅   | ✅   | ✅      | Type-safe actor system with supervision and messaging          |
+| kyo-stm         | ✅   | ✅   | ✅      | Software transactional memory for managing state               |
+| kyo-offheap     | ✅   | ❌   | ✅      | Direct memory allocation and off-heap data structures          |
 
 #### Integrations
 
-| Module               | JVM | JS | Native | Description                         |
-|----------------------|-----|----| ------ |-------------------------------------|
-| kyo-sttp             | ✅  | ✅ | ✅     | HTTP client using Sttp with automatic effect management |
-| kyo-tapir            | ✅  | ❌ | ❌     | HTTP server endpoints using Tapir with Netty backend |
-| kyo-caliban          | ✅  | ❌ | ❌     | GraphQL server using Caliban with schema derivation |
-| kyo-zio              | ✅  | ✅ | ❌     | Bidirectional ZIO interop with fiber and effect conversion |
-| kyo-zio-test         | ✅  | ✅ | ❌     | ZIO Test framework integration for testing Kyo effects |
-| kyo-cats             | ✅  | ✅ | ❌     | Cats Effect interop with `Sync` and fiber conversion |
-| kyo-cache            | ✅  | ❌ | ❌     | High-performance caching using Caffeine with memoization |
-| kyo-stats-registry   | ✅  | ✅ | ✅     | Metrics collection with counters, histograms, and gauges |
-| kyo-stats-otel       | ✅  | ❌ | ❌     | OpenTelemetry integration for metrics and tracing export |
-| kyo-playwright       | ✅  | ❌ | ❌     | Browser automation testing using Microsoft Playwright |
-| kyo-reactive-streams | ✅  | ❌ | ❌     | Reactive Streams interop implementation |
-| kyo-aeron            | ✅  | ❌ | ❌     | High-performance messaging using Aeron transport |
+| Module               | JVM | JS  | Native | Description                                                |
+| -------------------- | --- | --- | ------ | ---------------------------------------------------------- |
+| kyo-sttp             | ✅   | ✅   | ✅      | HTTP client using Sttp with automatic effect management    |
+| kyo-tapir            | ✅   | ❌   | ❌      | HTTP server endpoints using Tapir with Netty backend       |
+| kyo-caliban          | ✅   | ❌   | ❌      | GraphQL server using Caliban with schema derivation        |
+| kyo-zio              | ✅   | ✅   | ❌      | Bidirectional ZIO interop with fiber and effect conversion |
+| kyo-zio-test         | ✅   | ✅   | ❌      | ZIO Test framework integration for testing Kyo effects     |
+| kyo-cats             | ✅   | ✅   | ❌      | Cats Effect interop with `Sync` and fiber conversion       |
+| kyo-cache            | ✅   | ❌   | ❌      | High-performance caching using Caffeine with memoization   |
+| kyo-stats-registry   | ✅   | ✅   | ✅      | Metrics collection with counters, histograms, and gauges   |
+| kyo-stats-otel       | ✅   | ❌   | ❌      | OpenTelemetry integration for metrics and tracing export   |
+| kyo-playwright       | ✅   | ❌   | ❌      | Browser automation testing using Microsoft Playwright      |
+| kyo-reactive-streams | ✅   | ❌   | ❌      | Reactive Streams interop implementation                    |
+| kyo-aeron            | ✅   | ❌   | ❌      | High-performance messaging using Aeron transport           |
 
 #### Scheduler
 
 > These modules are designed to be used independently, without requiring the Kyo effect system. These modules provide specific functionalities that can be integrated into any Scala project, regardless of whether it uses Kyo's effect system or not. They are also compiled with support for Scala 2, enabling adoption without needing to update to Scala 3.
 
-| Module                | JVM | JS | Native | Description                         |
-|-----------------------|-----|----| ------ |-------------------------------------|
-| kyo-scheduler         | ✅  | ✅ | ✅     | Adaptive work-stealing scheduler with automatic parallelism |
-| kyo-scheduler-cats    | ✅  | ❌ | ❌     | Drop-in Cats Effect `ExecutionContext` replacement |
-| kyo-scheduler-finagle | ✅  | ❌ | ❌     | Twitter Finagle integration for improved performance |
-| kyo-scheduler-pekko   | ✅  | ❌ | ❌     | Apache Pekko actor system integration |
-| kyo-scheduler-zio     | ✅  | ❌ | ❌     | ZIO `Executor` implementation for better ZIO performance |
+| Module                | JVM | JS  | Native | Description                                                 |
+| --------------------- | --- | --- | ------ | ----------------------------------------------------------- |
+| kyo-scheduler         | ✅   | ✅   | ✅      | Adaptive work-stealing scheduler with automatic parallelism |
+| kyo-scheduler-cats    | ✅   | ❌   | ❌      | Drop-in Cats Effect `ExecutionContext` replacement          |
+| kyo-scheduler-finagle | ✅   | ❌   | ❌      | Twitter Finagle integration for improved performance        |
+| kyo-scheduler-pekko   | ✅   | ❌   | ❌      | Apache Pekko actor system integration                       |
+| kyo-scheduler-zio     | ✅   | ❌   | ❌      | ZIO `Executor` implementation for better ZIO performance    |
 
 Add Kyo modules to your `build.sbt`:
 
@@ -86,16 +86,17 @@ Use `%%` for JVM/Scala Native, or `%%%` for ScalaJS cross-compilation. See the m
 ## Talks
 > These talks are listed in reverse chronological order, as Kyo has grown and transformed significantly in preparation for 1.0.
 
-| Title | Speaker(s) | Host | Date |
-|-------|------------|------|------|
-| [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY) | Flavio Brasil | Func Prog Sweden | May, 2025 |
-| [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0) | Adam Hearn | LambdaConf | May, 2025 |
-| [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4) | Flavio Brasil & Adam Hearn | Scala for Fun & Profit | February, 2025 |
-| [The Actor Model Beyond Akka With Kyo](https://www.youtube.com/watch?v=VU31k3lQ8yU) | Damian Reeves | Functional Scala | December, 2024 |
-| [Building Robust Applications with Kyo: A Hands on Introduction](https://www.youtube.com/watch?v=QW8mAJr0Wso) | Adam Hearn | ScalaIO | November, 2024 |
-| [Comparing Approaches to Structured Concurrency](https://www.youtube.com/watch?v=g6dyLhAublQ) | James Ward & Adam Hearn | LambdaConf | May, 2024 |
-| [ Algebraic Effects from Scratch](https://www.youtube.com/watch?v=qPvPdRbTF-E) | Kit Langton | Func Prog Sweden | April, 2024 |
-| [Releasing Kyo: When Performance Meets Elegance In Scala](https://www.youtube.com/watch?v=FXkYKQRC9LI) | Flavio Brasil | Functional Scala | December, 2023 |
+| Title                                                                                                          | Speaker(s)                 | Host                   | Date           | Resources                                                                                             |
+|----------------------------------------------------------------------------------------------------------------|----------------------------|------------------------|----------------|-------------------------------------------------------------------------------------------------------|
+| [Suspension: the magic behind composability (or "The Kyo Monad")](https://www.youtube.com/watch?v=y3KiuFczOFE) | Flavio Brasil              | Lambda Days            | June, 2025     | [slides](https://speakerdeck.com/fwbrasil/suspension-the-magic-behind-composability-or-the-kyo-monad) |
+| [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY)              | Flavio Brasil              | Func Prog Sweden       | May, 2025      |                                                                                                       |
+| [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0)            | Adam Hearn                 | LambdaConf             | May, 2025      |                                                                                                       |
+| [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4)              | Flavio Brasil & Adam Hearn | Scala for Fun & Profit | February, 2025 |                                                                                                       |
+| [The Actor Model Beyond Akka With Kyo](https://www.youtube.com/watch?v=VU31k3lQ8yU)                            | Damian Reeves              | Functional Scala       | December, 2024 |                                                                                                       |
+| [Building Robust Applications with Kyo: A Hands on Introduction](https://www.youtube.com/watch?v=QW8mAJr0Wso)  | Adam Hearn                 | ScalaIO                | November, 2024 |                                                                                                       |
+| [Comparing Approaches to Structured Concurrency](https://www.youtube.com/watch?v=g6dyLhAublQ)                  | James Ward & Adam Hearn    | LambdaConf             | May, 2024      |                                                                                                       |
+| [ Algebraic Effects from Scratch](https://www.youtube.com/watch?v=qPvPdRbTF-E)                                 | Kit Langton                | Func Prog Sweden       | April, 2024    |                                                                                                       |
+| [Releasing Kyo: When Performance Meets Elegance In Scala](https://www.youtube.com/watch?v=FXkYKQRC9LI)         | Flavio Brasil              | Functional Scala       | December, 2023 |                                                                                                       |
 
 
 ## IDE Support
@@ -198,7 +199,7 @@ Kyo also offers an `andThen` method for more fluent code, combining two computat
 import kyo.*
 
 val a: Unit < Sync =
-    Sync(println("hello"))
+    Sync.defer(println("hello"))
 
 val b: String < Sync =
     a.andThen("test")
@@ -352,6 +353,46 @@ abortExceptionFirst(Abort.fail("test")) // Result.Fail("test")
 abortExceptionFirst(Abort.fail(ex))     // Result.Success(Result.Fail(ex))
 ```
 
+### Testing effects
+
+Testing Kyo effects is currently done using the `KyoSpecDefault` trait, found under `kyo.test` package in the `kyo-zio-test` library.
+
+You need to define the following in your `build.sbt`:
+
+```scala mdoc:skip
+lazy val libraryDependencies ++= Seq(
+  // We need this to run the kyo tests with sbt
+  "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+  "io.getkyo" %% "kyo-zio-test" % kyoVersion % Test
+)
+
+lazy val testFrameworksSettings = Seq(
+  // configure the test framework with sbt
+  Test / testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+)
+```
+
+Then you can create a test like this:
+
+```scala
+import kyo.*
+import kyo.test.*
+// We use Kyo's Result type, ignoring zio.test.Result
+import zio.test.{Result as _, *}
+
+object SimpleTest extends KyoSpecDefault:
+
+  def spec: Spec[Any, Any] =
+    suite("test suite")(
+
+      test("simple test") {
+        for
+          result <- Abort.run(42)
+        yield assertTrue(result == Result.succeed(42))
+      }
+    )
+```
+
 ### Direct Syntax
 
 Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages three constructs: `direct`, `.now`, and `.later`.
@@ -365,7 +406,7 @@ import kyo.*
 val a: String < (Abort[Exception] & Sync) =
     direct {
         val b: String =
-            Sync("hello").now
+            Sync.defer("hello").now
         val c: String =
             Abort.get(Right("world")).now
         b + " " + c
@@ -373,7 +414,7 @@ val a: String < (Abort[Exception] & Sync) =
 
 // Equivalent desugared
 val b: String < (Abort[Exception] & Sync) =
-    Sync("hello").map { b =>
+    Sync.defer("hello").map { b =>
         Abort.get(Right("world")).map { c =>
             b + " " + c
         }
@@ -392,12 +433,12 @@ val a: Int < Sync =
     direct {
         // Incorrect usage of a '<' value
         // without '.now' or '.later'
-        Sync(println(42))
+        Sync.defer(println(42))
         42
     }
 ```
 
-> Note: In the absence of effectful hygiene, the side effect `Sync(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
+> Note: In the absence of effectful hygiene, the side effect `Sync.defer(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
 
 The `.now` operator is used when you need the effect's result immediately, while `.later` is an advanced operation that preserves the effect without sequencing it:
 
@@ -406,22 +447,22 @@ import kyo.*
 
 // Using .now for immediate sequencing
 val immediate = direct {
-    val x: Int = Sync(1).now      // Get result here
-    val y: Int = Sync(2).now      // Then get this result
+    val x: Int = Sync.defer(1).now      // Get result here
+    val y: Int = Sync.defer(2).now      // Then get this result
     x + y                       // Use both results
 }
 
 // Using .later for preserved effects
 val preserved = direct {
-    val effect1: Int < Sync = Sync(1).later   // Effect preserved
-    val effect2: Int < Sync = Sync(2).later   // Effect preserved
+    val effect1: Int < Sync = Sync.defer(1).later   // Effect preserved
+    val effect2: Int < Sync = Sync.defer(2).later   // Effect preserved
     effect1.now + effect2.now             // Sequence effects
 }
 
 // Combining both approaches
 val combined = direct {
-    val effect1: Int < Sync = Sync(1).later   // Effect preserved
-    val effect2: Int = Sync(2).now          // Effect sequenced
+    val effect1: Int < Sync = Sync.defer(1).later   // Effect preserved
+    val effect2: Int = Sync.defer(2).now          // Effect sequenced
     effect1.now + effect2                 // Combine results
 }
 ```
@@ -436,26 +477,26 @@ direct {
     val a: Int = 5
 
     // Effectful value
-    val b: Int = Sync(10).now
+    val b: Int = Sync.defer(10).now
 
     // Control flow
     val c: String =
-        if Sync(true).now then "True branch" else "False branch"
+        if Sync.defer(true).now then "True branch" else "False branch"
 
     // Logical operations
     val d: Boolean =
-        Sync(true).now && Sync(false).now
+        Sync.defer(true).now && Sync.defer(false).now
 
     val e: Boolean =
-        Sync(true).now || Sync(true).now
+        Sync.defer(true).now || Sync.defer(true).now
 
     // Loop (for demonstration; this loop
     // won't execute its body)
-    while Sync(false).now do "Looping"
+    while Sync.defer(false).now do "Looping"
 
     // Pattern matching
     val matchResult: String =
-        Sync(1).now match
+        Sync.defer(1).now match
             case 1 => "One"
             case _ => "Other"
 }
@@ -521,7 +562,7 @@ import kyo.*
 
 // An example computation
 val a: Int < Sync =
-    Sync(Math.cos(42).toInt)
+    Sync.defer(Math.cos(42).toInt)
 
 // Avoid! Run the application with a timeout
 val b: Result[Throwable, Int] =
@@ -635,7 +676,7 @@ def writeBytes = 1 // placeholder
 
 // 'apply' is used to suspend side effects
 val a: Int < Sync =
-    Sync(writeBytes)
+    Sync.defer(writeBytes)
 ```
 
 Users shouldn't typically handle the `Sync` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `KyoApp` instead.
@@ -646,7 +687,7 @@ In some specific cases where Kyo isn't used as the main effect system of an appl
 import kyo.*
 
 val a: Int < Sync =
-    Sync(42)
+    Sync.defer(42)
 
 // ** Avoid 'Sync.Unsafe.run', use 'KyoApp' instead. **
 val b: Int < Abort[Nothing] =
@@ -735,19 +776,19 @@ trait Logger:
 val dbLayer: Layer[Database, Any] =
     Layer {
         new Database:
-            def query = Sync("DB result")
+            def query = Sync.defer("DB result")
     }
 
 val cacheLayer: Layer[Cache, Any] =
     Layer {
         new Cache:
-            def get = Sync(42)
+            def get = Sync.defer(42)
     }
 
 val loggerLayer: Layer[Logger, Any] =
     Layer {
         new Logger:
-            def log(msg: String) = Sync(println(msg))
+            def log(msg: String) = Sync.defer(println(msg))
     }
 
 // The `Layer.init` method provides a way to create a layer from multiple sub-layers, automatically 
@@ -800,7 +841,7 @@ trait EmailService:
 // Define layers
 val dbLayer: Layer[Database, Sync] = Layer {
     new Database:
-        def query = Sync("DB result")
+        def query = Sync.defer("DB result")
 }
 
 val userServiceLayer: Layer[UserService, Env[Database] & Sync] =
@@ -812,7 +853,7 @@ val userServiceLayer: Layer[UserService, Env[Database] & Sync] =
 val emailServiceLayer: Layer[EmailService, Sync] = Layer {
     new EmailService:
         def sendEmail(to: String, content: String) =
-            Sync(println(s"Email sent to $to: $content"))
+            Sync.defer(println(s"Email sent to $to: $content"))
 }
 
 // Example of `to`: Output of dbLayer is used as input for userServiceLayer
@@ -898,7 +939,7 @@ val b: Int < Async =
 // Example method to execute a function on a database
 def withDb[T](f: Database => T < Async): T < (Resource & Async) =
     // Initializes the database ('new Database' is a placeholder)
-    Sync(new Database).map { db =>
+    Sync.defer(new Database).map { db =>
         // Registers `db.close` to be finalized
         Resource.ensure(db.close).andThen {
             // Invokes the function
@@ -930,7 +971,7 @@ val source1 = Batch.sourceSeq[Int, String, Any] { seq =>
 // Using 'Batch.sourceMap' for processing the entire sequence at once, returning a 'Map'
 val source2 = Batch.sourceMap[Int, String, Sync] { seq =>
     // Source functions can perform arbitrary effects like 'Sync' before returning the results
-    Sync {
+    Sync.defer {
         seq.map(i => i -> i.toString).toMap
     }
 }
@@ -939,7 +980,7 @@ val source2 = Batch.sourceMap[Int, String, Sync] { seq =>
 // This is a more generic method that allows effects for each of the inputs
 val source3 = Batch.source[Int, String, Sync] { seq =>
     val map = seq.map { i =>
-        i -> Sync((i * 2).toString)
+        i -> Sync.defer((i * 2).toString)
     }.toMap
     (i: Int) => map(i)
 }
@@ -981,7 +1022,7 @@ import kyo.*
 
 // Correct usage: reusing the source
 val source = Batch.sourceSeq[Int, Int, Sync] { seq => 
-    Sync(seq.map(_ * 2))
+    Sync.defer(seq.map(_ * 2))
 }
 
 val goodBatch = for
@@ -993,8 +1034,8 @@ yield c
 // Incorrect usage: creating new sources inline
 val badBatch = for
     a <- Batch.eval(1 to 1000)
-    b <- Batch.sourceSeq[Int, Int, Sync](seq => Sync(seq.map(_ * 2)))(a)  // This won't be batched
-    c <- Batch.sourceSeq[Int, Int, Sync](seq => Sync(seq.map(_ * 2)))(b)  // This also won't be batched
+    b <- Batch.sourceSeq[Int, Int, Sync](seq => Sync.defer(seq.map(_ * 2)))(a)  // This won't be batched
+    c <- Batch.sourceSeq[Int, Int, Sync](seq => Sync.defer(seq.map(_ * 2)))(b)  // This also won't be batched
 yield c
 ```
 
@@ -1063,7 +1104,7 @@ val b: Int < Any =
 val d: Int < Sync =
     Loop(1)(i =>
         if i < 5 then
-            Sync(println(s"Iteration: $i")).map(_ => Loop.continue(i + 1))
+            Sync.defer(println(s"Iteration: $i")).map(_ => Loop.continue(i + 1))
         else
             Loop.done(i)
     )
@@ -1352,7 +1393,7 @@ case class Config(someConfig: String)
 // Stream with Sync effect
 val a: Stream[String, Sync] =
     Stream.init(Seq("file1.txt", "file2.txt"))
-        .map(fileName => Sync(scala.io.Source.fromFile(fileName).mkString))
+        .map(fileName => Sync.defer(scala.io.Source.fromFile(fileName).mkString))
 
 // Stream with Abort effect
 val b: Stream[Int, Abort[NumberFormatException]] =
@@ -1386,7 +1427,7 @@ import kyo.*
 
 case class Config(someConfig: String)
 
-val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream(1)
+val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream.init(Seq(1))
 
 val handled: Stream[Int, Async] = original.handle(
     Resource.run(_),
@@ -1699,7 +1740,7 @@ val authCut =
             (input, cont) =>
                 input.metadata.get("auth-token") match
                     case Some("valid-token") => cont(input)
-                    case _                   => Sync(Response(input.value, status = 401))
+                    case _                   => Sync.defer(Response(input.value, status = 401))
     )
 
 // Add logging via another Cut
@@ -1751,7 +1792,7 @@ val a: Unit < Check =
 // Checks can be composed with other effects
 val b: Int < (Check & Sync) =
     for
-        value <- Sync(42)
+        value <- Sync.defer(42)
         _     <- Check.require(value > 0, "Value is positive")
     yield value
 
@@ -1854,7 +1895,7 @@ import kyo.*
 // An example computation to
 // be scheduled
 val a: Unit < Sync =
-    Sync(())
+    Sync.defer(())
 
 // Recurring task with a delay between
 // executions
@@ -2034,7 +2075,7 @@ val stats2: Stat =
 
 // Some example computation
 val a: Int < Sync =
-    Sync(42)
+    Sync.defer(42)
 
 // Trace the execution of the
 // `a` example computation
@@ -2202,7 +2243,7 @@ import kyo.*
 // taken by reference and automatically
 // suspended with 'Sync'
 val a: Fiber[Nothing, Int] < Sync =
-    Fiber.run(Math.cos(42).toInt)
+    Fiber.init(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a
 // 'Fiber' via the 'get' method. This is also
@@ -2218,7 +2259,7 @@ import kyo.*
 
 // An example computation
 val a: Int < Sync =
-    Sync(Math.cos(42).toInt)
+    Sync.defer(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
 // parallel computations. Parameters taken by
@@ -2246,7 +2287,7 @@ import kyo.*
 
 // An example computation
 val a: Int < Sync =
-    Sync(Math.cos(42).toInt)
+    Sync.defer(Math.cos(42).toInt)
 
 // There are method overloadings for up to four
 // computations. Parameters taken by reference
@@ -2342,17 +2383,17 @@ import kyo.*
 
 // An example computation with fibers
 val a: Int < Async =
-    Fiber.run(Math.cos(42).toInt).map(_.get)
+    Fiber.init(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Async' directly
 val b: Fiber[Nothing, Int] < Sync =
-    Fiber.run(a)
+    Fiber.init(a)
 
 // The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
 // on thread blocking and requires a timeout
 val c: Int < (Abort[Timeout] & Sync) =
-    Fiber.runAndBlock(5.seconds)(a)
+    Async.runAndBlock(5.seconds)(a)
 ```
 
 > Note: Handling the `Async` effect doesn't break referential transparency as with `Sync` but its usage is not trivial due to the limitations of the pending effects. Prefer `KyoApp` instead.
@@ -2373,7 +2414,7 @@ val b: Boolean < Sync =
 // Fullfil the promise with
 // another fiber
 val c: Boolean < Sync =
-    a.map(fiber => Fiber.run(1).map(fiber.become(_)))
+    a.map(fiber => Fiber.init(1).map(fiber.become(_)))
 ```
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
@@ -2414,46 +2455,46 @@ import kyo.*
 
 // A bounded queue that rejects new
 // elements once full
-val a: Queue[Int] < Sync =
+val a: Queue[Int] < (Sync & Resource) =
     Queue.init(capacity = 42)
 
 // Obtain the number of items in the queue
 // via the method 'size' in 'Queue'
-val b: Int < (Sync & Abort[Closed]) =
+val b: Int < (Sync & Abort[Closed] & Resource) =
     a.map(_.size)
 
 // Get the queue capacity
-val c: Int < Sync =
+val c: Int < (Sync & Resource) =
     a.map(_.capacity)
 
 // Try to offer a new item
-val d: Boolean < (Sync & Abort[Closed]) =
+val d: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.offer(42))
 
 // Try to poll an item
-val e: Maybe[Int] < (Sync & Abort[Closed]) =
+val e: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.poll)
 
 // Try to 'peek' an item without removing it
-val f: Maybe[Int] < (Sync & Abort[Closed]) =
+val f: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.peek)
 
 // Check if the queue is empty
-val g: Boolean < (Sync & Abort[Closed]) =
+val g: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.empty)
 
 // Check if the queue is full
-val h: Boolean < (Sync & Abort[Closed]) =
+val h: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.full)
 
 // Drain the queue items
-val i: Seq[Int] < (Sync & Abort[Closed]) =
+val i: Seq[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.drain)
 
 // Close the queue. If successful,
 // returns a Some with the drained
 // elements
-val j: Maybe[Seq[Int]] < Sync =
+val j: Maybe[Seq[Int]] < (Sync & Resource) =
     a.map(_.close)
 ```
 
@@ -2464,25 +2505,25 @@ import kyo.*
 // Avoid `Queue.unbounded` since if queues can
 // grow without limits, the GC overhead can make
 // the system fail
-val a: Queue.Unbounded[Int] < Sync =
+val a: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.init()
 
 // A 'dropping' queue discards new entries
 // when full
-val b: Queue.Unbounded[Int] < Sync =
+val b: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.initDropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new
 // entries
-val c: Queue.Unbounded[Int] < Sync =
+val c: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.initSliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queue.Unbounded`. It provides
 // an additional method to 'add' new items
 // unconditionally
-val d: Unit < Sync =
+val d: Unit < (Sync & Resource) =
     c.map(_.add(42))
 ```
 
@@ -2490,12 +2531,12 @@ val d: Unit < Sync =
 
 It's also possible to specify a concurrent `Access` policy as the second parameter of the `Queue.init` methods. This configuration has an effect only on the JVM and is ignored in ScalaJS.
 
-| Policy | Full Form                              | Description                                                                                                                                                                                                          |
-| ------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy                       | Full Form                              | Description                                                                                                                                                                                                          |
+| ---------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MultiProducerMultiConsumer   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
-| MultiProducerSingleConsumer   | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
-| SingleProducerMultiConsumer   | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
-| SingleProducerSingleConsumer   | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
+| MultiProducerSingleConsumer  | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
+| SingleProducerMultiConsumer  | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
+| SingleProducerSingleConsumer | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
 
 Each policy is suitable for different scenario and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenario.
 
@@ -2507,7 +2548,7 @@ import kyo.*
 // Initialize a bounded queue with a
 // Multiple Producers, Multiple
 // Consumers policy
-val a: Queue[Int] < Sync =
+val a: Queue[Int] < (Sync & Resource) =
     Queue.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
@@ -2523,14 +2564,15 @@ The `Channel` effect serves as an advanced concurrency primitive, designed to fa
 ```scala    
 import kyo.*
 
-// A 'Channel' is initialized
-// with a fixed capacity
-val a: Channel[Int] < Sync =
+// A 'Channel' is initialized with a fixed capacity
+// Note the `Resource` effect, which ensures the channel
+// will eventually be closed
+val a: Channel[Int] < (Sync & Resource) =
     Channel.init(capacity = 42)
 
 // It's also possible to specify
 // an 'Access' policy
-val b: Channel[Int] < Sync =
+val b: Channel[Int] < (Sync & Resource) =
     Channel.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
@@ -2543,28 +2585,28 @@ While `Channel` share similarities with `Queue`—such as methods for querying s
 import kyo.*
 
 // An example channel
-val a: Channel[Int] < Sync =
+val a: Channel[Int] < (Sync & Resource) =
     Channel.init(capacity = 42)
 
 // Adds a new item to the channel.
 // If there's no capacity, the fiber
 // is automatically suspended until
 // space is made available
-val b: Unit < (Async & Abort[Closed]) =
+val b: Unit < (Async & Abort[Closed] & Resource) =
     a.map(_.put(42))
 
 // Takes an item from the channel.
 // If the channel is empty, the fiber
 // is suspended until a new item is
 // made available
-val c: Int < (Async & Abort[Closed]) =
+val c: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.take)
 
 // Closes the channel. If successful,
 // returns a Some with the drained
 // elements. All pending puts and takes
 // are automatically interrupted
-val f: Maybe[Seq[Int]] < Sync =
+val f: Maybe[Seq[Int]] < (Sync & Resource) =
     a.map(_.close)
 ```
 
@@ -2648,22 +2690,22 @@ The `Meter` effect offers utilities to regulate computational execution, be it l
 import kyo.*
 
 // 'mutex': One computation at a time
-val a: Meter < Sync =
+val a: Meter < (Sync & Resource) =
     Meter.initMutex
 
 // 'semaphore': Limit concurrent tasks
-val b: Meter < Sync =
+val b: Meter < (Sync & Resource) =
     Meter.initSemaphore(concurrency = 42)
 
 // 'rateLimiter': Tasks per time window
-val c: Meter < Sync =
+val c: Meter < (Sync & Resource) =
     Meter.initRateLimiter(
         rate = 10,
         period = 1.second
     )
 
 // 'pipeline': Combine multiple 'Meter's
-val d: Meter < Sync =
+val d: Meter < (Sync & Resource) =
     Meter.pipeline(a, b, c)
 ```
 
@@ -2673,25 +2715,25 @@ The `Meter` class comes with a handful of methods designed to provide insights i
 import kyo.*
 
 // An example 'Meter'
-val a: Meter < Sync =
+val a: Meter < (Sync & Resource) =
     Meter.initMutex
 
 // Get the number available permits
-val b: Int < (Async & Abort[Closed]) =
+val b: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.availablePermits)
 
 // Get the number of waiting fibers
-val c: Int < (Async & Abort[Closed]) =
+val c: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.pendingWaiters)
 
 // Use 'run' to execute tasks
 // respecting meter limits
-val d: Int < (Async & Abort[Closed]) =
+val d: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.run(Math.cos(42).toInt))
 
 // 'tryRun' executes if a permit is
 // available; returns 'None' otherwise
-val e: Maybe[Int] < (Async & Abort[Closed]) =
+val e: Maybe[Int] < (Async & Abort[Closed] & Resource) =
     a.map(_.tryRun(Math.cos(42).toInt))
 ```
 
@@ -2753,12 +2795,12 @@ val d: Unit < Async =
 val e: Unit < Async =
     for
         barrier <- Barrier.init(3)
-        fiber1  <- Fiber.run(Async.sleep(1.second))
-        fiber2  <- Fiber.run(Async.sleep(2.seconds))
+        fiber1  <- Fiber.init(Async.sleep(1.second))
+        fiber2  <- Fiber.init(Async.sleep(2.seconds))
         _       <- Async.zip(
                      fiber1.get.map(_ => barrier.await),
                      fiber2.get.map(_ => barrier.await),
-                     Fiber.run(barrier.await).map(_.get)
+                     Fiber.init(barrier.await).map(_.get)
                    )
     yield ()
 ```
@@ -2855,14 +2897,14 @@ import kyo.debug.*
 // and the result (or exception) of the computation
 val a: Int < Sync =
     Debug {
-        Sync(42)
+        Sync.defer(42)
     }
 
 // Similar to `apply`, but also prints intermediate steps
 // of the computation, providing a trace of execution
 val b: Int < Sync =
     Debug.trace {
-        Sync(41).map(_ + 1)
+        Sync.defer(41).map(_ + 1)
     }
 
 // Allows printing of specific values along with their 
@@ -2870,7 +2912,7 @@ val b: Int < Sync =
 // The return type of 'values' is 'Unit', not an effectful
 // computation.
 val c: Unit < Sync =
-    Sync {
+    Sync.defer {
         val x = 42
         val y = "Hello"
         Debug.values(x, y)
@@ -3209,7 +3251,7 @@ val a: Int < Async =
         fun = cache.memo { (v: String) =>
             // Note how the implementation
             // can use other effects
-            Sync(v.toInt)
+            Sync.defer(v.toInt)
         }
 
         // Use the function
@@ -3356,15 +3398,15 @@ import zio.{Fiber => _, *}
 val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- ZIOs.get(ZIO.succeed(21))
-        v2 <- Sync(21)
-        v3 <- Fiber.run(-42).map(_.get)
+        v2 <- Sync.defer(21)
+        v3 <- Fiber.init(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- ZIOs.get(ZIO.succeed(21).fork)
-        f2 <- Fiber.run(Sync(21))
+        f2 <- Fiber.init(Sync.defer(21))
         v1 <- ZIOs.get(f1.join)
         v2 <- f2.get
     yield v1 + v2
@@ -3375,7 +3417,7 @@ val c: Int < (Abort[Nothing] & Async) =
 
 // Transforming Kyo effects within ZIO effects
 val d: Task[Int] =
-    ZIOs.run(Sync(21).map(_ * 2))
+    ZIOs.run(Sync.defer(21).map(_ * 2))
 ```
 
 > Note: Support for ZIO environments (`R` in `ZIO[R, E, A]`) is currently in development. Once implemented, it will be possible to use ZIO effects with environments directly within Kyo computations.
@@ -3408,15 +3450,15 @@ import cats.effect.kernel.Outcome.Succeeded
 val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- Cats.get(CatsIO.pure(21))
-        v2 <- Sync(21)
-        v3 <- Fiber.run(-42).map(_.get)
+        v2 <- Sync.defer(21)
+        v3 <- Fiber.init(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries:
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- Cats.get(CatsIO.pure(21).start)
-        f2 <- Fiber.run(Sync(21))
+        f2 <- Fiber.init(Sync.defer(21))
         v1 <- Cats.get(f1.joinWith(CatsIO(99)))
         v2 <- f2.get
     yield v1 + v2
@@ -3427,7 +3469,7 @@ val c: Int < (Abort[Nothing] & Async) =
 
 // Transforming Kyo effects within Cats Effect Sync:
 val d: CatsIO[Int] =
-    Cats.run(Sync(21).map(_ * 2))
+    Cats.run(Sync.defer(21).map(_ * 2))
 ```
 
 ### Resolvers: GraphQL Server via Caliban
@@ -3524,8 +3566,6 @@ Being more modular than ZIO, Kyo separates effect constructors in the companion 
 1. Factory methods on the `Kyo` object, styled after those found on `ZIO`, for many of the core Kyo effect types.
 2. Extension methods on Kyo effects modeled similarly to ZIO's methods.
 
-Generally speaking, the names of `kyo-combinators` methods are the same as the corresponding methods in ZIO. When this is not possible or doesn't make sense, `kyo-combinators` tries to keep close to ZIO conventions.
-
 ### Simple example
 
 ```scala 3
@@ -3541,7 +3581,7 @@ object HelloService:
 
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (Sync & Abort[Throwable]) =
-            Kyo.suspendAttempt { // Introduces Sync & Abort[Throwable] effect
+            Kyo.deferAttempt { // Introduces Sync & Abort[Throwable] effect
                 println(s"Hello $saluee!")
             }
     end Live
@@ -3566,7 +3606,7 @@ end effect
 // There are no combinators for handling Sync or blocking Async, since this should
 // be done at the edge of the program
 Sync.Unsafe.run {                        // Handles Sync
-    Fiber.runAndBlock(Duration.Inf) {  // Handles Async
+    Async.runAndBlock(Duration.Inf) {  // Handles Async
         Kyo.scoped {                   // Handles Resource
             Memo.run:                  // Handles Memo (introduced by .provide, below)
                 effect

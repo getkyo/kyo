@@ -36,7 +36,7 @@ object Routes:
       */
     def run[A, S](server: NettyKyoServer)(v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
         Emit.run[Route][Unit, Nothing, Async & S](v).map { (routes, _) =>
-            Sync(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & S)
+            Sync.defer(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & S)
         }
     end run
 
@@ -49,7 +49,7 @@ object Routes:
       * @return
       *   Unit wrapped in Routes effect
       */
-    def add[A: Tag, I, E: SafeClassTag, O](e: Endpoint[A, I, E, O, Any])(
+    def add[A: Tag, I, E: ConcreteTag, O](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Async & Env[A] & Abort[E])
     )(using Frame): Unit < Routes =
         Emit.value(
@@ -74,7 +74,7 @@ object Routes:
       * @return
       *   Unit wrapped in Routes effect
       */
-    def add[A: Tag, I, E: SafeClassTag, O](
+    def add[A: Tag, I, E: ConcreteTag, O](
         e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[A, I, E, O, Any]
     )(
         f: I => O < (Async & Env[A] & Abort[E])

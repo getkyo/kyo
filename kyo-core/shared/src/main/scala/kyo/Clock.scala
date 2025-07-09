@@ -334,7 +334,7 @@ object Clock:
                     def set(now: Instant) = set(now, 100.millis)
 
                     def set(now: Instant, wallClockDelay: Duration) =
-                        Sync {
+                        Sync.defer {
                             current = now
                             tick()
                             Clock.live.unsafe.sleep(wallClockDelay).safe.get
@@ -343,7 +343,7 @@ object Clock:
                     def advance(duration: Duration) = advance(duration, duration.min(100.millis))
 
                     def advance(duration: Duration, wallClockDelay: Duration) =
-                        Sync {
+                        Sync.defer {
                             current = current + duration
                             tick()
                             Clock.live.unsafe.sleep(wallClockDelay).safe.get
@@ -499,7 +499,7 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E])
     )(using Frame): Fiber[E, A] < Sync =
-        Fiber.run {
+        Fiber.init {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
                     clock.now.map { now =>
@@ -601,7 +601,7 @@ object Clock:
     )(
         f: A => A < (Async & Abort[E])
     )(using Frame): Fiber[E, A] < Sync =
-        Fiber.run {
+        Fiber.init {
             Clock.use { clock =>
                 clock.now.map { now =>
                     Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>

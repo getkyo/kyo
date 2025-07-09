@@ -78,7 +78,7 @@ object Resource:
       *   The acquired resource wrapped in Resource, Sync, and S effects.
       */
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Resource & Sync & S) =
-        Sync {
+        Sync.defer {
             acquire.map { resource =>
                 ensure(release(resource)).andThen(resource)
             }
@@ -93,7 +93,7 @@ object Resource:
       * @return
       *   The acquired Closeable resource wrapped in Resource, Sync, and S effects.
       */
-    def acquire[A <: java.io.Closeable, S](resource: => A < S)(using Frame): A < (Resource & Sync & S) =
+    def acquire[A <: java.lang.AutoCloseable, S](resource: => A < S)(using Frame): A < (Resource & Sync & S) =
         acquireRelease(resource)(_.close())
 
     /** Runs a resource-managed effect with default parallelism of 1.
@@ -185,7 +185,7 @@ object Resource:
                                                 Abort.run[Throwable](task(ex))
                                                     .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                                             }
-                                                .handle(Fiber.run[Nothing, Unit, Any])
+                                                .handle(Fiber.init[Nothing, Unit, Any])
                                                 .map(promise.becomeDiscard)
                             }
 

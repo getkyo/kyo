@@ -3,7 +3,6 @@ package kyo.scheduler
 import IOPromise.*
 import java.util.concurrent.locks.LockSupport
 import kyo.*
-import kyo.Fiber.Interrupted
 import kyo.Result.Error
 import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
@@ -76,7 +75,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                 case l: Linked[E, A] @unchecked =>
                     interruptsLoop(l.p)
                 case _ =>
-                    discard(other.interrupt(Result.Panic(Interrupt())))
+                    discard(other.interrupt(Result.Panic(Interrupted(frame))))
         interruptsLoop(this)
     end interrupts
 
@@ -242,6 +241,14 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                                     LockSupport.park(this)
                                 else
                                     LockSupport.parkNanos(this, timeLeft.toNanos)
+                                end if
+                                if Thread.interrupted() then
+                                    promise.interruptDiscard(Result.Panic(Interrupted(
+                                        frame,
+                                        s"blocking thread ${Thread.currentThread().getName} being interrupted"
+                                    )))
+                                    Thread.currentThread().interrupt()
+                                    throw new java.lang.InterruptedException()
                                 end if
                                 apply()
                             else

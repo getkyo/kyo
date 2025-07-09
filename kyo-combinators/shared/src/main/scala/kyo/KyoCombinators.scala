@@ -77,12 +77,12 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last execution
       */
-    def repeatAtInterval(intervalSchedule: Schedule)(using Frame): A < (S & Async) =
+    def repeat(schedule: Schedule)(using Frame): A < (S & Async) =
         Clock.use { clock =>
-            Loop(intervalSchedule) { schedule =>
+            Loop(schedule) { current =>
                 clock.now.map { now =>
-                    schedule.next(now).map { (delay, nextSchedule) =>
-                        effect.delay(delay).andThen(Loop.continue(nextSchedule))
+                    current.next(now).map { (delay, next) =>
+                        effect.delay(delay).andThen(Loop.continue(next))
                     }.getOrElse {
                         effect.map(Loop.done)
                     }
@@ -120,34 +120,33 @@ extension [A, S](effect: A < S)
 
     /** Performs this computation repeatedly while the given condition holds.
       *
-      * @param fn
+      * @param predicate
       *   The condition to check after each iteration
       * @return
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
-    def repeatWhile[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1) =
+    def repeatWhile[S1](predicate: A => Boolean < S1)(using Frame): A < (S & S1) =
         Loop.foreach:
             effect.map: a =>
-                fn(a).map: test =>
-                    if test then Loop.continue
-                    else Loop.done(a)
+                predicate(a).map:
+                    case true  => Loop.continue
+                    case false => Loop.done(a)
     end repeatWhile
 
     /** Performs this computation repeatedly while the given condition holds.
       *
-      * @param fn
+      * @param predicate
       *   The condition to check after each iteration taking the current value and the number of iterations so far, and returning a tuple
       *   with the condition and the duration to sleep between iterations
       * @return
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
-    def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using Frame): A < (S & S1 & Async) =
+    def repeatWhile[S1](predicate: (A, Int) => (Boolean, Duration) < S1)(using Frame): A < (S & S1 & Async) =
         Loop.indexed: i =>
             effect.map: a =>
-                fn(a, i).map:
-                    case (test, wait) =>
-                        if test then Kyo.sleep(wait).andThen(Loop.continue)
-                        else Loop.done(a)
+                predicate(a, i).map: (test, wait) =>
+                    if test then Async.delay(wait)(Loop.continue)
+                    else Loop.done(a)
     end repeatWhile
 
     /** Performs this computation repeatedly until the given condition holds.
@@ -157,29 +156,28 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the first execution where the condition becomes true
       */
-    def repeatUntil[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1 & Async) =
+    def repeatUntil[S1](predicate: A => Boolean < S1)(using Frame): A < (S & S1 & Async) =
         Loop.foreach:
             effect.map: a =>
-                fn(a).map: test =>
-                    if test then Loop.done(a)
-                    else Loop.continue
+                predicate(a).map:
+                    case true  => Loop.done(a)
+                    case false => Loop.continue
     end repeatUntil
 
     /** Performs this computation repeatedly until the given condition holds.
       *
-      * @param fn
+      * @param predicate
       *   The condition to check after each iteration taking the current value and the number of iterations so far, and returning a tuple
       *   with the condition and the duration to sleep between iterations
       * @return
       *   A computation that produces the result of the first execution where the condition becomes true
       */
-    def repeatUntil[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using Frame): A < (S & S1 & Async) =
+    def repeatUntil[S1](predicate: (A, Int) => (Boolean, Duration) < S1)(using Frame): A < (S & S1 & Async) =
         Loop.indexed: i =>
             effect.map: a =>
-                fn(a, i).map:
-                    case (test, wait) =>
-                        if test then Loop.done(a)
-                        else Kyo.sleep(wait).andThen(Loop.continue)
+                predicate(a, i).map: (done, wait) =>
+                    if done then Loop.done(a)
+                    else Async.delay(wait)(Loop.continue)
     end repeatUntil
 
     /** Performs this computation indefinitely.
@@ -190,8 +188,7 @@ extension [A, S](effect: A < S)
       *   This method is typically used for long-running processes or servers that should run continuously
       */
     def forever(using Frame): Nothing < S =
-        Loop.forever(effect).andThen:
-            bug(s"Loop.forever completed successfully")
+        Loop.forever(effect)
 
     /** Performs this computation when the given condition holds.
       *
@@ -200,8 +197,8 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation wrapped in Present if the condition is satisfied, or Absent if not
       */
-    def when[S1](condition: => Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
-        condition.map(c => if c then effect.map(Present.apply) else Absent)
+    def when[S1](condition: Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
+        Kyo.when(condition)(effect)
 
     /** Performs this computation catching any Throwable in an Abort[Throwable] effect.
       *
@@ -229,7 +226,7 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of this computation with Abort[Absent] effect
       */
     def unless[S1](condition: Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
-        condition.map(c => if c then Absent else effect.map(Present(_)))
+        Kyo.unless(condition)(effect)
 
     /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
       * the Resource effect is handled.

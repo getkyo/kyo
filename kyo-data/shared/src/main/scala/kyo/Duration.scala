@@ -9,12 +9,10 @@ import kyo.Duration.Units.*
 import scala.concurrent.duration.Duration as ScalaDuration
 
 /** Represents a duration of time. */
-type Duration = Duration.Value
+opaque type Duration = Long
 
 /** Companion object for Duration type. */
 object Duration:
-
-    opaque type Value = Long
 
     inline given CanEqual[Duration, Duration] = CanEqual.derived
 

@@ -60,25 +60,25 @@ class CatsTest extends Test:
         "basic interop" in runKyo {
             for
                 v1 <- Cats.get(CatsIO.pure(1))
-                v2 <- Fiber.run(2).map(_.get)
+                v2 <- Fiber.init(2).map(_.get)
                 v3 <- Cats.get(CatsIO.pure(3))
             yield assert(v1 == 1 && v2 == 2 && v3 == 3)
         }
 
         "nested Kyo in Cats" in runKyo {
             Cats.get(CatsIO.defer {
-                val kyoComputation = Fiber.run(42).map(_.get)
+                val kyoComputation = Fiber.init(42).map(_.get)
                 Cats.run(kyoComputation)
             }).map(v => assert(v == 42))
         }
 
         "nested Cats in Kyo" in runKyo {
             val nestedCats = Cats.get(CatsIO.pure("nested"))
-            Fiber.run(nestedCats).map(_.get).map(s => assert(s == "nested"))
+            Fiber.init(nestedCats).map(_.get).map(s => assert(s == "nested"))
         }
 
         "complex nested pattern with parallel and race" in runKyo {
-            def kyoTask(i: Int): Int < (Abort[Nothing] & Async)  = Fiber.run(i * 2).map(_.get)
+            def kyoTask(i: Int): Int < (Abort[Nothing] & Async)  = Fiber.init(i * 2).map(_.get)
             def catsTask(i: Int): Int < (Abort[Nothing] & Async) = Cats.get(CatsIO.pure(i + 1))
 
             for
@@ -101,13 +101,13 @@ class CatsTest extends Test:
 
         def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < Sync =
             def loop(i: Int): Unit < Sync =
-                Sync {
+                Sync.defer {
                     if i == 0 then
-                        Sync(started.countDown()).andThen(loop(i + 1))
+                        Sync.defer(started.countDown()).andThen(loop(i + 1))
                     else
                         loop(i + 2)
                 }
-            Sync.ensure(Sync(done.countDown()))(loop(0))
+            Sync.ensure(Sync.defer(done.countDown()))(loop(0))
         end kyoLoop
 
         def catsLoop(started: CountDownLatch, done: CountDownLatch): CatsIO[Unit] =
@@ -144,7 +144,7 @@ class CatsTest extends Test:
                     val v =
                         for
                             _ <- Cats.get(catsLoop(started, done))
-                            _ <- Fiber.run(kyoLoop(started, done))
+                            _ <- Fiber.init(kyoLoop(started, done))
                         yield ()
                     for
                         f <- Cats.run(v).start
@@ -201,11 +201,11 @@ class CatsTest extends Test:
                     val done    = new CountDownLatch(1)
                     val panic   = Result.Panic(new Exception)
                     for
-                        f <- Fiber.run(Cats.get(catsLoop(started, done)))
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.init(Cats.get(catsLoop(started, done)))
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt(panic)
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r == panic)
                     end for
                 }
@@ -219,11 +219,11 @@ class CatsTest extends Test:
                             _ <- kyoLoop(started, done)
                         yield ()
                     for
-                        f <- Fiber.run(v)
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.init(v)
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -237,11 +237,11 @@ class CatsTest extends Test:
                         Async.zip[Throwable, Unit, Unit, Any](loop1, loop2)
                     end parallelEffect
                     for
-                        f <- Fiber.run(parallelEffect)
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.init(parallelEffect)
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
@@ -255,11 +255,11 @@ class CatsTest extends Test:
                         Async.race(loop1, loop2)
                     end raceEffect
                     for
-                        f <- Fiber.run(raceEffect)
-                        _ <- Sync(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Fiber.init(raceEffect)
+                        _ <- Sync.defer(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- Sync(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- Sync.defer(done.await(100, TimeUnit.MILLISECONDS))
                     yield assert(r.isPanic)
                     end for
                 }
