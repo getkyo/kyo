@@ -15,13 +15,13 @@ object Scope:
         ensure(_ => v)
 
     def ensure(callback: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Scope =
-        withFinalizerUnsafe(f => Abort.get(f.ensure(callback)))
+        withFinalizerUnsafe(_.ensure(callback))
 
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & S) =
         withFinalizerUnsafe { finalizer =>
             acquire.ensureMap { resource =>
-                val result = finalizer.ensure(_ => release(resource))
-                Abort.get(result).andThen(resource)
+                finalizer.ensure(_ => release(resource))
+                resource
             }
         }
 
@@ -32,42 +32,29 @@ object Scope:
         run(1, true)(v)
 
     def run[A, S](closeParallelism: Int, awaitClose: Boolean = true)(v: A < (Scope & S))(using Frame): A < (Async & S) =
-        Sync.Unsafe {
-            val finalizer = new Finalizer.Unsafe
-            runAndClose(finalizer, closeParallelism, awaitClose) {
-                local.let(Present(finalizer))(v)
-            }
+        runLocally(closeParallelism, awaitClose) { finalizer =>
+            local.let(Present(finalizer))(v)
         }
 
-    def runIsolated[A, S](f: Finalizer => A < (Scope & S))(using Frame): A < (Async & S) =
-        runIsolated(1)(f)
+    def runLocally[A, S](f: Finalizer => A < (Scope & S))(using Frame): A < (Async & S) =
+        runLocally(1)(f)
 
-    def runIsolated[A, S](closeParallelism: Int, awaitClose: Boolean = true)(f: Finalizer => A < (Scope & S))(
+    def runLocally[A, S](closeParallelism: Int, awaitClose: Boolean = true)(f: Finalizer => A < (Scope & S))(
         using Frame
     ): A < (Async & S) =
         Sync.withLocal(local) { parent =>
             import AllowUnsafe.embrace.danger
-            val child = new Finalizer.Unsafe
-            parent.foreach(p => discard(p.ensure(child.close(_, closeParallelism))))
-            runAndClose(child, closeParallelism, awaitClose)(f(child))
+            val finalizer = new Finalizer.Unsafe
+            parent.foreach(p => discard(p.tryEnsure(finalizer.close(_, closeParallelism))))
+            f(finalizer).handle(
+                Sync.ensure(finalizer.close(_, closeParallelism)),
+                Abort.run[Any]
+            ).map { result =>
+                finalizer.close(result.error, closeParallelism)
+                Kyo.when(awaitClose)(finalizer.await().safe.get)
+                    .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+            }
         }
-
-    private def runAndClose[A, S](finalizer: Finalizer, closeParallelism: Int, awaitClose: Boolean)(v: A < (Scope & S))(
-        using Frame
-    ): A < (Async & S) =
-        v.handle(
-            Sync.ensure { error =>
-                import AllowUnsafe.embrace.danger
-                finalizer.close(error, closeParallelism)
-            },
-            Abort.run[Any]
-        ).map { result =>
-            import AllowUnsafe.embrace.danger
-            finalizer.close(result.error, closeParallelism)
-            Kyo.when(awaitClose)(finalizer.await().safe.get)
-                .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
-        }
-    end runAndClose
 
     private def withFinalizerUnsafe[A, S](f: AllowUnsafe ?=> Finalizer => A < S)(using Frame): A < (Scope & S) =
         local.use {
@@ -84,7 +71,7 @@ object Scope:
         extension (self: Finalizer)
 
             def ensure(callback: Callback)(using Frame): Unit < Sync =
-                Sync.Unsafe(Abort.get(self.ensure(callback)))
+                Sync.Unsafe(self.ensure(callback))
 
             def unsafe: Unsafe = self
 
@@ -97,14 +84,16 @@ object Scope:
             private val queue   = Queue.Unbounded.Unsafe.init[Callback](Access.MultiProducerSingleConsumer)
             private val promise = Promise.Unsafe.init[Nothing, Unit]()
 
-            def ensure(callback: Callback)(using AllowUnsafe): Result[Nothing, Unit] =
+            private[Scope] def tryEnsure(callback: Callback): Unit =
+                discard(queue.offer(callback))
+
+            def ensure(callback: Callback)(using AllowUnsafe): Unit =
                 if !queue.offer(callback).contains(true) then
-                    Result.panic(new Closed(
+                    throw new Closed(
                         "Finalizer",
                         frame,
                         "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Resource.run' call."
-                    ))
-                else Result.unit
+                    )
 
             def close(ex: Maybe[Error[Any]], parallelism: Int)(using AllowUnsafe): Unit =
                 queue.close() match

@@ -113,7 +113,7 @@ class ScopeTest extends Test:
 
         "ensure" in run {
             var closes = 0
-            Scope.ensure(Fiber.run(closes += 1).map(_.get).unit)
+            Scope.ensure(Fiber.init(closes += 1).map(_.get).unit)
                 .handle(
                     Scope.run,
                     Abort.run
@@ -128,7 +128,7 @@ class ScopeTest extends Test:
             val acquire = Abort.get(Some(42))
             // only Async in release
             def release(i: Int) =
-                Fiber.run {
+                Fiber.init {
                     assert(i == 42)
                     closes += 1
                 }.map(_.get)
@@ -144,7 +144,7 @@ class ScopeTest extends Test:
 
         "acquire" in run {
             val r = TestResource(1)
-            Scope.acquire(Fiber.run(r).map(_.get))
+            Scope.acquire(Fiber.init(r).map(_.get))
                 .handle(
                     Scope.run,
                     Abort.run
@@ -158,7 +158,7 @@ class ScopeTest extends Test:
         case object TestException extends NoStackTrace
 
         "acquire fails" in run {
-            val io = Scope.acquireRelease(Sync[Int, Any](throw TestException))(_ => ())
+            val io = Scope.acquireRelease(Sync.defer[Int, Any](throw TestException))(_ => ())
             Scope.run(io)
                 .handle(Abort.run)
                 .map {
@@ -170,8 +170,8 @@ class ScopeTest extends Test:
         "release fails" in run {
             var acquired = false
             var released = false
-            val io = Scope.acquireRelease(Sync { acquired = true; "resource" }) { _ =>
-                Sync {
+            val io = Scope.acquireRelease(Sync.defer { acquired = true; "resource" }) { _ =>
+                Sync.defer {
                     released = true
                     throw TestException
                 }
@@ -186,7 +186,7 @@ class ScopeTest extends Test:
 
         "ensure fails" in run {
             var ensureCalled = false
-            val io           = Scope.ensure(Sync { ensureCalled = true; throw TestException })
+            val io           = Scope.ensure(Sync.defer { ensureCalled = true; throw TestException })
             Scope.run(io)
                 .map(_ => assert(ensureCalled))
 
@@ -197,7 +197,7 @@ class ScopeTest extends Test:
             val io =
                 for
                     l <- Latch.init(1)
-                    f <- Fiber.run(l.await.andThen(Scope.ensure { called = true }))
+                    f <- Fiber.init(l.await.andThen(Scope.ensure { called = true }))
                 yield (l, f)
             for
                 (l, f) <- Scope.run(io)
@@ -213,12 +213,12 @@ class ScopeTest extends Test:
         "cleans up resources in parallel" in run {
             Latch.init(3).map { latch =>
                 def makeResource(id: Int) =
-                    Scope.acquireRelease(Sync(id))(_ => latch.release)
+                    Scope.acquireRelease(Sync.defer(id))(_ => latch.release)
 
                 val resources = Kyo.foreach(1 to 3)(makeResource)
 
                 for
-                    close <- Fiber.run(resources.handle(Scope.run(3)))
+                    close <- Fiber.init(resources.handle(Scope.run(3)))
                     _     <- latch.await
                     ids   <- close.get
                 yield assert(ids == (1 to 3))
@@ -229,7 +229,7 @@ class ScopeTest extends Test:
         "respects parallelism limit" in run {
             AtomicInt.init.map { counter =>
                 def makeResource(id: Int) =
-                    Scope.acquireRelease(Sync(id)) { _ =>
+                    Scope.acquireRelease(Sync.defer(id)) { _ =>
                         for
                             current <- counter.getAndIncrement
                             _       <- Async.sleep(1.millis)
@@ -242,7 +242,7 @@ class ScopeTest extends Test:
                 val resources = Kyo.foreach(1 to 10)(makeResource)
 
                 for
-                    close <- Fiber.run(resources.handle(Scope.run(3)))
+                    close <- Fiber.init(resources.handle(Scope.run(3)))
                     ids   <- close.get
                 yield assert(ids == (1 to 10))
                 end for
@@ -299,7 +299,7 @@ class ScopeTest extends Test:
                     _ <- Scope.ensure {
                         Async.sleep(25.millis).andThen { secondFinalizerCalled = true }
                     }
-                    _ <- Sync(Abort.fail("Fail after acquiring resources"))
+                    _ <- Sync.defer(Abort.fail("Fail after acquiring resources"))
                 yield ()
 
             Scope.run(io)
@@ -422,14 +422,14 @@ class ScopeTest extends Test:
         }
     }
 
-    "can't be interrupted without registering the finalizer" in run {
+    "can't be interrupted without registering the finalizer" in runNotJS {
         val r    = TestResource(1)
         val cdl1 = new CountDownLatch(1)
         val cdl2 = new CountDownLatch(1)
         for
             l <- Latch.init(1)
             fiber <-
-                Fiber.run {
+                Fiber.init {
                     Scope.run {
                         Scope.acquire {
                             cdl1.countDown()
@@ -438,12 +438,239 @@ class ScopeTest extends Test:
                         }
                     }
                 }
-            _   <- IO(cdl1.await())
+            _   <- Sync.defer(cdl1.await())
             _   <- fiber.interrupt
-            _   <- IO(cdl2.countDown())
+            _   <- Sync.defer(cdl2.countDown())
             res <- fiber.getResult
             _   <- untilTrue(r.closes == 1)
         yield assert(res.isPanic)
         end for
+    }
+
+    "hierarchical behavior" - {
+
+        "nested scopes cleanup order" in run {
+            var cleanupOrder = List.empty[String]
+
+            Scope.run {
+                Scope.ensure { cleanupOrder = cleanupOrder :+ "outer" }.andThen {
+                    Scope.run {
+                        Scope.ensure { cleanupOrder = cleanupOrder :+ "inner" }
+                    }
+                }
+            }.map { _ =>
+                assert(cleanupOrder == List("inner", "outer"))
+            }
+        }
+
+        "exception propagation through hierarchy" in run {
+            var parentReceivedException: Maybe[Error[Any]] = null
+            var childReceivedException: Maybe[Error[Any]]  = null
+            case object TestException extends NoStackTrace
+
+            Scope.run {
+                Scope.ensure(ex => parentReceivedException = ex).andThen {
+                    Scope.run {
+                        Scope.ensure(ex => childReceivedException = ex).andThen {
+                            throw TestException
+                        }
+                    }
+                }
+            }.handle(Abort.run).map { result =>
+                assert(result.panic.exists(_ == TestException))
+                assert(childReceivedException.get == Panic(TestException))
+                assert(parentReceivedException.get == Panic(TestException))
+            }
+        }
+
+        "concurrent fibers with shared parent scope" in run {
+            val sharedResource = TestResource(1)
+            var fiber1Resource = 0
+            var fiber2Resource = 0
+            var cleanupOrder   = List.empty[String]
+
+            Scope.run {
+                for
+                    _ <- Scope.acquireRelease(sharedResource()) { res =>
+                        cleanupOrder = cleanupOrder :+ "shared"
+                        res.close()
+                    }
+                    fiber1 <- Fiber.init {
+                        Scope.acquireRelease(TestResource(2)()) { res =>
+                            cleanupOrder = cleanupOrder :+ "fiber1"
+                            res.close()
+                        }.map(r => fiber1Resource = r.id)
+                    }
+                    fiber2 <- Fiber.init {
+                        Scope.acquireRelease(TestResource(3)()) { res =>
+                            cleanupOrder = cleanupOrder :+ "fiber2"
+                            res.close()
+                        }.map(r => fiber2Resource = r.id)
+                    }
+                    _ <- fiber1.get
+                    _ <- fiber2.get
+                yield ()
+            }.map { _ =>
+                assert(fiber1Resource == 2 && fiber2Resource == 3)
+                assert(sharedResource.closes == 1)
+                assert(cleanupOrder == List("shared", "fiber1", "fiber2"))
+            }
+        }
+
+        "fiber creates child scope that outlives parent" in run {
+            var parentClosed = false
+            var childClosed  = false
+            var fiberResult  = 0
+
+            for
+                l <- Latch.init(1)
+                childFiber <- Scope.run {
+                    Scope.ensure { parentClosed = true }.andThen {
+                        Fiber.init {
+                            Scope.run {
+                                Scope.ensure { childClosed = true }
+                                    .andThen(l.await)
+                                    .andThen {
+                                        fiberResult = 42
+                                    }
+                            }
+                        }
+                    }
+                }
+                _ = assert(parentClosed && !childClosed)
+                _ <- l.release
+                _ <- childFiber.get
+            yield
+                assert(childClosed)
+                assert(fiberResult == 42)
+            end for
+        }
+
+        "resource leak detection on fiber escape" in run {
+            var leakedResourceUsed = false
+            val resource           = TestResource(1)
+
+            for
+                l <- Latch.init(1)
+                escapedFiber <- Scope.run {
+                    for
+                        r <- Scope.acquire(resource)
+                        fiber <- Fiber.init {
+                            Async.sleep(50.millis).andThen {
+                                Scope.ensure {
+                                    leakedResourceUsed = true
+                                }
+                            }
+                        }
+                    yield fiber
+                }
+                result <- escapedFiber.getResult
+            yield
+                assert(resource.closes == 1)
+                assert(!leakedResourceUsed)
+                assert(result.panic.exists(_.isInstanceOf[Closed]))
+            end for
+        }
+    }
+
+    "runLocally" - {
+
+        "wraps user function without affecting its resources" in run {
+            val tempResource     = TestResource(99)
+            val userResource     = TestResource(1)
+            var userCleanupOrder = List.empty[Int]
+
+            def processWithTempResource[A](f: => A < Scope): A < Async =
+                Scope.runLocally { finalizer =>
+                    Scope.run {
+                        Scope.acquireRelease(tempResource()) { res =>
+                            userCleanupOrder = userCleanupOrder :+ 0
+                            tempResource.close()
+                        }.andThen(f)
+                    }
+                }
+
+            Scope.run {
+                for
+                    _ <- Scope.acquireRelease(userResource()) { res =>
+                        userCleanupOrder = userCleanupOrder :+ 1
+                        res.close()
+                    }
+                    result <- processWithTempResource {
+                        Scope.acquireRelease(TestResource(2)()) { res =>
+                            userCleanupOrder = userCleanupOrder :+ 2
+                            res.close()
+                        }.map(_ => "done")
+                    }
+                    _ <- Scope.acquireRelease(TestResource(3)()) { res =>
+                        userCleanupOrder = userCleanupOrder :+ 3
+                        res.close()
+                    }
+                yield result
+            }.map { result =>
+                assert(result == "done")
+                assert(tempResource.closes == 1)
+                assert(userResource.closes == 1)
+                assert(userCleanupOrder == List(0, 2, 1, 3))
+            }
+        }
+
+        "exception in user function doesn't leak temp resources" in run {
+            case object UserException extends NoStackTrace
+            var tempResourceClosed = false
+            var userResourceClosed = false
+
+            def withTempResource[A](f: => A < Scope): A < Async =
+                Scope.runLocally { _ =>
+                    Scope.run {
+                        Scope.ensure { tempResourceClosed = true }.andThen(f)
+                    }
+                }
+
+            Abort.run {
+                Scope.run {
+                    for
+                        _ <- Scope.ensure { userResourceClosed = true }
+                        result <- withTempResource {
+                            Abort.panic(UserException)
+                        }
+                    yield result
+                }
+            }.map { result =>
+                assert(result.panic.contains(UserException))
+                assert(tempResourceClosed)
+                assert(userResourceClosed)
+            }
+        }
+
+        "composition of resource-wrapping functions" in run {
+            def withDatabase[A](f: String => A < (Scope & Async)): A < Async =
+                val dbResource = TestResource(1)
+                Scope.runLocally { _ =>
+                    Scope.run {
+                        Scope.acquire(dbResource()).map(_ => f(s"db-${dbResource.id}"))
+                    }
+                }
+            end withDatabase
+
+            def withCache[A](f: String => A < (Scope & Async)): A < Async =
+                val cacheResource = TestResource(2)
+                Scope.runLocally { _ =>
+                    Scope.run {
+                        Scope.acquire(cacheResource()).map(_ => f(s"cache-${cacheResource.id}"))
+                    }
+                }
+            end withCache
+
+            withDatabase { db =>
+                withCache { cache =>
+                    Scope.acquire(TestResource(3)()).map { userResource =>
+                        s"$db,$cache,user-${userResource.id}"
+                    }
+                }
+            }.map { result =>
+                assert(result == "db-1,cache-2,user-3")
+            }
+        }
     }
 end ScopeTest
