@@ -5,7 +5,7 @@ import kyo.Result.Panic
 import kyo.Tag
 import kyo.kernel.ContextEffect
 
-opaque type Scope = Sync
+opaque type Scope <: Sync = Sync
 
 object Scope:
 
@@ -118,7 +118,7 @@ object Scope:
                                     Abort.run[Throwable](task(ex))
                                         .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
                                 }
-                                    .handle(Fiber.run[Nothing, Unit, Any])
+                                    .handle(Fiber.init[Nothing, Unit, Any])
                                     .map(promise.safe.becomeDiscard)
                             )
 
