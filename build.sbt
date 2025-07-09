@@ -528,7 +528,7 @@ lazy val `kyo-zio` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio" % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio"         % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-streams" % zioVersion
         )
         .jsSettings(
