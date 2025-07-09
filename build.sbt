@@ -356,10 +356,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2",
-            libraryDependencies += ("com.eed3si9n.eval"          % "eval_3.6.4"      % "0.3.1" % Test)
-                .excludeAll(ExclusionRule(organization = "org.scala-lang")),
-            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scalaVersion.value % Test
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
