@@ -707,8 +707,8 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       *
       * For example, to ensure all resources close when the stream is evaluated:
       * ```
-      * val original: Stream[Int, Resource & Async] = ???
-      * val withCleanup = original.handle(Resource.run)
+      * val original: Stream[Int, Scope & Async] = ???
+      * val withCleanup = original.handle(Scope.run)
       * ```
       *
       * While `handle` can be used with any function that processes the underlying effect, its main purpose is to facilitate effect handling
@@ -716,9 +716,9 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * sequential style.
       *
       * ```
-      * val original: Stream[Int, Resource & Abort[String] & Var[Int]] = ???
+      * val original: Stream[Int, Scope & Abort[String] & Var[Int]] = ???
       * val handled: Stream[Int, Any] = original.handle(
-      *   Resource.run,
+      *   Scope.run,
       *   Abort.run[String](_),
       *   Var.run(20),
       * )

@@ -17,14 +17,14 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     inline def fork(using Frame, Isolate.Contextual[Ctx, Sync]): Fiber[E, A] < (Sync & Ctx) =
         Fiber.init(effect)
 
-    /** Forks this computation using the Async effect and returns its result as a `Fiber[E, A]`, managed by the Resource effect. Unlike
-      * `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is
-      * closed, preventing resource leaks.
+    /** Forks this computation using the Async effect and returns its result as a `Fiber[E, A]`, managed by the Scope effect. Unlike `fork`,
+      * which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is closed,
+      * preventing resource leaks.
       *
       * @return
-      *   A computation that produces the result of this computation with Async and Resource effects
+      *   A computation that produces the result of this computation with Async and Scope effects
       */
-    inline def forkScoped(using Frame, Isolate.Contextual[Ctx, Sync]): Fiber[E, A] < (Sync & Ctx & Resource) =
+    inline def forkScoped(using Frame, Isolate.Contextual[Ctx, Sync]): Fiber[E, A] < (Sync & Ctx & Scope) =
         Kyo.acquireRelease(Fiber.init(effect))(_.interrupt)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.

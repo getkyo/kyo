@@ -318,7 +318,7 @@ object Channel:
       * @warning
       *   The actual capacity may be larger than the specified capacity due to rounding.
       */
-    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < (Sync & Resource) =
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < (Sync & Scope) =
         initWith[A](capacity, access)(identity)
 
     /** Uses a new Channel with the provided configuration.
@@ -329,10 +329,10 @@ object Channel:
       */
     inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
-    )(using inline frame: Frame): B < (S & Sync & Resource) =
+    )(using inline frame: Frame): B < (S & Sync & Scope) =
         Sync.Unsafe:
             val channel = Unsafe.init[A](capacity, access)
-            Resource.ensure(Channel.close(channel)).andThen:
+            Scope.ensure(Channel.close(channel)).andThen:
                 f(channel)
 
     /** Uses a new Channel with the provided configuration, closing the channel after usage.
