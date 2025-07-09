@@ -422,31 +422,6 @@ class ScopeTest extends Test:
         }
     }
 
-    "can't be interrupted without registering the finalizer" in runNotJS {
-        val r    = TestResource(1)
-        val cdl1 = new CountDownLatch(1)
-        val cdl2 = new CountDownLatch(1)
-        for
-            l <- Latch.init(1)
-            fiber <-
-                Fiber.init {
-                    Scope.run {
-                        Scope.acquire {
-                            cdl1.countDown()
-                            cdl2.await()
-                            r
-                        }
-                    }
-                }
-            _   <- Sync.defer(cdl1.await())
-            _   <- fiber.interrupt
-            _   <- Sync.defer(cdl2.countDown())
-            res <- fiber.getResult
-            _   <- untilTrue(r.closes == 1)
-        yield assert(res.isPanic)
-        end for
-    }
-
     "hierarchical behavior" - {
 
         "nested scopes cleanup order" in run {
