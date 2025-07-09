@@ -112,7 +112,7 @@ object Check:
       * Important: Note that `Check.runAbort(Async.parallel(computation1, computation2))` will only short circuit once both computations
       * finish and the isolate re-emits values to restore its state.
       */
-    given isolate: Isolate.Stateful[Check, Any] with
+    given isolate: Isolate[Check, Any, Check] with
 
         type State = Chunk[CheckFailed]
 

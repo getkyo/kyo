@@ -10,7 +10,7 @@ final private[kyo] class StreamSubscription[V, S](
     subscriber: Subscriber[? >: V]
 )(
     using
-    Isolate.Contextual[S, Sync],
+    Isolate[S, Sync, Any],
     AllowUnsafe,
     Frame
 ) extends Subscription:
@@ -64,13 +64,16 @@ final private[kyo] class StreamSubscription[V, S](
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]],
         Frame
-    ): Fiber[StreamCanceled, StreamComplete] < (Sync & S) =
-        Fiber.init[StreamCanceled, StreamComplete, S](Poll.runEmit(stream.emit)(poll).map(_._2))
+    ): Fiber[StreamComplete, Abort[StreamCanceled]] < (Sync & S) =
+        Fiber.init[StreamCanceled, StreamComplete, S, Any](Poll.runEmit(stream.emit)(poll).map(_._2))
             .map { fiber =>
-                fiber.onComplete {
-                    case Result.Success(StreamComplete) => Sync.defer(subscriber.onComplete())
-                    case Result.Panic(e)                => Sync.defer(subscriber.onError(e))
-                    case Result.Failure(StreamCanceled) => Kyo.unit
+                fiber.onComplete { r =>
+                    val x = r.map(_.eval)
+                    x match
+                        case Result.Success(StreamComplete) => Sync.defer(subscriber.onComplete())
+                        case Result.Panic(e)                => Sync.defer(subscriber.onError(e))
+                        case Result.Failure(StreamCanceled) => Kyo.unit
+                    end match
                 }.andThen(fiber)
             }
     end consume
@@ -85,7 +88,7 @@ object StreamSubscription:
     case object StreamCanceled
 
     def subscribe[V, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(
         stream: Stream[V, S & Sync],
         subscriber: Subscriber[? >: V]
@@ -103,12 +106,12 @@ object StreamSubscription:
 
     object Unsafe:
         def subscribe[V, S](
-            using Isolate.Contextual[S, Sync]
+            using Isolate[S, Sync, Any]
         )(
             stream: Stream[V, S & Sync],
             subscriber: Subscriber[? >: V]
         )(
-            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (Sync & S)) => Unit
+            subscribeCallback: (Fiber[StreamComplete, Abort[StreamCanceled]] < (Sync & S)) => Unit
         )(
             using
             AllowUnsafe,

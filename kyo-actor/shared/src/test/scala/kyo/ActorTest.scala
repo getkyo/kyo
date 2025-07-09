@@ -244,7 +244,7 @@ class ActorTest extends Test:
                         Async.foreach(parents)(_.send(msg))
                     }
                 }
-                promise   <- Promise.init[Nothing, Int]
+                promise   <- Promise.init[Int, Any]
                 _         <- grandparent.send(Message(5, Subject.init(promise)))
                 _         <- promise.get
                 _         <- untilTrue(results.size.map(_ == 4))

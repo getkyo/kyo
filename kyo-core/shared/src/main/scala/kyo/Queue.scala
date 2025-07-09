@@ -533,7 +533,7 @@ object Queue:
         def peek()(using AllowUnsafe): Result[Closed, Maybe[A]]
         def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
-        def closeAwaitEmpty()(using Frame, AllowUnsafe): Fiber.Unsafe[Nothing, Boolean]
+        def closeAwaitEmpty()(using Frame, AllowUnsafe): Fiber.Unsafe[Boolean, Any]
         def closed()(using AllowUnsafe): Boolean
         final def safe: Queue[A] = this
     end Unsafe
@@ -543,7 +543,7 @@ object Queue:
 
         private enum State derives CanEqual:
             case Open
-            case HalfOpen(p: Promise.Unsafe[Nothing, Boolean], r: Result.Error[Closed])
+            case HalfOpen(p: Promise.Unsafe[Boolean, Any], r: Result.Error[Closed])
             case FullyClosed(r: Result.Error[Closed])
         end State
 
@@ -556,9 +556,9 @@ object Queue:
                 Maybe.when(state.compareAndSet(State.Open, State.FullyClosed(fail)))(_drain())
             end close
 
-            final def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe): Fiber.Unsafe[Nothing, Boolean] =
+            final def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe): Fiber.Unsafe[Boolean, Any] =
                 val fail = Result.Failure(Closed("Queue", initFrame))
-                val p    = Promise.Unsafe.init[Nothing, Boolean]()
+                val p    = Promise.Unsafe.init[Boolean, Any]()
                 if state.compareAndSet(State.Open, State.HalfOpen(p, fail)) then
                     handleHalfOpen()
                     p

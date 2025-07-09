@@ -21,7 +21,7 @@ package object reactivestreams:
 
     @nowarn("msg=anonymous")
     def subscribeToStream[T, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(
         stream: Stream[T, S & Sync],
         subscriber: Subscriber[? >: T]
@@ -38,7 +38,7 @@ package object reactivestreams:
         }
 
     def streamToPublisher[T, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(
         stream: Stream[T, S & Sync]
     )(

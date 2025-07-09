@@ -39,7 +39,7 @@ extension (kyoObject: Kyo.type)
       */
     def async[A, E](register: (A < (Abort[E] & Async) => Unit) => Any < (Abort[E] & Async))(using Frame): A < (Abort[E] & Async) =
         for
-            promise <- Promise.init[E, A]
+            promise <- Promise.init[A, Abort[E]]
             registerFn = (eff: A < (Abort[E] & Async)) =>
                 val effFiber = Fiber.init(eff)
                 val updatePromise =
