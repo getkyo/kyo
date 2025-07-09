@@ -10,6 +10,14 @@ import scala.util.control.NoStackTrace
 
 class ScopeInterruptTest extends Test:
 
+    case class TestResource(id: Int, var closes: Int = 0) extends Closeable derives CanEqual:
+        var acquires = 0
+        def apply() =
+            acquires += 1
+            this
+        def close() = closes += 1
+    end TestResource
+
     "can't be interrupted without registering the finalizer" in run {
         val r    = TestResource(1)
         val cdl1 = new CountDownLatch(1)
