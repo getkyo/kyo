@@ -425,8 +425,6 @@ object `<`:
     private def abortCastUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
         import quotes.reflect.*
         val source = TypeRepr.of[S1].show
-        val target = TypeRepr.of[S2].show
-        // Tried printing target, doesn't work since it's always Any
         report.errorAndAbort(
             s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
                |This may be due to an effect type mismatch.

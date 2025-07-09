@@ -3,6 +3,7 @@ package kyo
 import kyo.Tag
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
+import scala.annotation.publicInBinary
 import scala.annotation.targetName
 import scala.util.NotGiven
 
@@ -44,7 +45,7 @@ import scala.util.NotGiven
   * @see
   *   [[kyo.Poll]] for pull-based consumption with backpressure
   */
-sealed abstract class Stream[+V, -S] extends Serializable:
+abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializable:
 
     /** Returns the effect that produces acknowledgments and emits chunks of values. */
     def emit: Unit < (Emit[Chunk[V]] & S)
@@ -831,8 +832,6 @@ object Stream:
     inline def apply[V, S](inline v: => Unit < (Emit[Chunk[V]] & S)): Stream[V, S] =
         new Stream[V, S]:
             def emit: Unit < (Emit[Chunk[V]] & S) = v
-
-    abstract private[kyo] class StreamLike[+V, -S] extends Stream[V, S]
 
     private val _empty = Stream(())
 
