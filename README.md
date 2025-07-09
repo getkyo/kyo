@@ -2356,7 +2356,7 @@ val d: Unit < Sync =
 
 // A variant of `get` that returns a `Result`
 // with the failed or successful result
-val e: Result[Nothing, Int < Any] < Async =
+val e: Result[Nothing, Int] < Async =
     a.getResult
 
 // Try to interrupt/cancel a fiber
