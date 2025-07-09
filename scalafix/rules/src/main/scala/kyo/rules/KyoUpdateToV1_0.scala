@@ -38,6 +38,12 @@ class KyoUpdateToV1_0 extends SemanticRule("KyoUpdateToV1_0") {
             case q"$async($_)" if async.matches("kyo.Async") =>
                 Patch.replaceTree(async, "Async.defer")
 
+            // Resource => Scope
+            case resource @ t"Resource" if resource matches "kyo.Resource" =>
+                Patch.replaceTree(resource, "Scope")
+
+            case resource @ q"Resource" if resource matches "kyo.Resource" =>
+                Patch.replaceTree(resource, "Scope")
         }).asPatch
 
     }

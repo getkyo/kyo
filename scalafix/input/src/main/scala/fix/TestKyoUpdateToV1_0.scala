@@ -13,4 +13,6 @@ object TestKyoUpdateToV1_0:
         Console.printLine("hello").now
 
     val async: Fiber[Nothing, Unit] < Async = Async.run(Async.apply(Async(Kyo.unit)))
+
+    val resource: Any < (Resource & IO) = Resource.acquireRelease(prg)(Unit => Kyo.unit)
 end TestKyoUpdateToV1_0

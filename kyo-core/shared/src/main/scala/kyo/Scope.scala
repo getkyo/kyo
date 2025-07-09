@@ -36,6 +36,12 @@ import kyo.kernel.ContextEffect
   */
 sealed trait Scope extends ContextEffect[Scope.Finalizer]
 
+@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
+type Resource = Scope
+
+@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
+val Resource = Scope
+
 object Scope:
 
     /** Ensures that the given effect is executed when the resource is released.

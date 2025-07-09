@@ -23,10 +23,10 @@ import kyo.kernel.internal.Safepoint
   */
 opaque type Sync <: Abort[Nothing] = Abort[Nothing]
 
-@deprecated("use `Sync`", "0.19.1")
+@deprecated("Will be removed in 1.0, Use `Sync` instead", "0.19.1")
 type IO = Sync
 
-@deprecated("use `Sync`", "0.19.1")
+@deprecated("Will be removed in 1.0. Use `Sync` instead", "1.0-RC")
 val IO = Sync
 
 object Sync:
