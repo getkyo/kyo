@@ -17,8 +17,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < Async)(using Frame): A < (S & Resource & Sync) =
-        Resource.acquireRelease(acquire)(release)
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Scope & Sync) =
+        Scope.acquireRelease(acquire)(release)
 
     /** Adds a finalizer to the current effect using Resource.
       *
@@ -27,8 +27,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that ensures the finalizer is executed when the effect is completed
       */
-    def addFinalizer(finalizer: => Any < (Async & Abort[Throwable]))(using Frame): Unit < (Resource & Sync) =
-        Resource.ensure(finalizer)
+    def addFinalizer(finalizer: => Any < (Async & Abort[Throwable]))(using Frame): Unit < (Scope & Sync) =
+        Scope.ensure(finalizer)
 
     /** Creates an asynchronous effect that can be completed by the given register function.
       *
@@ -131,10 +131,10 @@ extension (kyoObject: Kyo.type)
       * @param resource
       *   The AutoCloseable resource to create an effect from
       * @return
-      *   An effect that manages the resource lifecycle using Resource and Sync effects
+      *   An effect that manages the resource lifecycle using Scope and Sync effects
       */
-    def fromAutoCloseable[A <: AutoCloseable, S](resource: => A < S)(using Frame): A < (S & Resource & Sync) =
-        Resource.acquire(resource)
+    def fromAutoCloseable[A <: AutoCloseable, S](resource: => A < S)(using Frame): A < (S & Scope & Sync) =
+        Scope.acquire(resource)
 
     /** Creates an effect from an Either[E, A] and handles Left[E] to Abort[E].
       *
@@ -357,8 +357,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
-    def scoped[A, S](resource: => A < (S & Resource))(using Frame): A < (Async & S) =
-        Resource.run(resource)
+    def scoped[A, S](resource: => A < (S & Scope))(using Frame): A < (Async & S) =
+        Scope.run(resource)
 
     /** Retrieves a dependency from Env.
       *

@@ -34,7 +34,7 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         isolate: Isolate[S, Sync, S2],
         reduce: Reducible[Abort[E]],
         frame: Frame
-    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Resource) =
+    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
         Kyo.acquireRelease(Fiber.init(effect))(_.interrupt)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.

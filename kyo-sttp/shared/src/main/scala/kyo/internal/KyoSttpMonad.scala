@@ -31,7 +31,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
     def ensure[A](f: M[A], e: => M[Unit]) =
         Promise.initWith[Unit, Any] { p =>
             def run =
-                Fiber.init(e).map(p.become).unit
+                Fiber.init(e).map(p.becomeDiscard)
             Sync.ensure(run)(f).map(r => p.get.andThen(r))
         }
 

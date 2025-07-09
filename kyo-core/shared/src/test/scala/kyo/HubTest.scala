@@ -14,8 +14,8 @@ class HubTest extends Test:
             }
         }
 
-        "resource" in run {
-            val effect: (Int, Hub[Int]) < (Abort[Closed] & Async) = Resource.run:
+        "scope" in run {
+            val effect: (Int, Hub[Int]) < (Abort[Closed] & Async) = Scope.run:
                 Hub.initWith[Int](10) { h =>
                     for
                         l <- h.listen
@@ -40,7 +40,7 @@ class HubTest extends Test:
             }
         }
 
-        "resource" in run {
+        "scope" in run {
             Hub.use[Int](10) { h =>
                 for
                     l <- h.listen
@@ -386,7 +386,7 @@ class HubTest extends Test:
         }
     }
 
-    "resource management" - {
+    "scope management" - {
         "listeners are cleaned up when hub closes" in run {
             for
                 h  <- Hub.init[Int](4)
@@ -411,10 +411,10 @@ class HubTest extends Test:
             yield assert(c1 && !c2 && v == 1)
         }
 
-        "resource safety" in run {
+        "scope safety" in run {
             for
                 h <- Hub.init[Int](4)
-                r <- Resource.run {
+                r <- Scope.run {
                     for
                         l <- h.listen
                         _ <- h.put(1)

@@ -13,7 +13,7 @@ class ChannelTest extends Test:
         }
 
         "resource safety" in run {
-            Resource.run(Channel.initWith[Int](10) { c =>
+            Scope.run(Channel.initWith[Int](10) { c =>
                 for
                     b <- c.put(1)
                     v <- c.take

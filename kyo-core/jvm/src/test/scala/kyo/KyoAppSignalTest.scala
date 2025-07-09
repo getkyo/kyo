@@ -7,7 +7,7 @@ class KyoAppSignalTest extends Test:
         run {
             for
                 _ <- Console.printLine("TestSignalApp started - waiting for signal")
-                _ <- Resource.ensure(ex => Console.printLine(s"TestSignalApp finished: $ex"))
+                _ <- Scope.ensure(ex => Console.printLine(s"TestSignalApp finished: $ex"))
                 _ <- Async.never
             yield ()
         }
