@@ -1,10 +1,10 @@
 package kyo
 
-abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abort[Throwable]]:
+abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Scope & Abort[Throwable]]:
 
     private var last: Unit < (Async & Abort[Throwable]) = ()
 
-    final override protected def run[A](v: => A < (Async & Resource & Abort[Throwable]))(using Frame, Render[A]): Unit =
+    final override protected def run[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
         import AllowUnsafe.embrace.danger
         val current: Unit < (Async & Abort[Throwable]) =
             Abort.runWith(Async.timeout(runTimeout)(handle(v)))(result => Sync.defer(onResult(result)).andThen(Abort.get(result)).unit)

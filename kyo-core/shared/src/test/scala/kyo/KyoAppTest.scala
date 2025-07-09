@@ -45,13 +45,13 @@ class KyoAppTest extends Test:
     }
 
     "effects in JVM" taggedAs jvmOnly in {
-        def run: Int < (Async & Resource & Abort[Throwable]) =
+        def run: Int < (Async & Scope & Abort[Throwable]) =
             for
                 _ <- Clock.repeatAtInterval(1.second, 1.second)(())
                 i <- Random.nextInt
                 _ <- Console.printLine(s"$i")
                 _ <- Clock.now
-                _ <- Resource.ensure(())
+                _ <- Scope.ensure(())
                 _ <- Async.sleep(1.second)
             yield 1
 
@@ -68,7 +68,7 @@ class KyoAppTest extends Test:
                     i <- Random.nextInt
                     _ <- Console.printLine(s"$i")
                     _ <- Clock.now
-                    _ <- Resource.ensure(())
+                    _ <- Scope.ensure(())
                     _ <- Async.sleep(1.second)
                 yield promise.complete(Try(succeed))
             }
@@ -90,7 +90,7 @@ class KyoAppTest extends Test:
     }
 
     "failing effects" taggedAs jvmOnly in {
-        def run: Unit < (Async & Resource & Abort[Throwable]) =
+        def run: Unit < (Async & Scope & Abort[Throwable]) =
             for
                 _ <- Clock.now
                 _ <- Random.nextInt

@@ -7,7 +7,7 @@ import zio.Cause
 import zio.Exit
 import zio.FiberId
 import zio.Runtime
-import zio.Scope
+import zio.Scope as ZScope
 import zio.StackTrace
 import zio.Trace
 import zio.Unsafe
@@ -29,9 +29,9 @@ object ZStreams:
     ): Stream[A, Abort[E] & Async] =
         Stream:
             Sync.defer {
-                val scope = Unsafe.unsafely(Scope.unsafe.make)
-                Resource.run {
-                    Resource.ensure(ex => ZIOs.get(scope.close(ex.fold(Exit.unit)(_.toExit)))).andThen {
+                val scope = Unsafe.unsafely(ZScope.unsafe.make)
+                Scope.run {
+                    Scope.ensure(ex => ZIOs.get(scope.close(ex.fold(Exit.unit)(_.toExit)))).andThen {
                         ZIOs.get(stream.channel.toPullIn(scope)).map: pullIn =>
                             Loop.foreach:
                                 ZIOs.get(pullIn).map {

@@ -17,7 +17,7 @@ class PathTest extends Test:
         JFiles.delete(Paths.get(name))
 
     def useFile(name: String, text: String) =
-        Resource.acquireRelease(Sync.defer(createFile(name, text)))(_ => Sync.defer(destroyFile(name)))
+        Scope.acquireRelease(Sync.defer(createFile(name, text)))(_ => Sync.defer(destroyFile(name)))
 
     "read and write files" - {
         "read file as string" in run {

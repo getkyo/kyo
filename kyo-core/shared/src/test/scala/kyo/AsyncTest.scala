@@ -36,9 +36,9 @@ class AsyncTest extends Test:
         "with Sync-based effects" - {
             "Resource" in run {
                 var closes = 0
-                val a      = Resource.ensure(closes += 1).andThen(42)
+                val a      = Scope.ensure(closes += 1).andThen(42)
                 val b      = Fiber.init(a)
-                Resource.run(b.map(_.get.map(v => assert(v == 42))))
+                Scope.run(b.map(_.get.map(v => assert(v == 42))))
             }
         }
         "non Sync-based effect" in run {
@@ -111,8 +111,8 @@ class AsyncTest extends Test:
             ref.incrementAndGet.map(_ => loop(ref))
 
         def runLoop(started: Latch, done: Latch) =
-            Resource.run {
-                Resource.ensure(done.release).map { _ =>
+            Scope.run {
+                Scope.ensure(done.release).map { _ =>
                     started.release.map(_ => AtomicInt.init(0).map(loop))
                 }
             }
@@ -254,8 +254,8 @@ class AsyncTest extends Test:
             ref.incrementAndGet.map(_ => loop(ref))
 
         def task(started: Latch, done: Latch): Unit < Async =
-            Resource.run {
-                Resource.ensure(done.release).map { _ =>
+            Scope.run {
+                Scope.ensure(done.release).map { _ =>
                     started.release.andThen(AtomicInt.init(0).map(loop))
                 }
             }
@@ -277,13 +277,13 @@ class AsyncTest extends Test:
                 set(-1)
         "outer" in run {
             val resource1 = new TestResource
-            val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resource & Async) =
+            val io1: (JAtomicInteger & Closeable, Set[Int]) < (Scope & Async) =
                 for
-                    r  <- Resource.acquire(resource1)
+                    r  <- Scope.acquire(resource1)
                     v1 <- Sync.defer(r.incrementAndGet())
                     v2 <- Fiber.init(r.incrementAndGet()).map(_.get)
                 yield (r, Set(v1, v2))
-            Resource.run(io1).map {
+            Scope.run(io1).map {
                 case (r, v) =>
                     assert(v == Set(1, 2))
                     assert(r.get() == -1)
@@ -291,7 +291,7 @@ class AsyncTest extends Test:
         }
         "inner" in run {
             val resource1 = new TestResource
-            Fiber.init(Resource.run(Resource.acquire(resource1).map(_.incrementAndGet())))
+            Fiber.init(Scope.run(Scope.acquire(resource1).map(_.incrementAndGet())))
                 .map(_.get).map { r =>
                     assert(r == 1)
                     assert(resource1.get() == -1)
@@ -301,8 +301,8 @@ class AsyncTest extends Test:
             val resource1 = new TestResource
             val resource2 = new TestResource
             Async.zip(
-                Resource.run(Resource.acquire(resource1).map(_.incrementAndGet())),
-                Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
+                Scope.run(Scope.acquire(resource1).map(_.incrementAndGet())),
+                Scope.run(Scope.acquire(resource2).map(_.incrementAndGet()))
             ).map { r =>
                 assert(r == (1, 1))
                 assert(resource1.get() == -1)
@@ -312,14 +312,14 @@ class AsyncTest extends Test:
         "mixed" in run {
             val resource1 = new TestResource
             val resource2 = new TestResource
-            val io1: Set[Int] < (Resource & Async) =
+            val io1: Set[Int] < (Scope & Async) =
                 for
-                    r  <- Resource.acquire(resource1)
+                    r  <- Scope.acquire(resource1)
                     v1 <- Sync.defer(r.incrementAndGet())
                     v2 <- Fiber.init(r.incrementAndGet()).map(_.get)
-                    v3 <- Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
+                    v3 <- Scope.run(Scope.acquire(resource2).map(_.incrementAndGet()))
                 yield Set(v1, v2, v3)
-            Resource.run(io1).map { r =>
+            Scope.run(io1).map { r =>
                 assert(r == Set(1, 2))
                 assert(resource1.get() == -1)
                 assert(resource2.get() == -1)

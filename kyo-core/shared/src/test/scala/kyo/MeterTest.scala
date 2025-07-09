@@ -4,7 +4,7 @@ class MeterTest extends Test:
 
     "mutex" - {
         "init" in run {
-            Resource.run(Meter.initMutex).map: meter =>
+            Scope.run(Meter.initMutex).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
@@ -68,7 +68,7 @@ class MeterTest extends Test:
 
     "semaphore" - {
         "init" in run {
-            Resource.run(Meter.initSemaphore(3)).map: meter =>
+            Scope.run(Meter.initSemaphore(3)).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
@@ -225,7 +225,7 @@ class MeterTest extends Test:
 
     "rate limiter" - {
         "init" in run {
-            Resource.run(Meter.initRateLimiter(2, 1.milli)).map: meter =>
+            Scope.run(Meter.initRateLimiter(2, 1.milli)).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }

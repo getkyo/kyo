@@ -106,7 +106,7 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(using Frame): Meter < (Sync & Resource) =
+    def initMutex(using Frame): Meter < (Sync & Scope) =
         initMutex(true)
 
     /** Creates a Meter that acts as a mutex (binary semaphore).
@@ -116,7 +116,7 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(reentrant: Boolean)(using Frame): Meter < (Sync & Resource) =
+    def initMutex(reentrant: Boolean)(using Frame): Meter < (Sync & Scope) =
         initSemaphore(1, reentrant)
 
     /** Use a **reentrant** Meter that acts as a mutex (binary semaphore). Meter is closed automatically after usage.
@@ -164,8 +164,8 @@ object Meter:
       * @return
       *   A Meter effect that represents a semaphore.
       */
-    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < (Sync & Resource) =
-        Resource.acquireRelease(initSemaphoreUnscoped(concurrency, reentrant))(_.close)
+    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < (Sync & Scope) =
+        Scope.acquireRelease(initSemaphoreUnscoped(concurrency, reentrant))(_.close)
 
     /** Use a Meter that acts as a semaphore with the specified concurrency. Meter is closed automatically after usage.
       *
@@ -209,8 +209,8 @@ object Meter:
       * @return
       *   A Meter effect that represents a rate limiter.
       */
-    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < (Sync & Resource) =
-        Resource.acquireRelease(initRateLimiterUnscoped(rate, period, reentrant))(_.close)
+    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < (Sync & Scope) =
+        Scope.acquireRelease(initRateLimiterUnscoped(rate, period, reentrant))(_.close)
 
     /** Use a Meter that acts as a rate limiter. Meter is closed automatically after usage
       *

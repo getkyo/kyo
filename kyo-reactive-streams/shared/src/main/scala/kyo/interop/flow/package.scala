@@ -15,7 +15,7 @@ package object flow:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Stream[T, Async] < (Resource & Sync) =
+    ): Stream[T, Async] < (Scope & Sync) =
         for
             subscriber <- StreamSubscriber[T](bufferSize, emitStrategy)
             _          <- Sync.defer(publisher.subscribe(subscriber))
@@ -33,7 +33,7 @@ package object flow:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Subscription < (Resource & Sync & S) =
+    ): Subscription < (Scope & Sync & S) =
         StreamSubscription.subscribe(stream, subscriber)
 
     def streamToPublisher[T, S](
@@ -45,6 +45,6 @@ package object flow:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Publisher[T] < (Resource & Sync & S) = StreamPublisher[T, S](stream)
+    ): Publisher[T] < (Scope & Sync & S) = StreamPublisher[T, S](stream)
 
 end flow

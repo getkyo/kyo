@@ -32,17 +32,17 @@ Kyo is structured as a monorepo, published to Maven Central:
 
 #### Core Libraries
 
-| Module          | JVM | JS  | Native | Description                                                    |
-| --------------- | --- | --- | ------ | -------------------------------------------------------------- |
-| kyo-data        | ✅   | ✅   | ✅      | Efficient `Maybe`, `Result`, `Duration`, and other data types  |
-| kyo-kernel      | ✅   | ✅   | ✅      | Core algebraic effects engine and type-level effect tracking   |
-| kyo-prelude     | ✅   | ✅   | ✅      | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc.    |
-| kyo-core        | ✅   | ✅   | ✅      | Side-effectful computations: `Sync`, `Async`, `Resource`, etc. |
-| kyo-direct      | ✅   | ✅   | ✅      | Direct-style syntax using `.await` and control flow            |
-| kyo-combinators | ✅   | ✅   | ✅      | ZIO-like effect combinators and utility methods                |
-| kyo-actor       | ✅   | ✅   | ✅      | Type-safe actor system with supervision and messaging          |
-| kyo-stm         | ✅   | ✅   | ✅      | Software transactional memory for managing state               |
-| kyo-offheap     | ✅   | ❌   | ✅      | Direct memory allocation and off-heap data structures          |
+| Module          | JVM | JS  | Native | Description                                                   |
+| --------------- | --- | --- | ------ | ------------------------------------------------------------- |
+| kyo-data        | ✅   | ✅   | ✅      | Efficient `Maybe`, `Result`, `Duration`, and other data types |
+| kyo-kernel      | ✅   | ✅   | ✅      | Core algebraic effects engine and type-level effect tracking  |
+| kyo-prelude     | ✅   | ✅   | ✅      | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc.   |
+| kyo-core        | ✅   | ✅   | ✅      | Side-effectful computations: `Sync`, `Async`, `Scope`, etc.   |
+| kyo-direct      | ✅   | ✅   | ✅      | Direct-style syntax using `.await` and control flow           |
+| kyo-combinators | ✅   | ✅   | ✅      | ZIO-like effect combinators and utility methods               |
+| kyo-actor       | ✅   | ✅   | ✅      | Type-safe actor system with supervision and messaging         |
+| kyo-stm         | ✅   | ✅   | ✅      | Software transactional memory for managing state              |
+| kyo-offheap     | ✅   | ❌   | ✅      | Direct memory allocation and off-heap data structures         |
 
 #### Integrations
 
@@ -87,7 +87,7 @@ Use `%%` for JVM/Scala Native, or `%%%` for ScalaJS cross-compilation. See the m
 > These talks are listed in reverse chronological order, as Kyo has grown and transformed significantly in preparation for 1.0.
 
 | Title                                                                                                          | Speaker(s)                 | Host                   | Date           | Resources                                                                                             |
-|----------------------------------------------------------------------------------------------------------------|----------------------------|------------------------|----------------|-------------------------------------------------------------------------------------------------------|
+| -------------------------------------------------------------------------------------------------------------- | -------------------------- | ---------------------- | -------------- | ----------------------------------------------------------------------------------------------------- |
 | [Suspension: the magic behind composability (or "The Kyo Monad")](https://www.youtube.com/watch?v=y3KiuFczOFE) | Flavio Brasil              | Lambda Days            | June, 2025     | [slides](https://speakerdeck.com/fwbrasil/suspension-the-magic-behind-composability-or-the-kyo-monad) |
 | [An Algebra of Thoughts: When Kyo effects meet LLMs](https://www.youtube.com/watch?v=KIjtXM5dlgY)              | Flavio Brasil              | Func Prog Sweden       | May, 2025      |                                                                                                       |
 | [Redefining Stream Composition with Algebraic Effects](https://www.youtube.com/watch?v=WcYKTyQwEA0)            | Adam Hearn                 | LambdaConf             | May, 2025      |                                                                                                       |
@@ -531,7 +531,7 @@ The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](htt
 
 ### Defining an App
 
-`KyoApp` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `KyoApp` can accommodate various effects, such as Sync, Async, Resource, Clock, Console, Random, Timer, and Aspect.
+`KyoApp` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `KyoApp` can accommodate various effects, such as Sync, Async, Scope, Clock, Console, Random, Timer, and Aspect.
 
 ```scala
 import kyo.*
@@ -910,9 +910,9 @@ val b: Int < Sync =
 
 > Note: Kyo's effects are designed so locals are properly propagated. For example, they're automatically inherited by forked computations in `Async`.
 
-### Resource: Resource Safety
+### Scope: Resource Safety
 
-The `Resource` effect handles the safe use of external resources like network connections, files, and any other resource that needs to be freed once the computation finalizes. It serves as a mechanism similar to ZIO's `Scope`.
+The `Scope` effect handles the safe use of external resources like network connections, files, and any other resource that needs to be freed once the computation finalizes. It serves as a mechanism similar to ZIO's `Scope`.
 
 ```scala
 import java.io.Closeable
@@ -924,36 +924,36 @@ class Database extends Closeable:
 
 // The `acquire` method accepts any object that
 // implements Java's `Closeable` interface
-val db: Database < (Resource & Async) =
-    Resource.acquire(new Database)
+val db: Database < (Scope & Async) =
+    Scope.acquire(new Database)
 
 // Use `run` to handle the effect, while also
 // closing the resources utilized by the
 // computation
 val b: Int < Async =
-    Resource.run(db.map(_.count))
+    Scope.run(db.map(_.count))
 
 // The `ensure` method provides a low-level API to handle the finalization of
 // resources directly. The `acquire` method is implemented in terms of `ensure`.
 
 // Example method to execute a function on a database
-def withDb[T](f: Database => T < Async): T < (Resource & Async) =
+def withDb[T](f: Database => T < Async): T < (Scope & Async) =
     // Initializes the database ('new Database' is a placeholder)
     Sync.defer(new Database).map { db =>
         // Registers `db.close` to be finalized
-        Resource.ensure(db.close).andThen {
+        Scope.ensure(db.close).andThen {
             // Invokes the function
             f(db)
         }
     }
 
 // Execute a function
-val c: Int < (Resource & Async) =
+val c: Int < (Scope & Async) =
     withDb(_.count)
 
 // Close resources
 val d: Int < Async =
-    Resource.run(c)
+    Scope.run(c)
 ```
 
 ### Batch: Efficient Data Processing
@@ -1427,10 +1427,10 @@ import kyo.*
 
 case class Config(someConfig: String)
 
-val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream.init(Seq(1))
+val original: Stream[Int, Scope & Env[Config] & Abort[String] & Async] = Stream.init(Seq(1))
 
 val handled: Stream[Int, Async] = original.handle(
-    Resource.run(_),
+    Scope.run(_),
     Env.run(Config("some config"))(_),
     Abort.run[String](_)
 )
@@ -2118,7 +2118,7 @@ val createDir: Unit < Sync =
 - File metadata: `exists`, `isDir`, `isFile`, `isLink`
 - File manipulation: `mkDir`, `mkFile`, `move`, `copy`, `remove`, `removeAll`
 
-All methods that perform side effects are suspended using the `Sync` effect, ensuring referential transparency. Methods that work with streams of data, such as `readStream` and `walk`, return a `Stream` of the appropriate type, suspended using the `Resource` effect to ensure proper resource handling.
+All methods that perform side effects are suspended using the `Sync` effect, ensuring referential transparency. Methods that work with streams of data, such as `readStream` and `walk`, return a `Stream` of the appropriate type, suspended using the `Scope` effect to ensure proper resource handling.
 
 ```scala
 import kyo.*
@@ -2127,11 +2127,11 @@ import java.io.IOException
 val path: Path = Path("tmp", "file.txt")
 
 // Read a file as a stream of lines
-val lines: Stream[String, Resource & Sync] =
+val lines: Stream[String, Scope & Sync] =
     path.readLinesStream()
 
 // Process the stream
-val result: Unit < (Resource & Console & Async & Abort[IOException]) =
+val result: Unit < (Scope & Console & Async & Abort[IOException]) =
     lines.map(line => Console.printLine(line)).discard
 
 // Walk a directory tree
@@ -2152,7 +2152,7 @@ import kyo.*
 val bytes: Stream[Byte, Sync] = Stream.init(Seq[Byte](1, 2, 3))
 
 // Write the stream to a file
-val sinkResult: Unit < (Resource & Sync) =
+val sinkResult: Unit < (Scope & Sync) =
     bytes.sink(Path("path", "to", "file.bin"))
 ```
 
@@ -2455,46 +2455,46 @@ import kyo.*
 
 // A bounded queue that rejects new
 // elements once full
-val a: Queue[Int] < (Sync & Resource) =
+val a: Queue[Int] < (Sync & Scope) =
     Queue.init(capacity = 42)
 
 // Obtain the number of items in the queue
 // via the method 'size' in 'Queue'
-val b: Int < (Sync & Abort[Closed] & Resource) =
+val b: Int < (Sync & Abort[Closed] & Scope) =
     a.map(_.size)
 
 // Get the queue capacity
-val c: Int < (Sync & Resource) =
+val c: Int < (Sync & Scope) =
     a.map(_.capacity)
 
 // Try to offer a new item
-val d: Boolean < (Sync & Abort[Closed] & Resource) =
+val d: Boolean < (Sync & Abort[Closed] & Scope) =
     a.map(_.offer(42))
 
 // Try to poll an item
-val e: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
+val e: Maybe[Int] < (Sync & Abort[Closed] & Scope) =
     a.map(_.poll)
 
 // Try to 'peek' an item without removing it
-val f: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
+val f: Maybe[Int] < (Sync & Abort[Closed] & Scope) =
     a.map(_.peek)
 
 // Check if the queue is empty
-val g: Boolean < (Sync & Abort[Closed] & Resource) =
+val g: Boolean < (Sync & Abort[Closed] & Scope) =
     a.map(_.empty)
 
 // Check if the queue is full
-val h: Boolean < (Sync & Abort[Closed] & Resource) =
+val h: Boolean < (Sync & Abort[Closed] & Scope) =
     a.map(_.full)
 
 // Drain the queue items
-val i: Seq[Int] < (Sync & Abort[Closed] & Resource) =
+val i: Seq[Int] < (Sync & Abort[Closed] & Scope) =
     a.map(_.drain)
 
 // Close the queue. If successful,
 // returns a Some with the drained
 // elements
-val j: Maybe[Seq[Int]] < (Sync & Resource) =
+val j: Maybe[Seq[Int]] < (Sync & Scope) =
     a.map(_.close)
 ```
 
@@ -2505,25 +2505,25 @@ import kyo.*
 // Avoid `Queue.unbounded` since if queues can
 // grow without limits, the GC overhead can make
 // the system fail
-val a: Queue.Unbounded[Int] < (Sync & Resource) =
+val a: Queue.Unbounded[Int] < (Sync & Scope) =
     Queue.Unbounded.init()
 
 // A 'dropping' queue discards new entries
 // when full
-val b: Queue.Unbounded[Int] < (Sync & Resource) =
+val b: Queue.Unbounded[Int] < (Sync & Scope) =
     Queue.Unbounded.initDropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new
 // entries
-val c: Queue.Unbounded[Int] < (Sync & Resource) =
+val c: Queue.Unbounded[Int] < (Sync & Scope) =
     Queue.Unbounded.initSliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queue.Unbounded`. It provides
 // an additional method to 'add' new items
 // unconditionally
-val d: Unit < (Sync & Resource) =
+val d: Unit < (Sync & Scope) =
     c.map(_.add(42))
 ```
 
@@ -2548,7 +2548,7 @@ import kyo.*
 // Initialize a bounded queue with a
 // Multiple Producers, Multiple
 // Consumers policy
-val a: Queue[Int] < (Sync & Resource) =
+val a: Queue[Int] < (Sync & Scope) =
     Queue.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
@@ -2567,12 +2567,12 @@ import kyo.*
 // A 'Channel' is initialized with a fixed capacity
 // Note the `Resource` effect, which ensures the channel
 // will eventually be closed
-val a: Channel[Int] < (Sync & Resource) =
+val a: Channel[Int] < (Sync & Scope) =
     Channel.init(capacity = 42)
 
 // It's also possible to specify
 // an 'Access' policy
-val b: Channel[Int] < (Sync & Resource) =
+val b: Channel[Int] < (Sync & Scope) =
     Channel.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
@@ -2585,28 +2585,28 @@ While `Channel` share similarities with `Queue`—such as methods for querying s
 import kyo.*
 
 // An example channel
-val a: Channel[Int] < (Sync & Resource) =
+val a: Channel[Int] < (Sync & Scope) =
     Channel.init(capacity = 42)
 
 // Adds a new item to the channel.
 // If there's no capacity, the fiber
 // is automatically suspended until
 // space is made available
-val b: Unit < (Async & Abort[Closed] & Resource) =
+val b: Unit < (Async & Abort[Closed] & Scope) =
     a.map(_.put(42))
 
 // Takes an item from the channel.
 // If the channel is empty, the fiber
 // is suspended until a new item is
 // made available
-val c: Int < (Async & Abort[Closed] & Resource) =
+val c: Int < (Async & Abort[Closed] & Scope) =
     a.map(_.take)
 
 // Closes the channel. If successful,
 // returns a Some with the drained
 // elements. All pending puts and takes
 // are automatically interrupted
-val f: Maybe[Seq[Int]] < (Sync & Resource) =
+val f: Maybe[Seq[Int]] < (Sync & Scope) =
     a.map(_.close)
 ```
 
@@ -2623,13 +2623,13 @@ import kyo.*
 import kyo.Hub.Listener
 
 // Initialize a Hub with a buffer
-val a: Hub[Int] < (Sync & Resource) =
+val a: Hub[Int] < (Sync & Scope) =
     Hub.init[Int](3)
 
 // Hub provide APIs similar to
 // channels: size, offer, isEmpty,
 // isFull, put
-val b: Boolean < (Sync & Abort[Closed] & Resource) =
+val b: Boolean < (Sync & Abort[Closed] & Scope) =
     a.map(_.offer(1))
 
 // But reading from hubs can only
@@ -2637,26 +2637,26 @@ val b: Boolean < (Sync & Abort[Closed] & Resource) =
 // only receive messages sent after
 // their creation. To create call
 // `listen`:
-val c: Listener[Int] < (Sync & Abort[Closed] & Resource) =
+val c: Listener[Int] < (Sync & Abort[Closed] & Scope) =
     a.map(_.listen)
 
 // Each listener can have an
 // additional message buffer
-val d: Listener[Int] < (Sync & Abort[Closed] & Resource) =
+val d: Listener[Int] < (Sync & Abort[Closed] & Scope) =
     a.map(_.listen(bufferSize = 3))
 
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
 // poll, take
-val e: Int < (Async & Abort[Closed] & Resource) =
+val e: Int < (Async & Abort[Closed] & Scope) =
     d.map(_.take)
 
 // A listener can be closed
 // individually. If successful,
 // a Some with the backlog of
 // pending messages is returned
-val f: Maybe[Seq[Int]] < (Sync & Abort[Closed] & Resource) =
+val f: Maybe[Seq[Int]] < (Sync & Abort[Closed] & Scope) =
     d.map(_.close)
 
 // Listeners are also managed
@@ -2664,7 +2664,7 @@ val f: Maybe[Seq[Int]] < (Sync & Abort[Closed] & Resource) =
 // when their `Resource` effect
 // is handled
 val g: Int < (Async & Abort[Closed]) =
-    Resource.run(e)
+    Scope.run(e)
 
 // If the Hub is closed, all
 // listeners are automatically
@@ -2672,7 +2672,7 @@ val g: Int < (Async & Abort[Closed]) =
 // only include items pending in
 // the hub's buffer. The listener
 // buffers are discarded
-val h: Maybe[Seq[Int]] < (Sync & Resource) =
+val h: Maybe[Seq[Int]] < (Sync & Scope) =
     a.map(_.close)
 ```
 
@@ -2690,22 +2690,22 @@ The `Meter` effect offers utilities to regulate computational execution, be it l
 import kyo.*
 
 // 'mutex': One computation at a time
-val a: Meter < (Sync & Resource) =
+val a: Meter < (Sync & Scope) =
     Meter.initMutex
 
 // 'semaphore': Limit concurrent tasks
-val b: Meter < (Sync & Resource) =
+val b: Meter < (Sync & Scope) =
     Meter.initSemaphore(concurrency = 42)
 
 // 'rateLimiter': Tasks per time window
-val c: Meter < (Sync & Resource) =
+val c: Meter < (Sync & Scope) =
     Meter.initRateLimiter(
         rate = 10,
         period = 1.second
     )
 
 // 'pipeline': Combine multiple 'Meter's
-val d: Meter < (Sync & Resource) =
+val d: Meter < (Sync & Scope) =
     Meter.pipeline(a, b, c)
 ```
 
@@ -2715,25 +2715,25 @@ The `Meter` class comes with a handful of methods designed to provide insights i
 import kyo.*
 
 // An example 'Meter'
-val a: Meter < (Sync & Resource) =
+val a: Meter < (Sync & Scope) =
     Meter.initMutex
 
 // Get the number available permits
-val b: Int < (Async & Abort[Closed] & Resource) =
+val b: Int < (Async & Abort[Closed] & Scope) =
     a.map(_.availablePermits)
 
 // Get the number of waiting fibers
-val c: Int < (Async & Abort[Closed] & Resource) =
+val c: Int < (Async & Abort[Closed] & Scope) =
     a.map(_.pendingWaiters)
 
 // Use 'run' to execute tasks
 // respecting meter limits
-val d: Int < (Async & Abort[Closed] & Resource) =
+val d: Int < (Async & Abort[Closed] & Scope) =
     a.map(_.run(Math.cos(42).toInt))
 
 // 'tryRun' executes if a permit is
 // available; returns 'None' otherwise
-val e: Maybe[Int] < (Async & Abort[Closed] & Resource) =
+val e: Maybe[Int] < (Async & Abort[Closed] & Scope) =
     a.map(_.tryRun(Math.cos(42).toInt))
 ```
 
@@ -3590,12 +3590,12 @@ end HelloService
 val keepTicking: Nothing < (Async & Emit[String]) =
     (Kyo.emit(".") *> Kyo.sleep(1.second)).forever
 
-val effect: Unit < (Async & Resource & Abort[Throwable] & Env[HelloService]) =
+val effect: Unit < (Async & Scope & Abort[Throwable] & Env[HelloService]) =
     for
         nameService <- Kyo.service[HelloService]      // Introduces Env[NameService]
         _           <- keepTicking                    // Introduces Async and Emit[String]
             .foreachEmit(Console.print)               // Handles Emit[String] and introduces Abort[IOException]
-            .forkScoped                               // Introduces Resource
+            .forkScoped                               // Introduces Scope
         saluee      <- Console.readln
         _           <- Kyo.sleep(2.seconds)
         _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
@@ -3607,7 +3607,7 @@ end effect
 // be done at the edge of the program
 Sync.Unsafe.run {                        // Handles Sync
     KyoApp.runAndBlock(Duration.Inf) {  // Handles Async
-        Kyo.scoped {                   // Handles Resource
+        Kyo.scoped {                   // Handles Scope
             Memo.run:                  // Handles Memo (introduced by .provide, below)
                 effect
                     .catching((thr: Throwable) =>             // Handles Abort[Throwable]
@@ -3707,7 +3707,7 @@ val retriedAUntilSucceed: Int < (Abort[B | C]) = effect.forAbort[A].retryForever
 
 Kyo's development was originally inspired by the paper ["Do Be Do Be Do"](https://arxiv.org/pdf/1611.09259.pdf) and its implementation in the [Unison](https://www.unison-lang.org/learn/language-reference/abilities-and-ability-handlers/) programming language. Kyo's design evolved from using interface-based effects to suspending concrete values associated with specific effects, making it more efficient when executed on the JVM.
 
-Additionally, Kyo draws inspiration from [ZIO](https://zio.dev/) in various aspects. The core mechanism for algebraic effects can be seen as a generalization of ZIO's effect rotation, and many of Kyo's effects are directly influenced by ZIO's mature set of primitives. For instance, `Env` and `Abort` correspond to ZIO's effect channels, `Resource` function similarly to `Scope`, and `Hub` was introduced based on ZIO.
+Additionally, Kyo draws inspiration from [ZIO](https://zio.dev/) in various aspects. The core mechanism for algebraic effects can be seen as a generalization of ZIO's effect rotation, and many of Kyo's effects are directly influenced by ZIO's mature set of primitives. For instance, `Env` and `Abort` correspond to ZIO's effect channels, `Scope` function similarly to `Scope`, and `Hub` was introduced based on ZIO.
 
 Kyo's asynchronous primitives take several aspects from [Twitter's util](https://github.com/twitter/util) and [Finagle](https://github.com/twitter/finagle), including features like async root compression, to provide stack safety, and support for cancellations (interruptions in Kyo).
 

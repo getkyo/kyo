@@ -236,8 +236,8 @@ extension [A, S](effect: A < S)
       * @return
       *   An effect that executes the finalizer after this effect
       */
-    def ensuring(finalizer: => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Resource & Sync) =
-        Resource.ensure(finalizer).andThen(effect)
+    def ensuring(finalizer: => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Scope & Sync) =
+        Scope.ensure(finalizer).andThen(effect)
 
     /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
       * the Resource effect is handled.
@@ -249,7 +249,7 @@ extension [A, S](effect: A < S)
       * @return
       *   An effect that executes the finalizer after this effect
       */
-    def ensuringError(finalizer: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Resource & Sync) =
-        Resource.ensure(finalizer).andThen(effect)
+    def ensuringError(finalizer: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Scope & Sync) =
+        Scope.ensure(finalizer).andThen(effect)
 
 end extension

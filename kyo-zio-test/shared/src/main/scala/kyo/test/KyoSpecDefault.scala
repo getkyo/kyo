@@ -4,9 +4,9 @@ import kyo.*
 import zio.ZIO
 import zio.test.Spec
 
-abstract class KyoSpecDefault extends KyoSpecAbstract[Async & Resource & Abort[Throwable]]:
-    final override def run[In](v: => In < (Async & Resource & Abort[Throwable]))(using Frame): ZIO[Environment, Throwable, In] =
-        ZIOs.run(Resource.run(v))
+abstract class KyoSpecDefault extends KyoSpecAbstract[Async & Scope & Abort[Throwable]]:
+    final override def run[In](v: => In < (Async & Scope & Abort[Throwable]))(using Frame): ZIO[Environment, Throwable, In] =
+        ZIOs.run(Scope.run(v))
 
     def timeout: Duration = Duration.Infinity
 
