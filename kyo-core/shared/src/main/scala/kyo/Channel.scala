@@ -525,17 +525,17 @@ object Channel:
                         case Absent =>
                             Absent
                         case Present(Put.Value(value, promise)) =>
-                            promise.completeUnitDiscard
+                            promise.completeUnitDiscard()
                             flush()
                             Present(value)
                         case Present(Put.Batch(batch, promise)) =>
                             val result = batch.headMaybe match
                                 case Absent =>
-                                    promise.completeUnitDiscard
+                                    promise.completeUnitDiscard()
                                     Absent
                                 case Present(value) =>
                                     if batch.tail.nonEmpty then discard(puts.offer(Put.Batch(batch.tail, promise)))
-                                    else promise.completeUnitDiscard
+                                    else promise.completeUnitDiscard()
                                     Present(value)
                             flush()
                             result
@@ -552,7 +552,7 @@ object Channel:
                                 flush()
                                 succeedIfNonEmptyOrOpen(current)
                             case Present(Put.Value(value, promise)) =>
-                                promise.completeUnitDiscard
+                                promise.completeUnitDiscard()
                                 loop(current.appended(value), i - 1)
                             case Present(Put.Batch(batch, promise)) =>
                                 val taken     = batch.take(i)
@@ -562,7 +562,7 @@ object Channel:
                                     flush()
                                     succeedIfNonEmptyOrOpen(current.concat(taken))
                                 else
-                                    promise.completeUnitDiscard
+                                    promise.completeUnitDiscard()
                                     loop(current.concat(taken), i - taken.length)
                                 end if
                         end match
@@ -579,10 +579,10 @@ object Channel:
                         case Absent =>
                             succeedIfNonEmptyOrOpen(current)
                         case Present(Put.Value(value, promise)) =>
-                            promise.completeUnitDiscard
+                            promise.completeUnitDiscard()
                             loop(current.appended(value))
                         case Present(Put.Batch(batch, promise)) =>
-                            promise.completeUnitDiscard
+                            promise.completeUnitDiscard()
                             loop(current.concat(batch))
                     end match
                 end loop
@@ -622,7 +622,7 @@ object Channel:
                                 Maybe(takes.poll()) match
                                     case Present(takePromise) if takePromise.complete(Result.succeed(value)) =>
                                         // Value transfered, complete put
-                                        promise.completeUnitDiscard
+                                        promise.completeUnitDiscard()
 
                                     case _ =>
                                         // Take promise was interrupted, return put to the queue
@@ -636,7 +636,7 @@ object Channel:
                                 def loop(i: Int): Unit =
                                     if i >= chunk.length then
                                         // All items transfered, complete put
-                                        promise.completeUnitDiscard
+                                        promise.completeUnitDiscard()
                                     else
                                         Maybe(takes.poll()) match
                                             case Present(takePromise) =>
@@ -802,7 +802,7 @@ object Channel:
                             def loop(i: Int): Unit =
                                 if i >= chunk.length then
                                     // All items offered, complete put
-                                    promise.completeUnitDiscard
+                                    promise.completeUnitDiscard()
                                 else if !queue.offer(chunk(i)).contains(true) then
                                     // Queue became full, add pending put for the rest of the batch
                                     discard(puts.add(Put.Batch(chunk.dropLeft(i), promise)))
@@ -813,7 +813,7 @@ object Channel:
                         case put @ Put.Value(value, promise) =>
                             if queue.offer(value).contains(true) then
                                 // Queue accepted the value, complete the put
-                                promise.completeUnitDiscard
+                                promise.completeUnitDiscard()
                             else
                                 // Queue became full, enqueue the put again
                                 discard(puts.add(put))
@@ -829,7 +829,7 @@ object Channel:
                                 Maybe(takes.poll()) match
                                     case Present(takePromise) if takePromise.complete(Result.succeed(value)) =>
                                         // Value transfered, complete put
-                                        promise.completeUnitDiscard
+                                        promise.completeUnitDiscard()
 
                                     case _ =>
                                         // Take promise was interrupted, return put to the queue
@@ -842,7 +842,7 @@ object Channel:
                                 def loop(i: Int): Unit =
                                     if i >= chunk.length then
                                         // All items transfered, complete put
-                                        promise.completeUnitDiscard
+                                        promise.completeUnitDiscard()
                                     else
                                         Maybe(takes.poll()) match
                                             case Present(takePromise) =>

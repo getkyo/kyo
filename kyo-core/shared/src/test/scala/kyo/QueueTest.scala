@@ -672,8 +672,8 @@ class QueueTest extends Test:
                 _        <- consumerFiber.getResult
             yield
                 assert(isClosed)
-                assert(Seq(result1, result2).count(_.map(_.eval).contains(true)) == 1)
-                assert(Seq(result1, result2).count(r => r.map(_.eval).contains(false) || r.isFailure) == 1)
+                assert(Seq(result1, result2).count(_.contains(true)) == 1)
+                assert(Seq(result1, result2).count(r => r.contains(false) || r.isFailure) == 1)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))
                 .andThen(succeed)
@@ -712,8 +712,8 @@ class QueueTest extends Test:
             yield
                 assert(isClosed)
                 assert(
-                    (result1.isFailure || result1.map(_.eval).contains(false)) && !result2.map(_.eval).contains(Absent) ||
-                        (result1.map(_.eval).contains(true)) && result2.map(_.eval).contains(Absent)
+                    (result1.isFailure || result1.contains(false)) && !result2.contains(Absent) ||
+                        (result1.contains(true)) && result2.contains(Absent)
                 )
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))

@@ -169,8 +169,8 @@ abstract class Isolate[Remove, -Keep, Restore]:
       *   A new isolate handling both state managements
       */
     final def andThen[RM2, KP2, RS2](next: Isolate[RM2, KP2, RS2]): Isolate[Remove & RM2, Keep & KP2, Restore & RS2] =
-        if self eq noop then next.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
-        else if next eq noop then self.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        if self eq Identity then next.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        else if next eq Identity then self.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
         else
             new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
                 type State        = (self.State, next.State)
@@ -222,13 +222,13 @@ object Isolate:
           *
           * Used as a base case for isolate composition and when no isolation is needed.
           */
-        object noop extends Isolate[Any, Any, Any]:
+        object Identity extends Isolate[Any, Any, Any]:
             type State        = Unit
             type Transform[A] = A
             def capture[A, S](f: State => A < S)(using Frame)              = f(())
             def isolate[A, S](state: State, v: A < (S & Any))(using Frame) = v
             def restore[A, S](v: A < S)(using Frame)                       = v
-        end noop
+        end Identity
 
         def deriveImpl[Remove: Type, Keep: Type, Restore: Type](using Quotes): Expr[Isolate[Remove, Keep, Restore]] =
             import quotes.reflect.*
@@ -292,7 +292,7 @@ object Isolate:
                 )
             end if
 
-            isolates.flatMap(_._2).foldLeft('{ noop.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
+            isolates.flatMap(_._2).foldLeft('{ Identity.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
                 '{ $prev.andThen($next.asInstanceOf[Isolate[Remove, Keep, Restore]]) }
             )
         end deriveImpl

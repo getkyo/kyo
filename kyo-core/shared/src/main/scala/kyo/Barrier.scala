@@ -85,7 +85,7 @@ object Barrier:
                             if c > 0 && !count.compareAndSet(c, c - 1) then
                                 loop(count.get())
                             else
-                                if c == 1 then promise.completeUnitDiscard
+                                if c == 1 then promise.completeUnitDiscard()
                                 promise
                         loop(count.get())
                     end await

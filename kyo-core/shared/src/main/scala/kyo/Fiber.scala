@@ -88,7 +88,17 @@ object Fiber:
     def never(using Frame): Fiber[Nothing, Any] < Sync =
         Sync.defer(IOPromise[Nothing, Nothing < Any]())
 
-    def fromResult[E, A, S](result: Result[E, A < S]): Fiber[A, Abort[E] & S] =
+    /** Creates a Fiber from a Result.
+      *
+      * This method creates a Fiber that is immediately completed with the provided Result. The Fiber will have the same success and error
+      * types as the Result, with the error type reduced according to the Reducible instance.
+      *
+      * @param result
+      *   The Result to create the Fiber from
+      * @return
+      *   A Fiber that is immediately completed with the provided Result
+      */
+    def fromResult[E, A, S](result: Result[E, A < S])(using reduce: Reducible[Abort[E]]): Fiber[A, reduce.SReduced & S] =
         IOPromise(result)
 
     /** Creates a Fiber from a Future.
@@ -211,8 +221,8 @@ object Fiber:
           * @return
           *   The Result of the Fiber
           */
-        def getResult(using Frame): Result[E, A < S] < Async =
-            Async.getResult(self.lower)
+        def getResult(using Frame): Result[E, A] < (Async & S) =
+            Async.useResult(self.lower)(_.foldError(_.map(Result.succeed), identity))
 
         /** Uses the Result of the Fiber to compute a new value.
           *
@@ -252,8 +262,8 @@ object Fiber:
           * @return
           *   The Result of the Fiber, or a Timeout error
           */
-        def block(timeout: Duration)(using Frame): Result[E | Timeout, A < S] < Sync =
-            Clock.deadline(timeout).map(d => self.lower.block(d.unsafe))
+        def block(timeout: Duration)(using Frame): Result[E | Timeout, A] < (Sync & S) =
+            Clock.deadline(timeout).map(d => self.lower.block(d.unsafe).foldError(_.map(Result.succeed), identity))
 
         /** Maps the Result of the Fiber using the provided function.
           *
@@ -571,9 +581,9 @@ object Fiber:
             end extension
 
             extension [S](self: Unsafe[Unit, S])
-                def completeUnit(using AllowUnsafe): Boolean =
+                def completeUnit()(using AllowUnsafe): Boolean =
                     self.lower.complete(Result.succeed(()))
-                def completeUnitDiscard(using AllowUnsafe): Unit =
+                def completeUnitDiscard()(using AllowUnsafe): Unit =
                     self.lower.completeDiscard(Result.succeed(()))
             end extension
 

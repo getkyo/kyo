@@ -18,7 +18,7 @@ abstract class KyoApp extends KyoAppPlatformSpecific:
         val interrupt = (signal: String) =>
             () =>
                 promise
-                    .completeDiscard(Result.panic(Interrupted(Frame.internal, s"Interrupt Signal Reached: $signal")))
+                    .completeDiscard(Result.panic(Interrupted(Frame.internal, s"Interrupt Signal: $signal")))
 
         if System.live.unsafe.operatingSystem() != System.OS.Windows then
             OsSignal.handle("INT", interrupt("INT"))
@@ -46,13 +46,13 @@ object KyoApp:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    private[kyo] def runAndBlock[E, A, S](
+    def runAndBlock[E, A, S](
         using isolate: Isolate[S, Sync, Any]
     )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E | Timeout] & Sync & S) =
         Fiber.init(v).map { fiber =>
-            fiber.block(timeout).map(Abort.get(_).flatten)
+            fiber.block(timeout).map(Abort.get(_))
         }
 
     /** An abstract base class for Kyo applications.

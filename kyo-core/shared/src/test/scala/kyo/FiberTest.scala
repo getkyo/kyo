@@ -143,7 +143,7 @@ class FiberTest extends Test:
                 }
 
             Fiber.internal.race(Seq(loop(100, "a"), loop(Int.MaxValue, "b"), loop(100, "c"))).map(_.getResult).map { r =>
-                assert(r.map(_.eval) == Result.succeed("c"))
+                assert(r == Result.succeed("c"))
             }
         }
         "raceFirst" - {
@@ -485,7 +485,7 @@ class FiberTest extends Test:
             val fiber = Fiber.succeed(42)
             for
                 result <- fiber.block(Duration.Infinity)
-            yield assert(result.map(_.eval) == Result.succeed(42))
+            yield assert(result == Result.succeed(42))
         }
 
         "timeout" in runNotJS {

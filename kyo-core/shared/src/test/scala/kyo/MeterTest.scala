@@ -45,7 +45,7 @@ class MeterTest extends Test:
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
             yield assert(
-                a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1.map(_.eval).contains(1) && v2 == 2 && a3 == 1 && w3 == 0
+                a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1.contains(1) && v2 == 2 && a3 == 1 && w3 == 0
             )
         }
 
@@ -62,7 +62,7 @@ class MeterTest extends Test:
                 b2  <- f1.done
                 _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
-            yield assert(a1 == 0 && w1 == 0 && b1.isEmpty && !b2 && v1.map(_.map(_.eval)).contains(Result.succeed(1)))
+            yield assert(a1 == 0 && w1 == 0 && b1.isEmpty && !b2 && v1.contains(Result.succeed(1)))
         }
     }
 
@@ -115,7 +115,7 @@ class MeterTest extends Test:
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
             yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && !d3 && a2 == 0 && w2 == 1 &&
-                v1.map(_.eval).contains(1) && v2.map(_.eval).contains(1) && v3 == 2 && a3 == 2 && w3 == 0)
+                v1.contains(1) && v2.contains(1) && v3 == 2 && a3 == 2 && w3 == 0)
         }
 
         "tryRun" in run {
@@ -139,7 +139,7 @@ class MeterTest extends Test:
                 v1  <- f1.get
                 v2  <- f2.get
             yield assert(a1 == 1 && w1 == 0 && b3.isEmpty && !b4 && !b5 &&
-                v1.map(_.map(_.eval)).contains(Result.succeed(1)) && v2.map(_.map(_.eval)).contains(Result.succeed(1)))
+                v1.contains(Result.succeed(1)) && v2.contains(Result.succeed(1)))
         }
 
         "concurrency" - {

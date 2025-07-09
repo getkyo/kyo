@@ -226,7 +226,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                 }
                 _      <- Resource.run(subscriber.stream.map(_.take(10).discard))
                 result <- promise.getResult
-            yield assert(result.map(_.eval) == Success(()))
+            yield assert(result == Success(()))
             end for
         }
     }

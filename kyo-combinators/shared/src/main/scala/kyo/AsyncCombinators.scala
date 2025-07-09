@@ -118,6 +118,6 @@ extension [A, E, S, S2](fiber: Fiber[A, Abort[E] & S2] < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def await(using Frame): Result[E, A < S2] < (S & Async) =
+    def await(using Frame): Result[E, A] < (S & S2 & Async) =
         fiber.map(_.getResult)
 end extension
