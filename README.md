@@ -2393,7 +2393,7 @@ val b: Fiber[Int, Any] < Sync =
 // arbitrary pending effects but relies
 // on thread blocking and requires a timeout
 val c: Int < (Abort[Timeout] & Sync) =
-    Async.runAndBlock(5.seconds)(a)
+    KyoApp.runAndBlock(5.seconds)(a)
 ```
 
 > Note: Handling the `Async` effect doesn't break referential transparency as with `Sync` but its usage is not trivial due to the limitations of the pending effects. Prefer `KyoApp` instead.
@@ -3606,7 +3606,7 @@ end effect
 // There are no combinators for handling Sync or blocking Async, since this should
 // be done at the edge of the program
 Sync.Unsafe.run {                        // Handles Sync
-    Async.runAndBlock(Duration.Inf) {  // Handles Async
+    KyoApp.runAndBlock(Duration.Inf) {  // Handles Async
         Kyo.scoped {                   // Handles Resource
             Memo.run:                  // Handles Memo (introduced by .provide, below)
                 effect
