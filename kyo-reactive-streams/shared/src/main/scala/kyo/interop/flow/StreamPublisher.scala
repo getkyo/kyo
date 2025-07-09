@@ -55,7 +55,7 @@ object StreamPublisher:
                     for
                         subscription <- publisher.getSubscription(subscriber)
                         fiber        <- subscription.subscribe.andThen(subscription.consume)
-                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupt())))
+                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))))
                     yield ()
             )
 

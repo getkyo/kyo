@@ -18,7 +18,7 @@ abstract class KyoApp extends KyoAppPlatformSpecific:
         val interrupt = (signal: String) =>
             () =>
                 promise
-                    .completeDiscard(Result.panic(Fiber.Interrupted(Frame.internal, s"Interrupt Signal Reached: $signal")))
+                    .completeDiscard(Result.panic(Interrupted(Frame.internal, s"Interrupt Signal: $signal")))
 
         if System.live.unsafe.operatingSystem() != System.OS.Windows then
             OsSignal.handle("INT", interrupt("INT"))
