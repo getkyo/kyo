@@ -10,4 +10,6 @@ object TestKyoUpdateToV1_0:
         Console.printLine("hello").now
 
     val async: Fiber[Nothing, Unit] < Async = Fiber.init(Async.defer(Async.defer(Kyo.unit)))
+
+    val resource: Any < (Scope & Sync) = Scope.acquireRelease(prg)(Unit => Kyo.unit)
 end TestKyoUpdateToV1_0
