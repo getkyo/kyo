@@ -72,7 +72,7 @@ class AsyncTest extends Test:
             Async.sleep(1.day).andThen(1)
                 .handle(
                     Async.timeout(10.millis),
-                    Async.runAndBlock(Duration.Infinity),
+                    KyoApp.runAndBlock(Duration.Infinity),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed
@@ -83,7 +83,7 @@ class AsyncTest extends Test:
         "block timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
                 .handle(
-                    Async.runAndBlock(10.millis),
+                    KyoApp.runAndBlock(10.millis),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed
@@ -94,7 +94,7 @@ class AsyncTest extends Test:
         "multiple fibers timeout" in runNotJS {
             Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
                 .handle(
-                    Async.runAndBlock(10.millis),
+                    KyoApp.runAndBlock(10.millis),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed
@@ -414,7 +414,7 @@ class AsyncTest extends Test:
         "same failures" in {
             val v: Int < Abort[Int]                            = 1
             val _: Fiber[Int, Abort[Int]] < Sync               = Fiber.init(v)
-            val _: Int < (Abort[Int | Timeout] & Sync)         = Async.runAndBlock(1.second)(v)
+            val _: Int < (Abort[Int | Timeout] & Sync)         = KyoApp.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.race(Seq(v))
@@ -428,7 +428,7 @@ class AsyncTest extends Test:
         "additional failure" in {
             val v: Int < Abort[Int]                                     = 1
             val _: Fiber[Int, Abort[Int | String]] < Sync               = Fiber.init(v)
-            val _: Int < (Abort[Int | Timeout | String] & Sync)         = Async.runAndBlock(1.second)(v)
+            val _: Int < (Abort[Int | Timeout | String] & Sync)         = KyoApp.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(Seq(v))
@@ -444,7 +444,7 @@ class AsyncTest extends Test:
                 val v: Int < Abort[Int] = 1
 
                 val _: Fiber[Fiber[Int, Abort[Int]], Any] < Sync      = Fiber.init(Fiber.init(v))
-                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.init(Async.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.init(KyoApp.runAndBlock(1.second)(v))
                 val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.init(Async.mask(v))
                 val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.init(Async.timeout(1.second)(v))
                 val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.init(Async.race(Seq(v)))
@@ -461,7 +461,7 @@ class AsyncTest extends Test:
 
                 val _: (Fiber[Int, Abort[Int]], Fiber[Int, Abort[Int]]) < Async = Async.zip(Fiber.init(v), Fiber.init(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async) =
-                    Async.zip(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
+                    Async.zip(KyoApp.runAndBlock(1.second)(v), KyoApp.runAndBlock(1.second)(v))
                 val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.mask(v), Async.mask(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async)     = Async.zip(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
                 val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.race(v, v), Async.race(v, v))
@@ -473,7 +473,7 @@ class AsyncTest extends Test:
                 val v: Int < Abort[Int] = 1
 
                 val _: Fiber[Int, Abort[Int]] < Async       = Async.race(Fiber.init(v), Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.race(KyoApp.runAndBlock(1.second)(v), KyoApp.runAndBlock(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.mask(v), Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.race(v, v), Async.race(v, v))
@@ -485,7 +485,7 @@ class AsyncTest extends Test:
                 val v: Int < Abort[Int] = 1
 
                 val _: Fiber[Int, Abort[Int]] < Async       = Async.mask(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(KyoApp.runAndBlock(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.mask(Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.mask(Async.race(v, v))
@@ -497,7 +497,7 @@ class AsyncTest extends Test:
                 val v: Int < Abort[Int] = 1
 
                 val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Async) = Async.timeout(1.second)(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(KyoApp.runAndBlock(1.second)(v))
                 val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.race(v, v))
@@ -508,12 +508,12 @@ class AsyncTest extends Test:
             "runAndBlock" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Sync) = Async.runAndBlock(1.second)(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.mask(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)              = Async.runAndBlock(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Sync)       = Async.runAndBlock(1.second)(Async.zip(v, v))
+                val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Sync) = KyoApp.runAndBlock(1.second)(Fiber.init(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(KyoApp.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Sync)       = KyoApp.runAndBlock(1.second)(Async.zip(v, v))
                 succeed
             }
         }

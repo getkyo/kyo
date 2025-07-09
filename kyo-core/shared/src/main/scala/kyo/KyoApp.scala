@@ -37,6 +37,24 @@ object KyoApp:
         new KyoApp:
             run(v)
 
+    /** Runs an asynchronous computation in a new fiber and blocks until completion or timeout.
+      *
+      * @param timeout
+      *   The maximum duration to wait
+      * @param v
+      *   The computation to run
+      * @return
+      *   The result of the computation, or a Timeout error
+      */
+    private[kyo] def runAndBlock[E, A, S](
+        using isolate: Isolate[S, Sync, Any]
+    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
+        using frame: Frame
+    ): A < (Abort[E | Timeout] & Sync & S) =
+        Fiber.init(v).map { fiber =>
+            fiber.block(timeout).map(Abort.get(_).flatten)
+        }
+
     /** An abstract base class for Kyo applications.
       *
       * This class provides a foundation for building applications using the Kyo framework.
@@ -117,7 +135,7 @@ object KyoApp:
         def runAndBlock[A](timeout: Duration)(
             v: A < (Async & Resource & Abort[Throwable])
         )(using Frame, AllowUnsafe): Result[Throwable, A] =
-            Abort.run(Sync.Unsafe.run(Async.runAndBlock(timeout)(Resource.run(v)))).eval
+            Abort.run(Sync.Unsafe.run(KyoApp.runAndBlock(timeout)(Resource.run(v)))).eval
     end Unsafe
 
 end KyoApp

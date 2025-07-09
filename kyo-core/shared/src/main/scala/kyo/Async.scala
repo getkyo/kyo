@@ -23,7 +23,7 @@ import scala.util.control.NonFatal
   * performance-critical sections where precise control over execution characteristics is needed.
   *
   * Unlike other effects, Async doesn't have a run method - it's typically handled by KyoApp at the application boundary. While
-  * Async.runAndBlock exists for blocking execution, it should be avoided as it defeats the purpose of asynchronous computation. For
+  * KyoApp.runAndBlock exists for blocking execution, it should be avoided as it defeats the purpose of asynchronous computation. For
   * advanced use cases requiring manual fiber handling, Fiber.init can be used.
   *
   * Note: For collection operations, Async provides concurrent execution variants of the `Kyo` companion object sequential operations. These
@@ -768,24 +768,6 @@ object Async extends AsyncPlatformSpecific:
                             loop()
                         end if
             Kyo.lift(Sync.defer(loop()))
-        }
-
-    /** Runs an asynchronous computation in a new fiber and blocks until completion or timeout.
-      *
-      * @param timeout
-      *   The maximum duration to wait
-      * @param v
-      *   The computation to run
-      * @return
-      *   The result of the computation, or a Timeout error
-      */
-    def runAndBlock[E, A, S](
-        using isolate: Isolate[S, Sync, Any]
-    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & Sync & S) =
-        Fiber.init(v).map { fiber =>
-            fiber.block(timeout).map(Abort.get(_).flatten)
         }
 
     /** Converts a Future to an asynchronous computation.

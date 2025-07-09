@@ -802,7 +802,7 @@ class STMTest extends Test:
             r.get
         }
 
-        val task = Async.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
+        val task = KyoApp.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
 
         Abort.run(task).map { result =>
             assert(result == Result.panic(ex))
