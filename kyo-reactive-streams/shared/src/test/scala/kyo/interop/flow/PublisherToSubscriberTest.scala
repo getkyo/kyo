@@ -211,7 +211,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                     Loop(0)(cur => Emit.valueWith(Chunk(cur))(Loop.continue(cur + 1)))
                 )
             for
-                promise    <- Fiber.Promise.init[Throwable, Unit]
+                promise    <- Fiber.Promise.init[Unit, Abort[Throwable]]
                 subscriber <- streamSubscriber
                 subscription <- Sync.Unsafe {
                     StreamSubscription.Unsafe.subscribe(

@@ -25,10 +25,10 @@ object ZIOs:
         Sync.Unsafe {
             Unsafe.unsafely {
                 given ce: CanEqual[E, E] = CanEqual.derived
-                val p                    = Promise.Unsafe.init[E, A]()
+                val p                    = Promise.Unsafe.init[A, Abort[E]]()
                 val f                    = Runtime.default.unsafe.fork(v)
                 f.unsafe.addObserver { (exit: Exit[E, A]) =>
-                    p.completeDiscard(exit.toResult)
+                    p.completeDiscard(exit.toResult.map(Kyo.lift))
                 }
                 p.onInterrupt(_ =>
                     discard(f.unsafe.interrupt(Cause.interrupt(FiberId.None, StackTrace(FiberId.None, Chunk(t)))))
@@ -64,7 +64,7 @@ object ZIOs:
             Fiber.init(v).map { fiber =>
                 ZIO.asyncInterrupt[Any, E, A] { cb =>
                     fiber.unsafe.onComplete {
-                        case Result.Success(a) => cb(Exit.succeed(a))
+                        case Result.Success(a) => cb(Exit.succeed(a.eval))
                         case Result.Failure(e) => cb(Exit.fail(e))
                         case Result.Panic(e)   => cb(Exit.die(e))
                     }

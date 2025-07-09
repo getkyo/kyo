@@ -104,7 +104,7 @@ final case class Clock(unsafe: Clock.Unsafe):
       */
     def deadline(duration: Duration)(using Frame): Clock.Deadline < Sync = Sync.Unsafe(unsafe.deadline(duration).safe)
 
-    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < Sync =
+    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Unit, Any] < Sync =
         if duration == Duration.Zero then Fiber.unit
         else if !duration.isFinite then Fiber.never
         else Sync.Unsafe(unsafe.sleep(duration).safe)
@@ -316,14 +316,14 @@ object Clock:
                 new Unsafe with TimeControl:
                     @volatile var current = Instant.Epoch
 
-                    case class Task(deadline: Instant) extends IOPromise[Nothing, Unit]
+                    case class Task(deadline: Instant) extends IOPromise[Nothing, Unit < Any]
                     val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => b.deadline < a.deadline))
 
                     def now()(using AllowUnsafe) = current
 
                     def nowMonotonic()(using AllowUnsafe) = current.toDuration
 
-                    def sleep(duration: Duration): Fiber.Unsafe[Nothing, Unit] =
+                    def sleep(duration: Duration): Fiber.Unsafe[Unit, Any] =
                         val task = new Task(current + duration)
                         queue.synchronized {
                             queue.enqueue(task)
@@ -361,7 +361,7 @@ object Clock:
                                     Maybe.empty
                         } match
                             case Present(task) =>
-                                task.completeDiscard(Result.unit)
+                                task.completeDiscard(Result.succeed(()))
                                 tick()
                             case Absent =>
                                 ()
@@ -389,7 +389,7 @@ object Clock:
     def nowMonotonic(using Frame): Duration < Sync =
         Sync.Unsafe.withLocal(local)(_.unsafe.nowMonotonic())
 
-    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < Sync =
+    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Unit, Any] < Sync =
         Sync.Unsafe.withLocal(local)(_.unsafe.sleep(duration).safe)
 
     /** Creates a new stopwatch using the local Clock instance.
@@ -422,7 +422,17 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delay: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
+    def repeatWithDelay[E, S](
+        delay: Duration
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatWithDelay(Duration.Zero, delay)(f)
 
     /** Repeatedly executes a task with a fixed delay between completions, starting after an initial delay.
@@ -440,8 +450,14 @@ object Clock:
         startAfter: Duration,
         delay: Duration
     )(
-        f: => Any < (Async & Abort[E])
-    )(using Frame): Fiber[E, Unit] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatWithDelay(startAfter, delay, ())(_ => f.unit)
 
     /** Repeatedly executes a task with a fixed delay between completions, maintaining state between executions.
@@ -464,8 +480,14 @@ object Clock:
         delay: Duration,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         repeatWithDelay(Schedule.delay(startAfter).andThen(Schedule.fixed(delay)), state)(f)
 
     /** Repeatedly executes a task with delays determined by a custom schedule.
@@ -477,8 +499,18 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatWithDelay[E, S](delaySchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
-        repeatWithDelay(delaySchedule, ())(_ => f.unit)
+    def repeatWithDelay[E, S](
+        delaySchedule: Schedule
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
+        repeatWithDelay[E, Unit, S](delaySchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with delays determined by a custom schedule, maintaining state between executions.
       *
@@ -497,8 +529,14 @@ object Clock:
         delaySchedule: Schedule,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         Fiber.init {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
@@ -524,7 +562,17 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](interval: Duration)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
+    def repeatAtInterval[E, S](
+        interval: Duration
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(Duration.Zero, interval)(f)
 
     /** Repeatedly executes a task at fixed time intervals, starting after an initial delay.
@@ -542,8 +590,14 @@ object Clock:
         startAfter: Duration,
         interval: Duration
     )(
-        f: => Any < (Async & Abort[E])
-    )(using Frame): Fiber[E, Unit] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(startAfter, interval, ())(_ => f.unit)
 
     /** Repeatedly executes a task at fixed time intervals, maintaining state between executions.
@@ -566,8 +620,14 @@ object Clock:
         interval: Duration,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(Schedule.delay(startAfter).andThen(Schedule.fixed(interval)), state)(f)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule.
@@ -579,7 +639,17 @@ object Clock:
       * @return
       *   A Fiber that can be used to control or interrupt the recurring task
       */
-    def repeatAtInterval[E, S](intervalSchedule: Schedule)(f: => Any < (Async & Abort[E]))(using Frame): Fiber[E, Unit] < Sync =
+    def repeatAtInterval[E, S](
+        intervalSchedule: Schedule
+    )(
+        using Isolate[S, Sync, Any]
+    )(
+        f: => Any < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[Unit, reduce.SReduced] < (Sync & S) =
         repeatAtInterval(intervalSchedule, ())(_ => f.unit)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule, maintaining state between executions.
@@ -599,8 +669,14 @@ object Clock:
         intervalSchedule: Schedule,
         state: A
     )(
-        f: A => A < (Async & Abort[E])
-    )(using Frame): Fiber[E, A] < Sync =
+        using Isolate[S, Sync, Any]
+    )(
+        f: A => A < (Async & Abort[E] & S)
+    )(
+        using
+        frame: Frame,
+        reduce: Reducible[Abort[E]]
+    ): Fiber[A, reduce.SReduced] < (Sync & S) =
         Fiber.init {
             Clock.use { clock =>
                 clock.now.map { now =>
@@ -624,7 +700,7 @@ object Clock:
 
         def nowMonotonic()(using AllowUnsafe): Duration
 
-        private[kyo] def sleep(duration: Duration): Fiber.Unsafe[Nothing, Unit]
+        private[kyo] def sleep(duration: Duration): Fiber.Unsafe[Unit, Any]
 
         final def stopwatch()(using AllowUnsafe): Stopwatch.Unsafe = Stopwatch.Unsafe(nowMonotonic(), this)
 
@@ -642,12 +718,12 @@ object Clock:
                 def nowMonotonic()(using AllowUnsafe) = java.lang.System.nanoTime().nanos
                 def sleep(duration: Duration) =
                     Promise.Unsafe.fromIOPromise {
-                        new IOPromise[Nothing, Unit] with Callable[Unit]:
+                        new IOPromise[Any, Unit < Any] with Callable[Unit]:
                             val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
-                            override def interrupt(error: Result.Error[Nothing]): Boolean =
+                            override def interrupt(error: Result.Error[Any]): Boolean =
                                 discard(task.cancel(true))
                                 super.interrupt(error)
-                            def call(): Unit = completeDiscard(Result.unit)
+                            def call(): Unit = completeDiscard(Result.succeed(()))
                     }
                 end sleep
     end Unsafe

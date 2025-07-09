@@ -8,7 +8,7 @@ import scala.annotation.nowarn
 
 abstract private[kyo] class StreamPublisher[V, S](
     stream: Stream[V, S & Sync]
-)(using Isolate.Contextual[S, Sync]) extends Publisher[V]:
+)(using Isolate[S, Sync, Any]) extends Publisher[V]:
 
     protected def bind(subscriber: Subscriber[? >: V]): Unit
 
@@ -28,7 +28,7 @@ end StreamPublisher
 object StreamPublisher:
 
     def apply[V, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(
         stream: Stream[V, S & Sync],
         capacity: Int = Int.MaxValue
@@ -82,10 +82,10 @@ object StreamPublisher:
     object Unsafe:
         @nowarn("msg=anonymous")
         def apply[V, S](
-            using Isolate.Contextual[S, Sync]
+            using Isolate[S, Sync, Any]
         )(
             stream: Stream[V, S & Sync],
-            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (Sync & S)) => Unit
+            subscribeCallback: (Fiber[StreamComplete, Abort[StreamCanceled]] < (Sync & S)) => Unit
         )(
             using
             AllowUnsafe,

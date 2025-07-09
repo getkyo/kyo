@@ -21,7 +21,7 @@ final private[kyo] class StreamSubscriber[V](
     end UpstreamState
 
     private val state = AtomicRef.Unsafe.init(
-        UpstreamState.Uninitialized -> Maybe.empty[Fiber.Promise.Unsafe[Nothing, Unit]]
+        UpstreamState.Uninitialized -> Maybe.empty[Fiber.Promise.Unsafe[Unit, Any]]
     )
 
     private inline def throwIfNull[A](b: A): Unit = if isNull(b) then throw new NullPointerException()
@@ -34,7 +34,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.Uninitialized, maybePromise) =>
                     val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty, 0) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        maybePromise.foreach(_.completeDiscard(Result.succeed(())))
+                        maybePromise.foreach(_.completeUnitDiscard())
                     else
                         handleSubscribe()
                     end if
@@ -57,7 +57,7 @@ final private[kyo] class StreamSubscriber[V](
                     if (strategy == EmitStrategy.Eager) || (strategy == EmitStrategy.Buffer && remaining == 1) then
                         val nextState = UpstreamState.WaitForRequest(subscription, items.append(item), remaining - 1) -> Absent
                         if state.compareAndSet(curState, nextState) then
-                            maybePromise.foreach(_.completeDiscard(Result.succeed(())))
+                            maybePromise.foreach(_.completeUnitDiscard())
                         else
                             handleNext()
                         end if
@@ -79,7 +79,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
                     val nextState = UpstreamState.Finished(Maybe(Panic(throwable)), items) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        maybePromise.foreach(_.completeDiscard(Result.succeed(())))
+                        maybePromise.foreach(_.completeUnitDiscard())
                     else
                         handleError()
                     end if
@@ -97,7 +97,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
                     val nextState = UpstreamState.Finished(Absent, items) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        maybePromise.foreach(_.completeDiscard(Result.succeed(())))
+                        maybePromise.foreach(_.completeUnitDiscard())
                     else
                         handleComplete()
                     end if
@@ -113,7 +113,7 @@ final private[kyo] class StreamSubscriber[V](
             val curState = state.get()
             curState match
                 case (UpstreamState.Uninitialized, Absent) =>
-                    val promise   = Fiber.Promise.Unsafe.init[Nothing, Unit]()
+                    val promise   = Fiber.Promise.Unsafe.init[Unit, Any]()
                     val nextState = UpstreamState.Uninitialized -> Present(promise)
                     if state.compareAndSet(curState, nextState) then
                         promise.safe.use(_ => false)
@@ -135,7 +135,7 @@ final private[kyo] class StreamSubscriber[V](
                                 handleAwait()
                             end if
                         else
-                            val promise   = Fiber.Promise.Unsafe.init[Nothing, Unit]()
+                            val promise   = Fiber.Promise.Unsafe.init[Unit, Any]()
                             val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty[V], remaining) -> Present(promise)
                             if state.compareAndSet(curState, nextState) then
                                 promise.safe.use(_ => false)
@@ -224,7 +224,7 @@ final private[kyo] class StreamSubscriber[V](
                 case (UpstreamState.Uninitialized, maybePromise) =>
                     val nextState = UpstreamState.Finished(Absent, Chunk.empty) -> Absent
                     if state.compareAndSet(curState, nextState) then
-                        Sync.defer(maybePromise.foreach(_.completeDiscard(Result.succeed(()))))
+                        Sync.defer(maybePromise.foreach(_.completeUnitDiscard()))
                     else
                         handleInterupt()
                     end if

@@ -44,7 +44,7 @@ import scala.annotation.*
   * @tparam B
   *   The type of result this actor produces upon completion
   */
-sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[Closed | E, B]):
+sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abort[Closed | E]]):
 
     /** Returns the message subject interface for sending messages to this actor.
       *
@@ -65,7 +65,7 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[Closed
       * @return
       *   A Fiber containing the actor's execution
       */
-    def fiber: Fiber[Closed | E, B] = _fiber
+    def fiber: Fiber[B, Abort[Closed | E]] = _fiber
 
     /** Retrieves the final result of this actor.
       *
@@ -385,7 +385,7 @@ object Actor:
       *   A new Actor instance in an async effect
       */
     def run[E, A: Tag, B, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(behavior: B < (Context[A] & Abort[E] & S))(
         using
         Tag[Poll[A]],
@@ -426,7 +426,7 @@ object Actor:
       *   A new Actor instance in an async effect
       */
     def run[E, A: Tag, B, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(capacity: Int)(behavior: B < (Context[A] & Abort[E] & S))(
         using
         Tag[Poll[A]],

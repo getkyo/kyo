@@ -416,7 +416,7 @@ object Signal:
           */
         final class Unsafe[A] private (
             currentRef: AtomicRef.Unsafe[A],
-            nextPromise: AtomicRef.Unsafe[Promise.Unsafe[Nothing, A]]
+            nextPromise: AtomicRef.Unsafe[Promise.Unsafe[A, Any]]
         )(using CanEqual[A, A]):
 
             def get()(using AllowUnsafe): A = currentRef.get()
@@ -470,7 +470,7 @@ object Signal:
                 loop()
             end updateAndGet
 
-            def next()(using AllowUnsafe): Fiber.Unsafe[Nothing, A] =
+            def next()(using AllowUnsafe): Fiber.Unsafe[A, Any] =
                 nextPromise.get()
 
             private def onUpdate(value: A)(using AllowUnsafe): Unit =

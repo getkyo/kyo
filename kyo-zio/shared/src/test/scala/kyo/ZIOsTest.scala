@@ -395,7 +395,7 @@ class ZIOsTest extends Test:
         "Interrupt" in runKyo {
             Cause.interrupt(zio.FiberId.None).toError match
                 case Result.Panic(e: Interrupted) => succeed
-                case _                            => fail("Expected Result.Panic with Interrupted")
+                case _                            => fail("Expected Result.Panic with Fiber.Interrupted")
             end match
         }
 

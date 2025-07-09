@@ -70,7 +70,7 @@ class FiberCombinatorsTest extends Test:
                 val effect = Kyo.never
                 runJVM {
                     Abort.run[Throwable] {
-                        val r = Async.runAndBlock(5.millis)(effect)
+                        val r = KyoApp.runAndBlock(5.millis)(effect)
                         Abort.catching[Throwable](r)
                     }.map { handledEffect =>
                         assert(handledEffect match
