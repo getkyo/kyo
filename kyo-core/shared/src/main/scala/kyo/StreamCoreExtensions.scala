@@ -35,7 +35,7 @@ object StreamCoreExtensions:
     end emitMaybeElementsFromChannel
 
     sealed trait StreamHub[A, E]:
-        def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async)
+        def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Scope & Async)
 
     private class StreamHubImpl[A, E](
         hub: Hub[Result.Partial[E, Maybe[Chunk[A]]]],
@@ -67,7 +67,7 @@ object StreamCoreExtensions:
                 case Absent =>
                     emit(listener)
 
-        def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Resource & Async) =
+        def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Scope & Async) =
             Abort.runPartial[Closed](hub.listen).map:
                 case Result.Success(listener) =>
                     Stream:
@@ -86,8 +86,8 @@ object StreamCoreExtensions:
             t1: ConcreteTag[E],
             t2: Tag[Emit[Chunk[A]]],
             fr: Frame
-        ): Unit < (Async & S & Resource) =
-            Resource.acquireRelease(Fiber.init {
+        ): Unit < (Async & S & Scope) =
+            Scope.acquireRelease(Fiber.init {
                 Abort.run[E](
                     Abort.run[Closed](
                         latch.await.andThen(stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk)))))
@@ -107,7 +107,7 @@ object StreamCoreExtensions:
             Tag[Emit[Chunk[A]]],
             Tag[Emit[Chunk[Chunk[A]]]],
             Frame
-        ): StreamHubImpl[A, E] < (Async & Resource) =
+        ): StreamHubImpl[A, E] < (Async & Scope) =
             Sync.Unsafe:
                 Latch.initWith(1): latch =>
                     Hub.initWith[Result.Partial[E, Maybe[Chunk[A]]]](bufferSize): hub =>
@@ -702,7 +702,7 @@ object StreamCoreExtensions:
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
             fr: Frame
-        ): (Stream[V, Abort[E] & Async], Stream[V, Abort[E] & Resource & Async]) < (Resource & Async & S) =
+        ): (Stream[V, Abort[E] & Async], Stream[V, Abort[E] & Scope & Async]) < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
                 for
                     s1 <- streamHub.subscribe
@@ -724,7 +724,7 @@ object StreamCoreExtensions:
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async]
-        ) < (Resource & Async & S) =
+        ) < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
                 for
                     s1 <- streamHub.subscribe
@@ -748,7 +748,7 @@ object StreamCoreExtensions:
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async]
-        ) < (Resource & Async & S) =
+        ) < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
                 for
                     s1 <- streamHub.subscribe
@@ -774,7 +774,7 @@ object StreamCoreExtensions:
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async]
-        ) < (Resource & Async & S) =
+        ) < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
                 for
                     s1 <- streamHub.subscribe
@@ -802,9 +802,9 @@ object StreamCoreExtensions:
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
             fr: Frame
-        ): Chunk[Stream[V, Abort[E] & Resource & Async]] < (Resource & Async & S) =
+        ): Chunk[Stream[V, Abort[E] & Scope & Async]] < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
-                val builder = Chunk.newBuilder[Stream[V, Abort[E] & Resource & Async]]
+                val builder = Chunk.newBuilder[Stream[V, Abort[E] & Scope & Async]]
                 Loop(numStreams): remaining =>
                     if remaining <= 0 then
                         Sync.defer(builder.result()).map(chunk => Loop.done(chunk))
@@ -834,7 +834,7 @@ object StreamCoreExtensions:
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
             fr: Frame
-        ): Stream[V, Abort[E] & Async & Resource] < (Resource & Async & S) =
+        ): Stream[V, Abort[E] & Async & Scope] < (Scope & Async & S) =
             broadcastDynamic(bufferSize).map: streamHub =>
                 Stream:
                     streamHub.subscribe.map(_.emit)
@@ -860,7 +860,7 @@ object StreamCoreExtensions:
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
             fr: Frame
-        ): StreamHub[V, E] < (Resource & Async & S) =
+        ): StreamHub[V, E] < (Scope & Async & S) =
             Latch.initWith(1): latch =>
                 StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
                     streamHub.consume(stream).andThen:
@@ -886,7 +886,7 @@ object StreamCoreExtensions:
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
             fr: Frame
-        ): A < (Resource & Async & S & S1) =
+        ): A < (Scope & Async & S & S1) =
             StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
                 fn(streamHub).map: a =>
                     streamHub.consume(stream).andThen(a)
@@ -910,7 +910,7 @@ object StreamCoreExtensions:
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
             fr: Frame
-        ): A < (Resource & Async & S & S1) =
+        ): A < (Scope & Async & S & S1) =
             StreamHubImpl.init[V, E](defaultAsyncStreamBufferSize).map: streamHub =>
                 fn(streamHub).map: a =>
                     streamHub.consume(stream).andThen(a)
@@ -958,10 +958,10 @@ object StreamCoreExtensions:
                                 )
 
                     // Single fiber emitting a tick at constant interval
-                    val tick: Fiber[Unit, Abort[Closed]] < (Sync & Resource) =
+                    val tick: Fiber[Unit, Abort[Closed]] < (Sync & Scope) =
                         if maxTime == Duration.Infinity then Fiber.unit
                         else
-                            Resource.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)
+                            Scope.acquireRelease(Clock.repeatWithDelay(maxTime)(channel.put(Tick)))(_.interrupt)
 
                     // Loop collecting values from the channel and re-emitting them as chunks.
                     // Chunks are emitted when the buffer exceeds the max size or a flush is requested.
@@ -991,7 +991,7 @@ object StreamCoreExtensions:
                         fiber <- push
                         _     <- Abort.run[Closed](pull) // ignore Closed channel, join the push fiber to capture any Abort.
                         _     <- fiber.get
-                    yield ()).handle(Resource.run, Abort.run[Closed], _.unit)
+                    yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
                 }
         end groupedWithin
 

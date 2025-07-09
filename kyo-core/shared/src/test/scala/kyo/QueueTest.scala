@@ -19,7 +19,7 @@ class QueueTest extends Test:
                     }
                     end effect
 
-                    Resource.run(effect).map:
+                    Scope.run(effect).map:
                         case (q, b, v) =>
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
@@ -144,7 +144,7 @@ class QueueTest extends Test:
                     }
                     end effect
 
-                    Resource.run(effect).map:
+                    Scope.run(effect).map:
                         case (q, b, v) =>
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
@@ -208,7 +208,7 @@ class QueueTest extends Test:
                     }
                     end effect
 
-                    Resource.run(effect).map:
+                    Scope.run(effect).map:
                         case (q, b, v) =>
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
@@ -257,7 +257,7 @@ class QueueTest extends Test:
                     }
                     end effect
 
-                    Resource.run(effect).map:
+                    Scope.run(effect).map:
                         case (q, b, v) =>
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))

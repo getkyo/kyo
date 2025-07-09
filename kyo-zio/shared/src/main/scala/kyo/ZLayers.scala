@@ -4,7 +4,7 @@ import ZIOs.toExit
 import zio.Cause
 import zio.Exit
 import zio.Runtime
-import zio.Scope
+import zio.Scope as ZScope
 import zio.Tag as ZTag
 import zio.Trace
 import zio.Unsafe
@@ -22,12 +22,12 @@ object ZLayers:
       * @return
       *   A Kyo Layer that, when run, will instantiate the resource from the ZLayer
       */
-    def get[E, A: ZTag: Tag](layer: => ZLayer[Any, E, A])(using Frame, Trace): Layer[A, Abort[E] & Async & Resource] =
+    def get[E, A: ZTag: Tag](layer: => ZLayer[Any, E, A])(using Frame, Trace): Layer[A, Abort[E] & Async & Scope] =
         Layer {
             Sync.Unsafe {
-                val scope = Unsafe.unsafely(Scope.unsafe.make)
+                val scope = Unsafe.unsafely(ZScope.unsafe.make)
 
-                Resource.ensure(ex => ZIOs.get(scope.close(ex.fold(Exit.unit)(_.toExit)))).andThen:
+                Scope.ensure(ex => ZIOs.get(scope.close(ex.fold(Exit.unit)(_.toExit)))).andThen:
                     ZIOs.get(layer.build(scope).map(_.get[A]))
             }
         }

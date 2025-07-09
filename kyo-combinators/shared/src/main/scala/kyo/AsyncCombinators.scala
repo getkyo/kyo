@@ -22,19 +22,19 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
         Fiber.init(effect)
 
-    /** Forks this computation using the Async effect and returns its result as a `Fiber[A, Abort[E]]`, managed by the Resource effect.
-      * Unlike `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope
-      * is closed, preventing resource leaks.
+    /** Forks this computation using the Async effect and returns its result as a `Fiber[A, Abort[E]]`, managed by the Scope effect. Unlike
+      * `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is
+      * closed, preventing resource leaks.
       *
       * @return
-      *   A computation that produces the result of this computation with Async and Resource effects
+      *   A computation that produces the result of this computation with Async and Scope effects
       */
     def forkScoped[S2](
         using
         isolate: Isolate[S, Sync, S2],
         reduce: Reducible[Abort[E]],
         frame: Frame
-    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Resource) =
+    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
         Kyo.acquireRelease(Fiber.init(effect))(_.interrupt)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.

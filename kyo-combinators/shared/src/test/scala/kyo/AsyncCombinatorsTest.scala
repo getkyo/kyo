@@ -154,7 +154,7 @@ class FiberCombinatorsTest extends Test:
                         result <- fiber.join
                     yield result
 
-                Fiber.init(Resource.run(program)).map(_.toFuture).map { handledEffect =>
+                Fiber.init(Scope.run(program)).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(state == 1)
                         assert(v == 1)
@@ -171,11 +171,11 @@ class FiberCombinatorsTest extends Test:
                 val program =
                     for
                         fiber  <- effect.forkScoped
-                        _      <- Resource.acquireRelease(())(_ => cleanedUp = true)
+                        _      <- Scope.acquireRelease(())(_ => cleanedUp = true)
                         result <- fiber.join
                     yield result
 
-                Fiber.init(Resource.run(program)).map(_.toFuture).map { handledEffect =>
+                Fiber.init(Scope.run(program)).map(_.toFuture).map { handledEffect =>
                     handledEffect.map(v =>
                         assert(v == 42)
                         assert(cleanedUp)

@@ -13,7 +13,7 @@ object StreamReactiveStreamsExtensions:
             Frame,
             Tag[Emit[Chunk[T]]],
             Tag[Poll[Chunk[T]]]
-        ): Subscription < (Resource & Sync & S) =
+        ): Subscription < (Scope & Sync & S) =
             subscribeToStream(stream, subscriber)
 
         def toPublisher(
@@ -21,7 +21,7 @@ object StreamReactiveStreamsExtensions:
             Frame,
             Tag[Emit[Chunk[T]]],
             Tag[Poll[Chunk[T]]]
-        ): Publisher[T] < (Resource & Sync & S) =
+        ): Publisher[T] < (Scope & Sync & S) =
             streamToPublisher(stream)
     end extension
 end StreamReactiveStreamsExtensions

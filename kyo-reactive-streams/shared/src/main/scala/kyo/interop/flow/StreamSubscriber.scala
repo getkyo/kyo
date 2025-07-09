@@ -260,8 +260,8 @@ final private[kyo] class StreamSubscriber[V](
             }
         }
 
-    def stream(using Frame, Tag[Emit[Chunk[V]]]): Stream[V, Async] < (Resource & Sync) =
-        Resource.ensure(interupt).andThen:
+    def stream(using Frame, Tag[Emit[Chunk[V]]]): Stream[V, Async] < (Scope & Sync) =
+        Scope.ensure(interupt).andThen:
             Stream(emit)
 
 end StreamSubscriber

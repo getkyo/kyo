@@ -15,7 +15,7 @@ class HubTest extends Test:
         }
 
         "resource" in run {
-            val effect: (Int, Hub[Int]) < (Abort[Closed] & Async) = Resource.run:
+            val effect: (Int, Hub[Int]) < (Abort[Closed] & Async) = Scope.run:
                 Hub.initWith[Int](10) { h =>
                     for
                         l <- h.listen
@@ -414,7 +414,7 @@ class HubTest extends Test:
         "resource safety" in run {
             for
                 h <- Hub.init[Int](4)
-                r <- Resource.run {
+                r <- Scope.run {
                     for
                         l <- h.listen
                         _ <- h.put(1)

@@ -8,7 +8,7 @@ import org.scalatest.compatible.Assertion
 import scala.concurrent.Future
 import zio.Cause
 import zio.Runtime
-import zio.Scope
+import zio.Scope as ZScope
 import zio.Tag as ZTag
 import zio.Unsafe
 import zio.ZIO
@@ -45,22 +45,22 @@ class ZLayersTest extends Test:
             val zlayer: ZLayer[Any, Nothing, TestService] =
                 ZLayer.succeed(TestServiceImpl(42))
 
-            val klayer: Layer[TestService, Async & Resource] =
+            val klayer: Layer[TestService, Async & Scope] =
                 ZLayers.get[Nothing, TestService](zlayer)
 
-            Env.runLayer(klayer)(Env.use[TestService](service => assert(service.getValue == 42))).handle(Memo.run, Resource.run)
+            Env.runLayer(klayer)(Env.use[TestService](service => assert(service.getValue == 42))).handle(Memo.run, Scope.run)
         }
 
         "ZLayer.fail" in runKyo {
             val zlayer: ZLayer[Any, String, TestService] =
                 ZLayer.fail("layer failed")
 
-            val klayer: Layer[TestService, Abort[String] & Async & Resource] =
+            val klayer: Layer[TestService, Abort[String] & Async & Scope] =
                 ZLayers.get(zlayer)
 
             val computation = Env.use[TestService](_.getValue)
 
-            Env.runLayer(klayer)(computation).handle(Abort.run(_), Memo.run, Resource.run).map { result =>
+            Env.runLayer(klayer)(computation).handle(Abort.run(_), Memo.run, Scope.run).map { result =>
                 result match
                     case Result.Failure(msg) => assert(msg == "layer failed")
                     case _                   => fail("Expected LayerError")
@@ -74,14 +74,14 @@ class ZLayersTest extends Test:
                         def getValue: Int = incrementAndGet()
                 }
 
-            val klayer1: Layer[TestService, Abort[Nothing] & Async & Resource] =
+            val klayer1: Layer[TestService, Abort[Nothing] & Async & Scope] =
                 ZLayers.get(zlayer)
 
             val klayer2 = Layer(Env.use[TestService](_.getValue))
 
             val klayer3 = klayer1.using(klayer2)
 
-            Env.runLayer(klayer3)(Env.use[TestService](_.getValue)).map(value => assert(value == 2)).handle(Memo.run, Resource.run)
+            Env.runLayer(klayer3)(Env.use[TestService](_.getValue)).map(value => assert(value == 2)).handle(Memo.run, Scope.run)
         }
 
         def scopedTest(name: String)(expectedExit: zio.Exit[Any, Any])(effect: => Any < (Env[Int] & Abort[String] & Async)) =
@@ -90,9 +90,9 @@ class ZLayersTest extends Test:
                 import zio.Exit
                 var acquired = 0
                 var exit     = AtomicReference[Exit[Any, Any]](Exit.fail("Exit was never updated"))
-                val zlayer   = ZLayer.scoped(Scope.addFinalizerExit(e => ZIO.succeed(exit.set(e))) *> ZIO.succeed { acquired += 1; 42 })
+                val zlayer   = ZLayer.scoped(ZScope.addFinalizerExit(e => ZIO.succeed(exit.set(e))) *> ZIO.succeed { acquired += 1; 42 })
                 val klayer   = ZLayers.get(zlayer)
-                Env.runLayer(klayer)(effect).handle(Memo.run, Resource.run, Abort.run(_)).andThen {
+                Env.runLayer(klayer)(effect).handle(Memo.run, Scope.run, Abort.run(_)).andThen {
                     assert(acquired == 1)
                     assert(exit.get == expectedExit)
                 }

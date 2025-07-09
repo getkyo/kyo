@@ -37,7 +37,7 @@ object StreamPublisher:
         Frame,
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
-    ): StreamPublisher[V, S] < (Resource & Sync & S) =
+    ): StreamPublisher[V, S] < (Scope & Sync & S) =
         def discardSubscriber(subscriber: Subscriber[? >: V]): Unit =
             subscriber.onSubscribe(new Subscription:
                 override def request(n: Long): Unit = ()
@@ -61,7 +61,7 @@ object StreamPublisher:
 
         for
             channel <-
-                Resource.acquireRelease(Channel.init[Subscriber[? >: V]](capacity))(
+                Scope.acquireRelease(Channel.init[Subscriber[? >: V]](capacity))(
                     _.close.map(_.foreach(_.foreach(discardSubscriber(_))))
                 )
             publisher <- Sync.Unsafe {
@@ -73,8 +73,8 @@ object StreamPublisher:
                             case Result.Success(true) => ()
                             case _                    => discardSubscriber(subscriber)
             }
-            supervisor <- Resource.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt)
-            _          <- Resource.acquireRelease(Fiber.init(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
+            supervisor <- Scope.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt)
+            _          <- Scope.acquireRelease(Fiber.init(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
         yield publisher
         end for
     end apply

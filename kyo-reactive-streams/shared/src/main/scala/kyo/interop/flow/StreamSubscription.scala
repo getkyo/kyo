@@ -97,11 +97,11 @@ object StreamSubscription:
         Frame,
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
-    ): StreamSubscription[V, S] < (Sync & S & Resource) =
+    ): StreamSubscription[V, S] < (Sync & S & Scope) =
         for
             subscription <- Sync.Unsafe(new StreamSubscription[V, S](stream, subscriber))
             _            <- subscription.subscribe
-            _            <- Resource.acquireRelease(subscription.consume)(_.interrupt.unit)
+            _            <- Scope.acquireRelease(subscription.consume)(_.interrupt.unit)
         yield subscription
 
     object Unsafe:

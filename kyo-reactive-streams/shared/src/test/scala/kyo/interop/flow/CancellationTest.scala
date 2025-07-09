@@ -16,7 +16,7 @@ final class CancellationTest extends Test:
 
     val attempts = 100
 
-    def testStreamSubscription(clue: String)(program: Subscription => Unit): Unit < (Sync & Resource) =
+    def testStreamSubscription(clue: String)(program: Subscription => Unit): Unit < (Sync & Scope) =
         Loop(attempts) { index =>
             if index <= 0 then
                 Loop.done

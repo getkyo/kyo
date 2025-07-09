@@ -184,7 +184,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                 fiber3      <- Fiber.init(latch.release.andThen(subStream3.run.unit))
                 fiber4      <- Fiber.init(latch.release.andThen(subStream4.run.unit))
                 latchPub    <- Latch.init(1)
-                publisherFiber <- Fiber.init(latch.await.andThen(Resource.run(
+                publisherFiber <- Fiber.init(latch.await.andThen(Scope.run(
                     Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                         .toPublisher
                         .map { publisher =>
@@ -224,7 +224,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                                 case _                       => promise.completeDiscard(Failure(TestError))
                         })))
                 }
-                _      <- Resource.run(subscriber.stream.map(_.take(10).discard))
+                _      <- Scope.run(subscriber.stream.map(_.take(10).discard))
                 result <- promise.getResult
             yield assert(result == Success(()))
             end for

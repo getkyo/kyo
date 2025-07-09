@@ -684,7 +684,7 @@ class StreamCoreExtensionsTest extends Test:
                 class TestResource(var closes: Int = 0) extends java.io.Closeable:
                     def close() = closes += 1
 
-                val stream        = Stream(Resource.acquire(TestResource()).map(r => Emit.value(Chunk(r))))
+                val stream        = Stream(Scope.acquire(TestResource()).map(r => Emit.value(Chunk(r))))
                 val groupedWithin = stream.groupedWithin(3, Duration.Infinity)
                 groupedWithin.run.map: grouped =>
                     stream.run.map: streamResult =>

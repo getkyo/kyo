@@ -3,11 +3,11 @@ package kyo.internal
 import kyo.*
 import scala.concurrent.Future
 
-private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async & Resource]:
-    def run(v: Future[Assertion] < (Abort[Any] & Async & Resource))(using Frame): Future[Assertion] =
+private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async & Scope]:
+    def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
         import AllowUnsafe.embrace.danger
         v.handle(
-            Resource.run,
+            Scope.run,
             Abort.recover[Any] {
                 case ex: Throwable => throw ex
                 case e             => throw new IllegalStateException(s"Test aborted with $e")
