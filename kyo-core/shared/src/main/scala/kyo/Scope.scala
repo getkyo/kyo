@@ -196,7 +196,7 @@ object Scope:
             case Absent             => bug("Missing finalizer from context")
         }
 
-    given Isolate.Contextual[Scope, Sync] = Isolate.Contextual.derive[Sync, Sync]
+    given isolate: Isolate[Scope, Sync, Any] = Isolate.derive[Sync, Sync, Any]
 
     /** Represents a finalizer for a scope. */
     opaque type Finalizer = Finalizer.Unsafe
@@ -229,7 +229,7 @@ object Scope:
             import AllowUnsafe.embrace.danger
 
             private val queue   = Queue.Unbounded.Unsafe.init[Callback](Access.MultiProducerSingleConsumer)
-            private val promise = Promise.Unsafe.init[Nothing, Unit]()
+            private val promise = Promise.Unsafe.init[Unit, Any]()
 
             private[Scope] def tryEnsure(callback: Callback): Unit =
                 discard(queue.offer(callback))
@@ -247,18 +247,18 @@ object Scope:
                     case Absent => ()
                     case Present(tasks) =>
                         if tasks.isEmpty then
-                            promise.completeDiscard(Result.unit)
+                            promise.completeDiscard(Result.succeed(()))
                         else
                             Sync.Unsafe.evalOrThrow(
                                 Async.foreachDiscard(tasks, parallelism) { task =>
                                     Abort.run[Throwable](task(ex))
                                         .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
                                 }
-                                    .handle(Fiber.init[Nothing, Unit, Any])
+                                    .handle(Fiber.init[Nothing, Unit, Any, Any])
                                     .map(promise.safe.becomeDiscard)
                             )
 
-            def await()(using AllowUnsafe): Fiber.Unsafe[Nothing, Unit] =
+            def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Any] =
                 promise
 
             def safe: Finalizer = this

@@ -250,7 +250,7 @@ class STMTest extends Test:
             Memo.run {
                 for
                     ref <- TRef.init(1)
-                    result <- STM.run {
+                    result <- STM.run(using Memo.isolate) {
                         for
                             _      <- ref.set(2)
                             v1     <- f(2)

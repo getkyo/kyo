@@ -22,9 +22,9 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
         Fiber.init(effect)
 
-    /** Forks this computation using the Async effect and returns its result as a `Fiber[A, Abort[E]]`, managed by the Scope effect. Unlike `fork`,
-      * which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is closed,
-      * preventing resource leaks.
+    /** Forks this computation using the Async effect and returns its result as a `Fiber[A, Abort[E]]`, managed by the Scope effect. Unlike
+      * `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is
+      * closed, preventing resource leaks.
       *
       * @return
       *   A computation that produces the result of this computation with Async and Scope effects

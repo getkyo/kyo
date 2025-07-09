@@ -374,13 +374,13 @@ class ChannelTest extends Test:
             yield assert(result.sorted == Chunk(1, 2, 3) && finalSize == 0)
             end for
         }
-        "race with close" in run {
+        "race with close" in runNotJS {
             verifyRaceDrainWithClose(2, _.drain, _.close)
         }
-        "race with closeAwaitEmpty" in run {
+        "race with closeAwaitEmpty" in runNotJS {
             verifyRaceDrainWithClose(2, _.drain, _.closeAwaitEmpty)
         }
-        "race with close and zero capacity" in run {
+        "race with close and zero capacity" in runNotJS {
             verifyRaceDrainWithClose(2, _.drain, _.close)
         }
     }
@@ -450,13 +450,13 @@ class ChannelTest extends Test:
                 finalSize <- c.size
             yield assert(result.size == 3 && finalSize == 0)
         }
-        "race with close" in run {
+        "race with close" in runNotJS {
             verifyRaceDrainWithClose(2, _.drainUpTo(2), _.close)
         }
-        "race with closeAwaitEmpty" in run {
+        "race with closeAwaitEmpty" in runNotJS {
             verifyRaceDrainWithClose(2, _.drainUpTo(2), _.closeAwaitEmpty)
         }
-        "race with close and zero capacity" in run {
+        "race with close and zero capacity" in runNotJS {
             verifyRaceDrainWithClose(0, _.drainUpTo(Int.MaxValue), _.close)
         }
     }

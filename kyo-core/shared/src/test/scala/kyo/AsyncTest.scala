@@ -752,7 +752,7 @@ class AsyncTest extends Test:
 
             Memo.run {
                 Kyo.zip(
-                    Async.collectAll(
+                    Async.collectAll(using Memo.isolate)(
                         Seq(
                             f(1),
                             f(1),
