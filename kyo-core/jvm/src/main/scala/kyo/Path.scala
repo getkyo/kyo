@@ -109,7 +109,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
 
     /** Reads a file returning its contents as a Stream of Strings
       */
-    def readStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Stream[String, Resource & Sync] =
+    def readStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Stream[String, Scope & Sync] =
         readLoop[String, Array[Byte], (FileChannel, ByteBuffer)](
             (FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
             ch => Sync.defer(ch._1.close()),
@@ -119,7 +119,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
 
     /** Reads a file returning its contents as a Stream of Lines
       */
-    def readLinesStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Stream[String, Resource & Sync] =
+    def readLinesStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Stream[String, Scope & Sync] =
         readLoop[String, String, BufferedReader](
             Sync.defer(JFiles.newBufferedReader(toJava, Charset.defaultCharset())),
             reader => reader.close(),
@@ -129,7 +129,7 @@ final class Path private (val path: List[String]) extends Serializable derives C
 
     /** Reads a file returning its contents as a Stream of Bytes
       */
-    def readBytesStream(using Frame): Stream[Byte, Resource & Sync] =
+    def readBytesStream(using Frame): Stream[Byte, Scope & Sync] =
         readLoop[Byte, Array[Byte], (FileChannel, ByteBuffer)](
             Sync.defer(FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
             ch => ch._1.close(),
@@ -161,9 +161,9 @@ final class Path private (val path: List[String]) extends Serializable derives C
         release: Res => Unit < Async,
         readOnce: Res => Maybe[ReadTpe] < Sync,
         writeOnce: ReadTpe => Chunk[A]
-    )(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Resource & Sync] =
-        Stream[A, Resource & Sync] {
-            Resource.acquireRelease(acquire)(release).map { res =>
+    )(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Scope & Sync] =
+        Stream[A, Scope & Sync] {
+            Scope.acquireRelease(acquire)(release).map { res =>
                 readOnce(res).map { state =>
                     Loop(state) {
                         case Absent => Loop.done
@@ -180,8 +180,8 @@ final class Path private (val path: List[String]) extends Serializable derives C
 
     /** Truncates the content of this file
       */
-    def truncate(size: Long)(using Frame): FileChannel < (Resource & Sync) =
-        Resource
+    def truncate(size: Long)(using Frame): FileChannel < (Scope & Sync) =
+        Scope
             .acquireRelease(FileChannel.open(toJava, StandardOpenOption.WRITE))(ch => ch.close())
             .map { ch =>
                 ch.truncate(size)
@@ -454,8 +454,8 @@ object Path:
 end Path
 
 extension [S](stream: Stream[Byte, S])
-    def sink(path: Path)(using Frame): Unit < (Resource & Sync & S) =
-        Resource.acquireRelease(Sync.defer(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
+    def sink(path: Path)(using Frame): Unit < (Scope & Sync & S) =
+        Scope.acquireRelease(Sync.defer(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
             stream.foreachChunk(bytes =>
                 Sync.defer {
                     fileCh.write(ByteBuffer.wrap(bytes.toArray))
@@ -467,8 +467,8 @@ end extension
 
 extension [S](stream: Stream[String, S])
     @scala.annotation.targetName("stringSink")
-    def sink(path: Path, charset: Codec = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Unit < (Resource & Sync & S) =
-        Resource.acquireRelease(Sync.defer(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
+    def sink(path: Path, charset: Codec = java.nio.charset.StandardCharsets.UTF_8)(using Frame): Unit < (Scope & Sync & S) =
+        Scope.acquireRelease(Sync.defer(FileChannel.open(path.toJava, StandardOpenOption.WRITE)))(ch => ch.close()).map { fileCh =>
             stream.foreach(s =>
                 Sync.defer {
                     fileCh.write(ByteBuffer.wrap(s.getBytes))
@@ -480,8 +480,8 @@ extension [S](stream: Stream[String, S])
     def sinkLines(
         path: Path,
         charset: Codec = java.nio.charset.StandardCharsets.UTF_8
-    )(using Frame): Unit < (Resource & Sync & S) =
-        Resource.acquireRelease(FileChannel.open(path.toJava, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
+    )(using Frame): Unit < (Scope & Sync & S) =
+        Scope.acquireRelease(FileChannel.open(path.toJava, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
             stream.foreach(line =>
                 Sync.defer {
                     fileCh.write(ByteBuffer.wrap(line.getBytes))

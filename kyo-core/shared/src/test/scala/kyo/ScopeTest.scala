@@ -6,7 +6,7 @@ import kyo.Result.Error
 import kyo.Result.Panic
 import scala.util.control.NoStackTrace
 
-class ResourceTest extends Test:
+class ScopeTest extends Test:
 
     case class TestResource(id: Int, var closes: Int = 0) extends Closeable derives CanEqual:
         var acquires = 0
@@ -31,8 +31,8 @@ class ResourceTest extends Test:
     "acquire + tranform + close" in run {
         val r1 = TestResource(1)
         val r2 = TestResource(2)
-        Resource.acquire(r1()).map(_ => assert(r1.closes == 0))
-            .handle(Resource.run)
+        Scope.acquire(r1()).map(_ => assert(r1.closes == 0))
+            .handle(Scope.run)
             .map { _ =>
                 assert(r1.closes == 1)
                 assert(r2.closes == 0)
@@ -44,8 +44,8 @@ class ResourceTest extends Test:
     "two acquires + close" in run {
         val r1 = TestResource(1)
         val r2 = TestResource(2)
-        Resource.acquire(r1()).map(_ => Resource.acquire(r2()))
-            .handle(Resource.run)
+        Scope.acquire(r1()).map(_ => Scope.acquire(r2()))
+            .handle(Scope.run)
             .map { _ =>
                 assert(r1.closes == 1)
                 assert(r2.closes == 1)
@@ -59,12 +59,12 @@ class ResourceTest extends Test:
         val r2 = TestResource(2)
         val io =
             for
-                r1 <- Resource.acquire(r1())
+                r1 <- Scope.acquire(r1())
                 i1 = r1.id * 3
-                r2 <- Resource.acquire(r2())
+                r2 <- Scope.acquire(r2())
                 i2 = r2.id * 5
             yield i1 + i2
-        io.handle(Resource.run)
+        io.handle(Scope.run)
             .map { r =>
                 assert(r == 13)
                 assert(r1.closes == 1)
@@ -76,10 +76,10 @@ class ResourceTest extends Test:
 
     "nested" in run {
         val r1 = TestResource(1)
-        Resource.acquire(r1())
+        Scope.acquire(r1())
             .handle(
-                Resource.run,
-                Resource.run
+                Scope.run,
+                Scope.run
             ).map { r =>
                 assert(r == r1)
                 assert(r1.acquires == 1)
@@ -88,19 +88,19 @@ class ResourceTest extends Test:
     }
 
     "empty run" in run {
-        Resource.run("a").map(s => assert(s == "a"))
+        Scope.run("a").map(s => assert(s == "a"))
     }
 
     "effectful acquireRelease" in run {
         val io =
             for
-                r          <- Resource.acquireRelease(EffectfulResource(1))(_.close)
+                r          <- Scope.acquireRelease(EffectfulResource(1))(_.close)
                 closeCount <- r.closes.get
             yield
                 assert(closeCount == 0)
                 r
         io.handle(
-            Resource.run,
+            Scope.run,
             Abort.run
         ).map { finalizedResource =>
             finalizedResource.foldError(_.closes.get.map(i => assert(i == 1)), _ => ???)
@@ -111,9 +111,9 @@ class ResourceTest extends Test:
 
         "ensure" in run {
             var closes = 0
-            Resource.ensure(Fiber.init(closes += 1).map(_.get).unit)
+            Scope.ensure(Fiber.init(closes += 1).map(_.get).unit)
                 .handle(
-                    Resource.run,
+                    Scope.run,
                     Abort.run
                 ).map { _ =>
                     assert(closes == 1)
@@ -130,9 +130,9 @@ class ResourceTest extends Test:
                     assert(i == 42)
                     closes += 1
                 }.map(_.get)
-            Resource.acquireRelease(acquire)(release)
+            Scope.acquireRelease(acquire)(release)
                 .handle(
-                    Resource.run,
+                    Scope.run,
                     Abort.run[Timeout],
                     Abort.run[Absent]
                 ).map { _ =>
@@ -142,9 +142,9 @@ class ResourceTest extends Test:
 
         "acquire" in run {
             val r = TestResource(1)
-            Resource.acquire(Fiber.init(r).map(_.get))
+            Scope.acquire(Fiber.init(r).map(_.get))
                 .handle(
-                    Resource.run,
+                    Scope.run,
                     Abort.run
                 ).map { _ =>
                     assert(r.closes == 1)
@@ -156,8 +156,8 @@ class ResourceTest extends Test:
         case object TestException extends NoStackTrace
 
         "acquire fails" in run {
-            val io = Resource.acquireRelease(Sync.defer[Int, Any](throw TestException))(_ => ())
-            Resource.run(io)
+            val io = Scope.acquireRelease(Sync.defer[Int, Any](throw TestException))(_ => ())
+            Scope.run(io)
                 .handle(Abort.run)
                 .map {
                     case Result.Panic(t) => assert(t eq TestException)
@@ -168,14 +168,14 @@ class ResourceTest extends Test:
         "release fails" in run {
             var acquired = false
             var released = false
-            val io = Resource.acquireRelease(Sync.defer { acquired = true; "resource" }) { _ =>
+            val io = Scope.acquireRelease(Sync.defer { acquired = true; "resource" }) { _ =>
                 Sync.defer {
                     released = true
                     throw TestException
                 }
             }
             io.handle(
-                Resource.run,
+                Scope.run,
                 Abort.run
             ).map { _ =>
                 assert(acquired && released)
@@ -184,21 +184,21 @@ class ResourceTest extends Test:
 
         "ensure fails" in run {
             var ensureCalled = false
-            val io           = Resource.ensure(Sync.defer { ensureCalled = true; throw TestException })
-            Resource.run(io)
+            val io           = Scope.ensure(Sync.defer { ensureCalled = true; throw TestException })
+            Scope.run(io)
                 .map(_ => assert(ensureCalled))
 
         }
 
-        "fiber escapes the scope of Resource.run" in run {
+        "fiber escapes the scope of Scope.run" in run {
             var called = false
             val io =
                 for
                     l <- Latch.init(1)
-                    f <- Fiber.init(l.await.andThen(Resource.ensure { called = true }))
+                    f <- Fiber.init(l.await.andThen(Scope.ensure { called = true }))
                 yield (l, f)
             for
-                (l, f) <- Resource.run(io)
+                (l, f) <- Scope.run(io)
                 _      <- l.release
                 result <- f.getResult
             yield assert(result.panic.exists(_.isInstanceOf[Closed]))
@@ -211,12 +211,12 @@ class ResourceTest extends Test:
         "cleans up resources in parallel" in run {
             Latch.init(3).map { latch =>
                 def makeResource(id: Int) =
-                    Resource.acquireRelease(Sync.defer(id))(_ => latch.release)
+                    Scope.acquireRelease(Sync.defer(id))(_ => latch.release)
 
                 val resources = Kyo.foreach(1 to 3)(makeResource)
 
                 for
-                    close <- Fiber.init(resources.handle(Resource.run(3)))
+                    close <- Fiber.init(resources.handle(Scope.run(3)))
                     _     <- latch.await
                     ids   <- close.get
                 yield assert(ids == (1 to 3))
@@ -227,7 +227,7 @@ class ResourceTest extends Test:
         "respects parallelism limit" in run {
             AtomicInt.init.map { counter =>
                 def makeResource(id: Int) =
-                    Resource.acquireRelease(Sync.defer(id)) { _ =>
+                    Scope.acquireRelease(Sync.defer(id)) { _ =>
                         for
                             current <- counter.getAndIncrement
                             _       <- Async.sleep(1.millis)
@@ -240,7 +240,7 @@ class ResourceTest extends Test:
                 val resources = Kyo.foreach(1 to 10)(makeResource)
 
                 for
-                    close <- Fiber.init(resources.handle(Resource.run(3)))
+                    close <- Fiber.init(resources.handle(Scope.run(3)))
                     ids   <- close.get
                 yield assert(ids == (1 to 10))
                 end for
@@ -252,12 +252,12 @@ class ResourceTest extends Test:
 
         "computation failure" in run {
             var finalizerCalled = false
-            val io = Resource.ensure {
+            val io = Scope.ensure {
                 Async.sleep(50.millis).andThen { finalizerCalled = true }
             }.map(_ => Abort.fail("Test failure"))
 
             io.handle(
-                Resource.run,
+                Scope.run,
                 Abort.run
             ).map { result =>
                 assert(finalizerCalled)
@@ -268,7 +268,7 @@ class ResourceTest extends Test:
         "finalizer failure" in run {
             var mainActionExecuted = false
             var finalizerStarted   = false
-            val io = Resource.ensure {
+            val io = Scope.ensure {
                 finalizerStarted = true
                 Async.sleep(50.millis)
             }.map { _ =>
@@ -276,7 +276,7 @@ class ResourceTest extends Test:
                 "success"
             }
 
-            Resource.run(io)
+            Scope.run(io)
                 .handle(Abort.run)
                 .map { result =>
                     assert(finalizerStarted)
@@ -291,16 +291,16 @@ class ResourceTest extends Test:
 
             val io =
                 for
-                    _ <- Resource.ensure {
+                    _ <- Scope.ensure {
                         Async.sleep(50.millis).andThen { firstFinalizerCalled = true }
                     }
-                    _ <- Resource.ensure {
+                    _ <- Scope.ensure {
                         Async.sleep(25.millis).andThen { secondFinalizerCalled = true }
                     }
                     _ <- Sync.defer(Abort.fail("Fail after acquiring resources"))
                 yield ()
 
-            Resource.run(io)
+            Scope.run(io)
                 .handle(Abort.run)
                 .map { result =>
                     assert(firstFinalizerCalled)
@@ -315,13 +315,13 @@ class ResourceTest extends Test:
 
             val io =
                 for
-                    _ <- Resource.acquire(r1())
-                    _ <- Resource.ensure {
+                    _ <- Scope.acquire(r1())
+                    _ <- Scope.ensure {
                         Async.sleep(50.millis).andThen { slowFinalizerDone = true }
                     }
                 yield "success"
 
-            Resource.run(io)
+            Scope.run(io)
                 .map { result =>
                     assert(r1.closes == 1)
                     assert(slowFinalizerDone)
@@ -336,11 +336,11 @@ class ResourceTest extends Test:
         "receives Absent on normal completion" in run {
             var receivedValue: Maybe[Error[Any]] = null
 
-            Resource.ensure { t =>
+            Scope.ensure { t =>
                 receivedValue = t
                 ()
             }
-                .handle(Resource.run)
+                .handle(Scope.run)
                 .map { _ =>
                     assert(receivedValue == Absent)
                 }
@@ -350,7 +350,7 @@ class ResourceTest extends Test:
             var receivedValue: Maybe[Error[Any]] = null
             val exception                        = TestException
 
-            val io = Resource.ensure { t =>
+            val io = Scope.ensure { t =>
                 receivedValue = t
                 ()
             }.map { _ =>
@@ -358,7 +358,7 @@ class ResourceTest extends Test:
             }
 
             io.handle(
-                Resource.run,
+                Scope.run,
                 Abort.run
             ).map { result =>
                 assert(receivedValue.isDefined)
@@ -372,11 +372,11 @@ class ResourceTest extends Test:
             var innerException: Maybe[Error[Any]] = null
             val testException                     = TestException
 
-            val io = Resource.ensure { t =>
+            val io = Scope.ensure { t =>
                 outerException = t
                 ()
             }.map { _ =>
-                Resource.ensure { t =>
+                Scope.ensure { t =>
                     innerException = t
                     ()
                 }.map { _ =>
@@ -385,8 +385,8 @@ class ResourceTest extends Test:
             }
 
             io.handle(
-                Resource.run,
-                Resource.run,
+                Scope.run,
+                Scope.run,
                 Abort.run
             ).map { result =>
                 assert(innerException.isDefined)
@@ -400,7 +400,7 @@ class ResourceTest extends Test:
         "can use exception information for recovery" in run {
             var recoveryAction = ""
 
-            val io = Resource.ensure { t =>
+            val io = Scope.ensure { t =>
                 recoveryAction = t match
                     case Present(Error(_: IllegalArgumentException)) => "IllegalArgument"
                     case Present(Error(_: IllegalStateException))    => "IllegalState"
@@ -412,11 +412,11 @@ class ResourceTest extends Test:
             }
 
             io.handle(
-                Resource.run,
+                Scope.run,
                 Abort.run
             ).map { _ =>
                 assert(recoveryAction == "IllegalState")
             }
         }
     }
-end ResourceTest
+end ScopeTest

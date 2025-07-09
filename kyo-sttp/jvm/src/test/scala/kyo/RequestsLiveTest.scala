@@ -34,7 +34,7 @@ class RequestsLiveTest extends Test:
         endpointPath: String,
         response: Try[String],
         port: Int = 8000
-    ): Int < (Sync & Resource) =
+    ): Int < (Sync & Scope) =
         Sync.defer {
 
             import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
@@ -63,7 +63,7 @@ class RequestsLiveTest extends Test:
             )
             server.setExecutor(null)
             server.start()
-            Resource.ensure(server.stop(0))
+            Scope.ensure(server.stop(0))
                 .andThen(Sync.defer(server.getAddress.getPort()))
         }
 end RequestsLiveTest

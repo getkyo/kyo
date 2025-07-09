@@ -23,10 +23,10 @@ import kyo.kernel.internal.Safepoint
   */
 opaque type Sync <: Abort[Nothing] = Abort[Nothing]
 
-@deprecated("use `Sync`", "0.19.1")
+@deprecated("Will be removed in 1.0, Use `Sync` instead", "0.19.1")
 type IO = Sync
 
-@deprecated("use `Sync`", "0.19.1")
+@deprecated("Will be removed in 1.0. Use `Sync` instead", "1.0-RC")
 val IO = Sync
 
 object Sync:
@@ -64,7 +64,7 @@ object Sync:
       * @tparam A
       *   The result type of the main computation.
       */
-    inline def ensure[A, S](inline f: => Any < Sync)(v: => A < S)(using inline frame: Frame): A < (Sync & S) =
+    inline def ensure[A, S](inline f: => Any < (Sync & Abort[Throwable]))(v: => A < S)(using inline frame: Frame): A < (Sync & S) =
         ensure(_ => f)(v)
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
@@ -86,7 +86,9 @@ object Sync:
       * @return
       *   The result of the computation, with the finalizer guaranteed to run.
       */
-    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < Sync)(v: => A < S)(using inline frame: Frame): A < (Sync & S) =
+    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
+        inline frame: Frame
+    ): A < (Sync & S) =
         Unsafe(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.

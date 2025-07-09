@@ -27,13 +27,13 @@ abstract class KyoApp extends KyoAppPlatformSpecific:
         promise.mask().safe
     end awaitInterrupt
 
-    override protected def handle[A](v: A < (Async & Resource & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
-        Async.raceFirst(Resource.run(v), awaitInterrupt.get)
+    override protected def handle[A](v: A < (Async & Scope & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =
+        Async.raceFirst(Scope.run(v), awaitInterrupt.get)
     end handle
 end KyoApp
 
 object KyoApp:
-    def apply[A](v: => A < (Async & Resource & Abort[Throwable]))(using Frame, Render[A]): KyoApp =
+    def apply[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): KyoApp =
         new KyoApp:
             run(v)
 
@@ -133,9 +133,9 @@ object KyoApp:
           *   A Result containing either the computed value or a failure.
           */
         def runAndBlock[A](timeout: Duration)(
-            v: A < (Async & Resource & Abort[Throwable])
+            v: A < (Async & Scope & Abort[Throwable])
         )(using Frame, AllowUnsafe): Result[Throwable, A] =
-            Abort.run(Sync.Unsafe.run(KyoApp.runAndBlock(timeout)(Resource.run(v)))).eval
+            Abort.run(Sync.Unsafe.run(KyoApp.runAndBlock(timeout)(Scope.run(v)))).eval
     end Unsafe
 
 end KyoApp
