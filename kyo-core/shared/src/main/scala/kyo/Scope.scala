@@ -36,10 +36,10 @@ import kyo.kernel.ContextEffect
   */
 sealed trait Scope extends ContextEffect[Scope.Finalizer]
 
-@deprecated("use `Scope`", "1.0-RC")
+@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
 type Resource = Scope
 
-@deprecated("use `Scope`", "1.0-RC")
+@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
 val Resource = Scope
 
 object Scope:
