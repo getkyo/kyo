@@ -225,7 +225,8 @@ object Scope:
         type Callback = Maybe[Error[Any]] => Any < (Async & Abort[Throwable])
 
         /** Unsafe implementation of a finalizer. */
-        final class Unsafe(using frame: Frame, allow: AllowUnsafe):
+        final class Unsafe private[Scope] (using frame: Frame):
+            import AllowUnsafe.embrace.danger
 
             private val queue   = Queue.Unbounded.Unsafe.init[Callback](Access.MultiProducerSingleConsumer)
             private val promise = Promise.Unsafe.init[Nothing, Unit]()
