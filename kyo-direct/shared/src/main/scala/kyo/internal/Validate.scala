@@ -211,25 +211,26 @@ private[kyo] object Validate:
                 statementsDive(qual)
 
                 Trees.traverse(qual) {
-                    case tree @ Apply(TypeApply(Ident("now"), _), _) =>
+                    case Apply(TypeApply(Ident("now"), _), _) =>
                         fail(
-                            tree,
-                            s"""
-                               |${".now".cyan} and ${".later".cyan} must not be nested.
+                            qual,
+                            s"""${".now".cyan} and ${".later".cyan} should not be nested.
+                               |While technically correct, and safe, this would not evaluate as expected.
                                |
-                               |For example, this is invalid:
+                               |For example, this is not accepted:
                                |${highlight("""
                                |  direct:
-                               |    g(f(x).now).later   // NOT OK - nested .now/.later
+                               |    g(f(x).now).later     // NOT OK - nested .now/.later
                                |""")}
                                |
                                |You must first extract intermediate values:
                                |${highlight("""
                                |  direct:
                                |    val y = f(x).now        // OK - get value first
-                               |    val z = g(y).later      // OK - pure operation
+                               |    val z = g(y).later      // OK - delayed effect
                                |   //...
                                |""")}
+                               |
                                |
                                """.stripMargin
                         )

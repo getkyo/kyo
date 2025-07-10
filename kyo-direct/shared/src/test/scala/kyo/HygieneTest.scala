@@ -299,7 +299,7 @@ class HygieneTest extends Test:
             case Result.Success(_) => assertionFailure("oups")
             case Result.Error(_)   => assertionSuccess            """
 
-        typeCheckFailure(prg)(".now and .later must not be nested.")
+        typeCheckFailure(prg)(".now and .later should not be nested.")
     }
 
     ".later in .later (#1366)" in {
