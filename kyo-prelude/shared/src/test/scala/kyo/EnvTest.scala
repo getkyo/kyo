@@ -46,7 +46,7 @@ class EnvTest extends Test:
     }
 
     "intersection type env" in {
-        assertCompiles("Env.get[Int & Double]")
+        typeCheck("Env.get[Int & Double]")
     }
 
     "reduce large intersection incrementally" in {

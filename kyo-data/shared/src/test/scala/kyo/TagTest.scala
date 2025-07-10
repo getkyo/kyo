@@ -785,48 +785,48 @@ class TagTest extends Test:
         "simple generic" in {
             trait Test[A]
             def testGeneric[A](using Tag[A]) = Tag[Test[A]]
-            assertCompiles("testGeneric[Int]")
-            assertCompiles("testGeneric[String]")
+            typeCheck("testGeneric[Int]")
+            typeCheck("testGeneric[String]")
         }
 
         "generic with bounds" in {
             def testBounded[A <: AnyVal](using Tag[A]) = Tag[Option[A]]
-            assertCompiles("testBounded[Int]")
-            assertCompiles("testBounded[Double]")
+            typeCheck("testBounded[Int]")
+            typeCheck("testBounded[Double]")
         }
 
         "nested generic" in {
             def testNestedGeneric[A, B](using Tag[A], Tag[B]) = Tag[Map[A, List[B]]]
-            assertCompiles("testNestedGeneric[String, Int]")
-            assertCompiles("testNestedGeneric[Int, Boolean]")
+            typeCheck("testNestedGeneric[String, Int]")
+            typeCheck("testNestedGeneric[Int, Boolean]")
         }
 
         "generic with variance" - {
             "covariance" in {
                 class Covariant[+A]
                 def testCovariance[A](using Tag[A]) = Tag[Covariant[A]]
-                assertCompiles("testCovariance[Int]")
-                assertCompiles("testCovariance[String]")
+                typeCheck("testCovariance[Int]")
+                typeCheck("testCovariance[String]")
             }
 
             "contravariance" in {
                 class Contravariant[-A]
                 def testContravariance[A](using Tag[A]) = Tag[Contravariant[A]]
-                assertCompiles("testContravariance[Int]")
-                assertCompiles("testContravariance[String]")
+                typeCheck("testContravariance[Int]")
+                typeCheck("testContravariance[String]")
             }
 
             "invariance" in {
                 class Invariant[A]
                 def testInvariance[A](using Tag[A]) = Tag[Invariant[A]]
-                assertCompiles("testInvariance[Int]")
-                assertCompiles("testInvariance[String]")
+                typeCheck("testInvariance[Int]")
+                typeCheck("testInvariance[String]")
             }
 
             "mixed variance" in {
                 class Mixed[+A, -B, C]
                 def testMixed[A, B, C](using Tag[A], Tag[B], Tag[C]) = Tag[Mixed[A, B, C]]
-                assertCompiles("testMixed[Int, String, Boolean]")
+                typeCheck("testMixed[Int, String, Boolean]")
             }
         }
 
@@ -834,31 +834,31 @@ class TagTest extends Test:
             "one" in {
                 sealed trait SealedGeneric[A]
                 def testSealed[A: Tag] = Tag[SealedGeneric[A]]
-                assertCompiles("testSealed[Int]")
-                assertCompiles("testSealed[String]")
+                typeCheck("testSealed[Int]")
+                typeCheck("testSealed[String]")
             }
             "two" in {
                 sealed trait SealedGeneric[A, B]
                 def testSealed[A, B](using Tag[A], Tag[B]) = Tag[SealedGeneric[A, B]]
-                assertCompiles("testSealed[Int, String]")
-                assertCompiles("testSealed[Boolean, Double]")
+                typeCheck("testSealed[Int, String]")
+                typeCheck("testSealed[Boolean, Double]")
             }
         }
 
         "opaque types" - {
             "simple opaque type" in {
                 def testOpaque = Tag[MyInt]
-                assertCompiles("testOpaque")
+                typeCheck("testOpaque")
             }
 
             "opaque type with type parameter" in {
                 def testOpaqueGeneric[A](using Tag[A]) = Tag[MyList[A]]
-                assertCompiles("testOpaqueGeneric[Int]")
+                typeCheck("testOpaqueGeneric[Int]")
             }
 
             "nested opaque types" in {
                 def testNestedOpaque[A](using Tag[A]) = Tag[Outer[A]]
-                assertCompiles("testNestedOpaque[String]")
+                typeCheck("testNestedOpaque[String]")
             }
         }
     }
