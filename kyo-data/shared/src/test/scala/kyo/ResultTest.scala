@@ -331,7 +331,7 @@ class ResultTest extends Test:
         "adds NoSuchElementException" in {
             val x = Result.succeed(2).filter(_ % 2 == 0)
             discard(x)
-            assertCompiles("val _: Result[NoSuchElementException, Int] = x")
+            typeCheck("val _: Result[NoSuchElementException, Int] = x")
         }
         "returns itself if the predicate holds for Success" in {
             assert(Result.succeed(2).filter(_ % 2 == 0) == Success(2))

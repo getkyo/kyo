@@ -1,8 +1,9 @@
 package kyo.internal
 
+import kyo.Test
 import org.scalatest.freespec.AnyFreeSpec
 
-class TypeIntersectionTest extends AnyFreeSpec:
+class TypeIntersectionTest extends Test:
 
     sealed trait Base
     trait A                        extends Base
@@ -215,9 +216,9 @@ class TypeIntersectionTest extends AnyFreeSpec:
                 v21.type & v22.type & v23.type & v24.type & v25.type & v26.type & v27.type & v28.type & v29.type & v30.type &
                 v31.type & v32.type & v33.type & v34.type & v35.type & v36.type & v37.type & v38.type & v39.type & v40.type
 
-            assertCompiles("TypeIntersection.summonAll[Values, TC]")
+            typeCheck("TypeIntersection.summonAll[Values, TC]")
         }
     }
 
-    inline def assertType[A, B](using ev: A =:= B): Unit = ()
+    inline def assertType[A, B](using ev: A =:= B): Assertion = assertionSuccess
 end TypeIntersectionTest
