@@ -290,12 +290,13 @@ class HygieneTest extends Test:
         def f(i: Int): Int < Var[Int] = Var.set(i)
         val stream                    = Stream.init(Seq(1, 2, 3))
 
+        typeCheckFailure("""
         val res: Stream[Int, Var[Int]] < Abort[String] = direct:
             val g = f(x.now).later
             stream.map(_ => g)
 
         Abort.run(res).eval match
             case Result.Success(_) => assertionFailure("oups")
-            case Result.Error(_)   => assertionSuccess
+            case Result.Error(_)   => assertionSuccess""")(".now and .later must not be nested.")
     }
 end HygieneTest
