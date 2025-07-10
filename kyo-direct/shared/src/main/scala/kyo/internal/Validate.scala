@@ -203,8 +203,9 @@ private[kyo] object Validate:
 
                 dive(qual)
 
+                // TODO: check with Flavio on f(x.now).later working
                 Trees.traverse(qual) {
-                    case tree @ Apply(TypeApply(Ident("now" | "later"), _), _) =>
+                    case tree @ Apply(TypeApply(Ident("now" | "later"), _), _) if false /* TODO clean */ =>
                         fail(
                             tree,
                             s"""${".now".cyan} and ${".later".cyan} can only be used directly inside a ${"`direct`".yellow} block.

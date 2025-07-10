@@ -276,4 +276,26 @@ class HygieneTest extends Test:
 
         assertionSuccess
     }
+
+    ".now in .now #1366" in {
+        val x: Int < Any              = 1
+        def f(i: Int): Int < Var[Int] = Var.set(i)
+
+        val res = direct(f(x.now).now)
+        assertResult((1, -1))(Var.runTuple(-1)(res).eval)
+    }
+
+    ".now in .later #1366" in {
+        val x: Int < Abort[String]    = Abort.fail("oups")
+        def f(i: Int): Int < Var[Int] = Var.set(i)
+        val stream                    = Stream.init(Seq(1, 2, 3))
+
+        val res: Stream[Int, Var[Int]] < Abort[String] = direct:
+            val g = f(x.now).later
+            stream.map(_ => g)
+
+        Abort.run(res).eval match
+            case Result.Success(_) => assertionFailure("oups")
+            case Result.Error(_)   => assertionSuccess
+    }
 end HygieneTest
