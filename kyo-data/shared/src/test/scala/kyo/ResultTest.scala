@@ -1375,6 +1375,27 @@ class ResultTest extends Test:
         }
     }
 
+    "foreach" - {
+        "does not apply the function for Error" in {
+            var applied = false
+            val result1 = Result.fail("error")
+            result1.foreach(_ => applied = true)
+            assert(!applied)
+
+            val result2 = Result.panic(new Exception("test"))
+            result2.foreach(_ => applied = true)
+            assert(!applied)
+        }
+        "applies the function for Success" in {
+            var applied = ""
+
+            val result = Result.succeed("hello")
+            result.foreach(value => applied = applied + value)
+
+            assert(applied == "hello")
+        }
+    }
+
     "show" - {
         "Success" in {
             assert(Result.succeed(42).show == "Success(42)")
