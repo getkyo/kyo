@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.Frame
 import kyo.Result
-import scala.compiletime
+import scala.annotation.publicInBinary
 import scala.compiletime.testing.typeCheckErrors
 import scala.util.Try
 
@@ -23,7 +23,9 @@ private[kyo] trait BaseKyoDataTest:
             case Result.Success(_) => assertionSuccess
     end typeCheck
 
-    transparent inline def typeCheckWith(inline code: String)(inline f: Result[String, Unit] => Assertion): Assertion =
+    @publicInBinary
+    private[BaseKyoDataTest] transparent inline def typeCheckWith(inline code: String)(inline f: Result[String, Unit] => Assertion)
+        : Assertion =
         val result: Result[String, Unit] =
             try
                 val errors = typeCheckErrors(code)
