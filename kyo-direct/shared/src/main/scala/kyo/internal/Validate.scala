@@ -105,6 +105,18 @@ private[kyo] object Validate:
                     case _                                                            => false
         end DirectBlock
 
+        def statementsDive(tree: Tree)(using Trees.Step): Unit =
+            @tailrec
+            def dive(qual: Tree): Unit =
+                qual match
+                    case Block(quals, last) =>
+                        quals.foreach(Trees.Step.goto)
+                        dive(last)
+                    case _ =>
+
+            dive(tree)
+        end statementsDive
+
         def skipDive(qualifiers: List[Tree])(using Trees.Step): Unit =
 
             def skipDive(tree: Tree): Unit =
@@ -192,23 +204,17 @@ private[kyo] object Validate:
             // direct: in direct:
             case DirectBlock() =>
 
-            case Apply(TypeApply(Ident(name @ ("now" | "later")), _), List(qual)) =>
-                @tailrec
-                def dive(qual: Tree): Unit =
-                    qual match
-                        case Block(quals, last) =>
-                            quals.foreach(Trees.Step.goto)
-                            dive(last)
-                        case _ =>
+            case Apply(TypeApply(Ident("now"), _), List(qual)) =>
+                statementsDive(qual)
 
-                dive(qual)
+            case Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                statementsDive(qual)
 
-                if name == "later" then
-                    Trees.traverse(qual) {
-                        case tree @ Apply(TypeApply(Ident("now"), _), _) =>
-                            fail(
-                                tree,
-                                s"""
+                Trees.traverse(qual) {
+                    case tree @ Apply(TypeApply(Ident("now"), _), _) =>
+                        fail(
+                            tree,
+                            s"""
                                |${".now".cyan} and ${".later".cyan} must not be nested.
                                |
                                |For example, this is invalid:
@@ -226,9 +232,8 @@ private[kyo] object Validate:
                                |""")}
                                |
                                """.stripMargin
-                            )
-                    }
-                end if
+                        )
+                }
 
             case tree: Term if tree.tpe.typeSymbol.name == "<" =>
                 fail(
