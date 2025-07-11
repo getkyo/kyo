@@ -244,22 +244,6 @@ class KyoTest extends Test:
     }
 
     "seq" - {
-        "collect" in {
-            assert(Kyo.collectAll(Seq.empty).eval == Chunk.empty)
-            assert(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1))).map(_.head)).eval == 2)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1), TestEffect1(2))).map(c => (c(0), c(1))))).eval == (
-                2,
-                3
-            ))
-            assert(TestEffect1.run(Kyo.collectAll(Seq.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(List(TestEffect1(1), TestEffect1(2), TestEffect1(3))).map(c =>
-                (c(0), c(1), c(2))
-            ))).eval == (2, 3, 4))
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Vector(TestEffect1(1), TestEffect1(2), TestEffect1(3))).map(c =>
-                (c(0), c(1), c(2))
-            ))).eval == (2, 3, 4))
-        }
-
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)

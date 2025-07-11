@@ -664,6 +664,7 @@ object Kyo:
                     curList match
                         case head :: tail => head.map(u => Loop.continue(tail, u :: accList))
                         case Nil          => Loop.done(accList.reverse)
+        end match
     end collectAll
 
     /** Collects the results of a `List` of effects, discarding the results.
