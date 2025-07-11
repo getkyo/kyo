@@ -1057,6 +1057,18 @@ class TagTest extends Test:
         test[C, A & B]
     }
 
+    opaque type V <: Vector[Any] = Vector[Any]
+    "opaque type bounds with variance (bug #1368)" in pendingUntilFixed {
+        abstract class Variant[+A]:
+            def method[AA >: A](using Tag[AA]): Unit
+
+        def x: Variant[V] = ???
+        def works1        = x.method[V]
+        def works2        = x.method[Vector[Any]]
+
+        typeCheck("x.method")
+    }
+
     // TODO: fix this to use `pendingUntilFixed` instead of `ignore`
     given RegisterFunction = (name, test, pending) =>
         if pending then name ignore Future.successful(test)
