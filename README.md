@@ -3292,7 +3292,7 @@ val c: String < (Async & Abort[FailedRequest]) =
 // Implementing a custom mock backend
 val backend: Backend =
     new Backend:
-        def send[T](r: Request[T, Any]) =
+        def send[T](r: Request[T, Any])(using Frame) =
             Response.ok(Right("mocked")).asInstanceOf[Response[T]]
 
 // Use the custom backend
