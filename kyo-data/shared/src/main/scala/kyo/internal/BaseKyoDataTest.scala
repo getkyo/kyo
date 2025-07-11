@@ -19,7 +19,7 @@ private[kyo] trait BaseKyoDataTest:
 
     transparent inline def typeCheck(inline code: String): Assertion =
         typeCheckWith(code):
-            case Result.Error(e)   => assertionFailure(s"$code is not typecheck: $e")
+            case Result.Error(e)   => assertionFailure(s"$code did not typecheck: $e")
             case Result.Success(_) => assertionSuccess
     end typeCheck
 
