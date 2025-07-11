@@ -47,7 +47,7 @@ class ParseTest extends Test:
             }
 
             "handles recursive parsers" in run {
-                def nested: Text < Parse =
+                def nested: Text < Parse[Char] =
                     Parse.firstOf(
                         Parse.between(
                             Parse.char('('),
@@ -71,7 +71,7 @@ class ParseTest extends Test:
             }
 
             "handles mutually recursive parsers" in run {
-                def term: Int < Parse =
+                def term: Int < Parse[Char] =
                     Parse.firstOf(
                         Parse.int,
                         Parse.between(
@@ -81,7 +81,7 @@ class ParseTest extends Test:
                         )
                     )
 
-                def expr: Int < Parse =
+                def expr: Int < Parse[Char] =
                     Parse.firstOf(
                         for
                             left  <- term
@@ -109,7 +109,7 @@ class ParseTest extends Test:
             }
 
             "lazy evaluation prevents stack overflow" in run {
-                def nested: Text < Parse =
+                def nested: Text < Parse[Char] =
                     Parse.firstOf(
                         Parse.between(
                             Parse.char('['),
@@ -789,46 +789,46 @@ class ParseTest extends Test:
             "reads digits" in run {
                 val parser =
                     for
-                        digits <- Parse.readWhile(_.isDigit)
-                        rest   <- Parse.readWhile(_ => true)
+                        digits <- Parse.readWhile[Char](_.isDigit)
+                        rest   <- Parse.readWhile[Char](_ => true)
                     yield (digits, rest)
 
                 Parse.run("123abc")(parser).map { case (digits, rest) =>
-                    assert(digits.is("123"))
-                    assert(rest.is("abc"))
+                    assert(digits == Chunk('1', '2', '3'))
+                    assert(rest == Chunk('a', 'b', 'c'))
                 }
             }
 
             "empty input" in run {
-                val parser = Parse.readWhile(_.isDigit)
+                val parser = Parse.readWhile[Char](_.isDigit)
                 Parse.run("")(parser).map { result =>
-                    assert(result.is(""))
+                    assert(result.isEmpty)
                 }
             }
 
             "no matching characters" in run {
                 val parser =
                     for
-                        digits <- Parse.readWhile(_.isDigit)
-                        rest   <- Parse.readWhile(_ => true)
+                        digits <- Parse.readWhile[Char](_.isDigit)
+                        rest   <- Parse.readWhile[Char](_ => true)
                     yield (digits, rest)
 
                 Parse.run("abc")(parser).map { case (digits, rest) =>
-                    assert(digits.is(""))
-                    assert(rest.is("abc"))
+                    assert(digits.isEmpty)
+                    assert(rest == Chunk('a', 'b', 'c'))
                 }
             }
 
             "reads until predicate fails" in run {
                 val parser =
                     for
-                        letters <- Parse.readWhile(_.isLetter)
-                        rest    <- Parse.readWhile(_ => true)
+                        letters <- Parse.readWhile[Char](_.isLetter)
+                        rest    <- Parse.readWhile[Char](_ => true)
                     yield (letters, rest)
 
                 Parse.run("aaa123")(parser).map { case (letters, rest) =>
-                    assert(letters.is("aaa"))
-                    assert(rest.is("123"))
+                    assert(letters == Chunk('a', 'a', 'a'))
+                    assert(rest == Chunk('1', '2', '3'))
                 }
             }
 
@@ -885,19 +885,19 @@ class ParseTest extends Test:
                     case '*' => left * right
                     case '/' => left / right
 
-                def parens: Double < Parse =
+                def parens: Double < Parse[Char] =
                     Parse.between(
                         Parse.char('('),
                         add,
                         Parse.char(')')
                     )
 
-                def factor: Double < Parse =
+                def factor: Double < Parse[Char] =
                     Parse.firstOf(Parse.decimal, parens)
 
-                def addOp: Char < Parse = Parse.charIn("+-")
+                def addOp: Char < Parse[Char] = Parse.charIn("+-")
 
-                def mult: Double < Parse =
+                def mult: Double < Parse[Char] =
                     for
                         init <- factor
                         rest <- Parse.repeat(
@@ -908,7 +908,7 @@ class ParseTest extends Test:
                         )
                     yield rest.foldLeft(init)((acc, pair) => eval(acc, pair._1, pair._2))
 
-                def add: Double < Parse =
+                def add: Double < Parse[Char] =
                     for
                         init <- mult
                         rest <- Parse.repeat(
@@ -1253,7 +1253,7 @@ class ParseTest extends Test:
                     _ <- Parse.whitespaces
                 yield n
 
-            def expr: Int < Parse =
+            def expr: Int < Parse[Char] =
                 for
                     left <- term
                     rest <- Parse.firstOf(
@@ -1283,7 +1283,7 @@ class ParseTest extends Test:
     "integration with other effects" - {
         "Parse with Emit" - {
             "emit parsed values" in run {
-                def parseAndEmit: Unit < (Parse & Emit[Int]) =
+                def parseAndEmit: Unit < (Parse[Char] & Emit[Int]) =
                     for
                         n1 <- Parse.int
                         _  <- Emit.value(n1)
@@ -1299,20 +1299,20 @@ class ParseTest extends Test:
 
         "Parse with Env" - {
             trait NumberParser:
-                def parseNumber: Int < Parse
+                def parseNumber: Int < Parse[Char]
 
             "configurable number parsing" in run {
                 val hexParser = new NumberParser:
                     def parseNumber =
                         Parse.read { s =>
                             val (num, rest) = s.span(c => c.isDigit || ('a' to 'f').contains(c.toLower))
-                            Result(Integer.parseInt(num.show, 16)).toMaybe.map((rest, _))
+                            Result(Integer.parseInt(num.mkString, 16)).toMaybe.map((rest, _))
                         }
 
                 val decimalParser = new NumberParser:
                     def parseNumber = Parse.int
 
-                def parseWithConfig: Int < (Parse & Env[NumberParser]) =
+                def parseWithConfig: Int < (Parse[Char] & Env[NumberParser]) =
                     Env.use[NumberParser](_.parseNumber)
 
                 for
