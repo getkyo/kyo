@@ -357,8 +357,7 @@ lazy val `kyo-direct` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2",
-
-            Test/sourceGenerators += TestVariant.generate.taskValue
+            Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)

@@ -6,7 +6,6 @@ import sbt.Keys.*
 object TestVariant {
 
     private object internal {
-
         case class Variant(base: String, replacements: Seq[String])
 
         object Variant {
@@ -36,13 +35,14 @@ object TestVariant {
 
         sealed trait Mode
         object Mode {
-            case object Continue                         extends Mode
+            case object Continue                     extends Mode
             case class Replace(testVariant: Variant) extends Mode
         }
 
         case class State(lines: Vector[Line], mode: Mode) {
             def next(line: Line, mode: Mode): State = copy(lines :+ line, mode)
         }
+
         object State {
             val zero: State = State(Vector.empty, Mode.Continue)
         }
@@ -52,10 +52,9 @@ object TestVariant {
 
         import internal.*
 
-
-        val log    = streams.value.log
+        val log              = streams.value.log
         val files: Seq[File] = (Test / unmanagedSources).value
-        val outDir = (Test / sourceManaged).value / "testVariants"
+        val outDir           = (Test / sourceManaged).value / "testVariants"
 
         lazy val created: Boolean = {
             IO.createDirectory(outDir)
@@ -63,13 +62,11 @@ object TestVariant {
         }
 
         var i = 0
-        def newFile: File = {
+        def newFile(name: String): File = {
             require(created)
             i = i + 1
-            outDir / s"generated${i}Test.scala"
+            outDir / s"generated${i}_$name.scala"
         }
-
-        //val sourceFiles: Seq[File] = (srcDir ** "*.scala").get.filter(_.isFile)
 
         files.flatMap(file => {
             val content = IO.read(file, StandardCharsets.UTF_8)
@@ -83,9 +80,8 @@ object TestVariant {
                     }
 
                     val line: Line = state.mode match {
-                        case Mode.Continue             => Line.Raw(str)
+                        case Mode.Continue => Line.Raw(str)
                         case Mode.Replace(testVariant) =>
-                            // TODO: manage errors here
                             Line.Variants(testVariant.replacements.map(r => str.replace(testVariant.base, r)))
                     }
 
@@ -96,7 +92,9 @@ object TestVariant {
                 assert(sizes.size == 1)
                 val size = sizes.head
 
-                val files: Seq[File] = (0 until size).map(_ => newFile)
+                val name = file.name.replaceAll(".scala$", "")
+
+                val files: Seq[File] = (0 until size).map(_ => newFile(name))
 
                 files.foreach(file => file.createNewFile())
 
@@ -115,7 +113,5 @@ object TestVariant {
             } else
                 Nil
         })
-
     }
-
 }
