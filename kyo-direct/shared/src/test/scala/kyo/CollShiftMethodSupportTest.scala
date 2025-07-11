@@ -2,17 +2,27 @@ package kyo
 
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
+import scala.annotation.nowarn
 
-@TestVariant("Coll", "List", "Vector", "Chunk", "Iterable", "IterableOneShot")
+@TestVariant("Coll", "List", "Vector", "Chunk", "Iterable", "IterableOneShot", "Set")
 class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
 
-    @TestVariant("Seq[X]", "List[X]", "Vector[X]", "Chunk[X]", "Iterable[X]", "Iterable[X]")
+    extension [A](left: Iterable[A])
+        @nowarn
+        def ~==(right: Iterable[A]): Boolean =
+            given CanEqual[A, A] = CanEqual.derived
+            left match
+                case set: Set[A] => set == right.toSet
+                case _           => left.toSeq == right.toSeq
+    end extension
+
+    @TestVariant("Seq[X]", "List[X]", "Vector[X]", "Chunk[X]", "Iterable[X]", "Iterable[X]", "Set[X]")
     type Coll[X] = Seq[X]
 
-    @TestVariant("x.toSeq", "x.toList", "x.toVector", "Chunk.from(x)", "x", "IterableTest.oneShot(x*)")
+    @TestVariant("x.toSeq", "x.toList", "x.toVector", "Chunk.from(x)", "x", "IterableTest.oneShot(x*)", "x.toSet")
     def Coll[X](x: X*): Coll[X] = x.toSeq
 
-    // @TestVariant("seq", "list", "vector", "chunk", "iterable", "iterableOneShot")
+    // @TestVariant("seq", "list", "vector", "chunk", "iterable", "iterableOneShot", "set)
     "seq" - {
         def xs: Coll[Int < Any] = Coll(1, 2, 3, 4)
         def xsValues: Coll[Int] = Coll(1, 2, 3, 4)
@@ -207,21 +217,21 @@ class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         }
         "scanLeft" in {
             val d = direct:
-                xs.scanLeft(0)((b, e) => b + e.now).toSeq
+                xs.scanLeft(0)((b, e) => b + e.now)
 
-            assert(d.eval == Seq(0, 1, 3, 6, 10))
+            assert(d.eval ~== Seq(0, 1, 3, 6, 10))
         }
         "scanRight" in {
             val d = direct:
-                xs.scanRight(0)((e, b) => e.now + b).toSeq
+                xs.scanRight(0)((e, b) => e.now + b)
 
-            assert(d.eval == Seq(10, 9, 7, 4, 0))
+            assert(d.eval ~== Seq(10, 9, 7, 4, 0))
         }
         "span" in {
             def f(i: Int): Boolean < Any = i < 3
 
             val d = direct:
-                val (take, drop) = xsValues.span(i => f(i).now)
+                val (take, _) = xsValues.span(i => f(i).now)
                 take.toSeq
 
             assert(d.eval == Seq(1, 2))
@@ -282,10 +292,10 @@ class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                         )
                 ).eval
 
-                assert(result.contains(Chunk("X", "Y")))
-                assert(result.contains(Chunk("X", "y")))
-                assert(result.contains(Chunk("x", "Y")))
-                assert(result.contains(Chunk("x", "y")))
+                assert(result.exists(_ ~== Chunk("X", "Y")))
+                assert(result.exists(_ ~== Chunk("X", "y")))
+                assert(result.exists(_ ~== Chunk("x", "Y")))
+                assert(result.exists(_ ~== Chunk("x", "y")))
                 assert(result.size == 4)
             }
 
@@ -298,10 +308,10 @@ class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                     }
                 val result = Choice.run(direct(effects.map(_.now))).eval
 
-                assert(result.contains(Chunk("X", "Y")))
-                assert(result.contains(Chunk("X", "y")))
-                assert(result.contains(Chunk("x", "Y")))
-                assert(result.contains(Chunk("x", "y")))
+                assert(result.exists(_ ~== Chunk("X", "Y")))
+                assert(result.exists(_ ~== Chunk("X", "y")))
+                assert(result.exists(_ ~== Chunk("x", "Y")))
+                assert(result.exists(_ ~== Chunk("x", "y")))
                 assert(result.size == 4)
             }
 
@@ -322,17 +332,17 @@ class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
                     )
 
                 val result = Choice.run(effects).eval
-                assert(result.contains(Chunk("XZ", "YZ")))
-                assert(result.contains(Chunk("XZ", "yz")))
-                assert(result.contains(Chunk("xz", "YZ")))
-                assert(result.contains(Chunk("xz", "yz")))
+                assert(result.exists(_ ~== Chunk("XZ", "YZ")))
+                assert(result.exists(_ ~== Chunk("XZ", "yz")))
+                assert(result.exists(_ ~== Chunk("xz", "YZ")))
+                assert(result.exists(_ ~== Chunk("xz", "yz")))
                 assert(result.size == 4)
             }
 
             "foldLeft" in {
                 val result = Choice.run(
                     direct:
-                        Coll(1, 1).foldLeft(0)((acc, _) => Choice.eval(0, 1).map(n => acc + n).now)
+                        Coll(1, 3).foldLeft(0)((acc, _) => Choice.eval(0, 1).map(n => acc + n).now)
                 ).eval
 
                 assert(result.contains(0))
@@ -343,5 +353,5 @@ class CollShiftMethodSupportTest extends AnyFreeSpec with Assertions:
         }
     }
 
-    //  @TestVariant("Coll", "List", "Vector", "Chunk", "Iterable", "IterableOneShot")
+    //  @TestVariant("Coll", "List", "Vector", "Chunk", "Iterable", "IterableOneShot", "Set")
 end CollShiftMethodSupportTest
