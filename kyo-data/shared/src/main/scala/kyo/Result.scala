@@ -642,6 +642,14 @@ object Result:
         def forall(pred: A => Boolean): Boolean =
             foldError(pred, _ => true)
 
+        /** Applies a side-effecting function to the successful value of this Result.
+          *
+          * @param f
+          *   the function to apply
+          */
+        inline def foreach(inline f: A => Unit): Unit =
+            foldError(f, _ => ())
+
         /** Applies a predicate to the successful value of this Result.
           *
           * @param p

@@ -15,8 +15,7 @@ Kyo introduces a novel approach based on algebraic effects to deliver straightfo
 
 Kyo achieves this without requiring a pretext of concepts from category theory, and avoiding cryptic operators. This results in a development experience that is both intuitive and robust.
 
-Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo generalizes this concept with a more flexible approach to effect management. While ZIO's effect system centers around two primary channels (environment and error handling), Kyo's algebraic effects allow for composing arbitrary effect types as needed. This design enables developers to work with a specialized set of effects for the problem they are trying to solve. This approach provides more granular control over computational contexts.
-
+Its effect system builds on a simple yet powerful abstraction: algebraic effects with modular handlers. Unlike systems that rely on a fixed set of effect channels, typically limited to error and environment, Kyo allows developers to define and compose an open set of effects tailored to their specific needs. This enables more precise and granular control over computational context, without unnecessary complexity.
 
 ## [Kyo: A New Approach to Functional Effects in Scala](https://www.youtube.com/watch?v=uA2_TWP5WF4)
 
@@ -104,7 +103,7 @@ Use `%%` for JVM/Scala Native, or `%%%` for ScalaJS cross-compilation. See the m
 
 ## IDE Support
 
-Kyo utilizes features from the latest Scala 3 versions may not be fully supported by IntelliJ IDEA. For the best development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server for improved stability. See the Metals [instructions](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to sbt BSP.
+Kyo uses advanced features from the latest Scala 3 versions that [IntelliJ IDEA may not fully support](https://github.com/getkyo/kyo/issues/1249). For a smoother development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server, which offers better stability. Refer to the Metals [guide](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to SBT BSP.
 
 ## Recommended Compiler Flags
 
@@ -3709,7 +3708,7 @@ val retriedAUntilSucceed: Int < (Abort[B | C]) = effect.forAbort[A].retryForever
 
 Kyo's development was originally inspired by the paper ["Do Be Do Be Do"](https://arxiv.org/pdf/1611.09259.pdf) and its implementation in the [Unison](https://www.unison-lang.org/learn/language-reference/abilities-and-ability-handlers/) programming language. Kyo's design evolved from using interface-based effects to suspending concrete values associated with specific effects, making it more efficient when executed on the JVM.
 
-Additionally, Kyo draws inspiration from [ZIO](https://zio.dev/) in various aspects. The core mechanism for algebraic effects can be seen as a generalization of ZIO's effect rotation, and many of Kyo's effects are directly influenced by ZIO's mature set of primitives. For instance, `Env` and `Abort` correspond to ZIO's effect channels, `Scope` function similarly to `Scope`, and `Hub` was introduced based on ZIO.
+Additionally, Kyo draws inspiration from [ZIO](https://zio.dev/) in various aspects. The core mechanism for algebraic effects can be seen as a generalization of ZIO's [effect rotation](https://degoes.net/articles/rotating-effects), and many of Kyo's effects are directly influenced by ZIO's mature set of primitives. For instance, `Env` and `Abort` correspond to ZIO's effect channels, `Scope` functions similarly to `Scope`, and `Hub` was introduced based on ZIO. This design keeps a focus on easy composition when using Kyo and ZIO in the same program, and lowers the barrier for developers familiar with ZIO to adopt Kyo.
 
 Kyo's asynchronous primitives take several aspects from [Twitter's util](https://github.com/twitter/util) and [Finagle](https://github.com/twitter/finagle), including features like async root compression, to provide stack safety, and support for cancellations (interruptions in Kyo).
 
