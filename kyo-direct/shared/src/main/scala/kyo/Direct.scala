@@ -169,20 +169,24 @@ private def impl[A: Type](body: Expr[A])(using quotes: Quotes): Expr[Any] =
 
     pending.asType match
         case '[s] =>
-            val transformedBody =
-                Trees.transform(preparedBody) {
-                    case Apply(TypeApply(Ident("now"), List(t, s2)), List(qual)) =>
-                        (t.tpe.asType, s2.tpe.asType) match
-                            case ('[t], '[s2]) => '{
-                                    given KyoCpsMonad[s2] = KyoCpsMonad[s2]
-                                    cps.await[[A] =>> A < s2, t, [A] =>> A < s2](${
-                                        qual.asExprOf[t < s2]
-                                    })
-                                }.asTerm
-                            case _ => bug("unreachable")
-                    case Apply(TypeApply(Ident("later"), List(t, s2)), List(qual)) =>
-                        qual
-                }
+            val transformer: TreeMap = new TreeMap:
+                override def transformTerm(term: Term)(owner: Symbol): Term =
+                    term match
+                        case Apply(TypeApply(Ident("now"), List(t, s2)), List(qual)) =>
+                            (t.tpe.asType, s2.tpe.asType) match
+                                case ('[t], '[s2]) => '{
+                                        given KyoCpsMonad[s2] = KyoCpsMonad[s2]
+                                        cps.await[[A] =>> A < s2, t, [A] =>> A < s2](${
+                                            transformTerm(qual)(owner).asExprOf[t < s2]
+                                        })
+                                    }.asTerm
+                                case _ => bug("unreachable")
+                        case Apply(TypeApply(Ident("later"), List(t, s2)), List(qual)) =>
+                            transformTerm(qual)(owner)
+
+                        case _ => super.transformTerm(term)(owner)
+
+            val transformedBody: Tree = transformer.transformTree(preparedBody)(Symbol.spliceOwner)
 
             '{
 

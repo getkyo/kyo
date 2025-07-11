@@ -105,6 +105,18 @@ private[kyo] object Validate:
                     case _                                                            => false
         end DirectBlock
 
+        def statementsDive(tree: Tree)(using Trees.Step): Unit =
+            @tailrec
+            def dive(qual: Tree): Unit =
+                qual match
+                    case Block(quals, last) =>
+                        quals.foreach(Trees.Step.goto)
+                        dive(last)
+                    case _ =>
+
+            dive(tree)
+        end statementsDive
+
         def skipDive(qualifiers: List[Tree])(using Trees.Step): Unit =
 
             def skipDive(tree: Tree): Unit =
@@ -192,52 +204,35 @@ private[kyo] object Validate:
             // direct: in direct:
             case DirectBlock() =>
 
-            case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
-                @tailrec
-                def dive(qual: Tree): Unit =
-                    qual match
-                        case Block(quals, last) =>
-                            quals.foreach(Trees.Step.goto)
-                            dive(last)
-                        case _ =>
+            case Apply(TypeApply(Ident("now"), _), List(qual)) =>
+                statementsDive(qual)
 
-                dive(qual)
+            case Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                statementsDive(qual)
 
                 Trees.traverse(qual) {
-                    case tree @ Apply(TypeApply(Ident("now" | "later"), _), _) =>
+                    case Apply(TypeApply(Ident("now"), _), _) =>
                         fail(
-                            tree,
-                            s"""${".now".cyan} and ${".later".cyan} can only be used directly inside a ${"`direct`".yellow} block.
-                            |
-                            |Common mistake: You may have forgotten to wrap an effectful computation in ${"`direct`".yellow}:
-                            |${highlight("""
-                            |// Missing direct when handling effects:
-                            |val result = Emit.run {      // NOT OK - missing direct
-                            |    Emit.value(1).now
-                            |    Emit.value(2).now
-                            |}
-                            |
-                            |// Correctly wrapped in direct:
-                            |val result = Emit.run {
-                            |    direct {                  // OK - effects wrapped in direct
-                            |        Emit.value(1).now
-                            |        Emit.value(2).now
-                            |    }
-                            |}""")}
-                            |
-                            |If you're seeing this inside a ${"`direct`".yellow} block, you may have nested ${".now".cyan}/${".later".cyan} calls:
-                            |${highlight("""
-                            |// Instead of nested .now:
-                            |direct {
-                            |    (counter.get.now + 1).now     // NOT OK - nested .now
-                            |}
-                            |
-                            |// Store intermediate results:
-                            |direct {
-                            |    val value = counter.get.now    // OK - get value first
-                            |    val incr = value + 1           // OK - pure operation
-                            |    Sync.defer(incr).now                   // OK - single .now
-                            |}""".stripMargin)}""".stripMargin
+                            qual,
+                            s"""${".now".cyan} and ${".later".cyan} should not be nested.
+                               |While technically correct, and safe, this would not evaluate as expected.
+                               |
+                               |For example, this is not accepted:
+                               |${highlight("""
+                               |  direct:
+                               |    g(f(x).now).later     // NOT OK - nested .now/.later
+                               |""")}
+                               |
+                               |You must first extract intermediate values:
+                               |${highlight("""
+                               |  direct:
+                               |    val y = f(x).now        // OK - get value first
+                               |    val z = g(y).later      // OK - delayed effect
+                               |   //...
+                               |""")}
+                               |
+                               |
+                               """.stripMargin
                         )
                 }
 
