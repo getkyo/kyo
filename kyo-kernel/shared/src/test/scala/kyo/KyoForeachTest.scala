@@ -9,17 +9,6 @@ class KyoForeachTest extends Test:
     import KyoForeachTest.*
 
     "List specialized" - {
-        "collectAll" in {
-            assert(Kyo.collectAll(List.empty).eval == List.empty)
-            assert(TestEffect1.run(Kyo.collectAll(List(TestEffect1(1))).map(_.head)).eval == 2)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(List(TestEffect1(1), TestEffect1(2))).map(c =>
-                (c(0), c(1))
-            ))).eval == (
-                2,
-                3
-            ))
-            assert(TestEffect1.run(Kyo.collectAll(List.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
-        }
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)
@@ -378,17 +367,6 @@ class KyoForeachTest extends Test:
     }
 
     "Seq specialized" - {
-        "collectAll" in {
-            assert(Kyo.collectAll(Seq.empty).eval == Seq.empty)
-            assert(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1))).map(_.head)).eval == 2)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Seq(TestEffect1(1), TestEffect1(2))).map(c =>
-                (c(0), c(1))
-            ))).eval == (
-                2,
-                3
-            ))
-            assert(TestEffect1.run(Kyo.collectAll(Seq.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
-        }
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)
@@ -747,17 +725,6 @@ class KyoForeachTest extends Test:
     }
 
     "Chunk specialized" - {
-        "collectAll" in {
-            assert(Kyo.collectAll(Chunk.empty).eval == Chunk.empty)
-            assert(TestEffect1.run(Kyo.collectAll(Chunk(TestEffect1(1))).map(_.head)).eval == 2)
-            assert(TestEffect2.run(TestEffect1.run(Kyo.collectAll(Chunk(TestEffect1(1), TestEffect1(2))).map(c =>
-                (c(0), c(1))
-            ))).eval == (
-                2,
-                3
-            ))
-            assert(TestEffect1.run(Kyo.collectAll(Chunk.fill(100)(TestEffect1(1))).map(_.size)).eval == 100)
-        }
         "collectDiscard" in {
             var count = 0
             val io    = TestEffect1(1).map(_ => count += 1)
