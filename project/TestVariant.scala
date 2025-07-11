@@ -2,6 +2,10 @@ import java.io.PrintWriter
 import java.nio.charset.StandardCharsets
 import sbt.*
 import sbt.Keys.*
+import sbt.internal.util.ManagedLogger
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
 object TestVariant {
 
@@ -9,7 +13,7 @@ object TestVariant {
         case class Variant(base: String, replacements: Seq[String])
 
         object Variant {
-            def parseLine(str: String): Option[Variant] = {
+            def extractFrom(str: String)(implicit log: ManagedLogger): Option[Try[Variant]] = {
                 val annotation   = """.*@TestVariant\(("[^"]+"(?:,\s*"[^"]+")*)\)""".r
                 val valuePattern = """"([^"]+)"""".r
 
@@ -18,8 +22,10 @@ object TestVariant {
                         val values = valuePattern.findAllMatchIn(args).map(_.group(1)).toList
                         values match {
                             case base :: replacements =>
-                                Some(Variant(base, replacements))
-                            case _ => None
+                                Some(Try(Variant(base, replacements)))
+                            case _ =>
+                                log.error(s"Invalid @TestVariant annotation: $str")
+                                Some(Try(sys.error("Invalid @TestVariant annotation")))
 
                         }
                     case _ => None
@@ -52,51 +58,78 @@ object TestVariant {
 
         import internal.*
 
-        val log              = streams.value.log
-        val files: Seq[File] = (Test / unmanagedSources).value
-        val outDir           = (Test / sourceManaged).value / "testVariants"
+        implicit val log: ManagedLogger = streams.value.log
+        val files: Seq[File]            = (Test / unmanagedSources).value
+        val outDir                      = (Test / sourceManaged).value / "testVariants"
 
         lazy val created: Boolean = {
+            log.debug(s"Creating directory $outDir")
             IO.createDirectory(outDir)
             outDir.isDirectory
         }
 
-        var i = 0
-        def newFile(name: String): File = {
+        var fileCounter = 0
+
+        def newScalaFile(suffix: String): File = {
             require(created)
-            i = i + 1
-            outDir / s"generated${i}_$name.scala"
+            val nn: String = if (fileCounter < 10) "0" + fileCounter else "" + fileCounter
+            val file       = outDir / s"generated$nn-$suffix.scala"
+            fileCounter = fileCounter + 1
+
+            log.debug(s"Creating file $file")
+            file.createNewFile()
+            file
         }
 
         files.flatMap(file => {
             val content = IO.read(file, StandardCharsets.UTF_8)
 
             if (content.contains("@TestVariant")) {
+                log.debug(s"Processing file $file for variants")
+
+                var expecedSize: Option[Int] = None
+
                 val processed: State = content.split("\n").foldLeft(State.zero)((state, str) => {
 
-                    val nextMod: Mode = Variant.parseLine(str) match {
-                        case Some(value) => Mode.Replace(value)
-                        case None        => Mode.Continue
+                    val nextMod: Mode = Variant.extractFrom(str) match {
+                        case Some(Success(variant)) if expecedSize.isEmpty =>
+                            expecedSize = Some(variant.replacements.size)
+                            Mode.Replace(variant)
+
+                        case Some(Success(variant)) if expecedSize.contains(variant.replacements.size) =>
+                            Mode.Replace(variant)
+
+                        case Some(Success(variant)) =>
+                            log.error(s"in $file\ninvalid variant $str : ${expecedSize.map(i =>
+                                    s"expected size $i, actual size ${variant.replacements.size}"
+                                ).mkString}")
+                            throw sys.error(s"invalid variant $str for $file")
+
+                        case Some(Failure(exception)) =>
+                            log.error(s"cannot generate variant for $file")
+                            throw exception
+                        case None => Mode.Continue
                     }
 
                     val line: Line = state.mode match {
                         case Mode.Continue => Line.Raw(str)
                         case Mode.Replace(testVariant) =>
-                            Line.Variants(testVariant.replacements.map(r => str.replace(testVariant.base, r)))
+                            if (str.contains(testVariant.base))
+                                Line.Variants(testVariant.replacements.map(r => str.replace(testVariant.base, r)))
+                            else {
+                                log.error(s"in $file: \ncannot find '${testVariant.base}' in this line: \n|  $str")
+                                throw sys.error(s"cannot generate variant for $file")
+                            }
                     }
 
                     state.next(line, nextMod)
                 })
 
-                val sizes = processed.lines.collect({ case Line.Variants(xs) => xs.size }).distinct
-                assert(sizes.size == 1)
-                val size = sizes.head
+                val size: Int = processed.lines.collectFirst({ case Line.Variants(xs) => xs.size }).get
 
-                val name = file.name.replaceAll(".scala$", "")
+                val testFilename = file.name.replaceAll(".scala$", "")
 
-                val files: Seq[File] = (0 until size).map(_ => newFile(name))
-
-                files.foreach(file => file.createNewFile())
+                val files: Seq[File] = (0 until size).map(_ => newScalaFile(suffix = testFilename))
 
                 val writers: Seq[PrintWriter] = files.map(file => new PrintWriter(file))
 
