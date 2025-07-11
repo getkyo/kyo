@@ -77,7 +77,7 @@ import scala.quoted.*
   * @tparam Restore
   *   Effects that become available after isolation completes
   */
-abstract class Isolate[Remove, -Keep, Restore]:
+abstract class Isolate[Remove, -Keep, -Restore]:
     self =>
 
     /** The type of state being managed */
@@ -288,6 +288,8 @@ object Isolate:
                         |   isolate.use {
                         |     Async.parallel(parallelism)(tasks)
                         |   }
+                        |
+                        |Can't materialize `Isolate[${TypeRepr.of[Remove].show}, ${TypeRepr.of[Keep].show}, ${TypeRepr.of[Restore].show}]`.
                         |""".stripMargin
                 )
             end if
