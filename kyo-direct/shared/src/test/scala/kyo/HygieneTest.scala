@@ -277,6 +277,16 @@ class HygieneTest extends Test:
         assertionSuccess
     }
 
+    ".now outside of direct" in {
+        val x: Int < Any = 1
+        typeCheckFailure("x.now")(".now must be used within a `direct` block.")
+    }
+
+    ".later outside of direct" in {
+        val x: Int < Any = 1
+        typeCheckFailure("x.later")(".later must be used within a `direct` block.")
+    }
+
     ".now in .now (#1366)" in {
         val x: Int < Any              = 1
         def f(i: Int): Int < Var[Int] = Var.set(i)
