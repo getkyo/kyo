@@ -7,7 +7,7 @@ import kyo.kernel.Effect
 import sttp.monad.Canceler
 import sttp.monad.MonadAsyncError
 
-class KyoSttpMonad extends MonadAsyncError[M]:
+sealed class KyoSttpMonad(using Frame) extends MonadAsyncError[M]:
 
     def map[A, T2](fa: M[A])(f: A => T2): M[T2] =
         fa.map(v => f(v))
@@ -18,12 +18,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
     protected def handleWrappedError[A](rt: M[A])(
         h: PartialFunction[Throwable, M[A]]
     ) =
-        Effect.catching(rt) {
-            case ex if h.isDefinedAt(ex) =>
-                h(ex)
-            case r =>
-                throw r
-        }
+        Effect.catching(rt)(ex => h.applyOrElse(ex, throw _))
 
     override def handleError[A](rt: => M[A])(h: PartialFunction[Throwable, M[A]]) =
         handleWrappedError(rt)(h)
@@ -52,8 +47,8 @@ class KyoSttpMonad extends MonadAsyncError[M]:
             val p = Promise.Unsafe.init[A, Any]()
             val canceller =
                 register {
-                    case Left(t)  => discard(p.complete(Result.panic(t)))
-                    case Right(t) => discard(p.complete(Result.succeed(t)))
+                    case Left(t)  => p.completeDiscard(Result.panic(t))
+                    case Right(t) => p.completeDiscard(Result.succeed(t))
                 }
             p.onInterrupt { _ =>
                 canceller.cancel()
@@ -63,9 +58,8 @@ class KyoSttpMonad extends MonadAsyncError[M]:
 
 end KyoSttpMonad
 
-object KyoSttpMonad extends KyoSttpMonad:
+object KyoSttpMonad extends KyoSttpMonad(using Frame.internal):
     type M[A] = A < Async
 
     inline given KyoSttpMonad = this
-    given Frame               = Frame.internal
 end KyoSttpMonad
