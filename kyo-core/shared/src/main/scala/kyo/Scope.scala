@@ -189,7 +189,7 @@ object Scope:
                                                 Abort.run[Throwable](task(ex))
                                                     .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
                                             }
-                                                .handle(Fiber.init[Nothing, Unit, Any, Any])
+                                                .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
                                                 .map(promise.becomeDiscard)
                             }
 

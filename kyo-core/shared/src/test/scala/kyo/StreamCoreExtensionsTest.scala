@@ -533,9 +533,11 @@ class StreamCoreExtensionsTest extends Test:
                         val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                         lazyStream.broadcasted().map: reusableStream =>
                             Latch.initWith(10): latch =>
-                                Fiber.init(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
+                                Fiber.initUnscoped(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map: runFiber =>
                                     latch.await.andThen:
-                                        Fiber.init(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                        Fiber.initUnscoped(
+                                            Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                        ).andThen:
                                             runFiber.get.map: resultChunks =>
                                                 assert(
                                                     resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)
@@ -562,11 +564,13 @@ class StreamCoreExtensionsTest extends Test:
                         val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                         lazyStream.broadcastDynamic().map: streamHub =>
                             Latch.initWith(10): latch =>
-                                Fiber.init(
+                                Fiber.initUnscoped(
                                     Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
                                 ).map: runFiber =>
                                     latch.await.andThen:
-                                        Fiber.init(Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))).andThen:
+                                        Fiber.initUnscoped(
+                                            Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                        ).andThen:
                                             runFiber.get.map: resultChunks =>
                                                 assert(
                                                     resultChunks.size == 10 && resultChunks.toSet.size == 1 && resultChunks.head == (0 to 10)

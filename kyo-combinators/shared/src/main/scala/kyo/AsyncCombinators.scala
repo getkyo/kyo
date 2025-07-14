@@ -20,7 +20,7 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
-        Fiber.init(effect)
+        Fiber.initUnscoped(effect)
 
     /** Forks this computation using the Async effect and returns its result as a `Fiber[A, Abort[E]]`, managed by the Resource effect.
       * Unlike `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope
@@ -35,7 +35,7 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
-        Kyo.acquireRelease(Fiber.init(effect))(_.interrupt)
+        Kyo.acquireRelease(Fiber.initUnscoped(effect))(_.interrupt)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.
       *
@@ -52,8 +52,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         i2: Isolate[S2, Sync, S3]
     ): A1 < (Abort[E | E1] & Async & S & S2 & S3) =
         for
-            left  <- Fiber.init(using i1)(effect)
-            right <- Fiber.init(using i2)(next)
+            left  <- Fiber.initUnscoped(using i1)(effect)
+            right <- Fiber.initUnscoped(using i2)(next)
             _     <- left.await
             a1    <- right.join
         yield a1
@@ -73,8 +73,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         i2: Isolate[S2, Sync, S3]
     ): A < (Abort[E | E1] & Async & S & S2 & S3) =
         for
-            left  <- Fiber.init(using i1)(effect)
-            right <- Fiber.init(using i2)(next)
+            left  <- Fiber.initUnscoped(using i1)(effect)
+            right <- Fiber.initUnscoped(using i2)(next)
             a     <- left.join
             _     <- right.await
         yield a
@@ -95,8 +95,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         zippable: Zippable[A, A1]
     ): zippable.Out < (Abort[E | E1] & Async & S & S2 & S3) =
         for
-            left  <- Fiber.init(using i1)(effect)
-            right <- Fiber.init(using i2)(next)
+            left  <- Fiber.initUnscoped(using i1)(effect)
+            right <- Fiber.initUnscoped(using i2)(next)
             a     <- left.join
             a1    <- right.join
         yield zippable.zip(a, a1)

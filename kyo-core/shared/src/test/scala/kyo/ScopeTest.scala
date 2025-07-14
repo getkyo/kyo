@@ -111,7 +111,7 @@ class ScopeTest extends Test:
 
         "ensure" in run {
             var closes = 0
-            Scope.ensure(Fiber.init(closes += 1).map(_.get).unit)
+            Scope.ensure(Fiber.initUnscoped(closes += 1).map(_.get).unit)
                 .handle(
                     Scope.run,
                     Abort.run
@@ -126,7 +126,7 @@ class ScopeTest extends Test:
             val acquire = Abort.get(Some(42))
             // only Async in release
             def release(i: Int) =
-                Fiber.init {
+                Fiber.initUnscoped {
                     assert(i == 42)
                     closes += 1
                 }.map(_.get)
@@ -142,7 +142,7 @@ class ScopeTest extends Test:
 
         "acquire" in run {
             val r = TestResource(1)
-            Scope.acquire(Fiber.init(r).map(_.get))
+            Scope.acquire(Fiber.initUnscoped(r).map(_.get))
                 .handle(
                     Scope.run,
                     Abort.run
@@ -195,7 +195,7 @@ class ScopeTest extends Test:
             val io =
                 for
                     l <- Latch.init(1)
-                    f <- Fiber.init(l.await.andThen(Scope.ensure { called = true }))
+                    f <- Fiber.initUnscoped(l.await.andThen(Scope.ensure { called = true }))
                 yield (l, f)
             for
                 (l, f) <- Scope.run(io)
@@ -216,7 +216,7 @@ class ScopeTest extends Test:
                 val resources = Kyo.foreach(1 to 3)(makeResource)
 
                 for
-                    close <- Fiber.init(resources.handle(Scope.run(3)))
+                    close <- Fiber.initUnscoped(resources.handle(Scope.run(3)))
                     _     <- latch.await
                     ids   <- close.get
                 yield assert(ids == (1 to 3))
@@ -240,7 +240,7 @@ class ScopeTest extends Test:
                 val resources = Kyo.foreach(1 to 10)(makeResource)
 
                 for
-                    close <- Fiber.init(resources.handle(Scope.run(3)))
+                    close <- Fiber.initUnscoped(resources.handle(Scope.run(3)))
                     ids   <- close.get
                 yield assert(ids == (1 to 10))
                 end for
