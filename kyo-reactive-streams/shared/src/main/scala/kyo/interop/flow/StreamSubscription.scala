@@ -23,7 +23,6 @@ final private[kyo] class StreamSubscription[V, S](
     end request
 
     override def cancel(): Unit =
-        given Frame = Frame.internal
         discard(requestChannel.close())
     end cancel
 
