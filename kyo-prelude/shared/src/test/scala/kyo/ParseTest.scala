@@ -1324,6 +1324,18 @@ class ParseTest extends Test:
                 end for
             }
         }
+
+        "Two Parse of different input type" in run {
+            val intCharZipParser: Chunk[(Char, Int)] < (Parse[Int] & Parse[Char]) =
+                for
+                    chars <- Parse.repeat(Parse.char)
+                    ints  <- Parse.repeat(Parse.any[Int])
+                yield chars.zip(ints)
+
+            for
+                result <- intCharZipParser.handle(Parse.run("abc"), Parse.run(Chunk(1, 2, 3)))
+            yield assert(result == Chunk(('a', 1), ('b', 2), ('c', 3)))
+        }
     }
 
     "streaming" - {
