@@ -408,13 +408,13 @@ object StreamCoreExtensions:
                         val emitResults =
                             val emit = Loop.foreach:
                                 channelOut.take.map: chunkFiber =>
-                                    chunkFiber.use: chunk =>
+                                    chunkFiber.get.map: chunk =>
                                         if chunk.nonEmpty then
                                             Emit.valueWith(chunk)(Loop.continue)
                                         else
                                             Loop.continue
                                         end if
-                            Abort.run(emit).unit
+                            Abort.run[Closed](emit).unit
                         end emitResults
 
                         // Stream from output channel, running handlers in background
@@ -468,7 +468,7 @@ object StreamCoreExtensions:
                         // Concurrency limiter
                         Meter.useSemaphore(parallel): semaphore =>
                             val closeAll = channelPar.close.andThen(channelOut.close)
-                            val closePar = channelPar.put(Fiber.unit).andThen(channelPar.closeAwaitEmpty)
+                            val closePar = channelPar.closeAwaitEmpty
 
                             // Handle original stream, asynchronously transforming input and publishing output
                             // using semaphore as rate limiter
@@ -485,26 +485,24 @@ object StreamCoreExtensions:
 
                             // Drain channelPar, waiting for each fiber to complete before finishing. This
                             // ensures background fiber does not complete until all transformations are published
-                            val handlePar = Loop.foreach:
-                                Abort.fold[Closed](
-                                    _ => Loop.continue,
-                                    // When finished, close the output channel after letting it drain
-                                    _ => channelOut.closeAwaitEmpty.andThen(Loop.done)
-                                ):
-                                    channelPar.take.map: fiber =>
-                                        fiber.get
+                            val handlePar =
+                                Abort.run[Closed](
+                                    Loop.foreach:
+                                        channelPar.take.map: fiber =>
+                                            fiber.get.andThen(Loop.continue)
+                                ).unit
 
                             // Run stream handler in background, closing the output channel when finished
                             // and propagating failures
                             val background = Fiber.init:
                                 Abort.fold[E | Closed](
-                                    onSuccess = _ => (),
+                                    onSuccess = _ => channelOut.closeAwaitEmpty.unit,
                                     onFail = {
                                         case _: Closed       => bug("buffer closed unexpectedly")
                                         case e: E @unchecked => closeAll.andThen(Abort.fail(e))
                                     },
                                     onPanic = e => closeAll.andThen(Abort.panic(e))
-                                )(Async.gather(handleEmit, handlePar).unit)
+                                )(Async.foreachDiscard(Seq(handleEmit, handlePar))(identity).unit)
 
                             // Emit from channel while running handler in background, then joining handler
                             // to capture any failures from background
@@ -588,7 +586,7 @@ object StreamCoreExtensions:
                                         else
                                             Loop.continue
                                         end if
-                            Abort.run(emit).unit
+                            Abort.run[Closed](emit).unit
                         end emitResults
 
                         // Stream from output channel, running handlers in background
@@ -618,9 +616,8 @@ object StreamCoreExtensions:
           * boundaries.
           *
           * @note
-          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be
-          *   up to 2*[[bufferSize]]
-          * 
+          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be up to 2*[[bufferSize]]
+          *
           * @param parallel
           *   Maximum number of elements to transform in parallel at a time
           * @param bufferSize
@@ -665,26 +662,24 @@ object StreamCoreExtensions:
 
                             // Drain channelPar, waiting for each fiber to complete before finishing. This
                             // ensures background fiber does not complete until all transformations are published
-                            val handlePar = Loop.foreach:
-                                Abort.fold[Closed](
-                                    _ => Loop.continue,
-                                    // When finished, close the output channel after letting it drain
-                                    _ => channelOut.closeAwaitEmpty.andThen(Loop.done)
-                                ):
-                                    channelPar.take.map: fiber =>
-                                        fiber.get
+                            val handlePar =
+                                Abort.run[Closed](
+                                    Loop.foreach:
+                                        channelPar.take.map: fiber =>
+                                            fiber.get.andThen(Loop.continue)
+                                ).unit
 
                             // Run stream handler in background, closing the output channel when finished
                             // and propagating failures
                             val background = Fiber.init:
                                 Abort.fold[E | Closed](
-                                    onSuccess = _ => (),
+                                    onSuccess = _ => channelOut.closeAwaitEmpty.unit,
                                     onFail = {
                                         case _: Closed       => bug("buffer closed unexpectedly")
                                         case e: E @unchecked => closeAll.andThen(Abort.fail(e))
                                     },
                                     onPanic = e => closeAll.andThen(Abort.panic(e))
-                                )(Async.gather(handleEmit, handlePar).unit)
+                                )(Async.foreachDiscard(Seq(handleEmit, handlePar))(identity))
 
                             // Emit chunks from channelOut
                             val emitResults =
@@ -707,9 +702,8 @@ object StreamCoreExtensions:
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunk in parallel. Does not preserve chunk boundaries.
           *
           * @note
-          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be
-          *   up to 2*[[bufferSize]]
-          * 
+          *   Keeps a separate buffer for background fibers, which means that the number of chunks in memory can be up to 2*[[bufferSize]]
+          *
           * @param f
           *   Asynchronous transformation of stream elements
           */
