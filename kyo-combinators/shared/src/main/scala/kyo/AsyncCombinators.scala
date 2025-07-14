@@ -9,8 +9,7 @@ import scala.util.NotGiven
 
 extension [A, E, S](effect: A < (Abort[E] & Async & S))
 
-    /** Forks this computation using the Async effect and returns its result as a fiber. Guarantees eventual fiber interruption using
-      * [[Scope]] effect.
+    /** Forks this computation, returning a fiber. Guarantees eventual fiber interruption using [[Scope]] effect.
       *
       * @return
       *   A computation that produces the result of this computation with Async effect
@@ -23,7 +22,22 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
         Fiber.init(effect)
 
-    /** Forks this computation using the Async effect without guaranteeing eventual cleanup
+    /** Forks this computation and uses the resulting fiber within a scoped function [[f]]. Guarantees fiber interruption after usage.
+      *
+      * @param f
+      *   A function using the forked fiber to produce a new effect
+      * @return
+      *   A computation that produces the result of [[f]] when applied to the forked fiber
+      */
+    def forkUsing[S2](
+        using
+        isolate: Isolate[S, Sync, S2],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    )[B, S3](f: Fiber[A, reduce.SReduced & S2] => B < S3): B < (Sync & S & S3) =
+        Fiber.use(effect)(f)
+
+    /** Forks this computation, returning a fiber. Does not guarantee fiber interruption.
       *
       * @return
       *   A computation that produces the result of this computation with Async and Resource effects
