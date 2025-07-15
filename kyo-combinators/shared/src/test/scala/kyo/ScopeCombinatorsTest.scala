@@ -20,7 +20,7 @@ class ScopeCombinatorsTest extends Test:
                 yield result
             assert(state == 0)
             val handledResources: Int < Async = Scope.run(effect)
-            Fiber.init(handledResources).map(_.toFuture).map { handled =>
+            Fiber.initUnscoped(handledResources).map(_.toFuture).map { handled =>
                 for
                     assertion1 <- handled.map(_ == 50)
                     assertion2 <- Future(assert(state == 0))
@@ -32,7 +32,7 @@ class ScopeCombinatorsTest extends Test:
         "should construct a resource using addFinalizer" in run {
             var state  = 0
             val effect = Kyo.addFinalizer(Sync.defer { state = 100 })
-            Fiber.init(Scope.run(effect)).map(_.toFuture).map { handled =>
+            Fiber.initUnscoped(Scope.run(effect)).map(_.toFuture).map { handled =>
                 for
                     ass1 <- handled
                     ass2 <- Future(assert(state == 100))
@@ -47,7 +47,7 @@ class ScopeCombinatorsTest extends Test:
                 override def close(): Unit = state = 100
             val effect = Kyo.fromAutoCloseable(closeable)
             assert(state == 0)
-            Fiber.init(Scope.run(effect)).map(_.toFuture).map { handled =>
+            Fiber.initUnscoped(Scope.run(effect)).map(_.toFuture).map { handled =>
                 for
                     ass2 <- handled.map(v => assert(v.equals(closeable)))
                     ass3 <- Future(assert(state == 100))

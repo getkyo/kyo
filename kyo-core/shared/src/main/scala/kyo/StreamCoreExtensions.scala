@@ -83,7 +83,7 @@ object StreamCoreExtensions:
             t2: Tag[Emit[Chunk[A]]],
             fr: Frame
         ): Unit < (Async & S & Scope) =
-            Scope.acquireRelease(Fiber.init {
+            Scope.acquireRelease(Fiber.initUnscoped {
                 Abort.run[E](
                     Abort.run[Closed](
                         latch.await.andThen(stream.foreachChunk(chunk => hub.put(Result.Success(Present(chunk)))))
@@ -132,7 +132,7 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.init(Abort.run {
+                        _ <- Fiber.initUnscoped(Abort.run {
                             Async.foreachDiscard(streams)(
                                 _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
                             )
@@ -248,7 +248,7 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.init(Abort.run(
+                        _ <- Fiber.initUnscoped(Abort.run(
                             Async
                                 .foreachDiscard(streams)(
                                     _.foreachChunk(c => Abort.run(channel.put(Present(c))))
@@ -325,7 +325,7 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.init(
+                        _ <- Fiber.initUnscoped(
                             Async.gather(
                                 stream.foreachChunk(c => channel.put(Present(c)))
                                     .andThen(channel.put(Absent)),
@@ -386,7 +386,7 @@ object StreamCoreExtensions:
                             handle = [C] =>
                                 (input, cont) =>
                                     // Fork async generation of chunks and publish fiber to output channel
-                                    Fiber.init(Async.foreach(input)(v => semaphore.run(f(v)))).map: chunkFiber =>
+                                    Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v)))).map: chunkFiber =>
                                         channelOut.put(chunkFiber).andThen:
                                             // Wait for available concurrency before continuing
                                             semaphore.run(Loop.continue(cont(())))
@@ -560,7 +560,7 @@ object StreamCoreExtensions:
                             handle = [C] =>
                                 (input, cont) =>
                                     // Transform chunk in background, publishing fiber to channelOut
-                                    semaphore.run(Fiber.init(f(input))).map: chunkFiber =>
+                                    semaphore.run(Fiber.initUnscoped(f(input))).map: chunkFiber =>
                                         channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
                         )
 
@@ -671,7 +671,7 @@ object StreamCoreExtensions:
 
                             // Run stream handler in background, closing the output channel when finished
                             // and propagating failures
-                            val background = Fiber.init:
+                            val background = Fiber.initUnscoped:
                                 Abort.fold[E | Closed](
                                     onSuccess = _ => channelOut.closeAwaitEmpty.unit,
                                     onFail = {
@@ -980,8 +980,8 @@ object StreamCoreExtensions:
 
                     // Handle loop collecting emitted values and flushing them until completion
                     val push: Fiber[Unit, Abort[E | Closed] & S] < (Sync & S) =
-                        Fiber.init:
-                            Sync.ensure(Fiber.init(using Isolate[Any, Any, Any])(channel.put(Flush))):
+                        Fiber.initUnscoped:
+                            Sync.ensure(Fiber.initUnscoped(using Isolate[Any, Any, Any])(channel.put(Flush))):
                                 ArrowEffect.handleLoop(t1, stream.emit)(
                                     handle = [C] =>
                                         (chunk, cont) =>

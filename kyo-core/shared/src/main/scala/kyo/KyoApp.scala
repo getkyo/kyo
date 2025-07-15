@@ -51,7 +51,7 @@ object KyoApp:
     )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E | Timeout] & Sync & S) =
-        Fiber.init(v).map { fiber =>
+        Fiber.initUnscoped(v).map { fiber =>
             fiber.block(timeout).map(Abort.get(_))
         }
 

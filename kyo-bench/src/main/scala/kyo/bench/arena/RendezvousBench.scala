@@ -100,8 +100,8 @@ class RendezvousBench extends ArenaBench.ForkOnly(10000 * (10000 + 1) / 2):
 
         for
             waiting  <- AtomicRef.init[Any](null)
-            _        <- Fiber.init(produce(waiting))
-            consumer <- Fiber.init(consume(waiting))
+            _        <- Fiber.initUnscoped(produce(waiting))
+            consumer <- Fiber.initUnscoped(consume(waiting))
             res      <- consumer.get
         yield res
         end for
