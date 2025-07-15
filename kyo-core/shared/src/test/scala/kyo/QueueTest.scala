@@ -354,10 +354,10 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.init(
+                offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                closeFiber  <- Fiber.init(latch.await.andThen(queue.close))
+                closeFiber  <- Fiber.initUnscoped(latch.await.andThen(queue.close))
                 _           <- latch.release
                 offered     <- offerFiber.get
                 backlog     <- closeFiber.get
@@ -380,10 +380,10 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.init(
+                offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                pollFiber <- Fiber.init(
+                pollFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.fill(100, 100)(Abort.run(queue.poll)))
                 )
                 _       <- latch.release
@@ -401,10 +401,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 _     <- Kyo.foreach(1 to size)(i => queue.offer(i))
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.init(
+                offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100)(i => Abort.run(queue.offer(i))))
                 )
-                closeFiber <- Fiber.init(latch.await.andThen(queue.close))
+                closeFiber <- Fiber.initUnscoped(latch.await.andThen(queue.close))
                 _          <- latch.release
                 offered    <- offerFiber.get
                 backlog    <- closeFiber.get
@@ -423,10 +423,10 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.init(
+                offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                closeFiber <- Fiber.init(
+                closeFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.fill(100, 100)(queue.close))
                 )
                 _        <- latch.release
@@ -447,13 +447,13 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.init(
+                offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                pollFiber <- Fiber.init(
+                pollFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.fill(100, 100)(Abort.run(queue.poll)))
                 )
-                closeFiber <- Fiber.init(latch.await.andThen(queue.close))
+                closeFiber <- Fiber.initUnscoped(latch.await.andThen(queue.close))
                 _          <- latch.release
                 offered    <- offerFiber.get
                 polled     <- pollFiber.get
@@ -556,7 +556,7 @@ class QueueTest extends Test:
                 q  <- Queue.init[Int](2)
                 _  <- q.offer(1)
                 _  <- q.offer(1)
-                f1 <- Fiber.init(q.closeAwaitEmpty)
+                f1 <- Fiber.initUnscoped(q.closeAwaitEmpty)
                 v1 <- Abort.run(q.size)
                 v2 <- Abort.run(q.empty)
                 v3 <- Abort.run(q.full)
@@ -591,7 +591,7 @@ class QueueTest extends Test:
                 queue  <- Queue.init[Int](10)
                 _      <- queue.offer(1)
                 _      <- queue.offer(2)
-                fiber  <- Fiber.init(queue.closeAwaitEmpty)
+                fiber  <- Fiber.initUnscoped(queue.closeAwaitEmpty)
                 _      <- queue.poll
                 _      <- queue.poll
                 result <- fiber.get
@@ -619,7 +619,7 @@ class QueueTest extends Test:
                     queue  <- Queue.Unbounded.init[Int]()
                     _      <- queue.add(1)
                     _      <- queue.add(2)
-                    fiber  <- Fiber.init(queue.closeAwaitEmpty)
+                    fiber  <- Fiber.initUnscoped(queue.closeAwaitEmpty)
                     _      <- queue.poll
                     _      <- queue.poll
                     result <- fiber.get
@@ -631,7 +631,7 @@ class QueueTest extends Test:
             for
                 queue  <- Queue.init[Int](10)
                 _      <- Kyo.foreach(1 to 5)(i => queue.offer(i))
-                fiber  <- Fiber.init(queue.closeAwaitEmpty)
+                fiber  <- Fiber.initUnscoped(queue.closeAwaitEmpty)
                 _      <- Async.foreach(1 to 5)(_ => queue.poll)
                 result <- fiber.get
             yield assert(result)
@@ -642,7 +642,7 @@ class QueueTest extends Test:
                 queue  <- Queue.Unbounded.initSliding[Int](2)
                 _      <- queue.add(1)
                 _      <- queue.add(2)
-                fiber  <- Fiber.init(queue.closeAwaitEmpty)
+                fiber  <- Fiber.initUnscoped(queue.closeAwaitEmpty)
                 _      <- queue.poll
                 _      <- queue.poll
                 result <- fiber.get
@@ -654,7 +654,7 @@ class QueueTest extends Test:
                 queue  <- Queue.Unbounded.initDropping[Int](2)
                 _      <- queue.add(1)
                 _      <- queue.add(2)
-                fiber  <- Fiber.init(queue.closeAwaitEmpty)
+                fiber  <- Fiber.initUnscoped(queue.closeAwaitEmpty)
                 _      <- queue.poll
                 _      <- queue.poll
                 result <- fiber.get
@@ -674,10 +674,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 _     <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
                 latch <- Latch.init(1)
-                closeAwaitEmptyFiber <- Fiber.init(
+                closeAwaitEmptyFiber <- Fiber.initUnscoped(
                     latch.await.andThen(queue.closeAwaitEmpty)
                 )
-                closeFiber <- Fiber.init(
+                closeFiber <- Fiber.initUnscoped(
                     latch.await.andThen(queue.close)
                 )
                 _        <- latch.release
@@ -699,20 +699,20 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 
-                producerFiber1 <- Fiber.init(
+                producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
-                producerFiber2 <- Fiber.init(
+                producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
 
-                consumerFiber <- Fiber.init(
+                consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
                     )
@@ -738,20 +738,20 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 
-                producerFiber1 <- Fiber.init(
+                producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
-                producerFiber2 <- Fiber.init(
+                producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.close)
                     )
                 )
 
-                consumerFiber <- Fiber.init(
+                consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
                     )

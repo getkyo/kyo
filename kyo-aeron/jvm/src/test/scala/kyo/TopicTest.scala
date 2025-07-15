@@ -34,9 +34,11 @@ class TopicTest extends Test:
                         for
                             started <- Latch.init(1)
                             fiber <-
-                                Fiber.init(using Topic.isolate)(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
+                                Fiber.initUnscoped(using Topic.isolate)(
+                                    started.release.andThen(Topic.stream[Message](uri).take(messages.size).run)
+                                )
                             _        <- started.await
-                            _        <- Fiber.init(Topic.publish(uri)(Stream.init(messages)))
+                            _        <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
                             received <- fiber.get
                         yield assert(received == messages)
                     }
@@ -48,11 +50,11 @@ class TopicTest extends Test:
                     Topic.run {
                         for
                             started       <- Latch.init(2)
-                            stringFiber   <- Fiber.init(started.release.andThen(Topic.stream[String](uri).take(strings.size).run))
-                            intFiber      <- Fiber.init(started.release.andThen(Topic.stream[Int](uri).take(ints.size).run))
+                            stringFiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[String](uri).take(strings.size).run))
+                            intFiber      <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Int](uri).take(ints.size).run))
                             _             <- started.await
-                            _             <- Fiber.init(Topic.publish(uri)(Stream.init(strings)))
-                            _             <- Fiber.init(Topic.publish(uri)(Stream.init(ints)))
+                            _             <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(strings)))
+                            _             <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(ints)))
                             stringResults <- stringFiber.get
                             intResults    <- intFiber.get
                         yield
@@ -69,12 +71,16 @@ class TopicTest extends Test:
                         for
                             started <- Latch.init(2)
                             strFiber <-
-                                Fiber.init(started.release.andThen(Topic.stream[GenericMessage[String]](uri).take(strMessages.size).run))
+                                Fiber.initUnscoped(
+                                    started.release.andThen(Topic.stream[GenericMessage[String]](uri).take(strMessages.size).run)
+                                )
                             intFiber <-
-                                Fiber.init(started.release.andThen(Topic.stream[GenericMessage[Int]](uri).take(intMessages.size).run))
+                                Fiber.initUnscoped(
+                                    started.release.andThen(Topic.stream[GenericMessage[Int]](uri).take(intMessages.size).run)
+                                )
                             _          <- started.await
-                            _          <- Fiber.init(Topic.publish(uri)(Stream.init(strMessages)))
-                            _          <- Fiber.init(Topic.publish(uri)(Stream.init(intMessages)))
+                            _          <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(strMessages)))
+                            _          <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(intMessages)))
                             strResults <- strFiber.get
                             intResults <- intFiber.get
                         yield
@@ -90,10 +96,10 @@ class TopicTest extends Test:
                     )
                     Topic.run {
                         for
-                            started  <- Latch.init(1)
-                            fiber    <- Fiber.init(started.release.andThen(Topic.stream[ComplexMessage](uri).take(messages.size).run))
-                            _        <- started.await
-                            _        <- Fiber.init(Topic.publish(uri)(Stream.init(messages)))
+                            started <- Latch.init(1)
+                            fiber <- Fiber.initUnscoped(started.release.andThen(Topic.stream[ComplexMessage](uri).take(messages.size).run))
+                            _     <- started.await
+                            _     <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
                             received <- fiber.get
                         yield assert(received == messages)
                     }
@@ -107,10 +113,10 @@ class TopicTest extends Test:
                     Topic.run {
                         for
                             started <- Latch.init(2)
-                            fiber1  <- Fiber.init(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
-                            fiber2  <- Fiber.init(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
+                            fiber1  <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
+                            fiber2  <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
                             _       <- started.await
-                            _       <- Fiber.init(Topic.publish(uri)(Stream.init(messages)))
+                            _       <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
                             result1 <- fiber1.get
                             result2 <- fiber2.get
                         yield
@@ -126,20 +132,20 @@ class TopicTest extends Test:
                         for
                             started <- Latch.init(2)
                             slowFiber <-
-                                Fiber.init(started.release.andThen(
+                                Fiber.initUnscoped(started.release.andThen(
                                     Topic.stream[Message](uri)
                                         .map(r => Async.delay(1.millis)(r))
                                         .take(messages.size)
                                         .run
                                 ))
                             fastFiber <-
-                                Fiber.init(started.release.andThen(
+                                Fiber.initUnscoped(started.release.andThen(
                                     Topic.stream[Message](uri)
                                         .take(messages.size)
                                         .run
                                 ))
                             _    <- started.await
-                            _    <- Fiber.init(Topic.publish(uri)(Stream.init(messages)))
+                            _    <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
                             slow <- slowFiber.get
                             fast <- fastFiber.get
                         yield
@@ -160,7 +166,7 @@ class TopicTest extends Test:
                     Topic.run {
                         for
                             started <- Latch.init(1)
-                            fiber   <- Fiber.init(started.release.andThen(Topic.stream[Base](uri, failSchedule).run))
+                            fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Base](uri, failSchedule).run))
                             _       <- started.await
                             result1 <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(messages)))
                             result2 <- fiber.getResult
@@ -174,7 +180,7 @@ class TopicTest extends Test:
                     Topic.run {
                         for
                             started <- Latch.init(1)
-                            fiber   <- Fiber.init(started.release.andThen(Topic.stream[Derived1](uri, failSchedule).run))
+                            fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Derived1](uri, failSchedule).run))
                             _       <- started.await
                             result1 <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(messages)))
                             result2 <- fiber.getResult
@@ -191,7 +197,7 @@ class TopicTest extends Test:
                     Topic.run {
                         for
                             started <- Latch.init(1)
-                            fiber   <- Fiber.init(started.release.andThen(Topic.stream[GenericBase[String]](uri, failSchedule).run))
+                            fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[GenericBase[String]](uri, failSchedule).run))
                             _       <- started.await
                             result1 <- Abort.run(Topic.publish(uri, failSchedule)(Stream.init(messages)))
                             result2 <- fiber.getResult
@@ -206,11 +212,11 @@ class TopicTest extends Test:
                     Topic.run {
                         for
                             started  <- Latch.init(2)
-                            fiber1   <- Fiber.init(started.release.andThen(Topic.stream[Derived1](uri).take(messages1.size).run))
-                            fiber2   <- Fiber.init(started.release.andThen(Topic.stream[Derived2](uri).take(messages2.size).run))
+                            fiber1   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Derived1](uri).take(messages1.size).run))
+                            fiber2   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Derived2](uri).take(messages2.size).run))
                             _        <- started.await
-                            _        <- Fiber.init(Topic.publish(uri)(Stream.init(messages1)))
-                            _        <- Fiber.init(Topic.publish(uri)(Stream.init(messages2)))
+                            _        <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages1)))
+                            _        <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages2)))
                             results1 <- fiber1.get
                             results2 <- fiber2.get
                         yield
@@ -226,7 +232,7 @@ class TopicTest extends Test:
                 Topic.run {
                     for
                         started <- Latch.init(1)
-                        fiber   <- Fiber.init(started.release.andThen(Topic.stream[Message](uri).take(count).run))
+                        fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(count).run))
                         _       <- started.await
                         result  <- Abort.run(Topic.publish[Message](uri)(Stream.init(messages)))
                     yield
@@ -241,7 +247,7 @@ class TopicTest extends Test:
                 Topic.run {
                     for
                         started <- Latch.init(1)
-                        fiber   <- Fiber.init(started.release.andThen(Topic.stream[Message](uri, failSchedule).take(1).run))
+                        fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri, failSchedule).take(1).run))
                         _       <- started.await
                         _       <- Topic.publish[Message](uri, failSchedule)(Stream.empty)
                         result  <- fiber.getResult
@@ -256,7 +262,7 @@ class TopicTest extends Test:
                 Topic.run {
                     for
                         started <- Latch.init(2)
-                        failingFiber <- Fiber.init(
+                        failingFiber <- Fiber.initUnscoped(
                             started.release.andThen(
                                 Topic.stream[Message](uri)
                                     .map(_ => Abort.fail("Planned failure"): Message < Abort[String])
@@ -264,7 +270,7 @@ class TopicTest extends Test:
                                     .run
                             )
                         )
-                        normalFiber <- Fiber.init(
+                        normalFiber <- Fiber.initUnscoped(
                             started.release.andThen(
                                 Topic.stream[Message](uri)
                                     .take(messageCount)
@@ -293,7 +299,7 @@ class TopicTest extends Test:
                 "subscriber without publisher" in run {
                     Topic.run {
                         for
-                            fiber  <- Fiber.init(Topic.stream[Message](uri, failSchedule).take(1).run)
+                            fiber  <- Fiber.initUnscoped(Topic.stream[Message](uri, failSchedule).take(1).run)
                             result <- fiber.getResult
                         yield assert(result.isFailure)
                     }

@@ -2244,7 +2244,7 @@ import kyo.*
 // taken by reference and automatically
 // suspended with 'Sync'
 val a: Fiber[Int, Any] < Sync =
-    Fiber.init(Math.cos(42).toInt)
+    Fiber.initUnscoped(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a
 // 'Fiber' via the 'get' method. This is also
@@ -2384,11 +2384,11 @@ import kyo.*
 
 // An example computation with fibers
 val a: Int < Async =
-    Fiber.init(Math.cos(42).toInt).map(_.get)
+    Fiber.initUnscoped(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Async' directly
 val b: Fiber[Int, Any] < Sync =
-    Fiber.init(a)
+    Fiber.initUnscoped(a)
 
 // The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
@@ -2415,7 +2415,7 @@ val b: Boolean < Sync =
 // Fullfil the promise with
 // another fiber
 val c: Boolean < Sync =
-    a.map(fiber => Fiber.init(1).map(fiber.become(_)))
+    a.map(fiber => Fiber.initUnscoped(1).map(fiber.become(_)))
 ```
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
@@ -2796,12 +2796,12 @@ val d: Unit < Async =
 val e: Unit < Async =
     for
         barrier <- Barrier.init(3)
-        fiber1  <- Fiber.init(Async.sleep(1.second))
-        fiber2  <- Fiber.init(Async.sleep(2.seconds))
+        fiber1  <- Fiber.initUnscoped(Async.sleep(1.second))
+        fiber2  <- Fiber.initUnscoped(Async.sleep(2.seconds))
         _       <- Async.zip(
                      fiber1.get.map(_ => barrier.await),
                      fiber2.get.map(_ => barrier.await),
-                     Fiber.init(barrier.await).map(_.get)
+                     Fiber.initUnscoped(barrier.await).map(_.get)
                    )
     yield ()
 ```
@@ -3400,14 +3400,14 @@ val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- ZIOs.get(ZIO.succeed(21))
         v2 <- Sync.defer(21)
-        v3 <- Fiber.init(-42).map(_.get)
+        v3 <- Fiber.initUnscoped(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- ZIOs.get(ZIO.succeed(21).fork)
-        f2 <- Fiber.init(Sync.defer(21))
+        f2 <- Fiber.initUnscoped(Sync.defer(21))
         v1 <- ZIOs.get(f1.join)
         v2 <- f2.get
     yield v1 + v2
@@ -3452,14 +3452,14 @@ val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- Cats.get(CatsIO.pure(21))
         v2 <- Sync.defer(21)
-        v3 <- Fiber.init(-42).map(_.get)
+        v3 <- Fiber.initUnscoped(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries:
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- Cats.get(CatsIO.pure(21).start)
-        f2 <- Fiber.init(Sync.defer(21))
+        f2 <- Fiber.initUnscoped(Sync.defer(21))
         v1 <- Cats.get(f1.joinWith(CatsIO(99)))
         v2 <- f2.get
     yield v1 + v2

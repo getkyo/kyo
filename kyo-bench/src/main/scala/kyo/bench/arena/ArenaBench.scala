@@ -47,7 +47,7 @@ object ArenaBench:
         def forkKyo(warmup: KyoForkWarmup): A =
             import kyo.*
             import AllowUnsafe.embrace.danger
-            Sync.Unsafe.evalOrThrow(Fiber.init(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).getOrThrow
+            Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).getOrThrow
         end forkKyo
 
         @Benchmark
