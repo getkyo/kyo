@@ -59,7 +59,7 @@ object TestVariant {
         import internal.*
 
         implicit val log: ManagedLogger = streams.value.log
-        val files: Seq[File]            = (Test / unmanagedSources).value
+        val files: Seq[File]            = ((Test / unmanagedSources).value).filter(_.name.endsWith(".scala"))
         val outDir                      = (Test / sourceManaged).value / "testVariants"
 
         lazy val created: Boolean = {
@@ -87,42 +87,45 @@ object TestVariant {
             if (content.contains("@TestVariant")) {
                 log.debug(s"Processing file $file for variants")
 
-                var expecedSize: Option[Int] = None
+                var expectedSize: Option[Int] = None
 
-                val processed: State = content.split("\n").foldLeft(State.zero)((state, str) => {
+                val processed: State = content.split("\n").zipWithIndex.foldLeft(State.zero)({
+                    case (state, (str, n)) => {
+                        val lineNumber = n + 1
 
-                    val nextMod: Mode = Variant.extractFrom(str) match {
-                        case Some(Success(variant)) if expecedSize.isEmpty =>
-                            expecedSize = Some(variant.replacements.size)
-                            Mode.Replace(variant)
+                        val nextMod: Mode = Variant.extractFrom(str) match {
+                            case Some(Success(variant)) if expectedSize.isEmpty =>
+                                expectedSize = Some(variant.replacements.size)
+                                Mode.Replace(variant)
 
-                        case Some(Success(variant)) if expecedSize.contains(variant.replacements.size) =>
-                            Mode.Replace(variant)
+                            case Some(Success(variant)) if expectedSize.contains(variant.replacements.size) =>
+                                Mode.Replace(variant)
 
-                        case Some(Success(variant)) =>
-                            log.error(s"in $file\ninvalid variant $str : ${expecedSize.map(i =>
-                                    s"expected size $i, actual size ${variant.replacements.size}"
-                                ).mkString}")
-                            throw sys.error(s"invalid variant $str for $file")
+                            case Some(Success(variant)) =>
+                                log.error(s"in $file:$lineNumber\ninvalid variant $str : ${expectedSize.map(i =>
+                                        s"expected size $i, actual size ${variant.replacements.size}"
+                                    ).mkString}")
+                                throw sys.error(s"invalid variant $str for $file:$lineNumber")
 
-                        case Some(Failure(exception)) =>
-                            log.error(s"cannot generate variant for $file")
-                            throw exception
-                        case None => Mode.Continue
+                            case Some(Failure(exception)) =>
+                                log.error(s"cannot generate variant for $file")
+                                throw exception
+                            case None => Mode.Continue
+                        }
+
+                        val line: Line = state.mode match {
+                            case Mode.Continue => Line.Raw(str)
+                            case Mode.Replace(testVariant) =>
+                                if (str.contains(testVariant.base))
+                                    Line.Variants(testVariant.replacements.map(r => str.replace(testVariant.base, r)))
+                                else {
+                                    log.error(s"in $file:$lineNumber:\ncannot find '${testVariant.base}' in this line: \n|  $str")
+                                    throw sys.error(s"cannot generate variant for $file")
+                                }
+                        }
+
+                        state.next(line, nextMod)
                     }
-
-                    val line: Line = state.mode match {
-                        case Mode.Continue => Line.Raw(str)
-                        case Mode.Replace(testVariant) =>
-                            if (str.contains(testVariant.base))
-                                Line.Variants(testVariant.replacements.map(r => str.replace(testVariant.base, r)))
-                            else {
-                                log.error(s"in $file: \ncannot find '${testVariant.base}' in this line: \n|  $str")
-                                throw sys.error(s"cannot generate variant for $file")
-                            }
-                    }
-
-                    state.next(line, nextMod)
                 })
 
                 val size: Int = processed.lines.collectFirst({ case Line.Variants(xs) => xs.size }).get
