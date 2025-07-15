@@ -827,7 +827,6 @@ class ChannelTest extends Test:
         "putBatch and drainUpTo retains groups" in run {
             (for
                 size    <- Choice.eval(0, 1, 2, 10)
-                size    <- Choice.eval(0)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 putFiber <- Fiber.init(
@@ -859,7 +858,6 @@ class ChannelTest extends Test:
         "putBatch and poll retains groups" in run {
             (for
                 size    <- Choice.eval(0, 1, 2, 10)
-                size    <- Choice.eval(0)
                 channel <- Channel.init[Int](size)
                 latch   <- Latch.init(1)
                 putFiber <- Fiber.init(
