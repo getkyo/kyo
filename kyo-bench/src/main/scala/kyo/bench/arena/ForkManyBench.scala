@@ -39,7 +39,7 @@ class ForkManyBench extends ArenaBench.ForkOnly(0):
                 case _ =>
                     false
             }
-            _ <- repeat(depth)(Fiber.init(effect))
+            _ <- repeat(depth)(Fiber.initUnscoped(effect))
             _ <- promise.get
         yield 0
         end for
