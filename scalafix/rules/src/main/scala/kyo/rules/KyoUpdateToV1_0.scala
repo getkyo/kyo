@@ -30,7 +30,7 @@ class KyoUpdateToV1_0 extends SemanticRule("KyoUpdateToV1_0") {
 
             // Async
             case asyncRun @ q"Async.run" if asyncRun.matches("kyo.Async.run") =>
-                Patch.replaceTree(asyncRun, "Fiber.init")
+                Patch.replaceTree(asyncRun, "/* Consider using Fiber.init or Fiber.use to guarantee termination */ Fiber.initUnscoped")
 
             case apply @ q"Async.apply" if apply.matches("kyo.Async.apply") =>
                 Patch.replaceTree(apply, "Async.defer")
