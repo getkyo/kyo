@@ -488,7 +488,7 @@ object StreamCoreExtensions:
                                     (input, cont) =>
                                         // For each element in input chunk, transform and publish each to channelOut
                                         // concurrently, limited by semaphore. Fork this collective process and publish
-                                        // fiber to channelPar in order to ensure completion/interruption. Wait for 
+                                        // fiber to channelPar in order to ensure completion/interruption. Wait for
                                         // concurrency first using semaphore to backpressure handler loop
                                         semaphore.run(Fiber.initUnscoped(
                                             Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
