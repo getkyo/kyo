@@ -64,7 +64,7 @@ final private[kyo] class StreamSubscription[V, S](
         Tag[Poll[Chunk[V]]],
         Frame
     ): Fiber[StreamComplete, Abort[StreamCanceled]] < (Sync & S) =
-        Fiber.init[StreamCanceled, StreamComplete, S, Any](Poll.runEmit(stream.emit)(poll).map(_._2))
+        Fiber.initUnscoped[StreamCanceled, StreamComplete, S, Any](Poll.runEmit(stream.emit)(poll).map(_._2))
             .map { fiber =>
                 fiber.onComplete { r =>
                     val x = r.map(_.eval)
