@@ -386,10 +386,8 @@ object StreamCoreExtensions:
                             handle = [C] =>
                                 (input, cont) =>
                                     // Fork async generation of chunks and publish fiber to output channel
-                                    Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v)))).map: chunkFiber =>
-                                        channelOut.put(chunkFiber).andThen:
-                                            // Wait for available concurrency before continuing
-                                            semaphore.run(Loop.continue(cont(())))
+                                    semaphore.run(Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v))))).map: chunkFiber =>
+                                        channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
                         )
 
                         val cleanup = Abort.run[Closed]:
@@ -484,12 +482,10 @@ object StreamCoreExtensions:
                             val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                                 handle = [C] =>
                                     (input, cont) =>
-                                        Fiber.initUnscoped(
+                                        semaphore.run(Fiber.initUnscoped(
                                             Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
-                                        ).map: fiber =>
-                                            channelPar.put(fiber).andThen:
-                                                // Wait for available concurrency before continuing
-                                                semaphore.run(Loop.continue(cont(())))
+                                        )).map: fiber =>
+                                            channelPar.put(fiber).andThen(Loop.continue(cont(())))
                             ).andThen(closePar)
 
                             // Drain channelPar, waiting for each fiber to complete before finishing. This
