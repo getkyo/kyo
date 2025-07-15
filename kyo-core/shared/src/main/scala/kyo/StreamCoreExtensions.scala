@@ -385,11 +385,14 @@ object StreamCoreExtensions:
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
                                 (input, cont) =>
-                                    // Fork async generation of chunks and publish fiber to output channel
+                                    // Fork async generation of chunks (with each transformation limited by semaphore)
+                                    // and publish fiber to output channel. Wait for concurrency using semaphore first to
+                                    // backpressure handler loop
                                     semaphore.run(Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v))))).map: chunkFiber =>
                                         channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
                         )
 
+                        // Ensure lingering fibers are interrupted
                         val cleanup = Abort.run[Closed]:
                             Sync.ensure(channelOut.close):
                                 Loop.foreach:
@@ -470,6 +473,7 @@ object StreamCoreExtensions:
                         Meter.useSemaphore(parallel): semaphore =>
                             val closePar = channelPar.closeAwaitEmpty.unit
 
+                            // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
                                 Sync.ensure(channelPar.close.andThen(channelOut.close)):
                                     Loop.foreach:
@@ -482,6 +486,10 @@ object StreamCoreExtensions:
                             val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                                 handle = [C] =>
                                     (input, cont) =>
+                                        // For each element in input chunk, transform and publish each to channelOut
+                                        // concurrently, limited by semaphore. Fork this collective process and publish
+                                        // fiber to channelPar in order to ensure completion/interruption. Wait for 
+                                        // concurrency first using semaphore to backpressure handler loop
                                         semaphore.run(Fiber.initUnscoped(
                                             Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
                                         )).map: fiber =>
@@ -567,6 +575,7 @@ object StreamCoreExtensions:
                                         channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
                         )
 
+                        // Ensure lingering fibers are interrupted
                         val cleanup = Abort.run[Closed]:
                             Sync.ensure(channelOut.close):
                                 Loop.foreach:
@@ -653,6 +662,7 @@ object StreamCoreExtensions:
                         Meter.useSemaphore(parallel): semaphore =>
                             val closePar = channelPar.put(Fiber.unit).andThen(channelPar.closeAwaitEmpty).unit
 
+                            // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
                                 Sync.ensure(channelPar.close.andThen(channelOut.close)):
                                     Loop.foreach:
@@ -665,6 +675,8 @@ object StreamCoreExtensions:
                             val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                                 handle = [C] =>
                                     (input, cont) =>
+                                        // Transform chunks and publish to channelOut in background fiber, placing
+                                        // fiber in channelPar to ensure completion/interruption
                                         semaphore.run(Fiber.initUnscoped(
                                             f(input).map: chunk =>
                                                 channelOut.put(chunk).unit
