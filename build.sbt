@@ -294,7 +294,8 @@ lazy val `kyo-kernel` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.jctools"   % "jctools-core" % "4.0.5",
-            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test
+            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test,
+            Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -356,7 +357,8 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2"
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2",
+            Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
