@@ -380,6 +380,14 @@ object StreamCoreExtensions:
                 Channel.use[Fiber[Chunk[V2], Async & Abort[E | Closed] & S & S2]](bufferSize): channelOut =>
                     // Concurrency limiter
                     Meter.useSemaphore(parallel): semaphore =>
+                        // Ensure lingering fibers are interrupted
+                        val cleanup = Abort.run[Closed]:
+                            Sync.ensure(channelOut.close):
+                                Loop.foreach:
+                                    channelOut.drain.map: chunk =>
+                                        if chunk.isEmpty then Loop.done
+                                        else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
+
                         // Handle original stream by running transformations in parallel, limiting concurrency
                         // via semaphore
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
@@ -391,14 +399,6 @@ object StreamCoreExtensions:
                                     semaphore.run(Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v))))).map: chunkFiber =>
                                         channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
                         )
-
-                        // Ensure lingering fibers are interrupted
-                        val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.close):
-                                Loop.foreach:
-                                    channelOut.drain.map: chunk =>
-                                        if chunk.isEmpty then Loop.done
-                                        else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
 
                         // Run stream handler in background, propagating errors to foreground
                         val background =
@@ -471,8 +471,6 @@ object StreamCoreExtensions:
                     Channel.use[Fiber[Unit, Async & Abort[E | Closed] & S & S2]](bufferSize): channelPar =>
                         // Concurrency limiter
                         Meter.useSemaphore(parallel): semaphore =>
-                            val closePar = channelPar.closeAwaitEmpty.unit
-
                             // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
                                 Sync.ensure(channelPar.close.andThen(channelOut.close)):
@@ -494,7 +492,7 @@ object StreamCoreExtensions:
                                             Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
                                         )).map: fiber =>
                                             channelPar.put(fiber).andThen(Loop.continue(cont(())))
-                            ).andThen(closePar)
+                            ).andThen(channelPar.closeAwaitEmpty.unit)
 
                             // Drain channelPar, waiting for each fiber to complete before finishing. This
                             // ensures background fiber does not complete until all transformations are published
@@ -565,6 +563,14 @@ object StreamCoreExtensions:
                 Channel.use[Fiber[Chunk[V2], Async & Abort[E | Closed] & S & S2]](bufferSize): channelOut =>
                     // Concurrency limiter
                     Meter.useSemaphore(parallel): semaphore =>
+                        // Ensure lingering fibers are interrupted
+                        val cleanup = Abort.run[Closed]:
+                            Sync.ensure(channelOut.close):
+                                Loop.foreach:
+                                    channelOut.drain.map: chunk =>
+                                        if chunk.isEmpty then Loop.done
+                                        else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
+
                         // Handle original stream by running transformations in parallel, limiting concurrency
                         // via semaphore
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
@@ -574,14 +580,6 @@ object StreamCoreExtensions:
                                     semaphore.run(Fiber.initUnscoped(f(input))).map: chunkFiber =>
                                         channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
                         )
-
-                        // Ensure lingering fibers are interrupted
-                        val cleanup = Abort.run[Closed]:
-                            Sync.ensure(channelOut.close):
-                                Loop.foreach:
-                                    channelOut.drain.map: chunk =>
-                                        if chunk.isEmpty then Loop.done
-                                        else Kyo.foreach(chunk)(_.interrupt).andThen(Loop.continue)
 
                         // Run stream handler in background, propagating errors to foreground
                         val background =
@@ -660,8 +658,6 @@ object StreamCoreExtensions:
                     Channel.use[Fiber[Unit, Async & Abort[E | Closed] & S & S2]](bufferSize): channelPar =>
                         // Concurrency limiter
                         Meter.useSemaphore(parallel): semaphore =>
-                            val closePar = channelPar.put(Fiber.unit).andThen(channelPar.closeAwaitEmpty).unit
-
                             // Ensure lingering fibers are interrupted
                             val cleanup = Abort.run[Closed]:
                                 Sync.ensure(channelPar.close.andThen(channelOut.close)):
@@ -682,7 +678,7 @@ object StreamCoreExtensions:
                                                 channelOut.put(chunk).unit
                                         )).map: fiber =>
                                             channelPar.put(fiber).andThen(Loop.continue(cont(())))
-                            ).andThen(closePar)
+                            ).andThen(channelPar.closeAwaitEmpty.unit)
 
                             // Drain channelPar, waiting for each fiber to complete before finishing. This
                             // ensures background fiber does not complete until all transformations are published
@@ -694,7 +690,7 @@ object StreamCoreExtensions:
 
                             // Run stream handler in background, closing the output channel when finished
                             // and propagating failures
-                            val background = Fiber.initUnscoped:
+                            val background =
                                 Abort.fold[E | Closed](
                                     onSuccess = _ => channelOut.closeAwaitEmpty.unit,
                                     onFail = {
@@ -714,7 +710,7 @@ object StreamCoreExtensions:
 
                             // Emit from channel while running handler in background, then joining handler
                             // to capture any failures from background
-                            background.map: backgroundFiber =>
+                            Fiber.use[E, Unit, S & S2, S & S2](background): backgroundFiber =>
                                 emitResults.andThen:
                                     backgroundFiber.get.unit
 
