@@ -1,6 +1,6 @@
 package kyo.bench.arena
 
-class StreamIOBench extends ArenaBench.SyncAndFork(25000000):
+class StreamSyncBench extends ArenaBench.SyncAndFork(25000000):
     val seq = (0 until 10000).toVector
 
     def catsBench() =
@@ -29,4 +29,4 @@ class StreamIOBench extends ArenaBench.SyncAndFork(25000000):
             .mapZIO(v => ZIO.succeed(v + 1))
             .runSum
     end zioBench
-end StreamIOBench
+end StreamSyncBench
