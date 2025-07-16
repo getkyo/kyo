@@ -132,7 +132,7 @@ class StreamCoreExtensionsTest extends Test:
                 val test =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
-                        buf <- Choice.eval(1, 4, 5, 8, 12, par, Int.MaxValue)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
                         s2 = stream.mapPar(par, buf)(i => Sync.defer(i + 1))
                         res <- s2.run
                     yield assert(
@@ -149,10 +149,28 @@ class StreamCoreExtensionsTest extends Test:
                 val test =
                     for
                         par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
-                        s2 = stream.mapPar(par)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapPar(par, buf)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
                         res <- s2.run
                     yield assert(
                         res == (2 to 5)
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+
+            "should propagate errors" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapPar(par, buf)(i => if i == 5 then Abort.fail("failure") else i + 1)
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure("failure")
                     )
                     end for
                 end test
@@ -167,7 +185,7 @@ class StreamCoreExtensionsTest extends Test:
                 val test =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
-                        buf <- Choice.eval(1, 4, 5, 8, 12)
+                        buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
                         s2 = stream.mapParUnordered(par, buf)(i => Sync.defer(i + 1))
                         res <- s2.run
                     yield assert(
@@ -183,8 +201,9 @@ class StreamCoreExtensionsTest extends Test:
                 val stream = Stream.init(1 to 4)
                 val test =
                     for
-                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
-                        s2 = stream.mapParUnordered(par)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapParUnordered(par, buf)(i => if i == 1 then Async.sleep(10.millis).andThen(i + 1) else i + 1)
                         res <- s2.run
                     yield assert(
                         res.toSet == (2 to 5).toSet &&
@@ -195,16 +214,32 @@ class StreamCoreExtensionsTest extends Test:
 
                 Choice.run(test).andThen(succeed)
             }
+
+            "should propagate errors" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapParUnordered(par, buf)(i => if i == 5 then Abort.fail("failure") else i + 1)
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure("failure")
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
         }
 
         "mapChunkPar" - {
             "should map all chunks preserving order" in run {
-                // pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
                 val test =
                     for
                         par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
-                        buf <- Choice.eval(1, 4, 5, 8, 12)
+                        buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
                         s2 = stream.mapChunkPar(par, buf)(c => Sync.defer(c.map(_ + 1)))
                         res <- s2.run
                     yield assert(
@@ -217,16 +252,91 @@ class StreamCoreExtensionsTest extends Test:
             }
 
             "should preserve order when first transformation is delayed" in run {
-                // pending
                 val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
                 val test =
                     for
-                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, 4, 5, 8, 12, Int.MaxValue)
                         s2 =
                             stream.mapChunkPar(par)(c => if c.head == 1 then Async.sleep(10.millis).andThen(c.map(_ + 1)) else c.map(_ + 1))
                         res <- s2.run
                     yield assert(
                         res == (2 to 9)
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+
+            "should propagate errors" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapChunkPar(par, buf)(chunk => if chunk.contains(5) then Abort.fail("failure") else chunk.map(_ + 1))
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure("failure")
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+        }
+
+        "mapChunkParUnordered" - {
+            "should map all chunks" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, 4, 5, 8, 12)
+                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync.defer(c.map(_ + 1)))
+                        res <- s2.run
+                    yield assert(
+                        res.toSet == (2 to 13).toSet
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+
+            "should not preserve order when first transformation is delayed" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        s2 =
+                            stream.mapChunkParUnordered(par)(c =>
+                                if c.head == 1 then Async.sleep(10.millis).andThen(c.map(_ + 1)) else c.map(_ + 1)
+                            )
+                        res <- s2.run
+                    yield assert(
+                        res.toSet == (2 to 9).toSet &&
+                            res != (2 to 9)
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+
+            "should propagate errors" in run {
+                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapChunkParUnordered(par, buf)(chunk =>
+                            if chunk.contains(5) then Abort.fail("failure") else chunk.map(_ + 1)
+                        )
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure("failure")
                     )
                     end for
                 end test
@@ -438,45 +548,6 @@ class StreamCoreExtensionsTest extends Test:
 
         "fromIteratorCatching" - {
             Seq(0, 1, 4, 32, 1024).foreach(fromIteratorCatchingTests)
-        }
-
-        "mapChunkParUnordered" - {
-            "should map all chunks" in run {
-                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
-                val test =
-                    for
-                        par <- Choice.eval(1, 2, 4, Async.defaultConcurrency, 1024)
-                        buf <- Choice.eval(1, 4, 5, 8, 12)
-                        s2 = stream.mapChunkParUnordered(par, buf)(c => Sync.defer(c.map(_ + 1)))
-                        res <- s2.run
-                    yield assert(
-                        res.toSet == (2 to 13).toSet
-                    )
-                    end for
-                end test
-
-                Choice.run(test).andThen(succeed)
-            }
-
-            "should not preserve order when first transformation is delayed" in run {
-                val stream = Stream.init(1 to 4).concat(Stream.init(5 to 8))
-                val test =
-                    for
-                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
-                        s2 =
-                            stream.mapChunkParUnordered(par)(c =>
-                                if c.head == 1 then Async.sleep(10.millis).andThen(c.map(_ + 1)) else c.map(_ + 1)
-                            )
-                        res <- s2.run
-                    yield assert(
-                        res.toSet == (2 to 9).toSet &&
-                            res != (2 to 9)
-                    )
-                    end for
-                end test
-
-                Choice.run(test).andThen(succeed)
-            }
         }
 
         "broadcast" - {
