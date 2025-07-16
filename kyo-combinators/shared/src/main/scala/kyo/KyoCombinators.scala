@@ -229,7 +229,7 @@ extension [A, S](effect: A < S)
         Kyo.unless(condition)(effect)
 
     /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
-      * the Resource effect is handled.
+      * the Scope effect is handled.
       *
       * @param finalizer
       *   The finalizer to execute after this effect
@@ -240,7 +240,7 @@ extension [A, S](effect: A < S)
         Scope.ensure(finalizer).andThen(effect)
 
     /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
-      * the Resource effect is handled.
+      * the Scope effect is handled.
       *
       * If the effect fails, the error is propagated as a `Present`. If the effect succeeds, the 'error' will be `Absent`.
       *

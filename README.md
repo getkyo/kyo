@@ -2566,7 +2566,7 @@ The `Channel` effect serves as an advanced concurrency primitive, designed to fa
 import kyo.*
 
 // A 'Channel' is initialized with a fixed capacity
-// Note the `Resource` effect, which ensures the channel
+// Note the `Scope` effect, which ensures the channel
 // will eventually be closed
 val a: Channel[Int] < (Sync & Scope) =
     Channel.init(capacity = 42)
@@ -2662,7 +2662,7 @@ val f: Maybe[Seq[Int]] < (Sync & Abort[Closed] & Scope) =
 
 // Listeners are also managed
 // resources. They are closed 
-// when their `Resource` effect
+// when their `Scope` effect
 // is handled
 val g: Int < (Async & Abort[Closed]) =
     Scope.run(e)

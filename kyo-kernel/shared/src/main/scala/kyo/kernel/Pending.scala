@@ -334,6 +334,23 @@ object `<`:
             f10(handle10)
         end handle
 
+        private[kyo] inline def ensureMap[B, S2](inline f: Safepoint ?=> A => B < S2)(
+            using
+            inline _frame: Frame,
+            inline safepoint: Safepoint
+        ): B < (S & S2) =
+            @nowarn("msg=anonymous") def ensureMapLoop(v: A < S)(using Safepoint): B < (S & S2) =
+                v match
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
+                            def frame = _frame
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                ensureMapLoop(kyo(v, context))
+                    case v =>
+                        f(v.unsafeGet)
+            ensureMapLoop(v)
+        end ensureMap
+
         private[kyo] inline def evalNow: Maybe[A] =
             v match
                 case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] => Maybe.empty

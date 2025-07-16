@@ -77,7 +77,7 @@ import scala.quoted.*
   * @tparam Restore
   *   Effects that become available after isolation completes
   */
-abstract class Isolate[Remove, -Keep, Restore]:
+abstract class Isolate[Remove, -Keep, -Restore]:
     self =>
 
     /** The type of state being managed */

@@ -15,12 +15,12 @@ extension (kyoObject: Kyo.type)
       * @param release
       *   The effect to release the resource
       * @return
-      *   An effect that manages the resource lifecycle using Resource and Sync effects
+      *   An effect that manages the resource lifecycle using Scope and Sync effects
       */
     def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Scope & Sync) =
         Scope.acquireRelease(acquire)(release)
 
-    /** Adds a finalizer to the current effect using Resource.
+    /** Adds a finalizer to the current effect using Scope.
       *
       * @param finalizer
       *   The effect to add as a finalizer
@@ -350,12 +350,12 @@ extension (kyoObject: Kyo.type)
     ): A < (SA & reduce.SReduced) =
         Env.run(dependency)(effect)
 
-    /** Creates a scoped effect using Resource.
+    /** Creates a scoped effect using Scope.
       *
       * @param resource
       *   The resource to create a scoped effect from
       * @return
-      *   An effect that manages the resource lifecycle using Resource and Sync effects
+      *   An effect that manages the resource lifecycle using Scope and Sync effects
       */
     def scoped[A, S](resource: => A < (S & Scope))(using Frame): A < (Async & S) =
         Scope.run(resource)

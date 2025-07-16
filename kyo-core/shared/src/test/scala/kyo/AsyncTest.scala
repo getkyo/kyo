@@ -34,7 +34,7 @@ class AsyncTest extends Test:
         }
 
         "with Sync-based effects" - {
-            "Resource" in run {
+            "Scope" in run {
                 var closes = 0
                 val a      = Scope.ensure(closes += 1).andThen(42)
                 val b      = Fiber.initUnscoped(a)
@@ -271,7 +271,7 @@ class AsyncTest extends Test:
         end for
     }
 
-    "with Resource" - {
+    "with Scope" - {
         class TestResource extends JAtomicInteger with Closeable:
             def close(): Unit =
                 set(-1)
@@ -752,7 +752,7 @@ class AsyncTest extends Test:
 
             Memo.run {
                 Kyo.zip(
-                    Async.collectAll(
+                    Async.collectAll(using Memo.isolate)(
                         Seq(
                             f(1),
                             f(1),
