@@ -13,7 +13,7 @@ abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Scope & Abort[
 
         initCode = Chunk(() =>
             val raced = Async.raceFirst(Clock.repeatWithDelay(1.hour)(()).map(_.get), last)
-            val _     = Sync.Unsafe.evalOrThrow(Fiber.init(raced))
+            val _     = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(raced))
         )
     end run
 

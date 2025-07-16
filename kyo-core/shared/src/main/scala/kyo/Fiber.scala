@@ -116,7 +116,7 @@ object Fiber:
     def fromFuture[A](future: => Future[A])(using Frame): Fiber[A, Any] < Sync =
         Sync.Unsafe(Unsafe.fromFuture(future))
 
-    /** Runs an asynchronous computation in a new Fiber.
+    /** Runs an asynchronous computation in a new Fiber guaranteeing eventual interruption via the [[Scope]] effect.
       *
       * @param v
       *   The computation to run
@@ -124,6 +124,42 @@ object Fiber:
       *   A Fiber representing the running computation
       */
     def init[E, A, S, S2](
+        using isolate: Isolate[S, Sync, S2]
+    )(
+        v: => A < (Abort[E] & Async & S)
+    )(
+        using
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
+        Scope.acquireRelease(initUnscoped[E, A, S, S2](v))(_.interrupt)
+
+    /** Use an asynchronous computation running in a new Fiber, interrupting the fiber after usage.
+      *
+      * @param v
+      *   The computation to run
+      * @return
+      *   A Fiber representing the running computation
+      */
+    def use[E, A, S, S2](
+        using
+        isolate: Isolate[S, Sync, S2],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    )(
+        v: => A < (Abort[E] & Async & S)
+    )[B, S3](f: Fiber[A, reduce.SReduced & S2] => B < S3): B < (Sync & S & S3) =
+        initUnscoped[E, A, S, S2](v).map: fiber =>
+            Sync.ensure(fiber.interrupt)(f(fiber))
+
+    /** Runs an asynchronous computation in a new Fiber without guaranteeing interruption.
+      *
+      * @param v
+      *   The computation to run
+      * @return
+      *   A Fiber representing the running computation
+      */
+    def initUnscoped[E, A, S, S2](
         using isolate: Isolate[S, Sync, S2]
     )(
         v: => A < (Abort[E] & Async & S)

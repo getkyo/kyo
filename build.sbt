@@ -528,7 +528,8 @@ lazy val `kyo-zio` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio" % zioVersion
+            libraryDependencies += "dev.zio" %%% "zio"         % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio-streams" % zioVersion
         )
         .jsSettings(
             `js-settings`
@@ -748,7 +749,8 @@ lazy val `kyo-scalafix-input` = (project in file("scalafix/input"))
         scalaVersion                       := scala3Version,
         semanticdbEnabled                  := true,
         semanticdbVersion                  := scalafixSemanticdb.revision,
-        libraryDependencies += "io.getkyo" %% "kyo-direct" % "0.19.0"
+        libraryDependencies += "io.getkyo" %% "kyo-direct"      % "0.19.0",
+        libraryDependencies += "io.getkyo" %% "kyo-combinators" % "0.19.0"
     )
 
 lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
@@ -757,7 +759,10 @@ lazy val `kyo-scalafix-output` = (project in file("scalafix/output"))
         scalaVersion      := scala3Version,
         semanticdbEnabled := true,
         semanticdbVersion := scalafixSemanticdb.revision
-    ).dependsOn(`kyo-direct`.projects(JVMPlatform))
+    ).dependsOn(
+        `kyo-direct`.projects(JVMPlatform),
+        `kyo-combinators`.projects(JVMPlatform)
+    )
 
 lazy val `kyo-scalafix-test` = (project in file("scalafix/tests"))
     .settings(

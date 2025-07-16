@@ -10,7 +10,6 @@ import org.scalatestplus.testng.*
 
 final class StreamPublisherTest extends PublisherVerification[Int](new TestEnvironment(50L)), TestNGSuiteLike:
     import AllowUnsafe.embrace.danger
-    given Frame = Frame.internal
 
     private def createStream(n: Int = 1) =
         if n <= 0 then

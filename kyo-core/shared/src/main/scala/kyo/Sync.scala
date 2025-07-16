@@ -23,10 +23,10 @@ import kyo.kernel.internal.Safepoint
   */
 opaque type Sync <: Abort[Nothing] = Abort[Nothing]
 
-@deprecated("use `Sync`", "0.19.1")
+@deprecated("Will be removed in 1.0, Use `Sync` instead", "0.19.1")
 type IO = Sync
 
-@deprecated("use `Sync`", "0.19.1")
+@deprecated("Will be removed in 1.0. Use `Sync` instead", "1.0-RC")
 val IO = Sync
 
 object Sync:
@@ -86,8 +86,8 @@ object Sync:
       * @return
       *   The result of the computation, with the finalizer guaranteed to run.
       */
-    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(
-        using inline frame: Frame
+    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
+        inline frame: Frame
     ): A < (Sync & S) =
         Unsafe(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
 

@@ -39,7 +39,7 @@ class ForkSpawnBench extends ArenaBench.ForkOnly(()):
             if level == depth then
                 cdl.release
             else
-                repeat(width)(Fiber.init(loop(cdl, level + 1)).map(_ => ()))
+                repeat(width)(Fiber.initUnscoped(loop(cdl, level + 1)).map(_ => ()))
 
         for
             cdl <- Latch.init(total)

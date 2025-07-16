@@ -266,7 +266,7 @@ class HygieneTest extends Test:
         )("Cannot lift `Unit < kyo.Abort[scala.Predef.String]` to the expected type (`Unit < ?`).")
     }
 
-    "opaque types issue #993" in {
+    "opaque types issue (#993)" in {
         val maybe1: Maybe[Int] < Sync = Maybe(1)
         val maybe0: Maybe[Int]        = Maybe(0)
         direct:
@@ -275,5 +275,52 @@ class HygieneTest extends Test:
             maybe0.contains(1)
 
         assertionSuccess
+    }
+
+    ".now outside of direct" in {
+        val x: Int < Any = 1
+        typeCheckFailure("x.now")(".now must be used within a `direct` block.")
+    }
+
+    ".later outside of direct" in {
+        val x: Int < Any = 1
+        typeCheckFailure("x.later")(".later must be used within a `direct` block.")
+    }
+
+    ".now in .now (#1366)" in {
+        val x: Int < Any              = 1
+        def f(i: Int): Int < Var[Int] = Var.set(i)
+
+        val res = direct(f(x.now).now)
+        assertResult((1, -1))(Var.runTuple(-1)(res).eval)
+    }
+
+    ".now in .later (#1366)" in {
+        val x: Int < Abort[String]    = Abort.fail("oups")
+        def f(i: Int): Int < Var[Int] = Var.set(i)
+        val stream: Stream[Int, Any]  = Stream.init(Seq(1, 2, 3))
+
+        val prg = """
+        val res: Stream[Int, Var[Int]] < Abort[String] = direct:
+            val g = f(x.now).later
+            stream.map(_ => g)
+
+        Abort.run(res).eval match
+            case Result.Success(_) => assertionFailure("oups")
+            case Result.Error(_)   => assertionSuccess            """
+
+        typeCheckFailure(prg)(".now and .later should not be nested.")
+    }
+
+    ".later in .later (#1366)" in {
+        val x: Int < Any = 1
+
+        def f[S](v: Int < S): Int < S = v.map(_ + 1)
+
+        val res: Int < Any = direct:
+            val g = f(x.later).later
+            g.now
+
+        assertResult(2)(res.eval)
     }
 end HygieneTest

@@ -13,7 +13,7 @@ private[kyo] trait BaseKyoCoreTest extends BaseKyoKernelTest[Abort[Any] & Async 
                 case e             => throw new IllegalStateException(s"Test aborted with $e")
             },
             Async.timeout(timeout),
-            Fiber.init,
+            Fiber.initUnscoped,
             _.map(_.toFuture).map(_.flatten),
             Sync.Unsafe.evalOrThrow
         )

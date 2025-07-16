@@ -26,7 +26,7 @@ object Requests:
           * @return
           *   The response wrapped in an effect
           */
-        def send[A](r: Request[A, Any]): Response[A] < (Async & Abort[FailedRequest])
+        def send[A](r: Request[A, Any])(using Frame): Response[A] < (Async & Abort[FailedRequest])
 
         /** Wraps the Backend with a meter
           *
@@ -37,7 +37,7 @@ object Requests:
           */
         def withMeter(m: Meter)(using Frame): Backend =
             new Backend:
-                def send[A](r: Request[A, Any]) =
+                def send[A](r: Request[A, Any])(using Frame) =
                     Abort.run(m.run(self.send(r))).map(r => Abort.get(r.mapFailure(FailedRequest(_))))
     end Backend
 
@@ -62,8 +62,8 @@ object Requests:
     type BasicRequest = RequestT[Empty, Either[FailedRequest, String], Any]
 
     /** A basic request with error handling */
-    val basicRequest: BasicRequest = sttp.client3.basicRequest.mapResponse {
-        case Left(value)  => Left(FailedRequest(value)(using Frame.internal))
+    def basicRequest(using Frame): BasicRequest = sttp.client3.basicRequest.mapResponse {
+        case Left(value)  => Left(FailedRequest(value))
         case Right(value) => Right(value)
     }
 

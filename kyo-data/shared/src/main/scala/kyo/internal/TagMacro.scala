@@ -11,7 +11,6 @@ import scala.collection.immutable.HashMap
 import scala.quoted.{Type as SType, *}
 
 private[kyo] object TagMacro:
-
     def deriveImpl[A: SType](using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
         val (staticDB, dynamicDB) = deriveDB[A]
@@ -109,7 +108,10 @@ private[kyo] object TagMacro:
                                     else Present(Variance.Invariant)
                                     end if
                                 }
-                            require(params.size == variances.size)
+                            require(
+                                params.size == variances.size,
+                                s"Found ${params.size} type parameters but ${variances.size} variances. TypeRepr: ${tpe.show}"
+                            )
                             ClassEntry(
                                 name,
                                 Span.from(variances),
@@ -131,7 +133,10 @@ private[kyo] object TagMacro:
                                             else Present(Variance.Invariant)
                                             end if
                                         }
-                                    require(params.size == variances.size)
+                                    require(
+                                        params.size == variances.size,
+                                        s"Found ${params.size} type parameters but ${variances.size} variances. TypeRepr: ${tpe.show}"
+                                    )
                                     OpaqueEntry(name, visit(lower), visit(upper), Span.from(variances), Span.from(params))
                             end match
 

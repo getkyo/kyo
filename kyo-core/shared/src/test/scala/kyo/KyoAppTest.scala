@@ -7,7 +7,7 @@ import scala.util.Try
 
 class KyoAppTest extends Test:
 
-    "main" in runNotJS {
+    "main" in {
         val app = new KyoApp:
             run {
                 for
@@ -19,7 +19,7 @@ class KyoAppTest extends Test:
         succeed
     }
 
-    "multiple runs" taggedAs jvmOnly in run {
+    "multiple runs" in runNotJS {
         for
             ref <- AtomicInt.init(0)
             app = new KyoApp:
@@ -44,7 +44,7 @@ class KyoAppTest extends Test:
         promise.future
     }
 
-    "effects in JVM" taggedAs jvmOnly in {
+    "effects" in runNotJS {
         def run: Int < (Async & Scope & Abort[Throwable]) =
             for
                 _ <- Clock.repeatAtInterval(1.second, 1.second)(())
@@ -59,7 +59,7 @@ class KyoAppTest extends Test:
         assert(KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) == Result.succeed(1))
     }
 
-    "effects in JS" taggedAs jsOnly in {
+    "effects in JS" in runNotJS {
         val promise = scala.concurrent.Promise[Assertion]()
         val app = new KyoApp:
             run {
@@ -76,7 +76,7 @@ class KyoAppTest extends Test:
         promise.future
     }
 
-    "exit on error" taggedAs jvmOnly in {
+    "exit on error" in runNotJS {
         var exitCode = -1
         def app(fail: Boolean): KyoApp = new KyoApp:
             override def exit(code: Int)(using AllowUnsafe): Unit = exitCode = code
@@ -89,7 +89,7 @@ class KyoAppTest extends Test:
         assert(exitCode == -1)
     }
 
-    "failing effects" taggedAs jvmOnly in {
+    "failing effects" in runNotJS {
         def run: Unit < (Async & Scope & Abort[Throwable]) =
             for
                 _ <- Clock.now
@@ -103,7 +103,7 @@ class KyoAppTest extends Test:
             case _                                           => fail("Unexpected Success...")
     }
 
-    "effect mismatch" taggedAs jvmOnly in {
+    "effect mismatch" in {
         typeCheckFailure("""
             new KyoApp:
                 run(1: Int < Var[Int])
@@ -112,7 +112,7 @@ class KyoAppTest extends Test:
         )
     }
 
-    "indirect effect mismatch" taggedAs jvmOnly in {
+    "indirect effect mismatch" in {
         typeCheckFailure("""
             new KyoApp:
                 run(Choice.run(1: Int < Var[Int]))

@@ -194,7 +194,7 @@ object Process:
                                 ()
                             }
                             for
-                                _ <- Fiber.init(Scope.run(resources))
+                                _ <- Fiber.initUnscoped(Scope.run(resources))
                             yield ()
                         case _ => Kyo.unit
                 yield process

@@ -661,7 +661,7 @@ class TextTest extends Test:
         }
 
         "dropUntilNext" in {
-            assert(Text("hello123world").dropUntilNext(_.isLetter).toString == "23world")
+            assert(Text("hello123world").dropUntilNext(_.isLetter).toString == "123world")
             assert(Text("hello").dropUntilNext(_.isLetter).isEmpty)
             assert(Text("").dropUntilNext(_.isLetter).isEmpty)
         }

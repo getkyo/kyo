@@ -549,7 +549,7 @@ object Text:
           */
         def dropUntilNext(p: Predicate): Text =
             val idx = self.indexWhere(!p(_))
-            if idx == -1 then Text.empty else self.drop(idx + 1)
+            if idx == -1 then Text.empty else self.drop(idx)
 
     end extension
 

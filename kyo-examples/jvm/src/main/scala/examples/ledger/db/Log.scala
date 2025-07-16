@@ -23,7 +23,7 @@ object Log:
         val cfg = Env.get[DB.Config].now
         val q   = Queue.Unbounded.initUnscoped[Entry](Access.MultiProducerSingleConsumer).now
         val log = Sync.defer(Live(cfg.workingDir + "/log.dat", q)).now
-        val _   = Fiber.init(log.flushLoop(cfg.flushInterval)).now
+        val _   = Fiber.initUnscoped(log.flushLoop(cfg.flushInterval)).now
         log
     }
 

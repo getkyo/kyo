@@ -120,7 +120,7 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         isolate.capture { state =>
-            Fiber.init(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
+            Fiber.initUnscoped(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
         }
 
     /** Creates a computation that never completes.
@@ -166,7 +166,7 @@ object Async extends AsyncPlatformSpecific:
         if !after.isFinite then v
         else
             isolate.capture { state =>
-                Fiber.init(isolate.isolate(state, v)).map { task =>
+                Fiber.initUnscoped(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
                         Sync.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)

@@ -23,7 +23,7 @@ class CacheTest extends Test:
         for
             c <- Cache.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
-                Fiber.init {
+                Fiber.initUnscoped {
                     calls += 1
                     v + 1
                 }.map(_.get)
@@ -40,7 +40,7 @@ class CacheTest extends Test:
         for
             c <- Cache.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
-                Fiber.init {
+                Fiber.initUnscoped {
                     calls += 1
                     if calls == 1 then
                         throw ex

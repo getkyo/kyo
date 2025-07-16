@@ -537,7 +537,7 @@ object Clock:
         frame: Frame,
         reduce: Reducible[Abort[E]]
     ): Fiber[A, reduce.SReduced] < (Sync & S) =
-        Fiber.init {
+        Fiber.initUnscoped {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
                     clock.now.map { now =>
@@ -677,7 +677,7 @@ object Clock:
         frame: Frame,
         reduce: Reducible[Abort[E]]
     ): Fiber[A, reduce.SReduced] < (Sync & S) =
-        Fiber.init {
+        Fiber.initUnscoped {
             Clock.use { clock =>
                 clock.now.map { now =>
                     Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>

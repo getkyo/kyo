@@ -7,8 +7,7 @@ object PlatformBackend:
     val default =
         new Backend:
             val b = FetchBackend()
-            def send[A](r: Request[A, Any]) =
-                given Frame = Frame.internal
+            def send[A](r: Request[A, Any])(using Frame) =
                 Abort.run(Async.fromFuture(r.send(b)))
                     .map(_.foldError(identity, ex => Abort.fail(FailedRequest(ex.failureOrPanic))))
             end send

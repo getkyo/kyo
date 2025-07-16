@@ -21,7 +21,7 @@ class ForkJoinContentionBench extends ArenaBench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        val forkFiber         = Fiber.init(())
+        val forkFiber         = Fiber.initUnscoped(())
         val forkAllFibers     = Kyo.foreach(range)(_ => forkFiber)
         val forkJoinAllFibers = forkAllFibers.flatMap(fibers => Kyo.foreach(fibers)(_.get).unit)
 

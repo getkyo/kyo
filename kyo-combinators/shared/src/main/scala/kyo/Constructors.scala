@@ -17,7 +17,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that manages the resource lifecycle using Scope and Sync effects
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < Async)(using Frame): A < (S & Scope & Sync) =
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Scope & Sync) =
         Scope.acquireRelease(acquire)(release)
 
     /** Adds a finalizer to the current effect using Scope.
@@ -41,10 +41,10 @@ extension (kyoObject: Kyo.type)
         for
             promise <- Promise.init[A, Abort[E]]
             registerFn = (eff: A < (Abort[E] & Async)) =>
-                val effFiber = Fiber.init(eff)
+                val effFiber = Fiber.initUnscoped(eff)
                 val updatePromise =
                     effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
-                val updatePromiseIO = Fiber.init(updatePromise).unit
+                val updatePromiseIO = Fiber.initUnscoped(updatePromise).unit
                 import AllowUnsafe.embrace.danger
                 Sync.Unsafe.evalOrThrow(updatePromiseIO)
             _ <- register(registerFn)

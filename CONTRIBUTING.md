@@ -142,12 +142,12 @@ If you want to contribute a new method like `S.newMethod` or `s.newMethod`, feel
 
 ### Where to add Your `newMethod`
 
-| Subproject        | Use For                                                 |
-| ----------------- | ------------------------------------------------------- |
-| `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)      |
+| Subproject        | Use For                                                   |
+| ----------------- | --------------------------------------------------------- |
+| `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)        |
 | `kyo-prelude`     | Effect types without `Sync` (`Abort`, `Env`, `Var`, etc.) |
-| `kyo-core`        | Methods requiring `Sync`, `Async`, or `Resource`          |
-| `kyo-combinators` | Extensions or composition helpers                       |
+| `kyo-core`        | Methods requiring `Sync`, `Async`, or `Scope`             |
+| `kyo-combinators` | Extensions or composition helpers                         |
 
 Add corresponding tests in the same subproject.
 

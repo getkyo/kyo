@@ -40,7 +40,7 @@ object Cats:
     def run[A](v: => A < (Abort[Throwable] & Async))(using frame: Frame): CatsIO[A] =
         CatsIO.defer {
             import AllowUnsafe.embrace.danger
-            Fiber.init(v).map { fiber =>
+            Fiber.initUnscoped(v).map { fiber =>
                 CatsIO.async[A] { cb =>
                     CatsIO {
                         fiber.unsafe.onComplete(r => cb(r.map(_.eval).toEither))

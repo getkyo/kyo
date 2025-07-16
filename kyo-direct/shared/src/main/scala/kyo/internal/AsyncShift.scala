@@ -52,6 +52,12 @@ class ResultAsyncShift(using Frame) extends AsyncShift[Result.type]:
                     case Result.Success(a)  => p(a)
                     case _: Result.Error[?] => monad.pure(true)
 
+    def foreach[F[_], E, A](result: Result.type, monad: CpsMonad[F])(ma: Result[E, A])(f: A => F[Unit]): F[Unit] =
+        monad match
+            case _: KyoCpsMonad[?] => ma match
+                    case Result.Success(a)  => f(a)
+                    case _: Result.Error[?] => Kyo.unit
+
     def filter[F[_], E, A](
         result: Result.type,
         monad: CpsMonad[F]
