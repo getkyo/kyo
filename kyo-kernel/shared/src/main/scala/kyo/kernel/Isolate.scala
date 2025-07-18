@@ -124,18 +124,18 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       */
     def restore[A, S](v: Transform[A] < S)(using Frame): A < (Restore & S)
 
-    /** Isolates Remove effects while exposing them as nested Restore effects.
+    /** Isolates 'Remove' effects while exposing them as nested 'Restore' effects.
       *
-      * This method "tunnels" the Remove effects through the isolation, transforming them into Restore effects that appear nested in the
-      * result type. Unlike `run` which directly applies the Restore effects, `nest` preserves them as a nested effect layer.
+      * This method "tunnels" the Remove effects through the isolation, transforming them into 'Restore' effects that appear nested in the
+      * result type. Unlike 'run' which directly applies the 'Restore' effects, 'nest' preserves them as a nested effect layer.
       *
-      * This is useful when you want to isolate effects for a specific operation but need to control when and how the resulting Restore
+      * This is useful when you want to isolate effects for a specific operation but need to control when and how the resulting 'Restore'
       * effects are applied in your program.
       *
       * @param v
       *   The computation containing effects to tunnel through isolation
       * @return
-      *   A computation with Restore effects nested in the result type
+      *   A computation with 'Restore' effects nested in the result type
       */
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
         capture { state =>
