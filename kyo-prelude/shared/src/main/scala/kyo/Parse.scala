@@ -52,6 +52,7 @@ object Parse:
       *   An Aspect that transforms from Const[Text] to Maybe[(Text, C)]
       */
     def readAspect[A](using
+        Tag[A],
         AspectTag[A],
         Frame
     ): Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]] =
@@ -68,6 +69,7 @@ object Parse:
       */
     def read[A, In](f: Chunk[In] => Maybe[(Chunk[In], A)])(using
         Frame,
+        Tag[In],
         StateTag[In],
         Tag[(Chunk[In], Maybe[(Chunk[In], Any)])]
     ): A < Parse[In] =
