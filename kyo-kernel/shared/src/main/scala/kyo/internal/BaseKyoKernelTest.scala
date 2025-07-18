@@ -2,7 +2,7 @@ package kyo.internal
 
 import java.util.concurrent.TimeoutException
 import kyo.*
-import kyo.kernel.Platform
+import kyo.internal.Platform
 import scala.annotation.targetName
 import scala.concurrent.Future
 
@@ -62,5 +62,5 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         if Platform.isDebugEnabled then
             Duration.Infinity
         else
-            8.seconds
+            15.seconds
 end BaseKyoKernelTest

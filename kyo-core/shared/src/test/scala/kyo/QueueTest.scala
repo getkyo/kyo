@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.kernel.Platform
+import kyo.internal.Platform
 
 class QueueTest extends Test:
 

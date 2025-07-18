@@ -1,4 +1,4 @@
-package kyo.kernel
+package kyo.internal
 
 import scala.concurrent.ExecutionContext
 

@@ -4,7 +4,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kyo.*
 import kyo.ZIOs.*
-import kyo.kernel.Platform
+import kyo.internal.Platform
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
 import scala.concurrent.Future
