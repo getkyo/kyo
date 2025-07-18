@@ -61,7 +61,9 @@ object Tag:
       * @return
       *   A Tag for type A
       */
-    inline given derive[A]: Tag[A] = ${ TagMacro.deriveImpl[A] }
+    inline given derive[A]: Tag[A] = ${ TagMacro.deriveImpl[A](allowDynamic = false) }
+
+    private[kyo] inline def dynamic[A]: Tag[A] = ${ TagMacro.deriveImpl[A](allowDynamic = true) }
 
     extension [A](self: Tag[A])
 
