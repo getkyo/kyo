@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.debug.Debug
+import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -61,7 +62,9 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         using
         fr: Frame,
         i1: Isolate[S, Sync, S3],
-        i2: Isolate[S2, Sync, S3]
+        i2: Isolate[S2, Sync, S3],
+        tag1: Tag[Abort[E]],
+        tag2: Tag[Abort[E1]]
     ): A1 < (Abort[E | E1] & Async & S & S2 & S3) =
         for
             left  <- Fiber.initUnscoped(using i1)(effect)
@@ -82,7 +85,9 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         using
         f: Frame,
         i1: Isolate[S, Sync, S3],
-        i2: Isolate[S2, Sync, S3]
+        i2: Isolate[S2, Sync, S3],
+        tag1: Tag[Abort[E]],
+        tag2: Tag[Abort[E1]]
     ): A < (Abort[E | E1] & Async & S & S2 & S3) =
         for
             left  <- Fiber.initUnscoped(using i1)(effect)
@@ -104,7 +109,9 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         fr: Frame,
         i1: Isolate[S, Sync, S3],
         i2: Isolate[S2, Sync, S3],
-        zippable: Zippable[A, A1]
+        zippable: Zippable[A, A1],
+        tag1: Tag[Abort[E]],
+        tag2: Tag[Abort[E1]]
     ): zippable.Out < (Abort[E | E1] & Async & S & S2 & S3) =
         for
             left  <- Fiber.initUnscoped(using i1)(effect)
@@ -122,7 +129,7 @@ extension [A, E, S, S2](fiber: Fiber[A, Abort[E] & S2] < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def join(using Frame): A < (S & S2 & Abort[E] & Async) =
+    def join(using Frame, Tag[Abort[E]]): A < (S & S2 & Abort[E] & Async) =
         fiber.map(_.get)
 
     /** Awaits the completion of the fiber and returns its result as a `Unit`.
