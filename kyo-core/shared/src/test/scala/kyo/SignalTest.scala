@@ -191,7 +191,7 @@ class SignalTest extends Test:
                 ref     <- Signal.initRef(1)
                 v1      <- ref.current
                 started <- Latch.init(1)
-                f       <- Fiber.run(started.release.andThen(ref.next))
+                f       <- Fiber.init(started.release.andThen(ref.next))
                 _       <- started.await
                 _       <- ref.set(2)
                 v2      <- f.get
@@ -219,7 +219,7 @@ class SignalTest extends Test:
         "streamChanges" in run {
             for
                 ref    <- Signal.initRef(1)
-                f      <- Fiber.run(ref.streamChanges.take(3).run)
+                f      <- Fiber.init(ref.streamChanges.take(3).run)
                 _      <- Async.sleep(2.millis)
                 _      <- ref.set(2)
                 _      <- Async.sleep(2.millis)
@@ -249,11 +249,11 @@ class SignalTest extends Test:
             (for
                 ref <- Signal.initRef(0)
                 readers <-
-                    Fiber.run(Async.fill(10, 10)(
+                    Fiber.init(Async.fill(10, 10)(
                         Loop(0)(_ => ref.currentWith(v => if v < 10 then Loop.continue(v) else Loop.done(v)))
                     ))
                 writers <-
-                    Fiber.run(Async.fill(10, 10)(
+                    Fiber.init(Async.fill(10, 10)(
                         Loop.foreach {
                             ref.get.map { v =>
                                 if v < 10 then

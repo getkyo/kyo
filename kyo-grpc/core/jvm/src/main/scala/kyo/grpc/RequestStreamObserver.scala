@@ -34,24 +34,11 @@ end RequestStreamObserver
 
 private[kyo] object RequestStreamObserver:
 
-    /** An 'inbound', server-side observer that receives a stream of requests and sends a single response.
+    /** Initializes a [[RequestStreamObserver]] for an 'inbound', server-side observer that receives a stream of requests and sends a single
+      * response.
       *
       * This creates a stream from the `requestChannel` and provides that to the function. Requests are forwarded to the channel. Once it
       * receives the response it forwards it on to the `responseObserver`.
-      *
-      * @param f
-      *   a function that takes a stream of requests and returns a single response
-      * @param requestChannel
-      *   a channel for receiving requests
-      * @param responseObserver
-      *   the observer that will receive the response
-      * @tparam Request
-      *   the type of the request messages
-      * @tparam Response
-      *   the type of the response message
-      */
-
-    /** Initializes a [[RequestStreamObserver]].
       *
       * When the pending [[Sync]] is run, it will start the background processing of requests and sending of the response. It will complete
       * when the response has been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while
@@ -73,9 +60,9 @@ private[kyo] object RequestStreamObserver:
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request] < Sync =
         for
-            requestChannel <- StreamChannel.init[Request, GrpcFailure]
+            requestChannel <- StreamChannel.initUnscoped[Request, GrpcFailure]
             response = f(requestChannel.stream)
-            _ <- Fiber.run(
+            _ <- Fiber.init(
                 StreamNotifier.notifyObserver(response, responseObserver)
                     // Make sure to close the channel explicitly in case the function produced a result without consuming the entire stream.
                     .andThen(requestChannel.close)
@@ -83,24 +70,11 @@ private[kyo] object RequestStreamObserver:
         yield RequestStreamObserver(requestChannel)
     end one
 
-    /** An 'inbound', server-side observer that receives a stream of requests and sends a stream of responses.
+    /** Initializes a [[RequestStreamObserver]] for an 'inbound', server-side observer that receives a stream of requests and sends a stream
+      * of responses.
       *
       * This creates a stream from the `requestChannel` and provides that to the function. Requests are forwarded to the channel. Each
       * response is then forwarded on to the `responseObserver`.
-      *
-      * @param f
-      *   a function that takes a stream of requests and returns a stream of responses
-      * @param requestChannel
-      *   a channel for receiving requests
-      * @param responseObserver
-      *   the observer that will receive the responses
-      * @tparam Request
-      *   the type of the request messages
-      * @tparam Response
-      *   the type of the response messages
-      */
-
-    /** Initializes a [[RequestStreamObserver]].
       *
       * When the pending [[Sync]] is run, it will start the background processing of requests and sending of responses. It will complete
       * when all responses have been sent to the `responseObserver`, and it has been completed. It will abort if an error occurs while
@@ -122,9 +96,9 @@ private[kyo] object RequestStreamObserver:
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): RequestStreamObserver[Request] < Sync =
         for
-            requestChannel <- StreamChannel.init[Request, GrpcFailure]
+            requestChannel <- StreamChannel.initUnscoped[Request, GrpcFailure]
             responses = Stream.unwrap(f(requestChannel.stream))
-            _ <- Fiber.run(
+            _ <- Fiber.init(
                 StreamNotifier.notifyObserver(responses, responseObserver)
                     // Make sure to close the channel explicitly in case the function produced a result without consuming the entire stream.
                     .andThen(requestChannel.close)

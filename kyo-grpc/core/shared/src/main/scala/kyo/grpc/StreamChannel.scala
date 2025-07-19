@@ -158,8 +158,25 @@ private[kyo] object StreamChannel:
     // TODO: Set the capacity to something else that matches how we backpressure.
     final private[kyo] val Capacity = 42
 
-    // This is only thread-safe if the channel is used in a single producer, single consumer pattern.
     /** Creates a new `StreamChannel` instance.
+     *
+     * This factory method initializes a new channel with the specified capacity and creates the necessary error tracking. The channel is
+     * configured for single producer, single consumer access pattern.
+     *
+     * @tparam A
+     * the type of values that will flow through the channel
+     * @tparam E
+     * the type of errors that can be signaled
+     * @return
+     * a pending computation that produces a new `StreamChannel` instance
+     */
+    def init[A, E](using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < (Sync & Resource) =
+        for
+            channel <- Channel.init[A](capacity = Capacity, access = Access.SingleProducerSingleConsumer)
+            error <- AtomicRef.init(Maybe.empty[E])
+        yield new StreamChannel[A, E](channel, error, summon)
+
+    /** Creates a new `StreamChannel` instance without guaranteeing eventual cleanup.
       *
       * This factory method initializes a new channel with the specified capacity and creates the necessary error tracking. The channel is
       * configured for single producer, single consumer access pattern.
@@ -171,9 +188,9 @@ private[kyo] object StreamChannel:
       * @return
       *   a pending computation that produces a new `StreamChannel` instance
       */
-    def init[A, E](using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < Sync =
+    def initUnscoped[A, E](using Frame, Tag[Emit[Chunk[A]]]): StreamChannel[A, E] < Sync =
         for
-            channel <- Channel.init[A](capacity = Capacity, access = Access.SingleProducerSingleConsumer)
+            channel <- Channel.initUnscoped[A](capacity = Capacity, access = Access.SingleProducerSingleConsumer)
             error   <- AtomicRef.init(Maybe.empty[E])
         yield new StreamChannel[A, E](channel, error, summon)
 

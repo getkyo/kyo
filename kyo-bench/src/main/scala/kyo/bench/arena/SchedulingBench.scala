@@ -42,7 +42,7 @@ class SchedulingBench extends ArenaBench.ForkOnly(1001000):
             }
 
         Kyo.foreach(range) { i =>
-            Fiber.run(fiber(i))
+            Fiber.init(fiber(i))
         }.map { fibers =>
             Kyo.foreach(fibers)(_.get)
         }.map(_.sum)

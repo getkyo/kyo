@@ -1,12 +1,7 @@
 package kyo.grpc
 
-import io.grpc.Status
-import io.grpc.StatusException
-import io.grpc.StatusRuntimeException
 import io.grpc.stub.StreamObserver
 import kyo.*
-import scala.util.chaining.scalaUtilChainingOps
-import scala.util.control.NonFatal
 
 /** Helpers for notifying gRPC [[StreamObserver]]s with Kyo computation results.
   *
@@ -36,7 +31,7 @@ private[kyo] object StreamNotifier:
       * @return
       *   A `Unit` computation that performs the notification, pending [[Sync]] and `S` effects
       */
-    def notifyObserver[A, E <: Throwable: SafeClassTag, S](
+    def notifyObserver[A, E <: Throwable, S](
         value: A < (Abort[E] & S),
         observer: StreamObserver[A]
     )(using Frame): Unit < (Sync & S) =
@@ -67,7 +62,7 @@ private[kyo] object StreamNotifier:
       * @return
       *   A `Unit` computation that performs the stream notification, pending [[Sync]] and `S` effects
       */
-    def notifyObserver[A, E <: Throwable: SafeClassTag, S](
+    def notifyObserver[A, E <: Throwable, S](
         values: Stream[A, Abort[E] & S],
         observer: StreamObserver[A]
     )(using Frame, Tag[Emit[Chunk[A]]]): Unit < (Sync & S) =

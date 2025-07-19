@@ -6,8 +6,8 @@ import io.opentelemetry.context.Context
 import kyo.*
 import kyo.stats.*
 import kyo.stats.Attributes
-import kyo.stats.internal.Span
 import kyo.stats.internal.TraceReceiver
+import kyo.stats.internal.TraceSpan
 
 class OTelTraceReceiver extends TraceReceiver {
 
@@ -16,9 +16,9 @@ class OTelTraceReceiver extends TraceReceiver {
     def startSpan(
         scope: List[String],
         name: String,
-        parent: Maybe[Span],
+        parent: Maybe[TraceSpan],
         attributes: Attributes
-    )(implicit frame: Frame): Span < Sync =
+    )(implicit frame: Frame): TraceSpan < Sync =
         Sync.defer {
             val b =
                 otel.getTracer(scope.mkString("_"))
@@ -26,14 +26,14 @@ class OTelTraceReceiver extends TraceReceiver {
                     .setAllAttributes(OTelAttributes(attributes))
             discard {
                 parent.collect {
-                    case Span(SpanImpl(c)) =>
+                    case TraceSpan(SpanImpl(c)) =>
                         b.setParent(c)
                 }
             }
-            Span(SpanImpl(b.startSpan().storeInContext(Context.current())))
+            TraceSpan(SpanImpl(b.startSpan().storeInContext(Context.current())))
         }
 
-    private case class SpanImpl(c: Context) extends Span.Unsafe {
+    private case class SpanImpl(c: Context) extends TraceSpan.Unsafe {
 
         def end(): Unit =
             OSpan.fromContext(c).end()

@@ -204,7 +204,6 @@ class AspectTest extends Test:
         case class Wrapped[+A, B](value: A, meta: B) derives CanEqual
         case class Container[+A](value: A, meta: String) derives CanEqual
 
-        // TODO SIGSEGV in Scala Native
         "with same input/output wrapper" in run {
             val aspect = Aspect.init[Wrapped[*, String], Wrapped[*, String], Any]
 
@@ -272,40 +271,112 @@ class AspectTest extends Test:
         }
     }
 
-    "init" - {
-        "with default binding" in run {
-            val defaultBinding: Cut[Const[Int], Const[Int], Any] =
-                [C] => (input, cont) => cont(input * 2)
+    "no binding" in run {
+        val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
-            val aspect = Aspect.init(defaultBinding)
+        aspect(5)(identity).map { result =>
+            assert(result == 5)
+        }
+    }
 
-            aspect(5)(identity).map { result =>
-                assert(result == 10)
+    "parametrized generic aspects" - {
+
+        "different type instantiations maintain separate cuts" in run {
+            def genericAspect[A: Tag]: Aspect[Const[A], Const[A], Any] =
+                Aspect.init[Const[A], Const[A], Any]
+
+            val intAspect    = genericAspect[Int]
+            val stringAspect = genericAspect[String]
+
+            def testInt(v: Int)       = intAspect(v)(x => x + 1)
+            def testString(v: String) = stringAspect(v)(x => x + "!")
+
+            intAspect.let([C] => (input, cont) => cont(input * 10)) {
+                stringAspect.let([C] => (input, cont) => cont(input.toUpperCase)) {
+                    for
+                        intResult    <- testInt(5)
+                        stringResult <- testString("hello")
+                    yield
+                        assert(intResult == 5 * 10 + 1)
+                        assert(stringResult == "HELLO!")
+                }
             }
         }
 
-        "with default cut" in run {
-            val defaultCut = Cut[Const[Int], Const[Int], Any] {
-                [C] =>
-                    (input, cont) => cont(input + 10)
-            }
+        "same generic aspect with different types don't interfere" in run {
+            def processingAspect[A: Tag]: Aspect[Const[A], Const[Option[A]], Any] =
+                Aspect.init[Const[A], Const[Option[A]], Any]
 
-            val aspect = Aspect.init(defaultCut)
+            val intProcessor    = processingAspect[Int]
+            val stringProcessor = processingAspect[String]
 
-            aspect(5)(identity).map { result =>
-                assert(result == 15)
+            intProcessor.let([C] =>
+                (input, cont) =>
+                    if input > 0 then cont(input * 2) else None) {
+                stringProcessor.let([C] =>
+                    (input, cont) =>
+                        if input.nonEmpty then cont(input.toUpperCase) else None) {
+                    for
+                        r1 <- intProcessor(5)(Some(_))
+                        r2 <- intProcessor(-5)(Some(_))
+                        r3 <- stringProcessor("test")(Some(_))
+                        r4 <- stringProcessor("")(Some(_))
+                    yield
+                        assert(r1 == Some(10))
+                        assert(r2 == None)
+                        assert(r3 == Some("TEST"))
+                        assert(r4 == None)
+                }
             }
         }
 
-        "override default behavior" in run {
-            val defaultBinding: Cut[Const[Int], Const[Int], Any] =
-                [C] => (input, cont) => cont(input * 2)
+        "nested generic aspects with same type parameter but different frames" in run {
+            def loggingAspect[A: Tag](using Frame): Aspect[Const[A], Const[(A, String)], Any] =
+                Aspect.init[Const[A], Const[(A, String)], Any]
 
-            val aspect = Aspect.init(defaultBinding)
+            val outer = loggingAspect[Int]
+            val inner = loggingAspect[Int]
 
-            aspect.let([C] => (input, cont) => cont(input + 3)) {
-                aspect(5)(identity).map { result =>
-                    assert(result == 8)
+            outer.let([C] => (input, cont) => cont(input * 10)) {
+                inner.let([C] => (input, cont) => cont(input * 100)) {
+                    for
+                        r1 <- outer(10)(x => (x * 2, "processed"))
+                        r2 <- inner(20)(x => (x * 2, "processed"))
+                    yield
+                        assert(r1 == (200, "processed"))
+                        assert(r2 == (4000, "processed"))
+                }
+            }
+        }
+
+        "generic aspect factory with complex types" in run {
+            def validationAspect[A: Tag]: Aspect[Const[A], Const[Either[String, A]], Any] =
+                Aspect.init[Const[A], Const[Either[String, A]], Any]
+
+            case class User(name: String, age: Int)
+
+            val userValidator = validationAspect[User]
+            val intValidator  = validationAspect[Int]
+
+            userValidator.let([C] =>
+                (input, cont) =>
+                    if input.age >= 0 && input.name.nonEmpty then
+                        cont(input)
+                    else
+                        Left("Invalid user")) {
+                intValidator.let([C] =>
+                    (input, cont) =>
+                        if input >= 0 then cont(input) else Left("Negative number")) {
+                    for
+                        r1 <- userValidator(User("Alice", 25))(Right(_))
+                        r2 <- userValidator(User("", -1))(Right(_))
+                        r3 <- intValidator(42)(Right(_))
+                        r4 <- intValidator(-5)(Right(_))
+                    yield
+                        assert(r1 == Right(User("Alice", 25)))
+                        assert(r2 == Left("Invalid user"))
+                        assert(r3 == Right(42))
+                        assert(r4 == Left("Negative number"))
                 }
             }
         }

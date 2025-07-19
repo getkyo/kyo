@@ -24,11 +24,11 @@ class ForkChainedBench extends ArenaBench.ForkOnly(0):
 
         def iterate(p: Promise[Nothing, Unit], n: Int): Unit < Sync =
             if n <= 0 then p.complete(Result.unit).unit
-            else Kyo.unit.flatMap(_ => Fiber.run(iterate(p, n - 1)).unit)
+            else Kyo.unit.flatMap(_ => Fiber.init(iterate(p, n - 1)).unit)
 
         for
             p <- Promise.init[Nothing, Unit]
-            _ <- Fiber.run(iterate(p, depth))
+            _ <- Fiber.init(iterate(p, depth))
             _ <- p.get
         yield 0
         end for

@@ -109,30 +109,12 @@ object Fiber:
       * @return
       *   A Fiber representing the running computation
       */
-    def run[E, A, S](
+    def init[E, A, S](
         using isolate: Isolate.Contextual[S, Sync]
     )(v: => A < (Abort[E] & Async & S))(using Frame): Fiber[E, A] < (Sync & S) =
         isolate.runInternal((trace, context) =>
             Fiber.fromTask(IOTask(v, trace, context))
         )
-
-    /** Runs an asynchronous computation in a new fiber and blocks until completion or timeout.
-      *
-      * @param timeout
-      *   The maximum duration to wait
-      * @param v
-      *   The computation to run
-      * @return
-      *   The result of the computation, or a Timeout error
-      */
-    def runAndBlock[E, A, S](
-        using isolate: Isolate.Contextual[S, Sync]
-    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & Sync & S) =
-        run(v).map { fiber =>
-            fiber.block(timeout).map(Abort.get(_))
-        }
 
     private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 

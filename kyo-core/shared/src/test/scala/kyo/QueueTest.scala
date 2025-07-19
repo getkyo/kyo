@@ -10,12 +10,34 @@ class QueueTest extends Test:
         access.foreach { access =>
             access.toString() - {
                 "initWith" in runNotNative {
-                    Queue.initWith[Int](2, access) { q =>
+                    val effect = Queue.initWith[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
                             v <- q.poll
-                        yield assert(b && v == Maybe(1))
+                        yield (q, b, v)
+                        end for
                     }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.use[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
                 }
                 "isEmpty" in runNotNative {
                     for
@@ -125,6 +147,36 @@ class QueueTest extends Test:
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {
+                "initWith" in runNotNative {
+                    val effect = Queue.Unbounded.initWith[Int](access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.Unbounded.use[Int](access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
                 "isEmpty" in runNotNative {
                     for
                         q <- Queue.Unbounded.init[Int](access)
@@ -158,32 +210,97 @@ class QueueTest extends Test:
 
     "dropping" - {
         access.foreach { access =>
-            access.toString() in runNotNative {
-                for
-                    q <- Queue.Unbounded.initDropping[Int](2)
-                    _ <- q.add(1)
-                    _ <- q.add(2)
-                    _ <- q.add(3)
-                    a <- q.poll
-                    b <- q.poll
-                    c <- q.poll
-                yield assert(a == Maybe(1) && b == Maybe(2) && c.isEmpty)
+            access.toString() - {
+                "initWith" in runNotNative {
+                    val effect = Queue.Unbounded.initDropping[Int](2, access).map { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.Unbounded.useDropping[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "add/poll" in runNotNative {
+                    for
+                        q <- Queue.Unbounded.initDropping[Int](2)
+                        _ <- q.add(1)
+                        _ <- q.add(2)
+                        _ <- q.add(3)
+                        a <- q.poll
+                        b <- q.poll
+                        c <- q.poll
+                    yield assert(a == Maybe(1) && b == Maybe(2) && c.isEmpty)
+                    end for
+                }
             }
         }
     }
 
     "sliding" - {
         access.foreach { access =>
-            access.toString() in runNotNative {
-                for
-                    q <- Queue.Unbounded.initSliding[Int](2)
-                    _ <- q.add(1)
-                    _ <- q.add(2)
-                    _ <- q.add(3)
-                    a <- q.poll
-                    b <- q.poll
-                    c <- q.poll
-                yield assert(a == Maybe(2) && b == Maybe(3) && c.isEmpty)
+            access.toString() - {
+                "initWith" in runNotNative {
+                    val effect = Queue.Unbounded.initSliding[Int](2, access).map { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    Resource.run(effect).map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "use" in runNotNative {
+                    val effect = Queue.Unbounded.useSliding[Int](2, access) { q =>
+                        for
+                            b <- q.offer(1)
+                            v <- q.poll
+                        yield (q, b, v)
+                        end for
+                    }
+                    end effect
+
+                    effect.map:
+                        case (q, b, v) =>
+                            q.closed.map: isClosed =>
+                                assert(isClosed && b && v == Maybe(1))
+                }
+                "add/poll" in runNotNative {
+                    for
+                        q <- Queue.Unbounded.initSliding[Int](2, access)
+                        _ <- q.add(1)
+                        _ <- q.add(2)
+                        _ <- q.add(3)
+                        a <- q.poll
+                        b <- q.poll
+                        c <- q.poll
+                    yield assert(a == Maybe(2) && b == Maybe(3) && c.isEmpty)
+                }
             }
         }
     }
@@ -250,10 +367,10 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                closeFiber  <- Fiber.run(latch.await.andThen(queue.close))
+                closeFiber  <- Fiber.init(latch.await.andThen(queue.close))
                 _           <- latch.release
                 offered     <- offerFiber.get
                 backlog     <- closeFiber.get
@@ -276,10 +393,10 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                pollFiber <- Fiber.run(
+                pollFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(100, 100)(Abort.run(queue.poll)))
                 )
                 _       <- latch.release
@@ -297,10 +414,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 _     <- Kyo.foreach(1 to size)(i => queue.offer(i))
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100)(i => Abort.run(queue.offer(i))))
                 )
-                closeFiber <- Fiber.run(latch.await.andThen(queue.close))
+                closeFiber <- Fiber.init(latch.await.andThen(queue.close))
                 _          <- latch.release
                 offered    <- offerFiber.get
                 backlog    <- closeFiber.get
@@ -319,10 +436,10 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                closeFiber <- Fiber.run(
+                closeFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(100, 100)(queue.close))
                 )
                 _        <- latch.release
@@ -343,13 +460,13 @@ class QueueTest extends Test:
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
-                offerFiber <- Fiber.run(
+                offerFiber <- Fiber.init(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(queue.offer(i))))
                 )
-                pollFiber <- Fiber.run(
+                pollFiber <- Fiber.init(
                     latch.await.andThen(Async.fill(100, 100)(Abort.run(queue.poll)))
                 )
-                closeFiber <- Fiber.run(latch.await.andThen(queue.close))
+                closeFiber <- Fiber.init(latch.await.andThen(queue.close))
                 _          <- latch.release
                 offered    <- offerFiber.get
                 polled     <- pollFiber.get
@@ -435,7 +552,7 @@ class QueueTest extends Test:
                 queue   <- Queue.init[Int](10)
                 _       <- queue.offer(1)
                 _       <- queue.offer(2)
-                fiber   <- Fiber.run(queue.closeAwaitEmpty)
+                fiber   <- Fiber.init(queue.closeAwaitEmpty)
                 closed1 <- queue.closed
                 _       <- queue.poll
                 _       <- queue.poll
@@ -465,7 +582,7 @@ class QueueTest extends Test:
                     queue  <- Queue.Unbounded.init[Int]()
                     _      <- queue.add(1)
                     _      <- queue.add(2)
-                    fiber  <- Fiber.run(queue.closeAwaitEmpty)
+                    fiber  <- Fiber.init(queue.closeAwaitEmpty)
                     _      <- queue.poll
                     _      <- queue.poll
                     result <- fiber.get
@@ -477,7 +594,7 @@ class QueueTest extends Test:
             for
                 queue  <- Queue.init[Int](10)
                 _      <- Kyo.foreach(1 to 5)(i => queue.offer(i))
-                fiber  <- Fiber.run(queue.closeAwaitEmpty)
+                fiber  <- Fiber.init(queue.closeAwaitEmpty)
                 _      <- Async.foreach(1 to 5)(_ => queue.poll)
                 result <- fiber.get
             yield assert(result)
@@ -488,7 +605,7 @@ class QueueTest extends Test:
                 queue  <- Queue.Unbounded.initSliding[Int](2)
                 _      <- queue.add(1)
                 _      <- queue.add(2)
-                fiber  <- Fiber.run(queue.closeAwaitEmpty)
+                fiber  <- Fiber.init(queue.closeAwaitEmpty)
                 _      <- queue.poll
                 _      <- queue.poll
                 result <- fiber.get
@@ -500,7 +617,7 @@ class QueueTest extends Test:
                 queue  <- Queue.Unbounded.initDropping[Int](2)
                 _      <- queue.add(1)
                 _      <- queue.add(2)
-                fiber  <- Fiber.run(queue.closeAwaitEmpty)
+                fiber  <- Fiber.init(queue.closeAwaitEmpty)
                 _      <- queue.poll
                 _      <- queue.poll
                 result <- fiber.get
@@ -520,10 +637,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 _     <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
                 latch <- Latch.init(1)
-                closeAwaitEmptyFiber <- Fiber.run(
+                closeAwaitEmptyFiber <- Fiber.init(
                     latch.await.andThen(queue.closeAwaitEmpty)
                 )
-                closeFiber <- Fiber.run(
+                closeFiber <- Fiber.init(
                     latch.await.andThen(queue.close)
                 )
                 _        <- latch.release
@@ -545,20 +662,20 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 
-                producerFiber1 <- Fiber.run(
+                producerFiber1 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
-                producerFiber2 <- Fiber.run(
+                producerFiber2 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
 
-                consumerFiber <- Fiber.run(
+                consumerFiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
                     )
@@ -584,20 +701,20 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 
-                producerFiber1 <- Fiber.run(
+                producerFiber1 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmpty)
                     )
                 )
-                producerFiber2 <- Fiber.run(
+                producerFiber2 <- Fiber.init(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.close)
                     )
                 )
 
-                consumerFiber <- Fiber.run(
+                consumerFiber <- Fiber.init(
                     latch.await.andThen(
                         Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
                     )

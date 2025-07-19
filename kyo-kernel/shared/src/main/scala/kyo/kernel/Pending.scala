@@ -72,7 +72,7 @@ object `<`:
                         val value = v.unsafeGet
                         Safepoint.handle(value)(
                             suspend = mapLoop(value),
-                            continue = f(value)
+                            continue = f(value): B < S2
                         )
             mapLoop(v)
         end map
@@ -101,7 +101,7 @@ object `<`:
                         val value = v.unsafeGet
                         Safepoint.handle(value)(
                             suspend = flatMapLoop(value),
-                            continue = f(value)
+                            continue = f(value): B < S2
                         )
             flatMapLoop(v)
         end flatMap
@@ -127,7 +127,7 @@ object `<`:
                         val value = v.unsafeGet
                         Safepoint.handle(value)(
                             suspend = andThenLoop(value),
-                            continue = f
+                            continue = f: B < S2
                         )
             andThenLoop(v)
         end andThen
@@ -350,11 +350,32 @@ object `<`:
 
     extension [A, S, S2](v: A < S < S2)
         /** Flattens a nested pending computation into a single computation.
+         *
+         * @return
+         * A flattened computation of type `A` with combined effects `S & S2`
+         */
+        def flatten(using _frame: Frame): A < (S & S2) =
+            def flattenLoop(v: A < S < S2)(using Safepoint): A < (S & S2) =
+                v match
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A < S, S2] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
+                            def frame = _frame
+
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                flattenLoop(kyo(v, context))
+                    case v =>
+                        v.unsafeGet
+
+            flattenLoop(v)
+    end extension
+
+    extension [A, S, S2](v: A < (S & S2))
+        /** Nests a single flattened computation into a single computation.
           *
           * @return
-          *   A flattened computation of type `A` with combined effects `S & S2`
+          *   A computation of type `A` with nested effects `S` then `S2`
           */
-        def flatten(using _frame: Frame): A < (S & S2) =
+        def nest(using _frame: Frame): A < S < S2 =
             def flattenLoop(v: A < S < S2)(using Safepoint): A < (S & S2) =
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A < S, S2] @unchecked =>
@@ -412,14 +433,13 @@ object `<`:
       * @return
       *   A computation in the effect context
       */
-    implicit def lift[A: CanLift, S](v: A): A < S =
-        v match
-            case kyo: Kyo[?, ?] => Nested(kyo)
-            case _              => v.asInstanceOf[A < S]
+    implicit inline def lift[A: CanLift, S](v: A): A < S = ${ LiftMacro.liftMacro[A, S]('v) }
 
     implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
 
     implicit inline def liftUnit[S](inline v: Unit): Unit < S = v.asInstanceOf[Unit < S]
+
+    // ---------
 
     implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ abortCastUnitImpl[S1, S2]('v) }
 
@@ -438,37 +458,37 @@ object `<`:
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
         using inline flat: CanLift[B]
     ): A1 => B < Any =
-        a1 => f(a1)
+        a1 => lift(f(a1))
 
     /** Converts a pure two-argument function to an effectful computation. */
     implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
         using inline flat: CanLift[B]
     ): (A1, A2) => B < Any =
-        (a1, a2) => f(a1, a2)
+        (a1, a2) => lift(f(a1, a2))
 
     /** Converts a pure three-argument function to an effectful computation. */
     implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
         using inline flat: CanLift[B]
     ): (A1, A2, A3) => B < Any =
-        (a1, a2, a3) => f(a1, a2, a3)
+        (a1, a2, a3) => lift(f(a1, a2, a3))
 
     /** Converts a pure four-argument function to an effectful computation. */
     implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
         using inline flat: CanLift[B]
     ): (A1, A2, A3, A4) => B < Any =
-        (a1, a2, a3, a4) => f(a1, a2, a3, a4)
+        (a1, a2, a3, a4) => lift(f(a1, a2, a3, a4))
 
     /** Converts a pure five-argument function to an effectful computation. */
     implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B](inline f: (A1, A2, A3, A4, A5) => B)(
         using inline flat: CanLift[B]
     ): (A1, A2, A3, A4, A5) => B < Any =
-        (a1, a2, a3, a4, a5) => f(a1, a2, a3, a4, a5)
+        (a1, a2, a3, a4, a5) => lift(f(a1, a2, a3, a4, a5))
 
     /** Converts a pure six-argument function to an effectful computation. */
     implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B](inline f: (A1, A2, A3, A4, A5, A6) => B)(
         using inline flat: CanLift[B]
     ): (A1, A2, A3, A4, A5, A6) => B < Any =
-        (a1, a2, a3, a4, a5, a6) => f(a1, a2, a3, a4, a5, a6)
+        (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asText(value: APendingS): Text = value match

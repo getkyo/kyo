@@ -1386,7 +1386,7 @@ import kyo.*
 
 case class Config(someConfig: String)
 
-val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream(1)
+val original: Stream[Int, Resource & Env[Config] & Abort[String] & Async] = Stream.init(Seq(1))
 
 val handled: Stream[Int, Async] = original.handle(
     Resource.run(_),
@@ -2202,7 +2202,7 @@ import kyo.*
 // taken by reference and automatically
 // suspended with 'Sync'
 val a: Fiber[Nothing, Int] < Sync =
-    Fiber.run(Math.cos(42).toInt)
+    Fiber.init(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a
 // 'Fiber' via the 'get' method. This is also
@@ -2342,17 +2342,17 @@ import kyo.*
 
 // An example computation with fibers
 val a: Int < Async =
-    Fiber.run(Math.cos(42).toInt).map(_.get)
+    Fiber.init(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Async' directly
 val b: Fiber[Nothing, Int] < Sync =
-    Fiber.run(a)
+    Fiber.init(a)
 
 // The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
 // on thread blocking and requires a timeout
 val c: Int < (Abort[Timeout] & Sync) =
-    Fiber.runAndBlock(5.seconds)(a)
+    Async.runAndBlock(5.seconds)(a)
 ```
 
 > Note: Handling the `Async` effect doesn't break referential transparency as with `Sync` but its usage is not trivial due to the limitations of the pending effects. Prefer `KyoApp` instead.
@@ -2373,7 +2373,7 @@ val b: Boolean < Sync =
 // Fullfil the promise with
 // another fiber
 val c: Boolean < Sync =
-    a.map(fiber => Fiber.run(1).map(fiber.become(_)))
+    a.map(fiber => Fiber.init(1).map(fiber.become(_)))
 ```
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
@@ -2414,46 +2414,46 @@ import kyo.*
 
 // A bounded queue that rejects new
 // elements once full
-val a: Queue[Int] < Sync =
+val a: Queue[Int] < (Sync & Resource) =
     Queue.init(capacity = 42)
 
 // Obtain the number of items in the queue
 // via the method 'size' in 'Queue'
-val b: Int < (Sync & Abort[Closed]) =
+val b: Int < (Sync & Abort[Closed] & Resource) =
     a.map(_.size)
 
 // Get the queue capacity
-val c: Int < Sync =
+val c: Int < (Sync & Resource) =
     a.map(_.capacity)
 
 // Try to offer a new item
-val d: Boolean < (Sync & Abort[Closed]) =
+val d: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.offer(42))
 
 // Try to poll an item
-val e: Maybe[Int] < (Sync & Abort[Closed]) =
+val e: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.poll)
 
 // Try to 'peek' an item without removing it
-val f: Maybe[Int] < (Sync & Abort[Closed]) =
+val f: Maybe[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.peek)
 
 // Check if the queue is empty
-val g: Boolean < (Sync & Abort[Closed]) =
+val g: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.empty)
 
 // Check if the queue is full
-val h: Boolean < (Sync & Abort[Closed]) =
+val h: Boolean < (Sync & Abort[Closed] & Resource) =
     a.map(_.full)
 
 // Drain the queue items
-val i: Seq[Int] < (Sync & Abort[Closed]) =
+val i: Seq[Int] < (Sync & Abort[Closed] & Resource) =
     a.map(_.drain)
 
 // Close the queue. If successful,
 // returns a Some with the drained
 // elements
-val j: Maybe[Seq[Int]] < Sync =
+val j: Maybe[Seq[Int]] < (Sync & Resource) =
     a.map(_.close)
 ```
 
@@ -2464,25 +2464,25 @@ import kyo.*
 // Avoid `Queue.unbounded` since if queues can
 // grow without limits, the GC overhead can make
 // the system fail
-val a: Queue.Unbounded[Int] < Sync =
+val a: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.init()
 
 // A 'dropping' queue discards new entries
 // when full
-val b: Queue.Unbounded[Int] < Sync =
+val b: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.initDropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new
 // entries
-val c: Queue.Unbounded[Int] < Sync =
+val c: Queue.Unbounded[Int] < (Sync & Resource) =
     Queue.Unbounded.initSliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queue.Unbounded`. It provides
 // an additional method to 'add' new items
 // unconditionally
-val d: Unit < Sync =
+val d: Unit < (Sync & Resource) =
     c.map(_.add(42))
 ```
 
@@ -2507,7 +2507,7 @@ import kyo.*
 // Initialize a bounded queue with a
 // Multiple Producers, Multiple
 // Consumers policy
-val a: Queue[Int] < Sync =
+val a: Queue[Int] < (Sync & Resource) =
     Queue.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
@@ -2523,14 +2523,15 @@ The `Channel` effect serves as an advanced concurrency primitive, designed to fa
 ```scala    
 import kyo.*
 
-// A 'Channel' is initialized
-// with a fixed capacity
-val a: Channel[Int] < Sync =
+// A 'Channel' is initialized with a fixed capacity
+// Note the `Resource` effect, which ensures the channel
+// will eventually be closed
+val a: Channel[Int] < (Sync & Resource) =
     Channel.init(capacity = 42)
 
 // It's also possible to specify
 // an 'Access' policy
-val b: Channel[Int] < Sync =
+val b: Channel[Int] < (Sync & Resource) =
     Channel.init(
         capacity = 42,
         access = Access.MultiProducerMultiConsumer
@@ -2543,28 +2544,28 @@ While `Channel` share similarities with `Queue`—such as methods for querying s
 import kyo.*
 
 // An example channel
-val a: Channel[Int] < Sync =
+val a: Channel[Int] < (Sync & Resource) =
     Channel.init(capacity = 42)
 
 // Adds a new item to the channel.
 // If there's no capacity, the fiber
 // is automatically suspended until
 // space is made available
-val b: Unit < (Async & Abort[Closed]) =
+val b: Unit < (Async & Abort[Closed] & Resource) =
     a.map(_.put(42))
 
 // Takes an item from the channel.
 // If the channel is empty, the fiber
 // is suspended until a new item is
 // made available
-val c: Int < (Async & Abort[Closed]) =
+val c: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.take)
 
 // Closes the channel. If successful,
 // returns a Some with the drained
 // elements. All pending puts and takes
 // are automatically interrupted
-val f: Maybe[Seq[Int]] < Sync =
+val f: Maybe[Seq[Int]] < (Sync & Resource) =
     a.map(_.close)
 ```
 
@@ -2648,22 +2649,22 @@ The `Meter` effect offers utilities to regulate computational execution, be it l
 import kyo.*
 
 // 'mutex': One computation at a time
-val a: Meter < Sync =
+val a: Meter < (Sync & Resource) =
     Meter.initMutex
 
 // 'semaphore': Limit concurrent tasks
-val b: Meter < Sync =
+val b: Meter < (Sync & Resource) =
     Meter.initSemaphore(concurrency = 42)
 
 // 'rateLimiter': Tasks per time window
-val c: Meter < Sync =
+val c: Meter < (Sync & Resource) =
     Meter.initRateLimiter(
         rate = 10,
         period = 1.second
     )
 
 // 'pipeline': Combine multiple 'Meter's
-val d: Meter < Sync =
+val d: Meter < (Sync & Resource) =
     Meter.pipeline(a, b, c)
 ```
 
@@ -2673,25 +2674,25 @@ The `Meter` class comes with a handful of methods designed to provide insights i
 import kyo.*
 
 // An example 'Meter'
-val a: Meter < Sync =
+val a: Meter < (Sync & Resource) =
     Meter.initMutex
 
 // Get the number available permits
-val b: Int < (Async & Abort[Closed]) =
+val b: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.availablePermits)
 
 // Get the number of waiting fibers
-val c: Int < (Async & Abort[Closed]) =
+val c: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.pendingWaiters)
 
 // Use 'run' to execute tasks
 // respecting meter limits
-val d: Int < (Async & Abort[Closed]) =
+val d: Int < (Async & Abort[Closed] & Resource) =
     a.map(_.run(Math.cos(42).toInt))
 
 // 'tryRun' executes if a permit is
 // available; returns 'None' otherwise
-val e: Maybe[Int] < (Async & Abort[Closed]) =
+val e: Maybe[Int] < (Async & Abort[Closed] & Resource) =
     a.map(_.tryRun(Math.cos(42).toInt))
 ```
 
@@ -2753,12 +2754,12 @@ val d: Unit < Async =
 val e: Unit < Async =
     for
         barrier <- Barrier.init(3)
-        fiber1  <- Fiber.run(Async.sleep(1.second))
-        fiber2  <- Fiber.run(Async.sleep(2.seconds))
+        fiber1  <- Fiber.init(Async.sleep(1.second))
+        fiber2  <- Fiber.init(Async.sleep(2.seconds))
         _       <- Async.zip(
                      fiber1.get.map(_ => barrier.await),
                      fiber2.get.map(_ => barrier.await),
-                     Fiber.run(barrier.await).map(_.get)
+                     Fiber.init(barrier.await).map(_.get)
                    )
     yield ()
 ```
@@ -3357,14 +3358,14 @@ val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- ZIOs.get(ZIO.succeed(21))
         v2 <- Sync.defer(21)
-        v3 <- Fiber.run(-42).map(_.get)
+        v3 <- Fiber.init(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- ZIOs.get(ZIO.succeed(21).fork)
-        f2 <- Fiber.run(Sync.defer(21))
+        f2 <- Fiber.init(Sync.defer(21))
         v1 <- ZIOs.get(f1.join)
         v2 <- f2.get
     yield v1 + v2
@@ -3409,14 +3410,14 @@ val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- Cats.get(CatsIO.pure(21))
         v2 <- Sync.defer(21)
-        v3 <- Fiber.run(-42).map(_.get)
+        v3 <- Fiber.init(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries:
 val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- Cats.get(CatsIO.pure(21).start)
-        f2 <- Fiber.run(Sync.defer(21))
+        f2 <- Fiber.init(Sync.defer(21))
         v1 <- Cats.get(f1.joinWith(CatsIO(99)))
         v2 <- f2.get
     yield v1 + v2
@@ -3524,8 +3525,6 @@ Being more modular than ZIO, Kyo separates effect constructors in the companion 
 1. Factory methods on the `Kyo` object, styled after those found on `ZIO`, for many of the core Kyo effect types.
 2. Extension methods on Kyo effects modeled similarly to ZIO's methods.
 
-Generally speaking, the names of `kyo-combinators` methods are the same as the corresponding methods in ZIO. When this is not possible or doesn't make sense, `kyo-combinators` tries to keep close to ZIO conventions.
-
 ### Simple example
 
 ```scala 3
@@ -3541,7 +3540,7 @@ object HelloService:
 
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (Sync & Abort[Throwable]) =
-            Kyo.suspendAttempt { // Introduces Sync & Abort[Throwable] effect
+            Kyo.deferAttempt { // Introduces Sync & Abort[Throwable] effect
                 println(s"Hello $saluee!")
             }
     end Live
@@ -3566,7 +3565,7 @@ end effect
 // There are no combinators for handling Sync or blocking Async, since this should
 // be done at the edge of the program
 Sync.Unsafe.run {                        // Handles Sync
-    Fiber.runAndBlock(Duration.Inf) {  // Handles Async
+    Async.runAndBlock(Duration.Inf) {  // Handles Async
         Kyo.scoped {                   // Handles Resource
             Memo.run:                  // Handles Memo (introduced by .provide, below)
                 effect

@@ -37,14 +37,14 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that can be completed by the given register function
       */
-    def async[A](register: (A < Async => Unit) => Any < Async)(using Frame): A < Async =
+    def async[A, E](register: (A < (Abort[E] & Async) => Unit) => Any < (Abort[E] & Async))(using Frame): A < (Abort[E] & Async) =
         for
-            promise <- Promise.init[Nothing, A]
-            registerFn = (eff: A < Async) =>
-                val effFiber = Fiber.run(eff)
+            promise <- Promise.init[E, A]
+            registerFn = (eff: A < (Abort[E] & Async)) =>
+                val effFiber = Fiber.init(eff)
                 val updatePromise =
                     effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
-                val updatePromiseIO = Fiber.run(updatePromise).unit
+                val updatePromiseIO = Fiber.init(updatePromise).unit
                 import AllowUnsafe.embrace.danger
                 Sync.Unsafe.evalOrThrow(updatePromiseIO)
             _ <- register(registerFn)
@@ -68,9 +68,18 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that emits a value
       */
-
     def emit[A](value: A)(using Tag[Emit[A]], Frame): Unit < Emit[A] =
         Emit.value(value)
+
+    /** Polls a value
+      *
+      * @param value
+      *   Value to emit
+      * @return
+      *   An effect that emits a value
+      */
+    def poll[A](using Tag[Poll[A]], Frame): Maybe[A] < Poll[A] =
+        Poll.one[A]
 
     /** Creates an effect that fails with Abort[E].
       *
@@ -91,10 +100,14 @@ extension (kyoObject: Kyo.type)
       * @return
       *   A new sequence with elements collected using the function
       */
-    inline def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
+    inline def foreachPar[E, A, S, A1, Ctx](
+        iterable: Iterable[A],
+        concurrency: Int = Async.defaultConcurrency
+    )(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using frame: Frame
-    ): Seq[A1] < (Abort[E] & Async & Ctx) =
-        Async.collectAll[E, A1, Ctx](sequence.map(useElement))
+    ): Chunk[A1] < (Abort[E] & Async & Ctx) =
+        Async.foreach(iterable, concurrency)(useElement)
+    end foreachPar
 
     /** Applies a function to each element in parallel and discards the results.
       *
@@ -105,10 +118,13 @@ extension (kyoObject: Kyo.type)
       * @return
       *   Discards the results of the function application and returns Unit
       */
-    inline def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
+    inline def foreachParDiscard[E, A, S, A1, Ctx](
+        iterable: Iterable[A],
+        concurrency: Int = Async.defaultConcurrency
+    )(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using frame: Frame
     ): Unit < (Abort[E] & Async & Ctx) =
-        foreachPar(sequence)(useElement).unit
+        Async.foreachDiscard(iterable, concurrency)(useElement).unit
 
     /** Creates an effect from an AutoCloseable resource.
       *
@@ -363,7 +379,7 @@ extension (kyoObject: Kyo.type)
         Tag[D],
         Frame
     ): [A, S] => (D => A < S) => A < (S & Env[D]) =
-        [A, S] => (fn: D => (A < S)) => service[D].map(d => fn(d))
+        [A, S] => (fn: D => (A < S)) => Env.use(fn)
 
     /** Sleeps for a given duration using Async.
       *
@@ -380,9 +396,9 @@ extension (kyoObject: Kyo.type)
       * @param effect
       *   The effect to suspend
       * @return
-      *   An effect that suspends the given effect
+      *   A suspended effect
       */
-    def suspend[A, S](effect: => A < S)(using Frame): A < (S & Sync) =
+    def defer[A, S](effect: => A < S)(using Frame): A < (S & Sync) =
         Sync.defer(effect)
 
     /** Suspends an effect using Sync and handles any exceptions that occur to Abort[Throwable].
@@ -392,28 +408,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that suspends the given effect and handles any exceptions that occur to Abort[Throwable]
       */
-    def suspendAttempt[A, S](effect: => A < S)(using Frame): A < (S & Sync & Abort[Throwable]) =
+    def deferAttempt[A, S](effect: => A < S)(using Frame): A < (S & Sync & Abort[Throwable]) =
         Sync.defer(Abort.catching[Throwable](effect))
-
-    /** Traverses a sequence of effects and collects the results.
-      *
-      * @param sequence
-      *   The sequence of effects to traverse
-      * @return
-      *   An effect that traverses the sequence of effects and collects the results
-      */
-    def traverse[A, S](sequence: Seq[A < S])(using Frame): Seq[A] < S =
-        Kyo.collectAll(sequence)
-
-    /** Traverses a sequence of effects and discards the results.
-      *
-      * @param sequence
-      *   The sequence of effects to traverse
-      * @return
-      *   An effect that traverses the sequence of effects and discards the results
-      */
-    def traverseDiscard[A, S](sequence: Seq[A < S])(using Frame): Unit < S =
-        Kyo.collectAllDiscard(sequence)
 
     /** Traverses a sequence of effects in parallel and collects the results.
       *
@@ -422,10 +418,12 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that traverses the sequence of effects in parallel and collects the results
       */
-    def traversePar[A](
-        sequence: => Seq[A < Async]
+    def collectAllPar[A](
+        sequence: => Seq[A < Async],
+        concurrency: Int = Async.defaultConcurrency
     )(using Frame): Seq[A] < Async =
-        foreachPar(sequence)(identity)
+        Async.collectAll(sequence, concurrency)
+    end collectAllPar
 
     /** Traverses a sequence of effects in parallel and discards the results.
       *
@@ -434,8 +432,9 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that traverses the sequence of effects in parallel and discards the results
       */
-    def traverseParDiscard[A](
-        sequence: => Seq[A < Async]
+    def collectAllParDiscard[A](
+        sequence: => Seq[A < Async],
+        concurrency: Int = Async.defaultConcurrency
     )(using Frame): Unit < Async =
-        foreachPar(sequence)(identity).unit
+        Async.collectAllDiscard(sequence, concurrency).unit
 end extension

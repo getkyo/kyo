@@ -61,7 +61,7 @@ class EnvCombinatorsTest extends Test:
             "should provide all layers and infer types correctly" in run {
                 val effect: Int < Env[String & Int & Boolean & Char] =
                     Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].andThen(23)
-                val layerChar   = Layer(Kyo.suspend('c'))
+                val layerChar   = Layer(Kyo.defer('c'))
                 val layerString = Layer("value")
                 val layerInt    = Layer(1)
                 val layerBool   = Layer(false)

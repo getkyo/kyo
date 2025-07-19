@@ -74,7 +74,7 @@ object StreamPublisher:
                             case _                    => discardSubscriber(subscriber)
             }
             supervisor <- Resource.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt)
-            _          <- Resource.acquireRelease(Fiber.run(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
+            _          <- Resource.acquireRelease(Fiber.init(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
         yield publisher
         end for
     end apply

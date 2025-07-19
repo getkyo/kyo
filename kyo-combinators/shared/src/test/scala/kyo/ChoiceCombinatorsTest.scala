@@ -49,28 +49,6 @@ class ChoiceCombinatorTest extends Test:
                     assert(state == 30)
                 }
             }
-
-            "should iterate using traverse" in run {
-                var state   = 0
-                val effects = (1 to 10).map(i => Sync.defer { state += i; state })
-                val effect  = Kyo.traverse(effects)
-                assert(state == 0)
-                effect.map { result =>
-                    assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
-                    assert(state == 55)
-                }
-            }
-
-            "should iterate using traverseDiscard" in run {
-                var state   = 0
-                val effects = (1 to 10).map(i => Sync.defer { state += i; state })
-                val effect  = Kyo.traverseDiscard(effects)
-                assert(state == 0)
-                effect.map { result =>
-                    assert(result == ())
-                    assert(state == 55)
-                }
-            }
         }
     }
 end ChoiceCombinatorTest
