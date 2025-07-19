@@ -6,29 +6,48 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
 
-extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
+extension [A, E, S](effect: A < (Abort[E] & Async & S))
 
-    /** Forks this computation using the Async effect and returns its result as a `Fiber[E, A]`.
+    /** Forks this computation, returning a fiber. Guarantees eventual fiber interruption using [[Scope]] effect.
       *
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    inline def fork(
-        using frame: Frame
-    ): Fiber[E, A] < (Sync & Ctx) =
+    def fork[S2](
+        using
+        isolate: Isolate[S, Sync, S2],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
         Fiber.init(effect)
 
-    /** Forks this computation using the Async effect and returns its result as a `Fiber[E, A]`, managed by the Resource effect. Unlike
-      * `fork`, which creates an unmanaged fiber, `forkScoped` ensures that the fiber is properly cleaned up when the enclosing scope is
-      * closed, preventing resource leaks.
+    /** Forks this computation and uses the resulting fiber within a scoped function [[f]]. Guarantees fiber interruption after usage.
+      *
+      * @param f
+      *   A function using the forked fiber to produce a new effect
+      * @return
+      *   A computation that produces the result of [[f]] when applied to the forked fiber
+      */
+    def forkUsing[S2](
+        using
+        isolate: Isolate[S, Sync, S2],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    )[B, S3](f: Fiber[A, reduce.SReduced & S2] => B < S3): B < (Sync & S & S3) =
+        Fiber.use(effect)(f)
+
+    /** Forks this computation, returning a fiber. Does not guarantee fiber interruption.
       *
       * @return
       *   A computation that produces the result of this computation with Async and Resource effects
       */
-    inline def forkScoped(
-        using frame: Frame
-    ): Fiber[E, A] < (Sync & Ctx & Resource) =
-        Kyo.acquireRelease(Fiber.init(effect))(_.interrupt.unit)
+    def forkUnscoped[S2](
+        using
+        isolate: Isolate[S, Sync, S2],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
+        Fiber.initUnscoped(effect)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.
       *
@@ -38,23 +57,17 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces the result of `next`
       */
     @targetName("zipRightPar")
-    def &>[A1, E1, Ctx1](
-        using
-        i1: Isolate.Contextual[Ctx, Sync],
-        i2: Isolate.Contextual[Ctx1, Sync]
-    )(next: A1 < (Abort[E1] & Async & Ctx1))(
+    def &>[A1, E1, S2, S3](next: A1 < (Abort[E1] & Async & S2))(
         using
         fr: Frame,
-        r: Reducible[Abort[E]],
-        r1: Reducible[Abort[E1]],
-        tag: Tag[Abort[E]],
-        tag1: Tag[Abort[E1]]
-    ): A1 < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+        i1: Isolate[S, Sync, S3],
+        i2: Isolate[S2, Sync, S3]
+    ): A1 < (Abort[E | E1] & Async & S & S2 & S3) =
         for
-            fiberA  <- Fiber.init(using i1)(effect)
-            fiberA1 <- Fiber.init(using i2)(next)
-            _       <- fiberA.awaitCompletion
-            a1      <- fiberA1.join
+            left  <- Fiber.initUnscoped(using i1)(effect)
+            right <- Fiber.initUnscoped(using i2)(next)
+            _     <- left.await
+            a1    <- right.join
         yield a1
 
     /** Performs this computation and then the next one in parallel, discarding the result of the next computation.
@@ -65,23 +78,17 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces the result of this computation
       */
     @targetName("zipLeftPar")
-    def <&[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
+    def <&[A1, E1, S2, S3](next: A1 < (Abort[E1] & Async & S2))(
         using
-        s: Isolate.Contextual[Ctx, Sync],
-        s2: Isolate.Contextual[Ctx1, Sync]
-    )(
-        using
-        fr: Frame,
-        r: Reducible[Abort[E]],
-        r1: Reducible[Abort[E1]],
-        tag: Tag[Abort[E]],
-        tag1: Tag[Abort[E1]]
-    ): A < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+        f: Frame,
+        i1: Isolate[S, Sync, S3],
+        i2: Isolate[S2, Sync, S3]
+    ): A < (Abort[E | E1] & Async & S & S2 & S3) =
         for
-            fiberA  <- Fiber.init(using s)(effect)
-            fiberA1 <- Fiber.init(using s2)(next)
-            a       <- fiberA.join
-            _       <- fiberA1.awaitCompletion
+            left  <- Fiber.initUnscoped(using i1)(effect)
+            right <- Fiber.initUnscoped(using i2)(next)
+            a     <- left.join
+            _     <- right.await
         yield a
 
     /** Performs this computation and then the next one in parallel, returning both results as a tuple.
@@ -92,35 +99,30 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
       *   A computation that produces a tuple of both results
       */
     @targetName("zipPar")
-    def <&>[A1, E1, Ctx1](
-        using
-        s: Isolate.Contextual[Ctx, Sync],
-        s2: Isolate.Contextual[Ctx1, Sync]
-    )(next: A1 < (Abort[E1] & Async & Ctx1))(
+    def <&>[A1, E1, S2, S3](next: A1 < (Abort[E1] & Async & S2))(
         using
         fr: Frame,
-        r: Reducible[Abort[E]],
-        r1: Reducible[Abort[E1]],
-        tag: Tag[Abort[E]],
-        tag1: Tag[Abort[E1]]
-    ): (A, A1) < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
+        i1: Isolate[S, Sync, S3],
+        i2: Isolate[S2, Sync, S3],
+        zippable: Zippable[A, A1]
+    ): zippable.Out < (Abort[E | E1] & Async & S & S2 & S3) =
         for
-            fiberA  <- Fiber.init(using s)(effect)
-            fiberA1 <- Fiber.init(using s2)(next)
-            a       <- fiberA.join
-            a1      <- fiberA1.join
-        yield (a, a1)
+            left  <- Fiber.initUnscoped(using i1)(effect)
+            right <- Fiber.initUnscoped(using i2)(next)
+            a     <- left.join
+            a1    <- right.join
+        yield zippable.zip(a, a1)
 
 end extension
 
-extension [A, E, S](fiber: Fiber[E, A] < S)
+extension [A, E, S, S2](fiber: Fiber[A, Abort[E] & S2] < S)
 
     /** Joins the fiber and returns its result as a `A`.
       *
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def join(using reduce: Reducible[Abort[E]], frame: Frame, tag: Tag[Abort[E]]): A < (S & reduce.SReduced & Async) =
+    def join(using Frame): A < (S & S2 & Abort[E] & Async) =
         fiber.map(_.get)
 
     /** Awaits the completion of the fiber and returns its result as a `Unit`.
@@ -128,6 +130,6 @@ extension [A, E, S](fiber: Fiber[E, A] < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def awaitCompletion(using Frame): Unit < (S & Async) =
-        fiber.map(_.getResult.unit)
+    def await(using Frame): Result[E, A] < (S & S2 & Async) =
+        fiber.map(_.getResult)
 end extension

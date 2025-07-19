@@ -44,7 +44,7 @@ import scala.annotation.*
   * @tparam B
   *   The type of result this actor produces upon completion
   */
-sealed abstract class Actor[E, A, B](_subject: Subject[A], _fiber: Fiber[Closed | E, B]):
+sealed abstract class Actor[E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abort[Closed | E]]):
 
     /** Returns the message subject interface for sending messages to this actor.
       *
@@ -65,7 +65,7 @@ sealed abstract class Actor[E, A, B](_subject: Subject[A], _fiber: Fiber[Closed 
       * @return
       *   A Fiber containing the actor's execution
       */
-    def fiber: Fiber[Closed | E, B] = _fiber
+    def fiber: Fiber[B, Abort[Closed | E]] = _fiber
 
     /** Retrieves the final result of this actor.
       *
@@ -115,16 +115,15 @@ object Actor:
       *     `self` and `selfWith` methods.
       *   - [[Abort[Closed]]]: Supports handling of mailbox closure situations with the specialized Closed error type. Triggered when
       *     `close` is called on the actor.
-      *   - [[Resource]]: Enables proper management and cleanup of acquired resources. Used within the actor implementation for mailbox
-      *     cleanup and for maintaining actor hierarchies where child actors are automatically cleaned up when their parent completes or
-      *     fails.
+      *   - [[Scope]]: Enables proper management and cleanup of acquired resources. Used within the actor implementation for mailbox cleanup
+      *     and for maintaining actor hierarchies where child actors are automatically cleaned up when their parent completes or fails.
       *   - [[Async]]: Provides asynchronous execution capabilities. Used to run the actor's processing loop concurrently.
       *
       * @tparam A
       *   The type of messages this actor context can process
       */
-    opaque type Context[A] <: Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async =
-        Poll[A] & Env[Subject[A]] & Abort[Closed] & Resource & Async
+    opaque type Context[A] <: Poll[A] & Env[Subject[A]] & Abort[Closed] & Scope & Async =
+        Poll[A] & Env[Subject[A]] & Abort[Closed] & Scope & Async
 
     /** Retrieves the current actor's Subject from the environment.
       *
@@ -385,14 +384,14 @@ object Actor:
       *   A new Actor instance in an async effect
       */
     def run[E, A: Tag, B, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(behavior: B < (Context[A] & Abort[E] & S))(
         using
         Tag[Poll[A]],
         Tag[Emit[A]],
         Tag[Subject[A]],
         Frame
-    ): Actor[E, A, B] < (Resource & Async & S) =
+    ): Actor[E, A, B] < (Scope & Async & S) =
         run(defaultCapacity)(behavior)
 
     /** Creates and starts new actor from a message processing behavior.
@@ -426,14 +425,14 @@ object Actor:
       *   A new Actor instance in an async effect
       */
     def run[E, A: Tag, B, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(capacity: Int)(behavior: B < (Context[A] & Abort[E] & S))(
         using
         Tag[Poll[A]],
         Tag[Emit[A]],
         Tag[Subject[A]],
         Frame
-    ): Actor[E, A, B] < (Resource & Async & S) =
+    ): Actor[E, A, B] < (Scope & Async & S) =
         for
             mailbox <-
                 // Create a bounded channel to serve as the actor's mailbox
@@ -453,10 +452,10 @@ object Actor:
                 }.handle(
                     Sync.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
                     Env.run(_subject),          // Provide the actor's Subject to the environment so it can be accessed via Actor.self
-                    Resource.run,               // Close used resources
+                    Scope.run,                  // Close used resources
                     Fiber.init                  // Start the actor's processing loop in an async context
                 )
-            _ <- Resource.ensure(mailbox.close) // Registers a finalizer in the outer scope to provide the actor hierarchy behavior
+            _ <- Scope.ensure(mailbox.close) // Registers a finalizer in the outer scope to provide the actor hierarchy behavior
         yield new Actor[E, A, B](_subject, _consumer):
             def close(using Frame) = mailbox.close
 end Actor

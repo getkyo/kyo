@@ -67,13 +67,9 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A, S](
-        using Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
-    )(v: A < (STM & Abort[E] & Async & S))(using
-        Frame,
-        ConcreteTag[E | FailedTransaction],
-        Tag[Abort[E | FailedTransaction]]
-    ): A < (S & Async & Abort[E | FailedTransaction]) =
+    def run[E: ConcreteTag, A, S](
+        using Isolate[S, Async & Abort[E | FailedTransaction], S]
+    )(v: A < (STM & Abort[E] & Async & S))(using frame: Frame): A < (S & Async & Abort[E | FailedTransaction]) =
         run(defaultRetrySchedule)(v)
 
     /** Executes a transactional computation with state isolation and the a custom retry schedule.
@@ -85,8 +81,8 @@ object STM:
       * @return
       *   The result of the computation if successful
       */
-    def run[E, A, S](
-        using isolate: Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
+    def run[E: ConcreteTag, A, S](
+        using isolate: Isolate[S, Async & Abort[E | FailedTransaction], S]
     )(retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async & S))(
         using
         Frame,

@@ -41,23 +41,23 @@ class PingPongBench extends ArenaBench.ForkOnly(()):
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
-        def iterate(promise: Promise[Nothing, Unit], n: Int): Unit < (Async & Abort[Closed]) =
+        def iterate(promise: Promise[Unit, Any], n: Int): Unit < (Async & Abort[Closed]) =
             for
                 ref  <- AtomicInt.init(n)
                 chan <- Channel.initUnscoped[Unit](1)
                 effect =
                     for
-                        _ <- Fiber.init(chan.put(()))
+                        _ <- Fiber.initUnscoped(chan.put(()))
                         _ <- chan.take
                         n <- ref.decrementAndGet
-                        _ <- if n == 0 then promise.complete(Result.unit).unit else Kyo.unit
+                        _ <- if n == 0 then promise.completeUnit else Kyo.unit
                     yield ()
-                _ <- repeat(depth)(Fiber.init[Closed, Unit, Any](effect))
+                _ <- repeat(depth)(Fiber.initUnscoped(effect))
             yield ()
 
         for
-            promise <- Promise.init[Nothing, Unit]
-            _       <- Fiber.init(iterate(promise, depth))
+            promise <- Promise.init[Unit, Any]
+            _       <- Fiber.initUnscoped(iterate(promise, depth))
             _       <- promise.get
         yield ()
         end for

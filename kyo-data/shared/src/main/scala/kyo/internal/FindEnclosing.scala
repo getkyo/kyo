@@ -13,8 +13,11 @@ private[kyo] object FindEnclosing:
         val fileName = pos.sourceFile.name
         if fileName.isEmpty || fileName.startsWith("<") then false // synthetic file, like scala-cli/repl
         else
-            val path     = pos.sourceFile.path
-            val excluded = (path.contains("src/test/") && testFileSuffixes.exists(fileName.endsWith)) || fileName.endsWith("Bench.scala")
+            val path = pos.sourceFile.path
+            val excluded =
+                ((path.contains("src/test/") || path.contains("src_managed/test/")) && testFileSuffixes.exists(
+                    fileName.endsWith
+                )) || fileName.endsWith("Bench.scala")
             apply(sym => sym.fullName.startsWith("kyo.") && !excluded).nonEmpty
         end if
     end isInternal

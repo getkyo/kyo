@@ -11,14 +11,13 @@ import scala.collection.immutable.HashMap
 import scala.quoted.{Type as SType, *}
 
 private[kyo] object TagMacro:
-
-    def deriveImpl[A: SType](using Quotes): Expr[String | Tag.internal.Dynamic] =
+    def deriveImpl[A: SType](allowDynamic: Boolean)(using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
         val (staticDB, dynamicDB) = deriveDB[A]
         val encoded               = Expr(Tag.internal.encode(staticDB))
         if dynamicDB.isEmpty then
             encoded
-        else if FindEnclosing.isInternal then
+        else if !allowDynamic && FindEnclosing.isInternal then
             val missing =
                 dynamicDB.map {
                     case (_, (tpe, _)) =>
@@ -109,7 +108,10 @@ private[kyo] object TagMacro:
                                     else Present(Variance.Invariant)
                                     end if
                                 }
-                            require(params.size == variances.size)
+                            require(
+                                params.size == variances.size,
+                                s"Found ${params.size} type parameters but ${variances.size} variances. TypeRepr: ${tpe.show}"
+                            )
                             ClassEntry(
                                 name,
                                 Span.from(variances),
@@ -131,7 +133,10 @@ private[kyo] object TagMacro:
                                             else Present(Variance.Invariant)
                                             end if
                                         }
-                                    require(params.size == variances.size)
+                                    require(
+                                        params.size == variances.size,
+                                        s"Found ${params.size} type parameters but ${variances.size} variances. TypeRepr: ${tpe.show}"
+                                    )
                                     OpaqueEntry(name, visit(lower), visit(upper), Span.from(variances), Span.from(params))
                             end match
 

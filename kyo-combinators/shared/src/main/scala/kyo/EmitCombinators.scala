@@ -147,7 +147,7 @@ extension [A, B, S](effect: B < (Emit[Chunk[A]] & S))
       */
     def emitToStreamAndResult(using Frame): (Stream[A, S & Async], B < Async) < Async =
         for
-            p <- Promise.init[Nothing, B]
+            p <- Promise.init[B, Any]
             streamEmit = effect.map: b =>
                 p.completeDiscard(Result.succeed(b))
         yield (Stream(streamEmit), p.join)

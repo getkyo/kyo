@@ -4,7 +4,7 @@ class MeterTest extends Test:
 
     "mutex" - {
         "init" in run {
-            Resource.run(Meter.initMutex).map: meter =>
+            Scope.run(Meter.initMutex).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
@@ -26,14 +26,14 @@ class MeterTest extends Test:
         "run" in run {
             for
                 t  <- Meter.initMutex
-                p  <- Promise.init[Nothing, Int]
-                b1 <- Promise.init[Nothing, Unit]
-                f1 <- Fiber.init(t.run(b1.complete(Result.unit).map(_ => p.getResult)))
+                p  <- Promise.init[Int, Any]
+                b1 <- Promise.init[Unit, Any]
+                f1 <- Fiber.initUnscoped(t.run(b1.completeUnit.map(_ => p.getResult)))
                 _  <- b1.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
-                b2 <- Promise.init[Nothing, Unit]
-                f2 <- Fiber.init(b2.complete(Result.unit).map(_ => t.run(2)))
+                b2 <- Promise.init[Unit, Any]
+                f2 <- Fiber.initUnscoped(b2.completeUnit.map(_ => t.run(2)))
                 _  <- b2.get
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
@@ -44,15 +44,17 @@ class MeterTest extends Test:
                 v2 <- f2.get
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
-            yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1 == Result.succeed(1) && v2 == 2 && a3 == 1 && w3 == 0)
+            yield assert(
+                a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1.contains(1) && v2 == 2 && a3 == 1 && w3 == 0
+            )
         }
 
         "tryRun" in run {
             for
                 sem <- Meter.initMutex
-                p   <- Promise.init[Nothing, Int]
-                b1  <- Promise.init[Nothing, Unit]
-                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.unit).map(_ => p.getResult)))
+                p   <- Promise.init[Int, Any]
+                b1  <- Promise.init[Unit, Any]
+                f1  <- Fiber.initUnscoped(sem.tryRun(b1.completeUnit.map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
@@ -66,7 +68,7 @@ class MeterTest extends Test:
 
     "semaphore" - {
         "init" in run {
-            Resource.run(Meter.initSemaphore(3)).map: meter =>
+            Scope.run(Meter.initSemaphore(3)).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
@@ -89,17 +91,17 @@ class MeterTest extends Test:
         "run" in run {
             for
                 t  <- Meter.initSemaphore(2)
-                p  <- Promise.init[Nothing, Int]
-                b1 <- Promise.init[Nothing, Unit]
-                f1 <- Fiber.init(t.run(b1.complete(Result.unit).map(_ => p.getResult)))
+                p  <- Promise.init[Int, Any]
+                b1 <- Promise.init[Unit, Any]
+                f1 <- Fiber.initUnscoped(t.run(b1.completeUnit.map(_ => p.getResult)))
                 _  <- b1.get
-                b2 <- Promise.init[Nothing, Unit]
-                f2 <- Fiber.init(t.run(b2.complete(Result.unit).map(_ => p.getResult)))
+                b2 <- Promise.init[Unit, Any]
+                f2 <- Fiber.initUnscoped(t.run(b2.completeUnit.map(_ => p.getResult)))
                 _  <- b2.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
-                b3 <- Promise.init[Nothing, Unit]
-                f3 <- Fiber.init(b3.complete(Result.unit).map(_ => t.run(2)))
+                b3 <- Promise.init[Unit, Any]
+                f3 <- Fiber.initUnscoped(b3.completeUnit.map(_ => t.run(2)))
                 _  <- b3.get
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
@@ -113,20 +115,20 @@ class MeterTest extends Test:
                 a3 <- t.availablePermits
                 w3 <- t.pendingWaiters
             yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && !d3 && a2 == 0 && w2 == 1 &&
-                v1 == Result.succeed(1) && v2 == Result.succeed(1) && v3 == 2 && a3 == 2 && w3 == 0)
+                v1.contains(1) && v2.contains(1) && v3 == 2 && a3 == 2 && w3 == 0)
         }
 
         "tryRun" in run {
             for
                 sem <- Meter.initSemaphore(2)
-                p   <- Promise.init[Nothing, Int]
-                b1  <- Promise.init[Nothing, Unit]
-                f1  <- Fiber.init(sem.tryRun(b1.complete(Result.unit).map(_ => p.getResult)))
+                p   <- Promise.init[Int, Any]
+                b1  <- Promise.init[Unit, Any]
+                f1  <- Fiber.initUnscoped(sem.tryRun(b1.completeUnit.map(_ => p.getResult)))
                 _   <- b1.get
                 a1  <- sem.availablePermits
                 w1  <- sem.pendingWaiters
-                b2  <- Promise.init[Nothing, Unit]
-                f2  <- Fiber.init(sem.tryRun(b2.complete(Result.unit).map(_ => p.getResult)))
+                b2  <- Promise.init[Unit, Any]
+                f2  <- Fiber.initUnscoped(sem.tryRun(b2.completeUnit.map(_ => p.getResult)))
                 _   <- b2.get
                 a2  <- sem.availablePermits
                 w2  <- sem.pendingWaiters
@@ -136,7 +138,8 @@ class MeterTest extends Test:
                 _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
                 v2  <- f2.get
-            yield assert(a1 == 1 && w1 == 0 && b3.isEmpty && !b4 && !b5 && v1.contains(Result.succeed(1)) && v2.contains(Result.succeed(1)))
+            yield assert(a1 == 1 && w1 == 0 && b3.isEmpty && !b4 && !b5 &&
+                v1.contains(Result.succeed(1)) && v2.contains(Result.succeed(1)))
         }
 
         "concurrency" - {
@@ -169,12 +172,12 @@ class MeterTest extends Test:
                     meter   <- Meter.initSemaphore(size)
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
-                    runFiber <- Fiber.init(
+                    runFiber <- Fiber.initUnscoped(
                         latch.await.andThen(Async.fill(100, 100)(
                             Abort.run(meter.run(counter.incrementAndGet))
                         ))
                     )
-                    closeFiber <- Fiber.init(latch.await.andThen(meter.close))
+                    closeFiber <- Fiber.initUnscoped(latch.await.andThen(meter.close))
                     _          <- latch.release
                     closed     <- closeFiber.get
                     completed  <- runFiber.get
@@ -198,9 +201,9 @@ class MeterTest extends Test:
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFibers <- Kyo.foreach(1 to 100)(_ =>
-                        Fiber.init(started.release.andThen(latch.await.andThen(meter.run(counter.incrementAndGet))))
+                        Fiber.initUnscoped(started.release.andThen(latch.await.andThen(meter.run(counter.incrementAndGet))))
                     )
-                    interruptFiber <- Fiber.init(latch.await.andThen(
+                    interruptFiber <- Fiber.initUnscoped(latch.await.andThen(
                         Async.foreach(runFibers.take(50), 50)(_.interrupt(panic))
                     ))
                     _           <- started.await
@@ -222,7 +225,7 @@ class MeterTest extends Test:
 
     "rate limiter" - {
         "init" in run {
-            Resource.run(Meter.initRateLimiter(2, 1.milli)).map: meter =>
+            Scope.run(Meter.initRateLimiter(2, 1.milli)).map: meter =>
                 meter.closed.map: isClosed =>
                     assert(isClosed)
         }
@@ -245,7 +248,7 @@ class MeterTest extends Test:
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
-                f1      <- Fiber.init(loop(meter, counter))
+                f1      <- Fiber.initUnscoped(loop(meter, counter))
                 _       <- Async.sleep(5.millis)
                 _       <- f1.interrupt(panic)
                 v1      <- counter.get
@@ -255,8 +258,8 @@ class MeterTest extends Test:
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
-                f1      <- Fiber.init(loop(meter, counter))
-                f2      <- Fiber.init(loop(meter, counter))
+                f1      <- Fiber.initUnscoped(loop(meter, counter))
+                f2      <- Fiber.initUnscoped(loop(meter, counter))
                 _       <- Async.sleep(5.millis)
                 _       <- f1.interrupt(panic)
                 _       <- f2.interrupt(panic)
@@ -278,8 +281,8 @@ class MeterTest extends Test:
             for
                 meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.milli), Meter.initMutex)
                 counter <- AtomicInt.init(0)
-                f1      <- Fiber.init(loop(meter, counter))
-                f2      <- Fiber.init(loop(meter, counter))
+                f1      <- Fiber.initUnscoped(loop(meter, counter))
+                f2      <- Fiber.initUnscoped(loop(meter, counter))
                 _       <- Async.sleep(5.millis)
                 _       <- f1.interrupt(panic)
                 _       <- f2.interrupt(panic)
@@ -290,7 +293,7 @@ class MeterTest extends Test:
         "tryRun" in run {
             for
                 meter <- Meter.pipeline(Meter.initRateLimiter(2, 10.millis), Meter.initMutex)
-                f1    <- Fiber.init(meter.run(Async.never))
+                f1    <- Fiber.initUnscoped(meter.run(Async.never))
                 _     <- untilTrue(meter.tryRun(()).map(_.isEmpty))
                 _     <- f1.interrupt(panic)
             yield succeed
@@ -313,8 +316,8 @@ class MeterTest extends Test:
             "non-reentrant" in run {
                 for
                     meter  <- Meter.initMutex(reentrant = false)
-                    p      <- Promise.init[Nothing, Int]
-                    f      <- Fiber.init(meter.run(meter.run(42)))
+                    p      <- Promise.init[Int, Any]
+                    f      <- Fiber.initUnscoped(meter.run(meter.run(42)))
                     _      <- Async.sleep(5.millis)
                     done   <- f.done
                     _      <- f.interrupt
@@ -328,7 +331,7 @@ class MeterTest extends Test:
                     (done, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.init(meter.run(42))
+                                f      <- Fiber.initUnscoped(meter.run(42))
                                 _      <- Async.sleep(5.millis)
                                 done   <- f.done
                                 _      <- f.interrupt
@@ -355,8 +358,8 @@ class MeterTest extends Test:
             "non-reentrant" in run {
                 for
                     meter  <- Meter.initSemaphore(1, reentrant = false)
-                    p      <- Promise.init[Nothing, Int]
-                    f      <- Fiber.init(meter.run(meter.run(42)))
+                    p      <- Promise.init[Int, Any]
+                    f      <- Fiber.initUnscoped(meter.run(meter.run(42)))
                     _      <- Async.sleep(5.millis)
                     done   <- f.done
                     _      <- f.interrupt
@@ -370,7 +373,7 @@ class MeterTest extends Test:
                     (done, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.init(meter.run(42))
+                                f      <- Fiber.initUnscoped(meter.run(42))
                                 _      <- Async.sleep(5.millis)
                                 done   <- f.done
                                 _      <- f.interrupt
@@ -397,8 +400,8 @@ class MeterTest extends Test:
             "non-reentrant" in run {
                 for
                     meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
-                    p      <- Promise.init[Nothing, Int]
-                    f      <- Fiber.init(meter.run(meter.run(42)))
+                    p      <- Promise.init[Int, Any]
+                    f      <- Fiber.initUnscoped(meter.run(meter.run(42)))
                     _      <- Async.sleep(5.millis)
                     done   <- f.done
                     _      <- f.interrupt
@@ -412,7 +415,7 @@ class MeterTest extends Test:
                     (done, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.init(meter.run(42))
+                                f      <- Fiber.initUnscoped(meter.run(42))
                                 _      <- Async.sleep(5.millis)
                                 done   <- f.done
                                 _      <- f.interrupt
@@ -445,8 +448,8 @@ class MeterTest extends Test:
                     sem         <- Meter.initSemaphore(1, reentrant = false)
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
-                    p           <- Promise.init[Nothing, Int]
-                    f <- Fiber.init(pipeline.run {
+                    p           <- Promise.init[Int, Any]
+                    f <- Fiber.initUnscoped(pipeline.run {
                         pipeline.run(42)
                     })
                     _      <- Async.sleep(5.millis)
@@ -465,7 +468,7 @@ class MeterTest extends Test:
                     (done, result) <- meter.run {
                         meter.run {
                             for
-                                f      <- Fiber.init(meter.run(42))
+                                f      <- Fiber.initUnscoped(meter.run(42))
                                 _      <- Async.sleep(5.millis)
                                 done   <- f.done
                                 _      <- f.interrupt

@@ -9,18 +9,18 @@ class AsyncTest extends Test:
     "run" - {
         "value" in run {
             for
-                v <- Fiber.init(1).map(_.get)
+                v <- Fiber.initUnscoped(1).map(_.get)
             yield assert(v == 1)
         }
         "executes in a different thread" in runNotJS {
             val t1 = Thread.currentThread()
             for
-                t2 <- Fiber.init(Thread.currentThread()).map(_.get)
+                t2 <- Fiber.initUnscoped(Thread.currentThread()).map(_.get)
             yield assert(t1 ne t2)
         }
         "multiple" in run {
             for
-                v0               <- Fiber.init(0).map(_.get)
+                v0               <- Fiber.initUnscoped(0).map(_.get)
                 (v1, v2)         <- Async.zip(1, 2)
                 (v3, v4, v5)     <- Async.zip(3, 4, 5)
                 (v6, v7, v8, v9) <- Async.zip(6, 7, 8, 9)
@@ -29,21 +29,21 @@ class AsyncTest extends Test:
         "nested" in runNotJS {
             val t1 = Thread.currentThread()
             for
-                t2 <- Fiber.init(Sync.defer(Fiber.init(Thread.currentThread()).map(_.get))).map(_.get)
+                t2 <- Fiber.initUnscoped(Sync.defer(Fiber.initUnscoped(Thread.currentThread()).map(_.get))).map(_.get)
             yield assert(t1 ne t2)
         }
 
         "with Sync-based effects" - {
             "Resource" in run {
                 var closes = 0
-                val a      = Resource.ensure(closes += 1).andThen(42)
-                val b      = Fiber.init(a)
-                Resource.run(b.map(_.get.map(v => assert(v == 42))))
+                val a      = Scope.ensure(closes += 1).andThen(42)
+                val b      = Fiber.initUnscoped(a)
+                Scope.run(b.map(_.get.map(v => assert(v == 42))))
             }
         }
         "non Sync-based effect" in run {
-            typeCheckFailure("Fiber.init(Var.get[Int])")(
-                "This operation requires Contextual isolation for effects"
+            typeCheckFailure("Fiber.initUnscoped(Var.get[Int])")(
+                "This operation requires isolation for effects"
             )
         }
     }
@@ -72,7 +72,7 @@ class AsyncTest extends Test:
             Async.sleep(1.day).andThen(1)
                 .handle(
                     Async.timeout(10.millis),
-                    Async.runAndBlock(Duration.Infinity),
+                    KyoApp.runAndBlock(Duration.Infinity),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed
@@ -83,7 +83,7 @@ class AsyncTest extends Test:
         "block timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
                 .handle(
-                    Async.runAndBlock(10.millis),
+                    KyoApp.runAndBlock(10.millis),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed
@@ -94,7 +94,7 @@ class AsyncTest extends Test:
         "multiple fibers timeout" in runNotJS {
             Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
                 .handle(
-                    Async.runAndBlock(10.millis),
+                    KyoApp.runAndBlock(10.millis),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed
@@ -111,8 +111,8 @@ class AsyncTest extends Test:
             ref.incrementAndGet.map(_ => loop(ref))
 
         def runLoop(started: Latch, done: Latch) =
-            Resource.run {
-                Resource.ensure(done.release).map { _ =>
+            Scope.run {
+                Scope.ensure(done.release).map { _ =>
                     started.release.map(_ => AtomicInt.init(0).map(loop))
                 }
             }
@@ -121,7 +121,7 @@ class AsyncTest extends Test:
             for
                 started     <- Latch.init(1)
                 done        <- Latch.init(1)
-                fiber       <- Fiber.init(runLoop(started, done))
+                fiber       <- Fiber.initUnscoped(runLoop(started, done))
                 _           <- started.await
                 interrupted <- fiber.interrupt(panic)
                 _           <- done.await
@@ -131,9 +131,9 @@ class AsyncTest extends Test:
             for
                 started      <- Latch.init(3)
                 done         <- Latch.init(3)
-                fiber1       <- Fiber.init(runLoop(started, done))
-                fiber2       <- Fiber.init(runLoop(started, done))
-                fiber3       <- Fiber.init(runLoop(started, done))
+                fiber1       <- Fiber.initUnscoped(runLoop(started, done))
+                fiber2       <- Fiber.initUnscoped(runLoop(started, done))
+                fiber3       <- Fiber.initUnscoped(runLoop(started, done))
                 _            <- started.await
                 interrupted1 <- fiber1.interrupt(panic)
                 interrupted2 <- fiber2.interrupt(panic)
@@ -243,7 +243,7 @@ class AsyncTest extends Test:
 
     "transform" in run {
         for
-            v1       <- Fiber.init(1).map(_.get)
+            v1       <- Fiber.initUnscoped(1).map(_.get)
             (v2, v3) <- Async.zip(2, 3)
             l        <- Async.collectAll(List[Int < Any](4, 5))
         yield assert(v1 + v2 + v3 + l.sum == 15)
@@ -254,8 +254,8 @@ class AsyncTest extends Test:
             ref.incrementAndGet.map(_ => loop(ref))
 
         def task(started: Latch, done: Latch): Unit < Async =
-            Resource.run {
-                Resource.ensure(done.release).map { _ =>
+            Scope.run {
+                Scope.ensure(done.release).map { _ =>
                     started.release.andThen(AtomicInt.init(0).map(loop))
                 }
             }
@@ -263,7 +263,7 @@ class AsyncTest extends Test:
         for
             started     <- Latch.init(1)
             done        <- Latch.init(1)
-            fiber       <- Fiber.init(task(started, done))
+            fiber       <- Fiber.initUnscoped(task(started, done))
             _           <- started.await
             interrupted <- fiber.interrupt(panic)
             _           <- done.await
@@ -277,13 +277,13 @@ class AsyncTest extends Test:
                 set(-1)
         "outer" in run {
             val resource1 = new TestResource
-            val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resource & Async) =
+            val io1: (JAtomicInteger & Closeable, Set[Int]) < (Scope & Async) =
                 for
-                    r  <- Resource.acquire(resource1)
+                    r  <- Scope.acquire(resource1)
                     v1 <- Sync.defer(r.incrementAndGet())
-                    v2 <- Fiber.init(r.incrementAndGet()).map(_.get)
+                    v2 <- Fiber.initUnscoped(r.incrementAndGet()).map(_.get)
                 yield (r, Set(v1, v2))
-            Resource.run(io1).map {
+            Scope.run(io1).map {
                 case (r, v) =>
                     assert(v == Set(1, 2))
                     assert(r.get() == -1)
@@ -291,7 +291,7 @@ class AsyncTest extends Test:
         }
         "inner" in run {
             val resource1 = new TestResource
-            Fiber.init(Resource.run(Resource.acquire(resource1).map(_.incrementAndGet())))
+            Fiber.initUnscoped(Scope.run(Scope.acquire(resource1).map(_.incrementAndGet())))
                 .map(_.get).map { r =>
                     assert(r == 1)
                     assert(resource1.get() == -1)
@@ -301,8 +301,8 @@ class AsyncTest extends Test:
             val resource1 = new TestResource
             val resource2 = new TestResource
             Async.zip(
-                Resource.run(Resource.acquire(resource1).map(_.incrementAndGet())),
-                Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
+                Scope.run(Scope.acquire(resource1).map(_.incrementAndGet())),
+                Scope.run(Scope.acquire(resource2).map(_.incrementAndGet()))
             ).map { r =>
                 assert(r == (1, 1))
                 assert(resource1.get() == -1)
@@ -312,14 +312,14 @@ class AsyncTest extends Test:
         "mixed" in run {
             val resource1 = new TestResource
             val resource2 = new TestResource
-            val io1: Set[Int] < (Resource & Async) =
+            val io1: Set[Int] < (Scope & Async) =
                 for
-                    r  <- Resource.acquire(resource1)
+                    r  <- Scope.acquire(resource1)
                     v1 <- Sync.defer(r.incrementAndGet())
-                    v2 <- Fiber.init(r.incrementAndGet()).map(_.get)
-                    v3 <- Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
+                    v2 <- Fiber.initUnscoped(r.incrementAndGet()).map(_.get)
+                    v3 <- Scope.run(Scope.acquire(resource2).map(_.incrementAndGet()))
                 yield Set(v1, v2, v3)
-            Resource.run(io1).map { r =>
+            Scope.run(io1).map { r =>
                 assert(r == Set(1, 2))
                 assert(resource1.get() == -1)
                 assert(resource2.get() == -1)
@@ -331,10 +331,10 @@ class AsyncTest extends Test:
         val l = Local.init(10)
         "fork" - {
             "default" in run {
-                Fiber.init(l.get).map(_.get).map(v => assert(v == 10))
+                Fiber.initUnscoped(l.get).map(_.get).map(v => assert(v == 10))
             }
             "let" in run {
-                l.let(20)(Fiber.init(l.get).map(_.get)).map(v => assert(v == 20))
+                l.let(20)(Fiber.initUnscoped(l.get).map(_.get)).map(v => assert(v == 20))
             }
         }
         "race" - {
@@ -371,7 +371,7 @@ class AsyncTest extends Test:
             val future: Future[Int] = Future.failed(exception)
             for
                 result <- Abort.run(Async.fromFuture(future))
-            yield assert(result.failure.contains(exception))
+            yield assert(result.panic.contains(exception))
             end for
         }
     }
@@ -379,7 +379,7 @@ class AsyncTest extends Test:
     "stack safety" in run {
         def loop(i: Int): Assertion < Async =
             if i > 0 then
-                Fiber.init(()).map(_ => loop(i - 1))
+                Fiber.initUnscoped(()).map(_ => loop(i - 1))
             else
                 succeed
         loop(10000)
@@ -400,7 +400,7 @@ class AsyncTest extends Test:
                         _ <- stop.release
                     yield ()
                 }
-            fiber <- Fiber.init(masked)
+            fiber <- Fiber.initUnscoped(masked)
             _     <- start.await
             _     <- fiber.interrupt
             r1    <- result.get
@@ -413,8 +413,8 @@ class AsyncTest extends Test:
     "boundary inference with Abort" - {
         "same failures" in {
             val v: Int < Abort[Int]                            = 1
-            val _: Fiber[Int, Int] < Sync                      = Fiber.init(v)
-            val _: Int < (Abort[Int | Timeout] & Sync)         = Async.runAndBlock(1.second)(v)
+            val _: Fiber[Int, Abort[Int]] < Sync               = Fiber.initUnscoped(v)
+            val _: Int < (Abort[Int | Timeout] & Sync)         = KyoApp.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.race(Seq(v))
@@ -427,8 +427,8 @@ class AsyncTest extends Test:
         }
         "additional failure" in {
             val v: Int < Abort[Int]                                     = 1
-            val _: Fiber[Int | String, Int] < Sync                      = Fiber.init(v)
-            val _: Int < (Abort[Int | Timeout | String] & Sync)         = Async.runAndBlock(1.second)(v)
+            val _: Fiber[Int, Abort[Int | String]] < Sync               = Fiber.initUnscoped(v)
+            val _: Int < (Abort[Int | Timeout | String] & Sync)         = KyoApp.runAndBlock(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.mask(v)
             val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(Seq(v))
@@ -443,25 +443,25 @@ class AsyncTest extends Test:
             "run" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Nothing, Fiber[Int, Int]] < Sync  = Fiber.init(Fiber.init(v))
-                val _: Fiber[Int | Timeout, Int] < Sync        = Fiber.init(Async.runAndBlock(1.second)(v))
-                val _: Fiber[Int, Int] < Sync                  = Fiber.init(Async.mask(v))
-                val _: Fiber[Int | Timeout, Int] < Sync        = Fiber.init(Async.timeout(1.second)(v))
-                val _: Fiber[Int, Int] < Sync                  = Fiber.init(Async.race(Seq(v)))
-                val _: Fiber[Int, Int] < Sync                  = Fiber.init(Async.race(v, v))
-                val x: Fiber[Int, Seq[Int]] < Sync             = Fiber.init(Async.collectAll(Seq(v)))
-                val _: Fiber[Int, (Int, Int)] < Sync           = Fiber.init(Async.zip(v, v))
-                val _: Fiber[Int, (Int, Int, Int)] < Sync      = Fiber.init(Async.zip(v, v, v))
-                val _: Fiber[Int, (Int, Int, Int, Int)] < Sync = Fiber.init(Async.zip(v, v, v, v))
+                val _: Fiber[Fiber[Int, Abort[Int]], Any] < Sync      = Fiber.initUnscoped(Fiber.initUnscoped(v))
+                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.initUnscoped(KyoApp.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.mask(v))
+                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.initUnscoped(Async.timeout(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.race(Seq(v)))
+                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.race(v, v))
+                val x: Fiber[Seq[Int], Abort[Int]] < Sync             = Fiber.initUnscoped(Async.collectAll(Seq(v)))
+                val _: Fiber[(Int, Int), Abort[Int]] < Sync           = Fiber.initUnscoped(Async.zip(v, v))
+                val _: Fiber[(Int, Int, Int), Abort[Int]] < Sync      = Fiber.initUnscoped(Async.zip(v, v, v))
+                val _: Fiber[(Int, Int, Int, Int), Abort[Int]] < Sync = Fiber.initUnscoped(Async.zip(v, v, v, v))
                 succeed
             }
 
             "zip" in run {
                 val v: Int < Abort[Int] = 1
 
-                val _: (Fiber[Int, Int], Fiber[Int, Int]) < Async = Async.zip(Fiber.init(v), Fiber.init(v))
+                val _: (Fiber[Int, Abort[Int]], Fiber[Int, Abort[Int]]) < Async = Async.zip(Fiber.initUnscoped(v), Fiber.initUnscoped(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async) =
-                    Async.zip(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
+                    Async.zip(KyoApp.runAndBlock(1.second)(v), KyoApp.runAndBlock(1.second)(v))
                 val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.mask(v), Async.mask(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async)     = Async.zip(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
                 val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.race(v, v), Async.race(v, v))
@@ -472,8 +472,8 @@ class AsyncTest extends Test:
             "race" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < Async              = Async.race(Fiber.init(v), Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Async       = Async.race(Fiber.initUnscoped(v), Fiber.initUnscoped(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.race(KyoApp.runAndBlock(1.second)(v), KyoApp.runAndBlock(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.mask(v), Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.race(Async.race(v, v), Async.race(v, v))
@@ -484,8 +484,8 @@ class AsyncTest extends Test:
             "mask" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < Async              = Async.mask(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Async       = Async.mask(Fiber.initUnscoped(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(KyoApp.runAndBlock(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.mask(Async.mask(v))
                 val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.timeout(1.second)(v))
                 val _: Int < (Abort[Int] & Async)           = Async.mask(Async.race(v, v))
@@ -496,24 +496,24 @@ class AsyncTest extends Test:
             "timeout" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < (Abort[Timeout] & Async)  = Async.timeout(1.second)(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.mask(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.timeout(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Async) = Async.timeout(1.second)(Async.zip(v, v))
+                val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Async) = Async.timeout(1.second)(Fiber.initUnscoped(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(KyoApp.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async)              = Async.timeout(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async)       = Async.timeout(1.second)(Async.zip(v, v))
                 succeed
             }
 
             "runAndBlock" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Int, Int] < (Abort[Timeout] & Sync)  = Async.runAndBlock(1.second)(Fiber.init(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.mask(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
-                val _: Int < (Abort[Int | Timeout] & Sync)        = Async.runAndBlock(1.second)(Async.race(v, v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Sync) = Async.runAndBlock(1.second)(Async.zip(v, v))
+                val _: Fiber[Int, Abort[Int]] < (Abort[Timeout] & Sync) = KyoApp.runAndBlock(1.second)(Fiber.initUnscoped(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(KyoApp.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Sync)              = KyoApp.runAndBlock(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Sync)       = KyoApp.runAndBlock(1.second)(Async.zip(v, v))
                 succeed
             }
         }
@@ -547,9 +547,9 @@ class AsyncTest extends Test:
         "interrupts computation" in runNotJS {
             for
                 flag   <- AtomicBoolean.init(false)
-                fiber  <- Promise.init[Nothing, Int]
+                fiber  <- Promise.init[Int, Any]
                 _      <- fiber.onInterrupt(_ => flag.set(true))
-                result <- Fiber.init(Async.timeout(1.millis)(fiber.get))
+                result <- Fiber.initUnscoped(Async.timeout(0.millis)(fiber.get))
                 result <- fiber.getResult
                 _      <- untilTrue(flag.get)
             yield assert(result.isPanic)
@@ -566,7 +566,7 @@ class AsyncTest extends Test:
                 (i, s, r) <- isolatedInt.let(20) {
                     isolatedString.let("modified") {
                         regularLocal.let("modified") {
-                            Fiber.init {
+                            Fiber.initUnscoped {
                                 for
                                     i <- isolatedInt.get
                                     s <- isolatedString.get
@@ -585,9 +585,9 @@ class AsyncTest extends Test:
                     isolatedString.let("parallel") {
                         regularLocal.let("parallel") {
                             Async.zip(
-                                Fiber.init(isolatedInt.get).map(_.get),
-                                Fiber.init(isolatedString.get).map(_.get),
-                                Fiber.init(regularLocal.get).map(_.get)
+                                Fiber.initUnscoped(isolatedInt.get).map(_.get),
+                                Fiber.initUnscoped(isolatedString.get).map(_.get),
+                                Fiber.initUnscoped(regularLocal.get).map(_.get)
                             )
                         }
                     }
@@ -600,14 +600,14 @@ class AsyncTest extends Test:
                 (i, s, r) <- isolatedInt.let(50) {
                     isolatedString.let("outer") {
                         regularLocal.let("outer") {
-                            Fiber.init {
+                            Fiber.initUnscoped {
                                 isolatedInt.let(60) {
                                     isolatedString.let("inner") {
                                         regularLocal.let("inner") {
                                             Async.zip(
-                                                Fiber.init(isolatedInt.get).map(_.get),
-                                                Fiber.init(isolatedString.get).map(_.get),
-                                                Fiber.init(regularLocal.get).map(_.get)
+                                                Fiber.initUnscoped(isolatedInt.get).map(_.get),
+                                                Fiber.initUnscoped(isolatedString.get).map(_.get),
+                                                Fiber.initUnscoped(regularLocal.get).map(_.get)
                                             )
                                         }
                                     }
@@ -1098,31 +1098,31 @@ class AsyncTest extends Test:
 
     "preemption is properly handled in nested Async computations" - {
         "simple" in run {
-            Fiber.init(Fiber.init(Async.delay(100.millis)(42))).map(_.get).map(_.get).map { result =>
+            Fiber.initUnscoped(Fiber.initUnscoped(Async.delay(100.millis)(42))).map(_.get).map(_.get).map { result =>
                 assert(result == 42)
             }
         }
         "with nested eval" in run {
             import AllowUnsafe.embrace.danger
-            val task = Sync.Unsafe.evalOrThrow(Fiber.init(Async.delay(100.millis)(42)))
-            Fiber.init(task).map(_.get).map(_.get).map { result =>
+            val task = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Async.delay(100.millis)(42)))
+            Fiber.initUnscoped(task).map(_.get).map(_.get).map { result =>
                 assert(result == 42)
             }
         }
         "with multiple nested evals" in run {
             import AllowUnsafe.embrace.danger
-            val innerTask  = Sync.Unsafe.evalOrThrow(Fiber.init(Async.delay(100.millis)(42)))
-            val middleTask = Sync.Unsafe.evalOrThrow(Fiber.init(innerTask))
-            val outerTask  = Sync.Unsafe.evalOrThrow(Fiber.init(middleTask))
-            Fiber.init(outerTask).map(_.get).map(_.get).map(_.get).map(_.get).map { result =>
+            val innerTask  = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Async.delay(100.millis)(42)))
+            val middleTask = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(innerTask))
+            val outerTask  = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(middleTask))
+            Fiber.initUnscoped(outerTask).map(_.get).map(_.get).map(_.get).map(_.get).map { result =>
                 assert(result == 42)
             }
         }
         "with eval inside async computation" in run {
             import AllowUnsafe.embrace.danger
-            Fiber.init {
+            Fiber.initUnscoped {
                 Async.delay(100.millis) {
-                    Sync.Unsafe.evalOrThrow(Fiber.init(42)).get
+                    Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(42)).get
                 }
             }.map(_.get).map { result =>
                 assert(result == 42)
@@ -1130,21 +1130,21 @@ class AsyncTest extends Test:
         }
         "with interleaved evals and delays" in run {
             import AllowUnsafe.embrace.danger
-            val task1 = Sync.Unsafe.evalOrThrow(Fiber.init(Async.delay(100.millis)(1)))
+            val task1 = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Async.delay(100.millis)(1)))
             val task2 = Async.delay(100.millis) {
-                Sync.Unsafe.evalOrThrow(Fiber.init(task1)).get
+                Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(task1)).get
             }
-            val task3 = Sync.Unsafe.evalOrThrow(Fiber.init(task2))
-            Fiber.init(task3).map(_.get).map(_.get).map(_.get).map { result =>
+            val task3 = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(task2))
+            Fiber.initUnscoped(task3).map(_.get).map(_.get).map(_.get).map { result =>
                 assert(result == 1)
             }
         }
         "with race" in run {
-            Fiber.init {
+            Fiber.initUnscoped {
                 Latch.initWith(1) { latch =>
                     Async.race(
-                        Fiber.init(Async.delay(100.millis)(latch.release.andThen(1))).map(_.get),
-                        Fiber.init(latch.await.andThen(Async.delay(100.millis)(2))).map(_.get)
+                        Fiber.initUnscoped(Async.delay(100.millis)(latch.release.andThen(1))).map(_.get),
+                        Fiber.initUnscoped(latch.await.andThen(Async.delay(100.millis)(2))).map(_.get)
                     )
                 }
             }.map(_.get).map { result =>
@@ -1266,7 +1266,7 @@ class AsyncTest extends Test:
                         yield count
                     }
                 }
-                fiber <- Fiber.init(memoized)
+                fiber <- Fiber.initUnscoped(memoized)
                 _     <- started.await
                 _     <- fiber.interrupt
                 _     <- done.await
@@ -1302,7 +1302,7 @@ class AsyncTest extends Test:
             for
                 started <- Latch.init(1)
                 done    <- Latch.init(1)
-                fiber <- Fiber.init {
+                fiber <- Fiber.initUnscoped {
                     started.release.andThen {
                         Async.defer { executed = true }.andThen {
                             done.release
@@ -1356,9 +1356,9 @@ class AsyncTest extends Test:
             for
                 done <- Latch.init(1)
                 exit <- Latch.init(1)
-                fiber <- Fiber.init {
+                fiber <- Fiber.initUnscoped {
                     Kyo.fill(100) {
-                        Promise.init[Nothing, Int].map { p2 =>
+                        Promise.init[Int, Any].map { p2 =>
                             p2.completeDiscard(Result.succeed(1)).andThen(p2.get)
                         }
                     }.andThen(done.release).andThen(exit.await)
@@ -1372,7 +1372,7 @@ class AsyncTest extends Test:
             for
                 done <- Latch.init(1)
                 exit <- Latch.init(1)
-                fiber <- Fiber.init {
+                fiber <- Fiber.initUnscoped {
                     Kyo.fill(100) {
                         Async.sleep(1.nanos)
                     }.andThen(done.release).andThen(exit.await)

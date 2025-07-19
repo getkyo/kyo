@@ -104,6 +104,7 @@ object WarmupJITProfile:
             new SemaphoreBench,
             new StateMapBench,
             new StreamBench,
-            new StreamIOBench
+            new StreamAsyncBench,
+            new StreamSyncBench
         )
 end WarmupJITProfile

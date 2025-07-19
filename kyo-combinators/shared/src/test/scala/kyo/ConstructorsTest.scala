@@ -165,20 +165,6 @@ class ConstructorsTest extends Test:
             }
         }
 
-        "suspendAttempt" - {
-            "should suspend an effect and handle exceptions" in {
-                import AllowUnsafe.embrace.danger
-                val successEffect = Kyo.deferAttempt(42)
-                val failureEffect = Kyo.deferAttempt(throw new Exception("Error"))
-
-                val successResult = Sync.Unsafe.evalOrThrow(Abort.run[Throwable](successEffect))
-                val failureResult = Sync.Unsafe.evalOrThrow(Abort.run[Throwable](failureEffect))
-
-                assert(successResult == Result.succeed(42))
-                assert(failureResult.isInstanceOf[Result.Failure[?]])
-            }
-        }
-
         "foreachPar" - {
             "should apply a function to each element in parallel" in run {
                 val input  = Seq(1, 2, 3, 4, 5)
@@ -235,30 +221,6 @@ class ConstructorsTest extends Test:
             import AllowUnsafe.embrace.danger
             Sync.Unsafe.evalOrThrow(effect)
             assert(state == 1)
-        }
-
-        "deferAttempt" - {
-            "success" in {
-                var state = 0
-                val effect = Kyo.deferAttempt:
-                    state += 1
-                assert(state == 0)
-                import AllowUnsafe.embrace.danger
-                Sync.Unsafe.evalOrThrow(effect)
-                assert(state == 1)
-            }
-
-            "fail" in {
-                var state     = 0
-                val exception = Exception("failure")
-                val effect = Kyo.deferAttempt:
-                    state += 1
-                    throw exception
-                assert(state == 0)
-                import AllowUnsafe.embrace.danger
-                val result = Sync.Unsafe.evalOrThrow(Abort.run(effect))
-                assert(state == 1 && result == Result.Failure(exception))
-            }
         }
     }
 

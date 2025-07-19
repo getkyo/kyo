@@ -137,10 +137,10 @@ abstract private class PublisherToSubscriberTest extends Test:
                 _ = publisher.subscribe(subscriber2)
                 _ = publisher.subscribe(subscriber3)
                 _ = publisher.subscribe(subscriber4)
-                fiber1 <- Fiber.init(modify(subStream1, shouldFail = false))
-                fiber2 <- Fiber.init(modify(subStream2, shouldFail = true))
-                fiber3 <- Fiber.init(modify(subStream3, shouldFail = false))
-                fiber4 <- Fiber.init(modify(subStream4, shouldFail = true))
+                fiber1 <- Fiber.initUnscoped(modify(subStream1, shouldFail = false))
+                fiber2 <- Fiber.initUnscoped(modify(subStream2, shouldFail = true))
+                fiber3 <- Fiber.initUnscoped(modify(subStream3, shouldFail = false))
+                fiber4 <- Fiber.initUnscoped(modify(subStream4, shouldFail = true))
                 value1 <- fiber1.get
                 value2 <- fiber2.getResult
                 value3 <- fiber3.get
@@ -179,12 +179,12 @@ abstract private class PublisherToSubscriberTest extends Test:
                 subscriber4 <- streamSubscriber
                 subStream4  <- subscriber4.stream
                 latch       <- Latch.init(4)
-                fiber1      <- Fiber.init(latch.release.andThen(subStream1.run.unit))
-                fiber2      <- Fiber.init(latch.release.andThen(subStream2.run.unit))
-                fiber3      <- Fiber.init(latch.release.andThen(subStream3.run.unit))
-                fiber4      <- Fiber.init(latch.release.andThen(subStream4.run.unit))
+                fiber1      <- Fiber.initUnscoped(latch.release.andThen(subStream1.run.unit))
+                fiber2      <- Fiber.initUnscoped(latch.release.andThen(subStream2.run.unit))
+                fiber3      <- Fiber.initUnscoped(latch.release.andThen(subStream3.run.unit))
+                fiber4      <- Fiber.initUnscoped(latch.release.andThen(subStream4.run.unit))
                 latchPub    <- Latch.init(1)
-                publisherFiber <- Fiber.init(latch.await.andThen(Resource.run(
+                publisherFiber <- Fiber.initUnscoped(latch.await.andThen(Scope.run(
                     Stream(Emit.valueWith(Chunk.empty)(emit(counter)))
                         .toPublisher
                         .map { publisher =>
@@ -211,7 +211,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                     Loop(0)(cur => Emit.valueWith(Chunk(cur))(Loop.continue(cur + 1)))
                 )
             for
-                promise    <- Fiber.Promise.init[Throwable, Unit]
+                promise    <- Fiber.Promise.init[Unit, Abort[Throwable]]
                 subscriber <- streamSubscriber
                 subscription <- Sync.Unsafe {
                     StreamSubscription.Unsafe.subscribe(
@@ -224,7 +224,7 @@ abstract private class PublisherToSubscriberTest extends Test:
                                 case _                       => promise.completeDiscard(Failure(TestError))
                         })))
                 }
-                _      <- Resource.run(subscriber.stream.map(_.take(10).discard))
+                _      <- Scope.run(subscriber.stream.map(_.take(10).discard))
                 result <- promise.getResult
             yield assert(result == Success(()))
             end for

@@ -124,7 +124,7 @@ class ActorTest extends Test:
                     for
                         childActor1 <- Actor.run {
                             for
-                                _ <- Resource.ensure(childActorStates.add("child1 cleaned up"))
+                                _ <- Scope.ensure(childActorStates.add("child1 cleaned up"))
                                 _ <- childActorStates.add("child1 started")
                             yield Actor.receiveAll[Int] { _ =>
                                 childActorStates.add("child1 received message").andThen(consumed.release)
@@ -132,7 +132,7 @@ class ActorTest extends Test:
                         }
                         childActor2 <- Actor.run {
                             for
-                                _ <- Resource.ensure(childActorStates.add("child2 cleaned up"))
+                                _ <- Scope.ensure(childActorStates.add("child2 cleaned up"))
                                 _ <- childActorStates.add("child2 started")
                             yield Actor.receiveAll[Int] { _ =>
                                 childActorStates.add("child2 received message").andThen(consumed.release)
@@ -167,7 +167,7 @@ class ActorTest extends Test:
                         for
                             childActor <- Actor.run {
                                 for
-                                    _ <- Resource.ensure(childCleaned.set(true))
+                                    _ <- Scope.ensure(childCleaned.set(true))
                                 yield Actor.receiveAll[Int] { _ =>
                                     messageReceived.release
                                 }
@@ -195,7 +195,7 @@ class ActorTest extends Test:
                         childActors <- Async.fill(actorCount) {
                             Actor.run {
                                 for
-                                    _ <- Resource.ensure(cleanupCounter.incrementAndGet)
+                                    _ <- Scope.ensure(cleanupCounter.incrementAndGet)
                                     _ <- startCounter.incrementAndGet
                                 yield Actor.receiveAll[Int] { _ =>
                                     allReceived.release
@@ -244,7 +244,7 @@ class ActorTest extends Test:
                         Async.foreach(parents)(_.send(msg))
                     }
                 }
-                promise   <- Promise.init[Nothing, Int]
+                promise   <- Promise.init[Int, Any]
                 _         <- grandparent.send(Message(5, Subject.init(promise)))
                 _         <- promise.get
                 _         <- untilTrue(results.size.map(_ == 4))
@@ -305,7 +305,7 @@ class ActorTest extends Test:
             for
                 resourceCleaned <- AtomicBoolean.init(false)
                 actor <- Actor.run {
-                    Resource.ensure(resourceCleaned.set(true)).andThen {
+                    Scope.ensure(resourceCleaned.set(true)).andThen {
                         Actor.receiveMax[Int](3) { _ => () }
                     }
                 }
@@ -322,7 +322,7 @@ class ActorTest extends Test:
             for
                 resourceCleaned <- AtomicBoolean.init(false)
                 actor <- Actor.run {
-                    Resource.ensure(resourceCleaned.set(true)).andThen {
+                    Scope.ensure(resourceCleaned.set(true)).andThen {
                         Actor.receiveMax[Int](1) { _ =>
                             Abort.fail(TestError)
                         }

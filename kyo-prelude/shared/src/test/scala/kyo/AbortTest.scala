@@ -955,7 +955,7 @@ class AbortTest extends Test:
 
     "Abort.run with parametrized type" in pendingUntilFixed {
         class Test[A]
-        assertCompiles("Abort.run(Abort.fail(new Test[Int]))")
+        typeCheck("Abort.run(Abort.fail(new Test[Int]))")
     }
 
     "Abort.run with type unions" - {
@@ -1081,7 +1081,7 @@ class AbortTest extends Test:
             "removes Abort from the effect set" in {
                 val computation = Abort.fail(CustomError("Expected error"))
                 val recovered   = Abort.recover[CustomError](_ => 42, _ => -1)(computation)
-                assertCompiles("val _: Int < Any = recovered")
+                typeCheck("val _: Int < Any = recovered")
             }
         }
 

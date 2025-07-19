@@ -25,10 +25,10 @@ object ZIOs:
         Sync.Unsafe {
             Unsafe.unsafely {
                 given ce: CanEqual[E, E] = CanEqual.derived
-                val p                    = Promise.Unsafe.init[E, A]()
+                val p                    = Promise.Unsafe.init[A, Abort[E]]()
                 val f                    = Runtime.default.unsafe.fork(v)
                 f.unsafe.addObserver { (exit: Exit[E, A]) =>
-                    p.completeDiscard(exit.toResult)
+                    p.completeDiscard(exit.toResult.map(Kyo.lift))
                 }
                 p.onInterrupt(_ =>
                     discard(f.unsafe.interrupt(Cause.interrupt(FiberId.None, StackTrace(FiberId.None, Chunk(t)))))
@@ -61,16 +61,14 @@ object ZIOs:
     def run[A, E](v: => A < (Abort[E] & Async))(using frame: Frame, trace: zio.Trace): ZIO[Any, E, A] =
         ZIO.suspendSucceed {
             import AllowUnsafe.embrace.danger
-            Fiber.init(v).map { fiber =>
+            Fiber.initUnscoped(v).map { fiber =>
                 ZIO.asyncInterrupt[Any, E, A] { cb =>
                     fiber.unsafe.onComplete {
-                        case Result.Success(a) => cb(Exit.succeed(a))
+                        case Result.Success(a) => cb(Exit.succeed(a.eval))
                         case Result.Failure(e) => cb(Exit.fail(e))
                         case Result.Panic(e)   => cb(Exit.die(e))
                     }
-                    Left(ZIO.succeed {
-                        fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))
-                    })
+                    Left(ZIO.succeed(fiber.unsafe.interrupt()))
                 }
             }.handle(Sync.Unsafe.evalOrThrow)
         }
@@ -102,7 +100,7 @@ object ZIOs:
                 cause match
                     case Fail(e, trace)            => Maybe(Result.Failure(e))
                     case Die(e, trace)             => Maybe(Result.Panic(e))
-                    case Interrupt(fiberId, trace) => Maybe(Result.Panic(Fiber.Interrupted(frame)))
+                    case Interrupt(fiberId, trace) => Maybe(Result.Panic(Interrupted(frame, fiberId.threadName)))
                     case Then(left, right)         => loop(left).orElse(loop(right))
                     case Both(left, right)         => loop(left).orElse(loop(right))
                     case Stackless(e, trace)       => loop(e)

@@ -1,40 +1,50 @@
 package kyo.kernel
 
+import Isolate.internal.*
+import kyo.*
 import kyo.Ansi.*
-import kyo.Frame
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.quoted.*
 
 /** Provides mechanisms for handling pending effects when forking computations.
   *
-  * Isolate provide two ways to handle state isolation, each designed for a specific category of effects:
+  * Isolate enables proper state management across execution boundaries like fibers, parallel operations, and detached computations. When
+  * forking execution, effects need special handling to prevent state leakage, ensure consistency, and determine what effects are available
+  * after the fork completes.
   *
-  * [[Contextual]] isolation is designed for [[ContextEffect]]s, which store their state in a simple format that can be directly copied from
-  * the original computation to the forked one. These are effects like environment variables, configuration settings, or local values -
-  * pieces of state that can simply be copied as-is when the computation forks.
+  * The abstraction uses three type parameters to precisely control effect flow:
+  *   - `Remove`: Effects that will be satisfied (handled) by the isolation
+  *   - `Keep`: Effects that remain available during isolated execution
+  *   - `Restore`: Effects that become available after isolation completes
   *
-  * [[Stateful]] isolation handles effects with more complex state that requires structured management. When forking a computation with
-  * these effects, the solution needs to:
+  * This design unifies two categories of state management:
   *
-  *   1. Capture a snapshot of the current state
-  *   2. Transform that state during isolated execution
-  *   3. Merge the transformed state back when the fork completes
+  * **Simple State Copying** is used for [[ContextEffect]]s, which store their state in a format that can be directly copied from the
+  * original computation to the forked one. These are effects like environment variables, configuration settings, or local values - pieces
+  * of state that can simply be copied as-is when the computation forks.
+  *
+  * **Complex State Management** handles effects that require structured transformation. When forking a computation with these effects, the
+  * isolation:
+  *
+  *   1. Captures a snapshot of the current state
+  *   2. Transforms that state during isolated execution
+  *   3. Restores the transformed state when the fork completes
   *
   * ==Operations==
   *
-  * Operations determine which isolation capability they require. Some operations like Fiber.init require Contextual isolation to enable the
-  * forked computation to execute to completion, while others like Async.parallel allow Stateful isolation given that the return type allows
-  * restoring forked effects after the parallel execution finishes. The choice between Contextual and Stateful isolation is made by the
-  * operation, not the user.
+  * Operations specify their isolation requirements through the type parameters. For example:
+  *   - `Fiber.init` requires `Isolate[S, Sync, S2]` - only Sync effects available during initialization
+  *   - `Async.parallel` might use `Isolate[S, Abort[E] & Async, S]` - async operations available, same effects restored
+  *
+  * The distinction between `Remove` and `Restore` is crucial: it allows operations to transform effects during isolation. A fiber might
+  * capture `Var[Int]` effects but only restore the final value, not intermediate updates.
   *
   * Most effects provide implicit instances based on their state management needs. Some effects like Var and Emit provide multiple
   * strategies through a dedicated isolate object, allowing users to choose between updating final values, merging changes, or keeping
   * modifications local.
   *
   * For effect intersections like (Env[Config] & Var[State]), instances are automatically derived if each component effect has an instance.
-  * Stateful isolation subsumes Contextual - if any effect needs Stateful isolation, the derived instance will be Stateful since it can
-  * handle both simple copying and complex state management.
   *
   * ==Explicit Composition==
   *
@@ -45,7 +55,7 @@ import scala.quoted.*
   *     Var.isolate.update[Int]                         // Update final Int value
   *         .andThen(Emit.isolate.merge[String])        // Preserve String emissions
   *
-  *  // Use in operations that accept Stateful isolation
+  *  // Use in operations that accept isolation
   *  isolate.use {
   *    Async.parallel(parallelism)(tasks)
   *  }
@@ -60,300 +70,257 @@ import scala.quoted.*
   * **Important**: Effects that short circuit execution like Abort and Choice should not provide isolation since the ordering of the
   * handling in the automatic derivation could produce different results depending on which effect is handled first.
   *
-  * @tparam Retain
+  * @tparam Remove
   *   Effects that will be satisfied (handled) by the isolation
-  * @tparam Passthrough
-  *   Additional effects that will remain pending after isolation
+  * @tparam Keep
+  *   Effects that remain available during isolated execution
+  * @tparam Restore
+  *   Effects that become available after isolation completes
   */
+abstract class Isolate[Remove, -Keep, -Restore]:
+    self =>
+
+    /** The type of state being managed */
+    type State
+
+    /** How state is transformed during isolated execution */
+    type Transform[_]
+
+    /** Captures the current state for isolation.
+      *
+      * This is the first phase of isolation, obtaining the state that will be managed during the isolated execution. The computation
+      * continues with all original effects plus Keep effects available.
+      *
+      * @param f
+      *   Function that receives the captured state
+      * @return
+      *   Computation with Remove, Keep, and additional effects
+      */
+    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & Keep & S)
+
+    /** Executes a computation with isolated state.
+      *
+      * This is the second phase where the computation runs in an isolated context. Only Keep effects and additional effects S are available -
+      * Remove effects have been captured and isolated. The result is wrapped in Transform to track any state changes.
+      *
+      * @param state
+      *   The captured state from phase 1
+      * @param v
+      *   The computation to run in isolation
+      * @return
+      *   Transformed result with only Keep and additional effects
+      */
+    def isolate[A, S](state: State, v: A < (S & Remove))(using Frame): Transform[A] < (Keep & S)
+
+    /** Restores state after isolated execution.
+      *
+      * This is the final phase that determines how the transformed state is propagated back. The Transform wrapper is unwrapped and Restore
+      * effects become available, which may differ from the original Remove effects.
+      *
+      * @param v
+      *   The transformed computation from phase 2
+      * @return
+      *   Final result with Restore and additional effects
+      */
+    def restore[A, S](v: Transform[A] < S)(using Frame): A < (Restore & S)
+
+    /** Isolates 'Remove' effects while exposing them as nested 'Restore' effects.
+      *
+      * This method "tunnels" the Remove effects through the isolation, transforming them into 'Restore' effects that appear nested in the
+      * result type. Unlike 'run' which directly applies the 'Restore' effects, 'nest' preserves them as a nested effect layer.
+      *
+      * This is useful when you want to isolate effects for a specific operation but need to control when and how the resulting 'Restore'
+      * effects are applied in your program.
+      *
+      * @param v
+      *   The computation containing effects to tunnel through isolation
+      * @return
+      *   A computation with 'Restore' effects nested in the result type
+      */
+    def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
+        capture { state =>
+            isolate(state, v).map(r => Kyo.lift(restore(r)))
+        }
+
+    /** Runs a computation with full state lifecycle management.
+      *
+      * Convenience method that composes all three phases: capture, isolate, and restore. This handles the complete isolation lifecycle in
+      * one call.
+      *
+      * @param v
+      *   The computation to run with isolation
+      * @return
+      *   Result with original Remove effects handled and Restore effects available
+      */
+    final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
+        capture(state => restore(isolate(state, v)))
+
+    /** Applies this isolate to a computation that requires it.
+      *
+      * Provides a more ergonomic way to use isolates with operations:
+      * {{{
+      * Var.isolate.update[Int].use {
+      *   Async.mask {
+      *     // computation with isolated Var[Int] effect
+      *   }
+      * }
+      * }}}
+      *
+      * @param f
+      *   The computation requiring this isolate
+      * @return
+      *   The result of running the computation with this isolate
+      */
+    final def use[A](f: this.type ?=> A): A = f(using this)
+
+    /** Composes this isolate with another, managing both states.
+      *
+      * Creates a new isolate that handles the state lifecycles of both this isolate and the next one, maintaining proper ordering and
+      * effect tracking. The composition:
+      *   - Combines Remove effects: `Remove & RM2`
+      *   - Intersects Keep effects: `Keep & KP2`
+      *   - Combines Restore effects: `Restore & RS2`
+      *
+      * @param next
+      *   The isolate to compose with this one
+      * @return
+      *   A new isolate handling both state managements
+      */
+    final def andThen[RM2, KP2, RS2](next: Isolate[RM2, KP2, RS2]): Isolate[Remove & RM2, Keep & KP2, Restore & RS2] =
+        if self eq Identity then next.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        else if next eq Identity then self.asInstanceOf[Isolate[Remove & RM2, Keep & KP2, Restore & RS2]]
+        else
+            new Isolate[Remove & RM2, Keep & KP2, Restore & RS2]:
+                type State        = (self.State, next.State)
+                type Transform[A] = self.Transform[next.Transform[A]]
+                def capture[A, S](f: State => A < S)(using Frame) =
+                    self.capture(s1 => next.capture(s2 => f((s1, s2))))
+                def isolate[A, S](state: State, v: A < (S & (Remove & RM2)))(using Frame) =
+                    self.isolate(state._1, next.isolate(state._2, v))
+                def restore[A, S](v: Transform[A] < S)(using Frame) =
+                    next.restore(self.restore(v))
+
+end Isolate
+
 object Isolate:
 
-    /** Controls effect propagation during forking by copying effect state.
+    /** Gets the Isolate instance for given effect types. */
+    def apply[Remove, Keep, Restore](using i: Isolate[Remove, Keep, Restore]): Isolate[Remove, Keep, Restore] = i
+
+    /** Derives an Isolate instance based on available instances.
       *
-      * @tparam Retain
-      *   The effects that will be satisfied by this isolation
-      * @tparam Passthrough
-      *   Additional effects that will remain pending after isolation
+      * The derivation automatically composes isolates for intersection types. For example, if isolates exist for `Var[Int]` and
+      * `Emit[String]`, it will automatically derive an isolate for `Var[Int] & Emit[String]`.
+      *
+      * The derived instance will:
+      *   - Remove all effects in the Remove type that aren't in Keep
+      *   - Only derive if isolates exist for all non-Keep effects in Remove
+      *   - Compose isolates using andThen in the order they appear
       */
-    sealed abstract class Contextual[Retain, -Passthrough] extends Serializable:
+    inline def derive[Remove, Keep, Restore]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
 
-        /** Runs a computation with transformed effects.
-          *
-          * Takes a computation with effects that include Retain, and produces a computation where Retain effects are satisfied while
-          * Passthrough effects remain pending.
-          *
-          * @param v
-          *   The computation to transform
-          * @param frame
-          *   The execution frame
-          * @return
-          *   The transformed computation
-          */
-        @nowarn("msg=anonymous")
-        inline def run[A, S](inline v: => A < (S & Retain))(inline _frame: Frame): A < (S & Passthrough) =
-            new KyoDefer[A, S & Passthrough]:
-                def frame = _frame
-                def apply(ign: Unit, context: Context)(using safepoint: Safepoint) =
-                    def loop(v: A < (S & Retain)): A < (S & Passthrough) =
-                        v match
-                            case kyo: KyoSuspend[IX, OX, EX, Any, A, S & Retain] @unchecked =>
-                                new KyoContinue[IX, OX, EX, Any, A, S & Passthrough](kyo):
-                                    def frame = _frame
-                                    def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                        loop(kyo(v, context))
-                            case _ =>
-                                v.unsafeGet
-                    loop(v)
-                end apply
+    // `Restore <: Remove` is used to help with implicit resolution. Without it, the compiler infers `Restore` as `Any` in some cases.
+    inline given [Remove, Keep, Restore <: Remove]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
 
-        /** Internal API for running computations with trace and context management. */
+    private[kyo] object internal:
+
         @nowarn("msg=anonymous")
-        private[kyo] inline def runInternal[A, S](inline f: (Trace, Context) => A < S)(using inline _frame: Frame): A < (S & Passthrough) =
-            new KyoDefer[A, S & Passthrough]:
+        private[kyo] inline def runDetached[A, S](inline f: (Trace, Context) => A < S)(using inline _frame: Frame): A < S =
+            new KyoDefer[A, S]:
                 def frame = _frame
                 def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
                     f(safepoint.saveTrace(), context.inherit)
-    end Contextual
 
-    object Contextual:
+        inline def restoring[Ctx, A, S](
+            trace: Trace,
+            interceptor: Safepoint.Interceptor
+        )(
+            inline v: => A < (Ctx & S)
+        )(using frame: Frame, safepoint: Safepoint): A < (Ctx & S) =
+            Safepoint.immediate(interceptor)(safepoint.withTrace(trace)(v))
 
-        /** Cached instance to avoid allocations */
-        private[Isolate] val cached: Contextual[Any, Any] =
-            new Contextual[Any, Any]:
-                def run[A, S2](v: A < S2): A < S2 = v
-
-        /** Gets the Contextual isolate instance for given effect types. */
-        def apply[R, P](using s: Contextual[R, P]): Contextual[R, P] = s
-
-        /** Derives a Contextual isolate instance based on available instances. */
-        inline given derive[R, P]: Contextual[R, P] = ${ deriveImpl[R, P] }
-
-        private def deriveImpl[R: Type, P: Type](using Quotes): Expr[Isolate.Contextual[R, P]] =
-            commonDeriveImpl[R, P, Isolate.Contextual[R, P]] { (retain, _) =>
-                import quotes.reflect.*
-
-                val missing = retain.filter { t =>
-                    t.asType match
-                        case '[tpe] => Expr.summon[Isolate.Contextual[tpe, P]].isEmpty
-                }
-
-                if missing.nonEmpty then
-                    report.errorAndAbort(
-                        s"""|This operation requires Contextual isolation for effects:
-                            |
-                            |  ${missing.map(_.show.red).mkString(" & ")}
-                            |
-                            |Common mistake: Using operations like Fiber.init with effects that need complex state management.
-                            |
-                            |You have a couple of options, from simplest to most advanced:
-                            |
-                            |1. Handle these effects before the operation:
-                            |   Fiber.init(MyEffect.run(computation))
-                            |
-                            |2. Use an operation that supports complex state:
-                            |   Instead of Fiber.init, use Async.parallel 
-                            |""".stripMargin
-                    )
-                end if
-
-                '{ cached.asInstanceOf[Isolate.Contextual[R, P]] }
-            }
-
-    end Contextual
-
-    /** Controls state isolation for effects requiring structured state management.
-      *
-      * Provides a three-phase approach to state isolation:
-      *   1. Capture initial state before forking
-      *   2. Transform state during isolated execution
-      *   3. Restore transformed state when the fork completes
-      *
-      * @tparam Retain
-      *   The effects that will be satisfied by this isolation
-      * @tparam Passthrough
-      *   Additional effects that will remain pending after isolation
-      */
-    abstract class Stateful[Retain, -Passthrough] extends Serializable:
-        self =>
-
-        /** The type of state being managed */
-        type State
-
-        /** How state is transformed during isolated execution */
-        type Transform[_]
-
-        /** Runs a computation with full state lifecycle management.
+        /** No-op isolate that performs no state management.
           *
-          * Convenience method that composes capture, isolate and restore to handle the complete state lifecycle.
+          * Used as a base case for isolate composition and when no isolation is needed.
           */
-        final def run[A, S](v: A < (S & Retain))(using Frame): A < (S & Retain & Passthrough) =
-            capture(state => restore(isolate(state, v)))
+        object Identity extends Isolate[Any, Any, Any]:
+            type State        = Unit
+            type Transform[A] = A
+            def capture[A, S](f: State => A < S)(using Frame)              = f(())
+            def isolate[A, S](state: State, v: A < (S & Any))(using Frame) = v
+            def restore[A, S](v: A < S)(using Frame)                       = v
+        end Identity
 
-        /** Phase 1: Capture Initial State
-          *
-          * Obtains the initial state that will be managed during isolation. This begins the isolation process by capturing current state.
-          */
-        def capture[A, S](f: State => A < S)(using Frame): A < (S & Retain & Passthrough)
+        def deriveImpl[Remove: Type, Keep: Type, Restore: Type](using Quotes): Expr[Isolate[Remove, Keep, Restore]] =
+            import quotes.reflect.*
 
-        /** Phase 2: Isolated Execution
-          *
-          * Executes a computation with isolated state. The computation runs with a transformed copy of the state, preventing effects from
-          * leaking.
-          */
-        def isolate[A, S](state: State, v: A < (S & Retain))(using Frame): Transform[A] < (S & Passthrough)
+            def flatten(tpe: TypeRepr): List[TypeRepr] =
+                tpe match
+                    case AndType(left, right)        => flatten(left) ++ flatten(right)
+                    case t if t =:= TypeRepr.of[Any] => Nil
+                    case t                           => List(t)
 
-        /** Phase 3: State Restoration
-          *
-          * Restores/merges state after isolated execution completes. Determines how transformed state is propagated back to the outer
-          * context.
-          */
-        def restore[A, S](v: Transform[A] < S)(using Frame): A < (S & Retain & Passthrough)
+            val keep = flatten(TypeRepr.of[Keep])
 
-        /** Applies this isolate to a computation that requires it.
-          *
-          * Provides a more ergonomic way to use isolates with effects:
-          * {{{
-          * Var.isolate.update[Int].use {
-          *   Async.mask {
-          *     // computation with isolated Var[Int] effect
-          *   }
-          * }
-          * }}}
-          *
-          * @param f
-          *   The computation requiring this isolate
-          * @return
-          *   The result of running the computation with this isolate
-          */
-        final def use[A](f: this.type ?=> A): A = f(using this)
-
-        /** Composes this isolate with another, managing both states.
-          *
-          * Creates a new isolate that handles the state lifecycles of both this isolate and the next one, maintaining proper ordering and
-          * effect tracking.
-          */
-        def andThen[R2, P2](next: Stateful[R2, P2]): Stateful[Retain & R2, Passthrough & P2] =
-            new Stateful[Retain & R2, Passthrough & P2]:
-                type State        = (self.State, next.State)
-                type Transform[A] = self.Transform[next.Transform[A]]
-                def capture[A, S2](f: State => A < S2)(using Frame) =
-                    self.capture(s1 => next.capture(s2 => f((s1, s2))))
-
-                def isolate[A, S3](state: (self.State, next.State), v: A < (Retain & R2 & S3))(using Frame) =
-                    self.isolate(state._1, next.isolate(state._2, v))
-
-                def restore[A, S2](v: self.Transform[next.Transform[A]] < S2)(using Frame) =
-                    next.restore(self.restore(v))
-            end new
-        end andThen
-    end Stateful
-
-    object Stateful:
-
-        /** No-op isolate with no state. */
-        val noop: Stateful[Any, Any] =
-            new Stateful[Any, Any]:
-                type State        = Unit
-                type Transform[A] = A
-                def capture[A, S2](f: State => A < S2)(using Frame)             = f(())
-                def isolate[A, S2](state: Unit, v: A < (Any & S2))(using Frame) = v
-                def restore[A, S2](v: A < S2)(using Frame)                      = v
-                override def andThen[R2, P2](next: Stateful[R2, P2])            = next
-
-        /** Gets the Stateful isolate instance for given effect types. */
-        def apply[Retain, Passthrough](using s: Stateful[Retain, Passthrough]): Stateful[Retain, Passthrough] = s
-
-        /** Derives a Stateful isolate instance based on available instances. */
-        inline given derive[R, P]: Stateful[R, P] = ${ deriveImpl[R, P] }
-
-        private def deriveImpl[R: Type, P: Type](using Quotes): Expr[Isolate.Stateful[R, P]] =
-            commonDeriveImpl[R, P, Isolate.Stateful[R, P]] { (retain, _) =>
-                import quotes.reflect.*
-
-                val isolates = retain.map { t =>
-                    t.asType match
-                        case '[tpe] =>
-                            t ->
-                                Expr.summon[Isolate.Contextual[tpe, P]].map(Left(_)).orElse(
-                                    Expr.summon[Isolate.Stateful[tpe, P]].map(Right(_))
-                                )
-                }
-
-                isolates.filter(_._2.isEmpty) match
-                    case Nil =>
-                    case missing =>
-                        report.errorAndAbort(
-                            s"""|This operation requires Stateful isolation for effects:
-                                |
-                                |  ${missing.map(_._1.show.red).mkString(" & ")}
-                                |
-                                |Common mistake: Using effects in parallel operations without handling how their state
-                                |should be managed across boundaries.
-                                |
-                                |You have a few options, from simplest to most advanced:
-                                |
-                                |1. Handle these effects before the operation:
-                                |   Async.parallel(parallelism)(tasks.map(MyEffect.run(_)))
-                                |
-                                |2. Some effects like Var and Emit provide options through their isolate object:
-                                |   Var.isolate.update[Int].use {
-                                |     Async.parallel(parallelism)(tasks)
-                                |   }
-                                |
-                                |3. For multiple effects, compose isolates with andThen:
-                                |   Var.isolate.update[Int]
-                                |     .andThen(Emit.isolate.merge[String])
-                                |     .use {
-                                |       Async.parallel(parallelism)(tasks)
-                                |     }
-                                |
-                                |4. For custom state management:
-                                |   val isolate = new Isolate.Stateful[MyEffect, Any] {
-                                |     type State = MyState        // Your effect's state
-                                |     type Transform[A] = (State, A)
-                                |     ...
-                                |   }
-                                |   isolate.use {
-                                |     Async.parallel(parallelism)(tasks)
-                                |   }
-                                |""".stripMargin
-                        )
-                end match
-
-                val statefulIsolates =
-                    isolates.flatMap {
-                        case (_, Some(Right(isolate))) => Some(isolate)
-                        case _                         => None
+            val isolates =
+                flatten(TypeRepr.of[Remove])
+                    .filterNot(t => keep.exists(t =:= _))
+                    .filterNot(_ <:< TypeRepr.of[ContextEffect[Any]])
+                    .map { t =>
+                        t.asType match
+                            case '[tpe] =>
+                                t -> Expr.summon[Isolate[tpe, Keep, Restore]]
                     }
 
-                statefulIsolates.foldLeft('{ noop.asInstanceOf[Stateful[R, P]] })((prev, next) =>
-                    '{ $prev.andThen($next.asInstanceOf[Isolate.Stateful[R, P]]) }
-                ).asExprOf[Isolate.Stateful[R, P]]
-            }
+            val missing = isolates.filter(_._2.isEmpty).map(_._1)
 
-    end Stateful
+            if missing.nonEmpty then
+                report.errorAndAbort(
+                    s"""|This operation requires isolation for effects:
+                        |
+                        |  ${missing.map(_.show.red).mkString(" & ")}
+                        |
+                        |Common mistake: Using effects in parallel operations without handling how their state
+                        |should be managed across boundaries.
+                        |
+                        |You have a few options, from simplest to most advanced:
+                        |
+                        |1. Handle these effects before the operation:
+                        |   Async.parallel(parallelism)(tasks.map(MyEffect.run(_)))
+                        |
+                        |2. Some effects like Var and Emit provide options through their isolate object:
+                        |   Var.isolate.update[Int].use {
+                        |     Async.parallel(parallelism)(tasks)
+                        |   }
+                        |
+                        |3. For multiple effects, compose isolates with andThen:
+                        |   Var.isolate.update[Int]
+                        |     .andThen(Emit.isolate.merge[String])
+                        |     .use {
+                        |       Async.parallel(parallelism)(tasks)
+                        |     }
+                        |
+                        |4. For custom state management:
+                        |   val isolate = new Isolate.Stateful[MyEffect, Any] {
+                        |     type State = MyState        // Your effect's state
+                        |     type Transform[A] = (State, A)
+                        |     ...
+                        |   }
+                        |   isolate.use {
+                        |     Async.parallel(parallelism)(tasks)
+                        |   }
+                        |
+                        |Failed to materialize `Isolate[${TypeRepr.of[Remove].show}, ${TypeRepr.of[Keep].show}, ${TypeRepr.of[
+                           Restore
+                       ].show}]`.
+                        |""".stripMargin
+                )
+            end if
 
-    private def commonDeriveImpl[R: Type, P: Type, T: Type](
-        using Quotes
-    )(
-        handler: (List[quotes.reflect.TypeRepr], List[quotes.reflect.TypeRepr]) => Expr[T]
-    ): Expr[T] =
-        import quotes.reflect.*
-
-        def flatten(tpe: TypeRepr): List[TypeRepr] =
-            tpe match
-                case AndType(left, right) => flatten(left) ++ flatten(right)
-                case OrType(left, right)  => report.errorAndAbort("Isolate: Unsupported type union in Pending Effects: ${tpe.show}\n".red)
-                case t if t =:= TypeRepr.of[Any] => Nil
-                case t                           => List(t)
-
-        val pass   = flatten(TypeRepr.of[P])
-        val retain = flatten(TypeRepr.of[R]).filterNot(t => pass.exists(t =:= _))
-        handler(retain, pass)
-    end commonDeriveImpl
-
-    private[kyo] inline def restoring[Ctx, A, S](trace: Trace, interceptor: Safepoint.Interceptor)(
-        inline v: => A < (Ctx & S)
-    )(using frame: Frame, safepoint: Safepoint): A < (Ctx & S) =
-        Safepoint.immediate(interceptor)(safepoint.withTrace(trace)(v))
+            isolates.flatMap(_._2).foldLeft('{ Identity.asInstanceOf[Isolate[Remove, Keep, Restore]] })((prev, next) =>
+                '{ $prev.andThen($next.asInstanceOf[Isolate[Remove, Keep, Restore]]) }
+            )
+        end deriveImpl
+    end internal
 
 end Isolate

@@ -27,7 +27,7 @@ class SubjectTest extends Test:
     "Subject.init with Promise" - {
         "completes promise with message" in run {
             for
-                promise <- Promise.init[Nothing, String]
+                promise <- Promise.init[String, Any]
                 subject = Subject.init(promise)
                 _      <- subject.send("test message")
                 result <- promise.get
@@ -36,7 +36,7 @@ class SubjectTest extends Test:
 
         "can only be completed once" in run {
             for
-                promise <- Promise.init[Nothing, String]
+                promise <- Promise.init[String, Any]
                 subject = Subject.init(promise)
                 _      <- subject.send("first message")
                 result <- Abort.run(subject.send("second message"))
@@ -109,7 +109,7 @@ class SubjectTest extends Test:
             case class Request(data: String, replyTo: Subject[String])
 
             for
-                promise <- Promise.init[Nothing, String]
+                promise <- Promise.init[String, Any]
                 subject = Subject.init[Request](
                     send = req => req.replyTo.send(s"Response to: ${req.data}"),
                     trySend = req => req.replyTo.trySend(s"Response to: ${req.data}")
@@ -160,7 +160,7 @@ class SubjectTest extends Test:
         "can coordinate between different subject implementations" in run {
             for
                 results    <- Queue.Unbounded.init[String]()
-                promiseSub <- Promise.init[Nothing, String]
+                promiseSub <- Promise.init[String, Any]
                 promise = Subject.init(promiseSub)
                 channel <- Channel.init[String](100)
                 channelSub = Subject.init(channel)

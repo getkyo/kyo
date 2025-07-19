@@ -196,7 +196,7 @@ object Var:
 
     object isolate:
 
-        abstract private[isolate] class Base[V, P](using Tag[Var[V]]) extends Isolate.Stateful[Var[V], P]:
+        abstract private[isolate] class Base[V, P, R](using Tag[Var[V]]) extends Isolate[Var[V], P, R]:
 
             type State = V
 
@@ -217,8 +217,8 @@ object Var:
           * @return
           *   An isolate that updates the Var with its isolated value
           */
-        def update[V](using Tag[Var[V]]): Isolate.Stateful[Var[V], Any] =
-            new Base[V, Any]:
+        def update[V](using Tag[Var[V]]): Isolate[Var[V], Any, Var[V]] =
+            new Base[V, Any, Var[V]]:
                 def restore[A, S2](v: (V, A) < S2)(using Frame) =
                     v.map(Var.setWith(_)(_))
 
@@ -234,13 +234,12 @@ object Var:
           * @return
           *   An isolate that merges Var values
           */
-        def merge[V](using Tag[Var[V]])[S](f: (V, V) => V < S): Isolate.Stateful[Var[V], S] =
-            new Base[V, S]:
-                def restore[A, S2](v: (V, A) < S2)(using Frame): A < (Var[V] & S2 & S) =
+        def merge[V](using Tag[Var[V]])(f: (V, V) => V): Isolate[Var[V], Any, Var[V]] =
+            new Base[V, Any, Var[V]]:
+                def restore[A, S2](v: (V, A) < S2)(using Frame) =
                     v.map: (state, a) =>
                         Var.use[V]: prev =>
-                            f(prev, state).map: next =>
-                                Var.setWith(next)(a)
+                            Var.setWith(f(prev, state))(a)
 
         /** Creates an isolate that keeps Var modifications local.
           *
@@ -252,8 +251,8 @@ object Var:
           * @return
           *   An isolate that discards Var modifications
           */
-        def discard[V](using Tag[Var[V]]): Isolate.Stateful[Var[V], Any] =
-            new Base[V, Any]:
+        def discard[V](using Tag[Var[V]]): Isolate[Var[V], Any, Any] =
+            new Base[V, Any, Any]:
                 def restore[A, S2](v: (V, A) < S2)(using Frame) =
                     v.map(_._2)
 

@@ -66,7 +66,7 @@ sealed abstract class Subject[A]:
       */
     def ask[B](f: Subject[B] => A)(using Frame): B < (Async & Abort[Closed]) =
         for
-            promise <- Promise.init[Nothing, B]
+            promise <- Promise.init[B, Any]
             _       <- send(f(Subject.init(promise)))
             result  <- promise.get
         yield result
@@ -110,7 +110,7 @@ object Subject:
       * @return
       *   A Subject[A] that completes the Promise with the first received message and aborts with Closed for subsequent messages
       */
-    def init[E, A](promise: Promise[E, A])(using frame: Frame): Subject[A] =
+    def init[A](promise: Promise[A, Any])(using frame: Frame): Subject[A] =
         def tryComplete(r: A) =
             Abort.unless(promise.complete(Result.succeed(r)))(Closed("Subject", frame))
         init(

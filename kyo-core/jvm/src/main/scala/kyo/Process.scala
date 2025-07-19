@@ -186,7 +186,7 @@ object Process:
                     }
                     _ <- stdin match
                         case Input.Stream(stream) =>
-                            val resources = Resource.acquireRelease((stream, process.stdin)) { streams =>
+                            val resources = Scope.acquireRelease((stream, process.stdin)) { streams =>
                                 streams._1.close()
                                 streams._2.close()
                             }.map { streams =>
@@ -194,7 +194,7 @@ object Process:
                                 ()
                             }
                             for
-                                _ <- Fiber.init(Resource.run(resources))
+                                _ <- Fiber.initUnscoped(Scope.run(resources))
                             yield ()
                         case _ => Kyo.unit
                 yield process

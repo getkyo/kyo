@@ -16,12 +16,12 @@ package object reactivestreams:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Stream[T, Async] < (Resource & Sync) =
+    ): Stream[T, Async] < (Scope & Sync) =
         flow.fromPublisher(FlowAdapters.toFlowPublisher(publisher), bufferSize, emitStrategy)
 
     @nowarn("msg=anonymous")
     def subscribeToStream[T, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(
         stream: Stream[T, S & Sync],
         subscriber: Subscriber[? >: T]
@@ -30,7 +30,7 @@ package object reactivestreams:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Subscription < (Resource & Sync & S) =
+    ): Subscription < (Scope & Sync & S) =
         flow.subscribeToStream(stream, FlowAdapters.toFlowSubscriber(subscriber)).map { subscription =>
             new Subscription:
                 override def request(n: Long): Unit = subscription.request(n)
@@ -38,7 +38,7 @@ package object reactivestreams:
         }
 
     def streamToPublisher[T, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(
         stream: Stream[T, S & Sync]
     )(
@@ -46,7 +46,7 @@ package object reactivestreams:
         Frame,
         Tag[Emit[Chunk[T]]],
         Tag[Poll[Chunk[T]]]
-    ): Publisher[T] < (Resource & Sync & S) = flow.streamToPublisher(stream).map { publisher =>
+    ): Publisher[T] < (Scope & Sync & S) = flow.streamToPublisher(stream).map { publisher =>
         FlowAdapters.toPublisher(publisher)
     }
 end reactivestreams
