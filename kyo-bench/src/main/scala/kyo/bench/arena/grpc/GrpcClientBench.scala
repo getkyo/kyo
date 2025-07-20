@@ -13,6 +13,7 @@ import kyo.bench.arena.ArenaBench2.*
 import kyo.grpc.Grpc
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
+import org.openjdk.jmh.annotations.Scope
 import scala.compiletime.uninitialized
 import scala.concurrent.Future
 import scalapb.zio_grpc

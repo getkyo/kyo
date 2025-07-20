@@ -68,13 +68,14 @@ object ClientCall:
         options: CallOptions,
         requests: Stream[Request, Grpc]
     )(using Frame, Tag[Emit[Chunk[Request]]]): Response < Grpc =
-        for
-            promise <- Promise.init[GrpcFailure, Response]
-            responseObserver = UnaryResponseStreamObserver(promise)
-            requestObserver <- Sync.defer(ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver))
-            _               <- StreamNotifier.notifyObserver(requests, requestObserver)
-            response        <- promise.get
-        yield response
+//        for
+//            promise <- Promise.init[GrpcFailure, Response]
+//            responseObserver = UnaryResponseStreamObserver(promise)
+//            requestObserver <- Sync.defer(ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver))
+//            _               <- StreamNotifier.notifyObserver(requests, requestObserver)
+//            response        <- promise.get
+//        yield response
+        ???
 
     /** Executes a server streaming gRPC call.
       *
@@ -102,13 +103,14 @@ object ClientCall:
         options: CallOptions,
         request: Request
     )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] < Scope =
-        val responses: Stream[Response, Abort[GrpcFailure] & Async] < (Sync & Scope) =
-            for
-                responseChannel <- StreamChannel.initUnscoped[Response, GrpcFailure]
-                responseObserver = ResponseStreamObserver(responseChannel)
-                _ <- Sync.defer(ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver))
-            yield responseChannel.stream
-        Stream.unwrap(responses)
+        ???
+//        val responses: Stream[Response, Abort[GrpcFailure] & Async] < (Sync & Scope) =
+//            for
+//                responseChannel <- StreamChannel.initUnscoped[Response, GrpcFailure]
+//                responseObserver = ResponseStreamObserver(responseChannel)
+//                _ <- Sync.defer(ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver))
+//            yield responseChannel.stream
+//        Stream.unwrap(responses)
     end serverStreaming
 
     /** Executes a bidirectional streaming gRPC call.
@@ -137,14 +139,15 @@ object ClientCall:
         options: CallOptions,
         requests: Stream[Request, Grpc]
     )(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
-        val responses =
-            for
-                responseChannel  <- StreamChannel.init[Response, GrpcFailure]
-                responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
-                requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)
-                _ <- StreamNotifier.notifyObserver(requests, requestObserver)
-            yield responseChannel.stream
-        Stream.unwrap(responses)
+        ???
+//        val responses =
+//            for
+//                responseChannel  <- StreamChannel.init[Response, GrpcFailure]
+//                responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
+//                requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)
+//                _ <- StreamNotifier.notifyObserver(requests, requestObserver)
+//            yield responseChannel.stream
+//        Stream.unwrap(responses)
     end bidiStreaming
 
 end ClientCall

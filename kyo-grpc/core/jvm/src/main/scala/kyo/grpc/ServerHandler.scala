@@ -32,11 +32,12 @@ object ServerHandler:
       *   a gRPC [[ServerCallHandler]] for unary calls
       */
     def unary[Request, Response](f: Request => Response < Grpc)(using Frame): ServerCallHandler[Request, Response] =
-        ServerCalls.asyncUnaryCall { (request, responseObserver) =>
-            val response  = f(request)
-            val completed = StreamNotifier.notifyObserver(response, responseObserver)
-            KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
-        }
+        UnaryServerCallHandler()
+//        ServerCalls.asyncUnaryCall { (request, responseObserver) =>
+//            val response  = f(request)
+//            val completed = StreamNotifier.notifyObserver(response, responseObserver)
+//            KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
+//        }
 
     /** Creates a server handler for client streaming gRPC calls.
       *
@@ -56,11 +57,12 @@ object ServerHandler:
         Frame,
         Tag[Emit[Chunk[Request]]]
     ): ServerCallHandler[Request, Response] =
-        ServerCalls.asyncClientStreamingCall(responseObserver =>
-            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-            val requestObserver        = RequestStreamObserver.one(f, serverResponseObserver)
-            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
-        )
+        ???
+//        ServerCalls.asyncClientStreamingCall(responseObserver =>
+//            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
+//            val requestObserver        = RequestStreamObserver.one(f, serverResponseObserver)
+//            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
+//        )
 
     /** Creates a server handler for server streaming gRPC calls.
       *
@@ -105,10 +107,11 @@ object ServerHandler:
         Tag[Emit[Chunk[Request]]],
         Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
-        ServerCalls.asyncBidiStreamingCall(responseObserver =>
-            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-            val requestObserver        = RequestStreamObserver.many(f, serverResponseObserver)
-            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
-        )
+        ???
+//        ServerCalls.asyncBidiStreamingCall(responseObserver =>
+//            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
+//            val requestObserver        = RequestStreamObserver.many(f, serverResponseObserver)
+//            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
+//        )
 
 end ServerHandler

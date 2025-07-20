@@ -240,7 +240,7 @@ object Channel:
           * @return
           *   a `Fiber` that completes with `true` if the channel was successfully closed and emptied, `false` if it was already closed
           */
-        def closeAwaitEmptyFiber(using Frame, AllowUnsafe): Fiber[Boolean, Any] < Sync = Sync.Unsafe(self.closeAwaitEmpty().safe)
+        def closeAwaitEmptyFiber(using Frame): Fiber[Boolean, Any] < Sync = Sync.Unsafe(self.closeAwaitEmpty().safe)
 
         /** Checks if the channel is closed.
           *

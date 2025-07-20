@@ -10,6 +10,7 @@ import kyo.*
 import kyo.bench.arena.ArenaBench2.*
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
+import org.openjdk.jmh.annotations.Scope
 import scala.compiletime.uninitialized
 import scalapb.zio_grpc
 import zio.ZIO

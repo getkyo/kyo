@@ -20,7 +20,7 @@ private[compiler] object Types {
 
     val sync = "_root_.kyo.Sync"
 
-    val resource = "_root_.kyo.Scope"
+    val scope = "_root_.kyo.Scope"
 
     def streamGrpcResponse(t: String) = s"_root_.kyo.Stream[$t, $grpcResponse]"
 

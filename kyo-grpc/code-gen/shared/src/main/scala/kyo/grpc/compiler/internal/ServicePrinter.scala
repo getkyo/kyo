@@ -136,7 +136,7 @@ private[compiler] case class ServicePrinter(
                 "shutdown" :- s"(${Types.managedChannel}, ${Types.duration}) => ${Types.frame} ?=> ${Types.pending(Types.any, Types.sync)}" := s"${Types.client}.shutdown"
             )
             .addUsingParameters(Types.frame)
-            .addReturnType(Types.pending("Client", s"${Types.resource} & ${Types.sync}"))
+            .addReturnType(Types.pending("Client", s"${Types.scope} & ${Types.sync}"))
             .addBody(
                 _.add(s"${Types.client}.channel(host, port, timeout)(configure, shutdown).map($name.client(_, options))")
             )
@@ -211,7 +211,10 @@ private[compiler] case class ServicePrinter(
             case StreamType.Unary | StreamType.ClientStreaming =>
                 Types.pendingGrpcRequest(method.outputType.scalaType)
             case StreamType.ServerStreaming | StreamType.Bidirectional =>
-                Types.streamGrpcRequest(method.outputType.scalaType)
+                Types.pending(
+                    Types.streamGrpcRequest(method.outputType.scalaType),
+                    Types.scope
+                )
         }
     }
 

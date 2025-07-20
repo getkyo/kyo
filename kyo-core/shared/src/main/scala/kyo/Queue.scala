@@ -146,7 +146,7 @@ object Queue:
           *   A `Fiber` that completes with `true` if the queue was successfully closed and emptied, `false` if it was already closed or
           *   another `closeAwaitEmpty` is already running.
           */
-        def closeAwaitEmptyFiber(using Frame, AllowUnsafe): Fiber[Boolean, Any] < Sync = Sync.Unsafe(self.closeAwaitEmpty().safe)
+        def closeAwaitEmptyFiber(using Frame): Fiber[Boolean, Any] < Sync = Sync.Unsafe(self.closeAwaitEmpty().safe)
 
         /** Checks if the queue is closed.
           *

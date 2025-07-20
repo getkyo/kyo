@@ -32,9 +32,9 @@ object Grpc:
       *   A computation that completes with the result of the Future
       */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
-        Fiber.fromFuture(f)
-            .map(_.getResult)
-            .map(_.mapError(e => GrpcFailure.fromThrowable(e.failureOrPanic)))
-            .map(Abort.get)
+        Abort.recoverError[Throwable] {
+            case Result.Error(t) => Abort.fail(GrpcFailure.fromThrowable(t))
+        }(Async.fromFuture(f))
+    end fromFuture
 
 end Grpc

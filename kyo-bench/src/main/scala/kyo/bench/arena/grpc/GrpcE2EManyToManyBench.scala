@@ -38,7 +38,7 @@ class GrpcE2EManyToManyBench extends ArenaBench.ForkOnly[Long](sizeSquared):
             for
                 _      <- createKyoServer(port, static = false)
                 client <- createKyoClient(port)
-            yield client.manyToMany(Stream.init(requests)).into(Sink.count.map(_.toLong))
+            yield client.manyToMany(Stream.init(requests)).map(_.into(Sink.count.map(_.toLong)))
 
     override def zioBench(): UIO[Long] =
         ZIO.scoped:

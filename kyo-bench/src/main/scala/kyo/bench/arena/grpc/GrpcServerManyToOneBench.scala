@@ -43,7 +43,7 @@ class GrpcServerManyToOneBench extends ArenaBench2(response):
     def kyoBench(warmup: KyoForkWarmup, state: KyoState): Response =
         import state.*
         forkKyo:
-            Promise.initWith[Throwable, Response]: promise =>
+            Promise.initWith[Response, Abort[Throwable]]: promise =>
                 val observer = new StreamObserver[Response]:
                     private var response: Maybe[Response] = Maybe.empty
                     def onNext(response: Response): Unit =

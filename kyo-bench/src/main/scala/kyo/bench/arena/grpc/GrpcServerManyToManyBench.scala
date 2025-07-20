@@ -5,6 +5,7 @@ import GrpcService.*
 import io.grpc.stub.StreamObserver
 import kgrpc.bench.*
 import kyo.*
+import kyo.Fiber.Promise.Unsafe
 import kyo.bench.arena.ArenaBench2
 import kyo.bench.arena.WarmupJITProfile.CatsForkWarmup
 import kyo.bench.arena.WarmupJITProfile.KyoForkWarmup
@@ -38,13 +39,14 @@ class GrpcServerManyToManyBench extends ArenaBench2(sizeSquared):
     def kyoBench(warmup: KyoForkWarmup, state: KyoState): Int =
         import state.*
         forkKyo:
-            Promise.initWith[Throwable, Int]: promise =>
+            Promise.initWith[Int, Abort[Throwable]]: promise =>
                 val observer = new StreamObserver[Response]:
                     private var count: Int               = 0
                     def onNext(response: Response): Unit = count += 1
                     def onError(t: Throwable): Unit =
                         import AllowUnsafe.embrace.danger
                         discard(promise.unsafe.complete(Result.fail(t)))
+                    end onError
                     def onCompleted(): Unit =
                         import AllowUnsafe.embrace.danger
                         discard(promise.unsafe.complete(Result.succeed(count)))

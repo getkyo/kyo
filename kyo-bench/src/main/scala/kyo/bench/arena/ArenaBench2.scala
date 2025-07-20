@@ -10,11 +10,16 @@ abstract class ArenaBench2[A](val expectedResult: A) extends BaseBench:
     def forkCats(catsBench: cats.effect.IO[A])(using cats.effect.unsafe.IORuntime): A =
         cats.effect.IO.cede.flatMap(_ => catsBench).unsafeRunSync()
 
-    def forkKyo(kyoBenchFiber: kyo.<[A, kyo.Async & kyo.Abort[Throwable]]): A =
+    def forkKyo(kyoBenchFiber: kyo.<[A, kyo.Async & kyo.Abort[Throwable] & kyo.Scope]): A =
         import kyo.*
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        Sync.Unsafe.evalOrThrow(Fiber.run(kyoBenchFiber).flatMap(_.block(Duration.Infinity))).getOrThrow
+        kyoBenchFiber.handle(
+            kyo.Scope.run,
+            Fiber.initUnscoped(_),
+            _.map(_.block(Duration.Infinity)),
+            Sync.Unsafe.evalOrThrow
+        ).getOrThrow
     end forkKyo
 
     def forkZIO(zioBench: zio.Task[A])(using zioRuntime: zio.Runtime[Any]): A = zio.Unsafe.unsafe(implicit u =>
