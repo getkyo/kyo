@@ -31,15 +31,15 @@ class ForkManyBench extends ArenaBench.ForkOnly(0):
             else io.flatMap(_ => repeat(n - 1)(io))
 
         for
-            promise <- Promise.init[Nothing, Unit]
+            promise <- Promise.init[Unit, Any]
             ref     <- AtomicInt.init(depth)
             effect = ref.decrementAndGet.flatMap {
                 case 1 =>
-                    promise.complete(Result.unit)
+                    promise.completeUnit
                 case _ =>
                     false
             }
-            _ <- repeat(depth)(Fiber.init(effect))
+            _ <- repeat(depth)(Fiber.initUnscoped(effect))
             _ <- promise.get
         yield 0
         end for

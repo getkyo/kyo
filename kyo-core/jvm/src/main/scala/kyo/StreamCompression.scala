@@ -72,7 +72,7 @@ object StreamCompression:
             tag: Tag[Emit[Chunk[Byte]]],
             frame: Frame,
             ev: A <:< Byte
-        ): Stream[Byte, Resource & Sync & Ctx] =
+        ): Stream[Byte, Scope & Sync & Ctx] =
             deflateStream(stream.map(ev.apply), bufferSize, compressionLevel, strategy, flushMode, noWrap)
         end deflate
 
@@ -84,7 +84,7 @@ object StreamCompression:
             tag: Tag[Emit[Chunk[Byte]]],
             frame: Frame,
             ev: A <:< Byte
-        ): Stream[Byte, Sync & Resource & Ctx & Abort[StreamCompressionException]] =
+        ): Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]] =
             inflateStream(stream.map(ev.apply), bufferSize, noWrap)
         end inflate
 
@@ -98,7 +98,7 @@ object StreamCompression:
             tag: Tag[Emit[Chunk[Byte]]],
             frame: Frame,
             ev: A <:< Byte
-        ): Stream[Byte, Resource & Sync & Ctx] =
+        ): Stream[Byte, Scope & Sync & Ctx] =
             gzipStream(stream.map(ev.apply), bufferSize, compressionLevel, strategy, flushMode)
         end gzip
 
@@ -109,7 +109,7 @@ object StreamCompression:
             tag: Tag[Emit[Chunk[Byte]]],
             frame: Frame,
             ev: A <:< Byte
-        ): Stream[Byte, Sync & Resource & Ctx & Abort[StreamCompressionException]] =
+        ): Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]] =
             gunzipStream(stream.map(ev.apply), bufferSize)
         end gunzip
     end extension
@@ -150,10 +150,10 @@ object StreamCompression:
             using
             Tag[Emit[Chunk[Byte]]],
             Frame
-        ): Unit < (Resource & Sync & Emit[Chunk[Byte]] & Ctx) =
+        ): Unit < (Scope & Sync & Emit[Chunk[Byte]] & Ctx) =
             Loop(DeflateState.Initialize):
                 case DeflateState.Initialize =>
-                    Resource.acquireRelease(Sync.defer {
+                    Scope.acquireRelease(Sync.defer {
                         val deflater = new Deflater(compressionLevel.value, noWrap)
                         deflater.setStrategy(strategy.value)
                         deflater
@@ -206,7 +206,7 @@ object StreamCompression:
         using
         tag: Tag[Emit[Chunk[Byte]]],
         _frame: Frame
-    ): Stream[Byte, Resource & Sync & Ctx] =
+    ): Stream[Byte, Scope & Sync & Ctx] =
         enum GZipState derives CanEqual:
             case Initialize                                                                             extends GZipState
             case SendHeader(delfater: Deflater, crc32: CRC32)                                           extends GZipState
@@ -232,12 +232,12 @@ object StreamCompression:
             compressionLevel: CompressionLevel,
             strategy: CompressionStrategy,
             flushMode: FlushMode
-        ): Unit < (Resource & Sync & Emit[Chunk[Byte]] & Ctx) =
+        ): Unit < (Scope & Sync & Emit[Chunk[Byte]] & Ctx) =
             val bufferIO = Sync.defer(new Array[Byte](bufferSize))
 
             Loop(GZipState.Initialize):
                 case GZipState.Initialize =>
-                    Resource.acquireRelease(Sync.defer {
+                    Scope.acquireRelease(Sync.defer {
                         val deflater = new Deflater(compressionLevel.value, true)
                         val crc32    = new CRC32()
                         deflater.setStrategy(strategy.value)
@@ -352,10 +352,10 @@ object StreamCompression:
             using
             Tag[Emit[Chunk[Byte]]],
             Frame
-        ): Unit < (Resource & Sync & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
+        ): Unit < (Scope & Sync & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
             Loop(InflateState.Initialize):
                 case InflateState.Initialize =>
-                    Resource
+                    Scope
                         .acquireRelease(Sync.defer(new Inflater(noWrap)))(inflater => Sync.defer(inflater.end()))
                         .map: inflater =>
                             Loop.continue(InflateState.InflateInput(inflater, stream.emit))
@@ -376,7 +376,7 @@ object StreamCompression:
                         Emit.valueWith(leftOver):
                             maybeEmitFn match
                                 case Present(emitFn) =>
-                                    Resource
+                                    Scope
                                         .acquireRelease(Sync.defer(new Inflater(noWrap)))(inflater => Sync.defer(inflater.end()))
                                         .map: inflater =>
                                             Loop.continue(InflateState.InflateInput(inflater, emitFn()))
@@ -464,7 +464,7 @@ object StreamCompression:
             checkCrc16: Boolean
         )(
             using Frame
-        ): (Chunk[Byte], CRC32, Unit < (Emit[Chunk[Byte]] & Ctx)) => Loop.Outcome[GunzipState, Unit] < (Resource & Sync) =
+        ): (Chunk[Byte], CRC32, Unit < (Emit[Chunk[Byte]] & Ctx)) => Loop.Outcome[GunzipState, Unit] < (Scope & Sync) =
             (bytes: Chunk[Byte], headerCrc32: CRC32, emit: Unit < (Emit[Chunk[Byte]] & Ctx)) =>
                 if hasExtra then
                     Sync.defer(Loop.continue(GunzipState.ParseHeaderExtra(
@@ -489,7 +489,7 @@ object StreamCompression:
                         emit
                     )))
                 else
-                    Resource.acquireRelease(Sync.defer {
+                    Scope.acquireRelease(Sync.defer {
                         val inflater     = new Inflater(true)
                         val contentCrc32 = new CRC32()
                         inflater -> contentCrc32
@@ -511,10 +511,10 @@ object StreamCompression:
             using
             Tag[Chunk[Byte]],
             Frame
-        ): Unit < (Resource & Sync & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
+        ): Unit < (Scope & Sync & Abort[StreamCompressionException] & Ctx & Emit[Chunk[Byte]]) =
             Loop(GunzipState.Initialize):
                 case GunzipState.Initialize =>
-                    Resource.acquireRelease(Sync.defer(new CRC32()))(headerCrc32 => Sync.defer(headerCrc32.reset()))
+                    Scope.acquireRelease(Sync.defer(new CRC32()))(headerCrc32 => Sync.defer(headerCrc32.reset()))
                         .map: headerCrc32 =>
                             Loop.continue(GunzipState.ParseHeader(Chunk.empty, headerCrc32, stream.emit))
                 case GunzipState.ParseHeader(accBytes, headerCrc32, emit) =>
@@ -731,7 +731,7 @@ object StreamCompression:
                         else
                             maybeEmitFn match
                                 case Present(emitFn) =>
-                                    Resource.acquireRelease(Sync.defer(new CRC32()))(headerCrc32 => Sync.defer(headerCrc32.reset()))
+                                    Scope.acquireRelease(Sync.defer(new CRC32()))(headerCrc32 => Sync.defer(headerCrc32.reset()))
                                         .map: headerCrc32 =>
                                             Loop.continue(GunzipState.ParseHeader(rest, headerCrc32, emitFn()))
                                 case Absent =>

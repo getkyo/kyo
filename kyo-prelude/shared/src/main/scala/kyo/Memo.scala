@@ -63,6 +63,6 @@ object Memo:
       * When the isolation ends, merges any cached results from the isolated computation with the outer cache using the later result on
       * conflicts. This allows memoized results computed in isolation to be reused later.
       */
-    given isolate: Isolate.Stateful[Memo, Any] = Var.isolate.merge[Cache]((a, b) => Cache(a.map ++ b.map))
+    given isolate: Isolate[Memo, Any, Memo] = Var.isolate.merge[Cache]((a, b) => Cache(a.map ++ b.map))
 
 end Memo

@@ -8,7 +8,7 @@ import scala.annotation.nowarn
 
 abstract private[kyo] class StreamPublisher[V, S](
     stream: Stream[V, S & Sync]
-)(using Isolate.Contextual[S, Sync]) extends Publisher[V]:
+)(using Isolate[S, Sync, Any]) extends Publisher[V]:
 
     protected def bind(subscriber: Subscriber[? >: V]): Unit
 
@@ -28,7 +28,7 @@ end StreamPublisher
 object StreamPublisher:
 
     def apply[V, S](
-        using Isolate.Contextual[S, Sync]
+        using Isolate[S, Sync, Any]
     )(
         stream: Stream[V, S & Sync],
         capacity: Int = Int.MaxValue
@@ -37,7 +37,7 @@ object StreamPublisher:
         Frame,
         Tag[Emit[Chunk[V]]],
         Tag[Poll[Chunk[V]]]
-    ): StreamPublisher[V, S] < (Resource & Sync & S) =
+    ): StreamPublisher[V, S] < (Scope & Sync & S) =
         def discardSubscriber(subscriber: Subscriber[? >: V]): Unit =
             subscriber.onSubscribe(new Subscription:
                 override def request(n: Long): Unit = ()
@@ -55,13 +55,13 @@ object StreamPublisher:
                     for
                         subscription <- publisher.getSubscription(subscriber)
                         fiber        <- subscription.subscribe.andThen(subscription.consume)
-                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupt())))
+                        _            <- supervisor.onInterrupt(_ => fiber.interrupt(Result.Panic(Interrupted(summon[Frame]))))
                     yield ()
             )
 
         for
             channel <-
-                Resource.acquireRelease(Channel.init[Subscriber[? >: V]](capacity))(
+                Scope.acquireRelease(Channel.init[Subscriber[? >: V]](capacity))(
                     _.close.map(_.foreach(_.foreach(discardSubscriber(_))))
                 )
             publisher <- Sync.Unsafe {
@@ -73,8 +73,8 @@ object StreamPublisher:
                             case Result.Success(true) => ()
                             case _                    => discardSubscriber(subscriber)
             }
-            supervisor <- Resource.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt)
-            _          <- Resource.acquireRelease(Fiber.init(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
+            supervisor <- Scope.acquireRelease(Fiber.Promise.init[Nothing, Unit])(_.interrupt)
+            _          <- Scope.acquireRelease(Fiber.initUnscoped(consumeChannel(publisher, channel, supervisor)))(_.interrupt)
         yield publisher
         end for
     end apply
@@ -82,10 +82,10 @@ object StreamPublisher:
     object Unsafe:
         @nowarn("msg=anonymous")
         def apply[V, S](
-            using Isolate.Contextual[S, Sync]
+            using Isolate[S, Sync, Any]
         )(
             stream: Stream[V, S & Sync],
-            subscribeCallback: (Fiber[StreamCanceled, StreamComplete] < (Sync & S)) => Unit
+            subscribeCallback: (Fiber[StreamComplete, Abort[StreamCanceled]] < (Sync & S)) => Unit
         )(
             using
             AllowUnsafe,

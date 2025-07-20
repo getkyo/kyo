@@ -237,7 +237,7 @@ class LayerTest extends Test:
             val b = Layer.from((a: A) => Abort.when(false)("").andThen(B(a)))
             val c = Layer.from((b: B) => Var.get[Unit].andThen(C(b)))
             discard(a, b, c)
-            assertCompiles("""Layer.init[C](a, b, c)""")
+            typeCheck("""Layer.init[C](a, b, c)""")
         }
         "pruneable inputs" in pendingUntilFixed {
             val a = Layer("")

@@ -138,7 +138,7 @@ class CheckTest extends Test:
             val result = Check.runChunk {
                 for
                     _ <- Check.require(false, "Outer failure 1")
-                    isolated <- Isolate.Stateful[Check, Any].run {
+                    isolated <- Isolate[Check, Any, Check].run {
                         for
                             _ <- Check.require(false, "Inner failure 1")
                             _ <- Check.require(true, "Inner success")
@@ -162,10 +162,10 @@ class CheckTest extends Test:
             val result = Check.runChunk {
                 for
                     _ <- Check.require(false, "Start failure")
-                    v1 <- Isolate.Stateful[Check, Any].run {
+                    v1 <- Isolate[Check, Any, Check].run {
                         for
                             _ <- Check.require(false, "Inner failure 1")
-                            v2 <- Isolate.Stateful[Check, Any].run {
+                            v2 <- Isolate[Check, Any, Check].run {
                                 Check.require(false, "Nested failure").map(_ => "nested-result")
                             }
                         yield v2
@@ -185,7 +185,7 @@ class CheckTest extends Test:
 
         "composition" - {
             "can combine multiple isolates" in run {
-                val i1 = Isolate.Stateful[Check, Any]
+                val i1 = Isolate[Check, Any, Check]
                 val i2 = Emit.isolate.merge[String]
 
                 val combined = i1.andThen(i2)
@@ -209,7 +209,7 @@ class CheckTest extends Test:
             }
 
             "with Var isolate" in run {
-                val isolate = Isolate.Stateful[Check, Any].andThen(Var.isolate.update[Int])
+                val isolate = Isolate[Check, Any, Check].andThen(Var.isolate.update[Int])
 
                 val result = Check.runChunk {
                     Var.runTuple(1) {

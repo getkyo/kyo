@@ -350,32 +350,11 @@ object `<`:
 
     extension [A, S, S2](v: A < S < S2)
         /** Flattens a nested pending computation into a single computation.
-         *
-         * @return
-         * A flattened computation of type `A` with combined effects `S & S2`
-         */
-        def flatten(using _frame: Frame): A < (S & S2) =
-            def flattenLoop(v: A < S < S2)(using Safepoint): A < (S & S2) =
-                v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A < S, S2] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                            def frame = _frame
-
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                flattenLoop(kyo(v, context))
-                    case v =>
-                        v.unsafeGet
-
-            flattenLoop(v)
-    end extension
-
-    extension [A, S, S2](v: A < (S & S2))
-        /** Nests a single flattened computation into a single computation.
           *
           * @return
-          *   A computation of type `A` with nested effects `S` then `S2`
+          *   A flattened computation of type `A` with combined effects `S & S2`
           */
-        def nest(using _frame: Frame): A < S < S2 =
+        def flatten(using _frame: Frame): A < (S & S2) =
             def flattenLoop(v: A < S < S2)(using Safepoint): A < (S & S2) =
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A < S, S2] @unchecked =>

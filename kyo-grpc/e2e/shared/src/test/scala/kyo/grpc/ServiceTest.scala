@@ -517,7 +517,7 @@ class ServiceTest extends Test:
         createChannel(port).map(TestService.client(_))
 
     private def createChannel(port: Int) =
-        Resource.acquireRelease(
+        Scope.acquireRelease(
             Sync.defer(
                 ManagedChannelBuilder
                     .forAddress("localhost", port)

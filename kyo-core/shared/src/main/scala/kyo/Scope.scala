@@ -7,36 +7,42 @@ import kyo.kernel.ContextEffect
 
 /** A structured effect for safe acquisition and finalization of resources.
   *
-  * Resource provides a principled mechanism for working with entities that require proper cleanup, ensuring resources are released in a
+  * Scope provides a principled mechanism for working with entities that require proper cleanup, ensuring resources are released in a
   * deterministic manner even in the presence of errors or interruptions. This effect is particularly valuable for managing external
   * dependencies with lifecycle requirements such as file handles, network connections, database sessions, or any action that needs a
   * corresponding cleanup step.
   *
   * Key features:
-  *   - Automatic resource finalization through `Resource.run` when computations complete or fail
+  *   - Automatic resource finalization through `Scope.run` when computations complete or fail
   *   - Compositional API allowing resource dependencies to be built up safely with `acquireRelease` and `acquire`
   *   - Support for parallel cleanup through configurable concurrency levels with `run(closeParallelism)(...)`
-  *   - Declarative cleanup registration using `Resource.ensure` for custom finalizers
+  *   - Declarative cleanup registration using `Scope.ensure` for custom finalizers
   *
-  * The Resource effect follows the bracket pattern (acquire-use-release) but with improved interruption handling and parallel cleanup
-  * capabilities. Resource finalizers registered with `ensure` are guaranteed to run exactly once when the associated scope completes, with
+  * The Scope effect follows the bracket pattern (acquire-use-release) but with improved interruption handling and parallel cleanup
+  * capabilities. Scope finalizers registered with `ensure` are guaranteed to run exactly once when the associated scope completes, with
   * failures in finalizers logged rather than thrown to avoid masking the primary computation result.
   *
   * Typically, you would use `acquireRelease` to pair resource acquisition with its cleanup function, then compose multiple resources
-  * together before running the combined effect with `Resource.run`.
+  * together before running the combined effect with `Scope.run`.
   *
   * @see
-  *   [[kyo.Resource.acquireRelease]] For creating resources with custom acquire and release functions
+  *   [[kyo.Scope.acquireRelease]] For creating resources with custom acquire and release functions
   * @see
-  *   [[kyo.Resource.acquire]] For creating resources from Java Closeables
+  *   [[kyo.Scope.acquire]] For creating resources from Java Closeables
   * @see
-  *   [[kyo.Resource.ensure]] For registering cleanup actions
+  *   [[kyo.Scope.ensure]] For registering cleanup actions
   * @see
-  *   [[kyo.Resource.run]] For executing resource-managed computations
+  *   [[kyo.Scope.run]] For executing resource-managed computations
   */
-sealed trait Resource extends ContextEffect[Resource.Finalizer]
+sealed trait Scope extends ContextEffect[Scope.Finalizer]
 
-object Resource:
+@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
+type Resource = Scope
+
+@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
+val Resource = Scope
+
+object Scope:
 
     /** Ensures that the given effect is executed when the resource is released.
       *
@@ -47,8 +53,8 @@ object Resource:
       * @return
       *   A unit value wrapped in Resource and Sync effects.
       */
-    inline def ensure(inline v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & Sync) =
-        ContextEffect.suspendWith(Tag[Resource])(_.ensure(_ => v))
+    inline def ensure(inline v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Scope & Sync) =
+        ContextEffect.suspendWith(Tag[Scope])(_.ensure(_ => v))
 
     /** Ensures that the given effect is executed when the resource is released, with information about the computation's outcome.
       *
@@ -63,8 +69,8 @@ object Resource:
       * @return
       *   A unit value wrapped in Resource and Sync effects.
       */
-    inline def ensure(inline f: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & Sync) =
-        ContextEffect.suspendWith(Tag[Resource])(_.ensure(f))
+    inline def ensure(inline f: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Scope & Sync) =
+        ContextEffect.suspendWith(Tag[Scope])(_.ensure(f))
 
     /** Acquires a resource and provides a release function.
       *
@@ -77,7 +83,7 @@ object Resource:
       * @return
       *   The acquired resource wrapped in Resource, Sync, and S effects.
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Resource & Sync & S) =
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & Sync & S) =
         Sync.defer {
             acquire.map { resource =>
                 ensure(release(resource)).andThen(resource)
@@ -93,7 +99,7 @@ object Resource:
       * @return
       *   The acquired Closeable resource wrapped in Resource, Sync, and S effects.
       */
-    def acquire[A <: java.io.Closeable, S](resource: => A < S)(using Frame): A < (Resource & Sync & S) =
+    def acquire[A <: java.lang.AutoCloseable, S](resource: => A < S)(using Frame): A < (Scope & Sync & S) =
         acquireRelease(resource)(_.close())
 
     /** Runs a resource-managed effect with default parallelism of 1.
@@ -108,7 +114,7 @@ object Resource:
       * @return
       *   The result of the effect wrapped in Async and S effects.
       */
-    def run[A, S](v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
+    def run[A, S](v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         run(1)(v)
 
     /** Runs a resource-managed effect with specified parallelism for cleanup.
@@ -126,10 +132,10 @@ object Resource:
       * @return
       *   The result of the effect wrapped in Async and S effects.
       */
-    def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
+    def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Sync.Unsafe {
             val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
-            ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
+            ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(v)
                 .handle(
                     Sync.ensure(finalizer.close),
                     Abort.run[Any]
@@ -140,8 +146,6 @@ object Resource:
                         .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
                 }
         }
-
-    given Isolate.Contextual[Resource, Any] = Isolate.Contextual.derive[Resource, Any]
 
     /** Represents a finalizer for a resource. */
     sealed abstract class Finalizer:
@@ -159,7 +163,7 @@ object Resource:
                         val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
                             Access.MultiProducerSingleConsumer
                         )
-                        val promise = Promise.Unsafe.init[Nothing, Unit]().safe
+                        val promise = Promise.Unsafe.init[Unit, Any]().safe
 
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                             Sync.Unsafe {
@@ -167,7 +171,7 @@ object Resource:
                                     Abort.panic(new Closed(
                                         "Finalizer",
                                         frame,
-                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Resource.run' call."
+                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
                                     ))
                                 else ()
                             }
@@ -179,13 +183,13 @@ object Resource:
                                     case Absent => ()
                                     case Present(tasks) =>
                                         if tasks.isEmpty then
-                                            promise.completeDiscard(Result.unit)
+                                            promise.completeUnitDiscard
                                         else
                                             Async.foreachDiscard(tasks, parallelism) { task =>
                                                 Abort.run[Throwable](task(ex))
-                                                    .map(_.foldError(_ => (), ex => Log.error("Resource finalizer failed", ex.exception)))
+                                                    .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
                                             }
-                                                .handle(Fiber.init[Nothing, Unit, Any])
+                                                .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
                                                 .map(promise.becomeDiscard)
                             }
 
@@ -195,4 +199,4 @@ object Resource:
         end Awaitable
     end Finalizer
 
-end Resource
+end Scope

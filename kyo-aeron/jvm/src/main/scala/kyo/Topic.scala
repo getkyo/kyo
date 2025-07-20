@@ -262,6 +262,6 @@ object Topic:
         }
     end stream
 
-    given isolate: Isolate.Contextual[Topic, Any] = Isolate.Contextual[Topic, Any]
+    given isolate: Isolate[Topic, Any, Any] = Isolate.derive[Env[Aeron], Any, Any]
 
 end Topic

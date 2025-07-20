@@ -70,6 +70,7 @@ private[kyo] object Validate:
             validType && validName
         end validAsyncShift
 
+        @tailrec
         def asyncShiftDive(qualifiers: List[Tree])(using Trees.Step): Unit =
             qualifiers match
                 case Block(List(DefDef(_, _, _, Some(body))), _) :: xs =>
@@ -82,6 +83,88 @@ private[kyo] object Validate:
                     asyncShiftDive(xs)
 
                 case _ => qualifiers.foreach(qual => Trees.Step.goto(qual))
+
+        extension (term: Term)
+            def children: List[Tree] =
+                term match
+                    case Apply(fun, args)           => fun :: args
+                    case TypeApply(fun, targs)      => fun :: targs
+                    case Select(qualifier, _)       => List(qualifier)
+                    case Ident(_)                   => Nil
+                    case Block(stats, expr)         => stats.collect { case t: Term => t } :+ expr
+                    case Inlined(_, bindings, expr) => bindings.collect { case t: Term => t } :+ expr
+                    case If(cond, thenp, elsep)     => List(cond, thenp, elsep)
+                    case Lambda(meth, _)            => meth
+                    case _                          => Nil // Other cases (Literal, Closure, etc.)
+        end extension
+
+        object DirectBlock:
+            def unapply(t: Term): Boolean =
+                t match
+                    case Inlined(Some(Apply(TypeApply(Ident("direct"), _), _)), _, _) => true
+                    case _                                                            => false
+        end DirectBlock
+
+        def statementsDive(tree: Tree)(using Trees.Step): Unit =
+            @tailrec
+            def dive(qual: Tree): Unit =
+                qual match
+                    case Block(quals, last) =>
+                        quals.foreach(Trees.Step.goto)
+                        dive(last)
+                    case _ =>
+
+            dive(tree)
+        end statementsDive
+
+        def skipDive(qualifiers: List[Tree])(using Trees.Step): Unit =
+
+            def skipDive(tree: Tree): Unit =
+                tree match
+                    case Block(List(DefDef(_, _, _, Some(body))), _) =>
+
+                        val hasNow: Boolean = Trees.exists(body)({
+                            case t @ (Apply(TypeApply(Ident("now"), _), List(_)) | Select(_, "now")) => true
+                            case DirectBlock()                                                       => false
+                        })
+
+                        if hasNow then
+                            report.errorAndAbort(
+                                """
+                                  |Calling `.now` inside a lazy structure breaks effect handling, and allow for escaping behavior.
+                                  |You have two options:
+                                  | - calling .now before building the structure :
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |        val y = f(1).now
+                                  |        stream.map(x => x + y)
+                                  |
+                                  | - using the effect
+                                  |     def f(x: Int): Int < S
+                                  |     direct:
+                                  |       stream.map(x => f(x + 1))
+                                  |
+                                  |""".stripMargin,
+                                body.pos
+                            )
+                        else
+                            body match
+                                case DirectBlock() =>
+                                case x @ Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                                    Trees.Step.goto(x)
+
+                                case tree: Term if tree.tpe.typeSymbol.name == "<" =>
+                                    tree.children.foreach(Trees.Step.goto)
+
+                                case _ =>
+                                    Trees.Step.goto(body)
+                        end if
+
+                    case x =>
+                        Trees.Step.goto(x)
+
+            qualifiers.foreach(skipDive)
+        end skipDive
 
         Trees.traverseGoto(expr.asTerm) {
             case Apply(
@@ -113,52 +196,43 @@ private[kyo] object Validate:
                 Trees.Step.goto(select.qualifier)
                 asyncShiftDive(argGroup0)
 
-            case Apply(TypeApply(Ident("now" | "later"), _), List(qual)) =>
-                @tailrec
-                def dive(qual: Tree): Unit =
-                    qual match
-                        case Block(quals, last) =>
-                            quals.foreach(Trees.Step.goto)
-                            dive(last)
-                        case _ =>
+            case Apply(Apply(TypeApply(Select(qual, _), _), argGroup0), argGroup1) if qual.tpe <:< TypeRepr.of[kyo.Stream[?, ?]] =>
+                Trees.Step.goto(qual)
+                skipDive(argGroup0)
+                skipDive(argGroup1)
 
-                dive(qual)
+            // direct: in direct:
+            case DirectBlock() =>
+
+            case Apply(TypeApply(Ident("now"), _), List(qual)) =>
+                statementsDive(qual)
+
+            case Apply(TypeApply(Ident("later"), _), List(qual)) =>
+                statementsDive(qual)
 
                 Trees.traverse(qual) {
-                    case tree @ Apply(TypeApply(Ident("now" | "later"), _), _) =>
+                    case Apply(TypeApply(Ident("now"), _), _) =>
                         fail(
-                            tree,
-                            s"""${".now".cyan} and ${".later".cyan} can only be used directly inside a ${"`direct`".yellow} block.
-                            |
-                            |Common mistake: You may have forgotten to wrap an effectful computation in ${"`direct`".yellow}:
-                            |${highlight("""
-                            |// Missing direct when handling effects:
-                            |val result = Emit.run {      // NOT OK - missing direct
-                            |    Emit.value(1).now
-                            |    Emit.value(2).now
-                            |}
-                            |
-                            |// Correctly wrapped in direct:
-                            |val result = Emit.run {
-                            |    direct {                  // OK - effects wrapped in direct
-                            |        Emit.value(1).now
-                            |        Emit.value(2).now
-                            |    }
-                            |}""")}
-                            |
-                            |If you're seeing this inside a ${"`direct`".yellow} block, you may have nested ${".now".cyan}/${".later".cyan} calls:
-                            |${highlight("""
-                            |// Instead of nested .now:
-                            |direct {
-                            |    (counter.get.now + 1).now     // NOT OK - nested .now
-                            |}
-                            |
-                            |// Store intermediate results:
-                            |direct {
-                            |    val value = counter.get.now    // OK - get value first
-                            |    val incr = value + 1           // OK - pure operation
-                            |    Sync.defer(incr).now                   // OK - single .now
-                            |}""".stripMargin)}""".stripMargin
+                            qual,
+                            s"""${".now".cyan} and ${".later".cyan} should not be nested.
+                               |While technically correct, and safe, this would not evaluate as expected.
+                               |
+                               |For example, this is not accepted:
+                               |${highlight("""
+                               |  direct:
+                               |    g(f(x).now).later     // NOT OK - nested .now/.later
+                               |""")}
+                               |
+                               |You must first extract intermediate values:
+                               |${highlight("""
+                               |  direct:
+                               |    val y = f(x).now        // OK - get value first
+                               |    val z = g(y).later      // OK - delayed effect
+                               |   //...
+                               |""")}
+                               |
+                               |
+                               """.stripMargin
                         )
                 }
 

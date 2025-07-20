@@ -60,13 +60,13 @@ object Server:
       *   A function to handle the shutdown of the server, which takes the server instance and a timeout duration. Defaults to
       *   [[Server.shutdown]]
       * @return
-      *   the running server pending [[Resource]] and [[Sync]]
+      *   the running server pending [[Scope]] and [[Sync]]
       */
     def start(port: Int, timeout: Duration = 30.seconds)(
         configure: ServerBuilder[?] => ServerBuilder[?],
         shutdown: (io.grpc.Server, Duration) => Frame ?=> Any < Sync = shutdown
-    )(using Frame): io.grpc.Server < (Resource & Sync) =
-        Resource.acquireRelease(
+    )(using Frame): io.grpc.Server < (Scope & Sync) =
+        Scope.acquireRelease(
             Sync.defer(configure(ServerBuilder.forPort(port)).build().start())
         )(shutdown(_, timeout))
 

@@ -193,7 +193,7 @@ object Memory:
                 Sync.ensure(Sync.defer(arena.close))(Env.run(arena)(f))
             }
 
-        given isolate: Isolate.Contextual[Arena, Sync] = Isolate.Contextual.derive[Arena, Sync]
+        given isolate: Isolate[Arena, Sync, Any] = Isolate.derive[Env[Arena.State] & Sync, Sync, Any]
 
         private[kyo] def use[A, S](f: JArena => A < S)(using Frame): A < (S & Arena) =
             Env.use[State](f)

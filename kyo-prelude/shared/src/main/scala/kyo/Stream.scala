@@ -3,6 +3,7 @@ package kyo
 import kyo.Tag
 import kyo.kernel.ArrowEffect
 import scala.annotation.nowarn
+import scala.annotation.publicInBinary
 import scala.annotation.targetName
 import scala.util.NotGiven
 
@@ -44,7 +45,7 @@ import scala.util.NotGiven
   * @see
   *   [[kyo.Poll]] for pull-based consumption with backpressure
   */
-sealed abstract class Stream[+V, -S] extends Serializable:
+abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializable:
 
     /** Returns the effect that produces acknowledgments and emits chunks of values. */
     def emit: Unit < (Emit[Chunk[V]] & S)
@@ -707,8 +708,8 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       *
       * For example, to ensure all resources close when the stream is evaluated:
       * ```
-      * val original: Stream[Int, Resource & Async] = ???
-      * val withCleanup = original.handle(Resource.run)
+      * val original: Stream[Int, Scope & Async] = ???
+      * val withCleanup = original.handle(Scope.run)
       * ```
       *
       * While `handle` can be used with any function that processes the underlying effect, its main purpose is to facilitate effect handling
@@ -716,9 +717,9 @@ sealed abstract class Stream[+V, -S] extends Serializable:
       * sequential style.
       *
       * ```
-      * val original: Stream[Int, Resource & Abort[String] & Var[Int]] = ???
+      * val original: Stream[Int, Scope & Abort[String] & Var[Int]] = ???
       * val handled: Stream[Int, Any] = original.handle(
-      *   Resource.run,
+      *   Scope.run,
       *   Abort.run[String](_),
       *   Var.run(20),
       * )

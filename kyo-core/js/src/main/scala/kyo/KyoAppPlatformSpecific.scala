@@ -1,26 +1,20 @@
 package kyo
 
-import kyo.Maybe.Absent
-import kyo.Maybe.Present
+abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Scope & Abort[Throwable]]:
 
-abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abort[Throwable]]:
+    private var last: Unit < (Async & Abort[Throwable]) = ()
 
-    private var maybePreviousAsync: Maybe[Unit < (Async & Abort[Throwable])] = Absent
-
-    final override protected def run[A](v: => A < (Async & Resource & Abort[Throwable]))(using Frame, Render[A]): Unit =
+    final override protected def run[A](v: => A < (Async & Scope & Abort[Throwable]))(using Frame, Render[A]): Unit =
         import AllowUnsafe.embrace.danger
-        val currentAsync: Unit < (Async & Abort[Throwable]) =
-            Abort.run(handle(v)).map(result => Sync.defer(onResult(result)).andThen(Abort.get(result)).unit)
-        maybePreviousAsync = maybePreviousAsync match
-            case Absent                 => Present(currentAsync)
-            case Present(previousAsync) => Present(previousAsync.map(_ => currentAsync))
-        initCode = maybePreviousAsync.map { previousAsync => () =>
-            val racedAsyncIO = Clock.repeatWithDelay(1.hour)(()).map { fiber =>
-                val race = Async.race(fiber.get, previousAsync)
-                Async.timeout(timeout)(race)
-            }
-            val _ = Sync.Unsafe.evalOrThrow(Fiber.init(racedAsyncIO))
-        }.toChunk
+        val current: Unit < (Async & Abort[Throwable]) =
+            Abort.runWith(Async.timeout(runTimeout)(handle(v)))(result => Sync.defer(onResult(result)).andThen(Abort.get(result)).unit)
+
+        last = last.andThen(current)
+
+        initCode = Chunk(() =>
+            val raced = Async.raceFirst(Clock.repeatWithDelay(1.hour)(()).map(_.get), last)
+            val _     = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(raced))
+        )
     end run
 
 end KyoAppPlatformSpecific

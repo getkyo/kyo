@@ -106,7 +106,7 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(using Frame): Meter < (Sync & Resource) =
+    def initMutex(using Frame): Meter < (Sync & Scope) =
         initMutex(true)
 
     /** Creates a Meter that acts as a mutex (binary semaphore).
@@ -116,7 +116,7 @@ object Meter:
       * @return
       *   A Meter effect that represents a mutex.
       */
-    def initMutex(reentrant: Boolean)(using Frame): Meter < (Sync & Resource) =
+    def initMutex(reentrant: Boolean)(using Frame): Meter < (Sync & Scope) =
         initSemaphore(1, reentrant)
 
     /** Use a **reentrant** Meter that acts as a mutex (binary semaphore). Meter is closed automatically after usage.
@@ -164,8 +164,8 @@ object Meter:
       * @return
       *   A Meter effect that represents a semaphore.
       */
-    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < (Sync & Resource) =
-        Resource.acquireRelease(initSemaphoreUnscoped(concurrency, reentrant))(_.close)
+    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < (Sync & Scope) =
+        Scope.acquireRelease(initSemaphoreUnscoped(concurrency, reentrant))(_.close)
 
     /** Use a Meter that acts as a semaphore with the specified concurrency. Meter is closed automatically after usage.
       *
@@ -209,8 +209,8 @@ object Meter:
       * @return
       *   A Meter effect that represents a rate limiter.
       */
-    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < (Sync & Resource) =
-        Resource.acquireRelease(initRateLimiterUnscoped(rate, period, reentrant))(_.close)
+    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < (Sync & Scope) =
+        Scope.acquireRelease(initRateLimiterUnscoped(rate, period, reentrant))(_.close)
 
     /** Use a Meter that acts as a rate limiter. Meter is closed automatically after usage
       *
@@ -366,8 +366,8 @@ object Meter:
         // >= 0     => # of permits
         // < 0      => # of waiters
         val state   = AtomicInt.Unsafe.init(permits)
-        val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, Unit]](8)
-        val closed  = Promise.Unsafe.init[Closed, Nothing]()
+        val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Unit, Abort[Closed]]](8)
+        val closed  = Promise.Unsafe.init[Nothing, Abort[Closed]]()
 
         protected def dispatch[A, S](v: => A < S): A < (S & Sync)
         protected def onClose(): Unit
@@ -400,7 +400,7 @@ object Meter:
                             dispatch(withAcquiredMeter(v))
                         else
                             // No permit available, add to waiters queue
-                            val p = Promise.Unsafe.init[Closed, Unit]()
+                            val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
                             waiters.add(p)
                             dispatch(p.safe.use(_ => withAcquiredMeter(v)))
                     else
@@ -480,7 +480,7 @@ object Meter:
             else if !state.compareAndSet(st, st + 1) then
                 // CAS failed, retry
                 release()
-            else if st < 0 && !pollWaiter().complete(Result.unit) then
+            else if st < 0 && !pollWaiter().completeUnit() then
                 // Waiter is already complete due to interruption, retry
                 release()
             else
@@ -489,7 +489,7 @@ object Meter:
             end if
         end release
 
-        @tailrec final private def pollWaiter(): Promise.Unsafe[Closed, Unit] =
+        @tailrec final private def pollWaiter(): Promise.Unsafe[Unit, Abort[Closed]] =
             val waiter = waiters.poll()
             if !isNull(waiter) then waiter
             else

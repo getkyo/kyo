@@ -69,11 +69,11 @@ object ClientCall:
         requests: Stream[Request, Grpc]
     )(using Frame, Tag[Emit[Chunk[Request]]]): Response < Grpc =
         for
-            promise          <- Promise.init[GrpcFailure, Response]
+            promise <- Promise.init[GrpcFailure, Response]
             responseObserver = UnaryResponseStreamObserver(promise)
             requestObserver <- Sync.defer(ClientCalls.asyncClientStreamingCall(channel, method, options, responseObserver))
-            _        <- StreamNotifier.notifyObserver(requests, requestObserver)
-            response <- promise.get
+            _               <- StreamNotifier.notifyObserver(requests, requestObserver)
+            response        <- promise.get
         yield response
 
     /** Executes a server streaming gRPC call.
@@ -101,10 +101,10 @@ object ClientCall:
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         request: Request
-    )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] < Resource =
-        val responses: Stream[Response, Abort[GrpcFailure] & Async] < (Sync & Resource) =
+    )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] < Scope =
+        val responses: Stream[Response, Abort[GrpcFailure] & Async] < (Sync & Scope) =
             for
-                responseChannel  <- StreamChannel.initUnscoped[Response, GrpcFailure]
+                responseChannel <- StreamChannel.initUnscoped[Response, GrpcFailure]
                 responseObserver = ResponseStreamObserver(responseChannel)
                 _ <- Sync.defer(ClientCalls.asyncServerStreamingCall(channel, method, options, request, responseObserver))
             yield responseChannel.stream

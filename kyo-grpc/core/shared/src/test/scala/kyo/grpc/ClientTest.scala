@@ -98,7 +98,7 @@ class ClientTest extends Test with AsyncMockFactory:
     "shuts down channel" in run {
         val channel = mock[ManagedChannel]
 
-        // Be careful here. Unexpected calls will fail when shutdown is called which gets swallowed by Resource and so
+        // Be careful here. Unexpected calls will fail when shutdown is called which gets swallowed by Scope and so
         // the test will not fail. See https://github.com/ScalaMock/ScalaMock/issues/633.
         var shutdownCount = 0
         (() => channel.shutdown())
@@ -117,7 +117,7 @@ class ClientTest extends Test with AsyncMockFactory:
 
         val provider = StubProvider(builder)
 
-        val result = Resource.run:
+        val result = Scope.run:
             for
                 _ <- replaceProviders(provider)
                 _ <- Client.channel(host, port)(identity)

@@ -38,7 +38,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final private def eval(startMillis: Long, clock: InternalClock, deadline: Long)(using Safepoint): A < (Ctx & Async & Abort[E]) =
         try
             val next: A < (Ctx & Async & Abort[E]) =
-                Isolate.restoring(trace, this) {
+                Isolate.internal.restoring(trace, this) {
                     ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
                         stop =
                             shouldPreempt() || (deadline != Long.MaxValue && clock.currentMillis() > deadline),

@@ -58,9 +58,9 @@ private[kyo] object RequestStreamObserver:
     def one[Request, Response](
         f: Stream[Request, Grpc] => Response < Grpc,
         responseObserver: ServerCallStreamObserver[Response]
-    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request] < Sync =
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request] < (Sync & Scope) =
         for
-            requestChannel <- StreamChannel.initUnscoped[Request, GrpcFailure]
+            requestChannel <- StreamChannel.init[Request, GrpcFailure]
             response = f(requestChannel.stream)
             _ <- Fiber.init(
                 StreamNotifier.notifyObserver(response, responseObserver)
@@ -94,9 +94,9 @@ private[kyo] object RequestStreamObserver:
     def many[Request, Response](
         f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc,
         responseObserver: ServerCallStreamObserver[Response]
-    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): RequestStreamObserver[Request] < Sync =
+    )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): RequestStreamObserver[Request] < (Sync & Scope) =
         for
-            requestChannel <- StreamChannel.initUnscoped[Request, GrpcFailure]
+            requestChannel <- StreamChannel.init[Request, GrpcFailure]
             responses = Stream.unwrap(f(requestChannel.stream))
             _ <- Fiber.init(
                 StreamNotifier.notifyObserver(responses, responseObserver)

@@ -632,6 +632,14 @@ class ShiftMethodSupportTest extends AnyFreeSpec with Assertions:
             assert(d.eval)
         }
 
+        "foreach" in {
+            def f(i: Int): Unit < Var[Int] = Var.setDiscard(i)
+            val d = direct:
+                yResult.foreach(i => f(i).now)
+
+            Var.runTuple(0)(d).map((v, _) => assert(v == 1))
+        }
+
         "fold" in {
             def identity(i: Int): Int < Any = i
             val d = direct:

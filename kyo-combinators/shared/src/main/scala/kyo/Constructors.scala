@@ -17,8 +17,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < Async)(using Frame): A < (S & Resource & Sync) =
-        Resource.acquireRelease(acquire)(release)
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (S & Scope & Sync) =
+        Scope.acquireRelease(acquire)(release)
 
     /** Adds a finalizer to the current effect using Resource.
       *
@@ -27,8 +27,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that ensures the finalizer is executed when the effect is completed
       */
-    def addFinalizer(finalizer: => Any < Async)(using Frame): Unit < (Resource & Sync) =
-        Resource.ensure(finalizer)
+    def addFinalizer(finalizer: => Any < (Async & Abort[Throwable]))(using Frame): Unit < (Scope & Sync) =
+        Scope.ensure(finalizer)
 
     /** Creates an asynchronous effect that can be completed by the given register function.
       *
@@ -39,12 +39,12 @@ extension (kyoObject: Kyo.type)
       */
     def async[A, E](register: (A < (Abort[E] & Async) => Unit) => Any < (Abort[E] & Async))(using Frame): A < (Abort[E] & Async) =
         for
-            promise <- Promise.init[E, A]
+            promise <- Promise.init[A, Abort[E]]
             registerFn = (eff: A < (Abort[E] & Async)) =>
-                val effFiber = Fiber.init(eff)
+                val effFiber = Fiber.initUnscoped(eff)
                 val updatePromise =
                     effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
-                val updatePromiseIO = Fiber.init(updatePromise).unit
+                val updatePromiseIO = Fiber.initUnscoped(updatePromise).unit
                 import AllowUnsafe.embrace.danger
                 Sync.Unsafe.evalOrThrow(updatePromiseIO)
             _ <- register(registerFn)
@@ -128,13 +128,13 @@ extension (kyoObject: Kyo.type)
 
     /** Creates an effect from an AutoCloseable resource.
       *
-      * @param closeable
+      * @param resource
       *   The AutoCloseable resource to create an effect from
       * @return
-      *   An effect that manages the resource lifecycle using Resource and Sync effects
+      *   An effect that manages the resource lifecycle using Scope and Sync effects
       */
-    def fromAutoCloseable[A <: AutoCloseable, S](closeable: => A < S)(using Frame): A < (S & Resource & Sync) =
-        acquireRelease(closeable)(c => Sync.defer(c.close()))
+    def fromAutoCloseable[A <: AutoCloseable, S](resource: => A < S)(using Frame): A < (S & Scope & Sync) =
+        Scope.acquire(resource)
 
     /** Creates an effect from an Either[E, A] and handles Left[E] to Abort[E].
       *
@@ -357,8 +357,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that manages the resource lifecycle using Resource and Sync effects
       */
-    def scoped[A, S](resource: => A < (S & Resource))(using Frame): A < (Async & S) =
-        Resource.run(resource)
+    def scoped[A, S](resource: => A < (S & Scope))(using Frame): A < (Async & S) =
+        Scope.run(resource)
 
     /** Retrieves a dependency from Env.
       *
@@ -400,16 +400,6 @@ extension (kyoObject: Kyo.type)
       */
     def defer[A, S](effect: => A < S)(using Frame): A < (S & Sync) =
         Sync.defer(effect)
-
-    /** Suspends an effect using Sync and handles any exceptions that occur to Abort[Throwable].
-      *
-      * @param effect
-      *   The effect to suspend
-      * @return
-      *   An effect that suspends the given effect and handles any exceptions that occur to Abort[Throwable]
-      */
-    def deferAttempt[A, S](effect: => A < S)(using Frame): A < (S & Sync & Abort[Throwable]) =
-        Sync.defer(Abort.catching[Throwable](effect))
 
     /** Traverses a sequence of effects in parallel and collects the results.
       *

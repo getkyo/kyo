@@ -20,7 +20,7 @@ import java.util.concurrent.CopyOnWriteArraySet
   */
 final class Hub[A] private[kyo] (
     ch: Channel[A],
-    fiber: Fiber[Closed, Unit],
+    fiber: Fiber[Unit, Abort[Closed]],
     listeners: CopyOnWriteArraySet[Listener[A]]
 )(using initFrame: Frame):
 
@@ -111,7 +111,7 @@ final class Hub[A] private[kyo] (
       * @see
       *   [[Hub.DefaultBufferSize]] for the default buffer size used by this method
       */
-    def listen(using Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
+    def listen(using Frame): Listener[A] < (Sync & Abort[Closed] & Scope) =
         listen(DefaultBufferSize)
 
     /** Creates a new listener for this Hub with the specified buffer size.
@@ -121,7 +121,7 @@ final class Hub[A] private[kyo] (
       * @return
       *   a new Listener with the specified buffer size
       */
-    def listen(bufferSize: Int)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
+    def listen(bufferSize: Int)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Scope) =
         listen(bufferSize, _ => true)
 
     /** Creates a new listener for this Hub with a custom filter predicate.
@@ -133,7 +133,7 @@ final class Hub[A] private[kyo] (
       * @see
       *   [[Hub.DefaultBufferSize]] for the default buffer size used by this method
       */
-    def listen(filter: A => Boolean)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
+    def listen(filter: A => Boolean)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Scope) =
         listen(DefaultBufferSize, filter)
 
     /** Creates a new listener for this Hub with specified buffer size and filter.
@@ -152,7 +152,7 @@ final class Hub[A] private[kyo] (
       * @return
       *   a new Listener that will receive filtered messages from the Hub
       */
-    def listen(bufferSize: Int, filter: A => Boolean)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Resource) =
+    def listen(bufferSize: Int, filter: A => Boolean)(using frame: Frame): Listener[A] < (Sync & Abort[Closed] & Scope) =
         def fail = Abort.fail(Closed("Hub", initFrame))
         closed.map {
             case true => fail
@@ -169,7 +169,7 @@ final class Hub[A] private[kyo] (
                                 fail
                             }
                         case false =>
-                            Resource.acquireRelease(listener)(_.close.unit)
+                            Scope.acquireRelease(listener)(_.close.unit)
                     }
                 }
         }
@@ -195,7 +195,7 @@ object Hub:
       * @see
       *   [[Hub.DefaultBufferSize]] for the default capacity value used by this method
       */
-    def init[A](using Frame): Hub[A] < (Sync & Resource) =
+    def init[A](using Frame): Hub[A] < (Sync & Scope) =
         init(DefaultBufferSize)
 
     /** Initializes a new Hub with the specified capacity.
@@ -207,7 +207,7 @@ object Hub:
       * @return
       *   a new Hub instance
       */
-    def init[A](capacity: Int)(using Frame): Hub[A] < (Sync & Resource) =
+    def init[A](capacity: Int)(using Frame): Hub[A] < (Sync & Scope) =
         initWith[A](capacity)(identity)
 
     /** Uses a new Hub with the given type and capacity.
@@ -221,9 +221,9 @@ object Hub:
       * @return
       *   The result of applying the function
       */
-    def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & Sync & Resource) =
+    def initWith[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & Sync & Scope) =
         initUnscopedWith[A](capacity): hub =>
-            Resource.ensure(hub.close).andThen:
+            Scope.ensure(hub.close).andThen:
                 f(hub)
 
     def use[A](capacity: Int)[B, S](f: Hub[A] => B < S)(using Frame): B < (S & Sync) =
@@ -238,7 +238,7 @@ object Hub:
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
             def currentListeners = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
-            Fiber.init {
+            Fiber.initUnscoped {
                 Loop.foreach {
                     channel.take.map { value =>
                         Abort.recover { error =>

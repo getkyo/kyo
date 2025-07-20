@@ -292,9 +292,8 @@ object Layer:
         case class To[Out1, Out2, S1, S2](lhs: Layer[?, ?], rhs: Layer[?, ?])                            extends Layer[Out1 & Out2, S1 & S2]
         case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Env[In] & S))(using val tag: Tag[Out]) extends Layer[Out, S]
 
-        private given Frame = Frame.internal
-
         class DoRun[Out, S] extends Serializable:
+            private given Frame = Frame.internal
             private val memo = Memo[Layer[Out, S], TypeMap[Out], S & Memo] { self =>
                 type Expected = TypeMap[Out] < (S & Memo)
                 self match

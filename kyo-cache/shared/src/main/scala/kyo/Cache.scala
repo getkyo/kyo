@@ -33,10 +33,10 @@ class Cache(private[kyo] val store: Store) extends Serializable:
         f: A => B < S
     )(using Frame): A => B < (Async & S) =
         (v: A) =>
-            Promise.initWith[Throwable, B] { p =>
+            Promise.initWith[B, Abort[Throwable]] { p =>
                 val key = (this, v)
                 Sync.defer {
-                    val p2 = store.get(key, _ => p.asInstanceOf[Promise[Nothing, Any]])
+                    val p2 = store.get(key, _ => p.asInstanceOf[Promise[Any, Any]])
                     if p.equals(p2) then
                         Sync.ensure {
                             p.interrupt.map {
@@ -52,12 +52,12 @@ class Cache(private[kyo] val store: Store) extends Serializable:
                                         .andThen(v)
                                 case r =>
                                     Sync.defer(store.invalidate(key))
-                                        .andThen(p.complete(r))
+                                        .andThen(p.complete(r.map(Kyo.lift)))
                                         .andThen(r.getOrThrow)
                             }
                         }
                     else
-                        p2.asInstanceOf[Promise[Nothing, B]].get
+                        p2.asInstanceOf[Promise[B, Any]].get
                     end if
                 }
             }
@@ -138,7 +138,7 @@ end Cache
 object Cache:
 
     /** The type of the underlying cache store. */
-    type Store = caffeine.cache.Cache[Any, Promise[Nothing, Any]]
+    type Store = caffeine.cache.Cache[Any, Promise[Any, Any]]
 
     /** A builder class for configuring Cache instances.
       *
@@ -228,7 +228,7 @@ object Cache:
         Sync.defer {
             new Cache(
                 f(new Builder(Caffeine.newBuilder())).b
-                    .build[Any, Promise[Nothing, Any]]()
+                    .build[Any, Promise[Any, Any]]()
             )
         }
 end Cache

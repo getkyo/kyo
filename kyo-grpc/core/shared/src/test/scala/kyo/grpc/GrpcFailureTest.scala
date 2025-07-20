@@ -56,13 +56,13 @@ class GrpcFailureTest extends Test:
         }
 
         "handles deeply nested gRPC exceptions" in {
-            val innerStatusException = Status.NOT_FOUND.withDescription("Resource not found").asException()
+            val innerStatusException = Status.NOT_FOUND.withDescription("Scope not found").asException()
             val middleException      = new IllegalArgumentException("Middle", innerStatusException)
             val outerException       = new RuntimeException("Outer", middleException)
             val result               = GrpcFailure.fromThrowable(outerException)
 
             assert(result.getStatus.getCode === Status.Code.NOT_FOUND)
-            assert(result.getStatus.getDescription === "Resource not found")
+            assert(result.getStatus.getDescription === "Scope not found")
         }
 
         "defaults to UNKNOWN when no gRPC exception in cause chain" in {

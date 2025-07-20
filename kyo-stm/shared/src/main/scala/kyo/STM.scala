@@ -68,7 +68,7 @@ object STM:
       *   The result of the computation if successful
       */
     def run[E: ConcreteTag, A, S](
-        using Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
+        using Isolate[S, Async & Abort[E | FailedTransaction], S]
     )(v: A < (STM & Abort[E] & Async & S))(using frame: Frame): A < (S & Async & Abort[E | FailedTransaction]) =
         run(defaultRetrySchedule)(v)
 
@@ -82,7 +82,7 @@ object STM:
       *   The result of the computation if successful
       */
     def run[E: ConcreteTag, A, S](
-        using isolate: Isolate.Stateful[S, Async & Abort[E | FailedTransaction]]
+        using isolate: Isolate[S, Async & Abort[E | FailedTransaction], S]
     )(retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async & S))(
         using frame: Frame
     ): A < (S & Async & Abort[E | FailedTransaction]) =

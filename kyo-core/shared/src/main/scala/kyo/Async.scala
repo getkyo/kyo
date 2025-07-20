@@ -23,7 +23,7 @@ import scala.util.control.NonFatal
   * performance-critical sections where precise control over execution characteristics is needed.
   *
   * Unlike other effects, Async doesn't have a run method - it's typically handled by KyoApp at the application boundary. While
-  * Async.runAndBlock exists for blocking execution, it should be avoided as it defeats the purpose of asynchronous computation. For
+  * KyoApp.runAndBlock exists for blocking execution, it should be avoided as it defeats the purpose of asynchronous computation. For
   * advanced use cases requiring manual fiber handling, Fiber.init can be used.
   *
   * Note: For collection operations, Async provides concurrent execution variants of the `Kyo` companion object sequential operations. These
@@ -115,12 +115,12 @@ object Async extends AsyncPlatformSpecific:
       *   The result of the computation, which can still be interrupted
       */
     def mask[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         isolate.capture { state =>
-            Fiber.init(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
+            Fiber.initUnscoped(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
         }
 
     /** Creates a computation that never completes.
@@ -128,7 +128,7 @@ object Async extends AsyncPlatformSpecific:
       * @return
       *   A computation that never completes
       */
-    def never[A](using Frame): A < Async = Fiber.never[Nothing, A].get
+    def never[A](using Frame): A < Async = Fiber.never.map(_.get)
 
     /** Delays execution of a computation by a specified duration.
       *
@@ -161,13 +161,12 @@ object Async extends AsyncPlatformSpecific:
       *   The result of the computation, or a Timeout error
       */
     def timeout[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
-        if after == Duration.Zero then Abort.fail(Timeout(Present(after)))
-        else if !after.isFinite then v
+        if !after.isFinite then v
         else
             isolate.capture { state =>
-                Fiber.init(isolate.isolate(state, v)).map { task =>
+                Fiber.initUnscoped(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
                         Sync.Unsafe {
                             val sleepFiber = clock.unsafe.sleep(after)
@@ -196,13 +195,13 @@ object Async extends AsyncPlatformSpecific:
       *   The result of the first successful computation to complete
       */
     def race[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         require(iterable.nonEmpty, "Can't race an empty collection.")
         isolate.capture { state =>
-            Fiber.race(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
+            Fiber.internal.race(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
         }
     end race
 
@@ -219,7 +218,7 @@ object Async extends AsyncPlatformSpecific:
       *   The result of the first successful computation to complete
       */
     def race[E, A, S](
-        using Isolate.Stateful[S, Abort[E] & Async]
+        using Isolate[S, Abort[E] & Async, S]
     )(
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
@@ -244,13 +243,13 @@ object Async extends AsyncPlatformSpecific:
       *   The result of the first computation to complete
       */
     def raceFirst[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         require(iterable.nonEmpty, "Can't race an empty collection.")
         isolate.capture { state =>
-            Fiber.raceFirst(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
+            Fiber.internal.raceFirst(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
         }
     end raceFirst
 
@@ -268,7 +267,7 @@ object Async extends AsyncPlatformSpecific:
       * @return
       */
     def raceFirst[E, A, S](
-        using Isolate.Stateful[S, Abort[E] & Async]
+        using Isolate[S, Abort[E] & Async, S]
     )(
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
@@ -289,7 +288,7 @@ object Async extends AsyncPlatformSpecific:
       *   Successful results as a Chunk
       */
     def gather[E, A, S](
-        using Isolate.Stateful[S, Abort[E] & Async]
+        using Isolate[S, Abort[E] & Async, S]
     )(
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
@@ -310,7 +309,7 @@ object Async extends AsyncPlatformSpecific:
       *   Successful results as a Chunk (size <= max)
       */
     def gather[E, A, S](
-        using Isolate.Stateful[S, Abort[E] & Async]
+        using Isolate[S, Abort[E] & Async, S]
     )(max: Int)(
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
@@ -334,7 +333,7 @@ object Async extends AsyncPlatformSpecific:
       *   Successful results as a Chunk (size <= max)
       */
     def gather[E, A, S](
-        using Isolate.Stateful[S, Abort[E] & Async]
+        using Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): Chunk[A] < (Abort[E] & Async & S) =
@@ -355,12 +354,12 @@ object Async extends AsyncPlatformSpecific:
       *   Successful results as a Chunk (size <= max)
       */
     def gather[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): Chunk[A] < (Abort[E] & Async & S) =
         isolate.capture { state =>
-            Fiber.gather(max)(iterable.map(isolate.isolate(state, _)))
+            Fiber.internal.gather(max)(iterable.map(isolate.isolate(state, _)))
                 .map(_.use(chunk => Kyo.collectAll(chunk.map(isolate.restore))))
         }
 
@@ -376,7 +375,7 @@ object Async extends AsyncPlatformSpecific:
       *   Chunk containing results in the original sequence order
       */
     def foreachIndexed[E, A, B, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(f: (Int, A) => B < (Abort[E] & Async & S))(using
         Frame
     ): Chunk[B] < (Abort[E] & Async & S) =
@@ -388,13 +387,13 @@ object Async extends AsyncPlatformSpecific:
                 case 1 => f(0, iterable.head).map(Chunk(_))
                 case size if size <= concurrency =>
                     isolate.capture { state =>
-                        Fiber.foreachIndexed(iterable)((idx, v) => isolate.isolate(state, f(idx, v)))
+                        Fiber.internal.foreachIndexed(iterable)((idx, v) => isolate.isolate(state, f(idx, v)))
                             .map(_.use(r => Kyo.foreach(r)(isolate.restore)))
                     }
                 case size =>
                     isolate.capture { state =>
                         val groupSize = Math.ceil(size.toDouble / Math.max(1, concurrency)).toInt
-                        Fiber.foreachIndexed(Chunk.from(iterable.grouped(groupSize)))((idx, group) =>
+                        Fiber.internal.foreachIndexed(Chunk.from(iterable.grouped(groupSize)))((idx, group) =>
                             Kyo.foreachIndexed(Chunk.from(group))((idx2, v) => isolate.isolate(state, f(idx + idx2, v)))
                         ).map(_.use(r => Kyo.foreach(r.flattenChunk)(isolate.restore)))
                     }
@@ -411,7 +410,7 @@ object Async extends AsyncPlatformSpecific:
       *   Chunk containing results in the original sequence order
       */
     def foreach[E, A, B, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
     )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
@@ -427,7 +426,7 @@ object Async extends AsyncPlatformSpecific:
       *   Function that processes each element
       */
     def foreachDiscard[E, A, B, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
     )(using Frame): Unit < (Abort[E] & Async & S) =
@@ -445,7 +444,7 @@ object Async extends AsyncPlatformSpecific:
       *   Chunk containing only elements that satisfied the predicate
       */
     def filter[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Boolean < (Abort[E] & Async & S)
     )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
@@ -463,7 +462,7 @@ object Async extends AsyncPlatformSpecific:
       *   Chunk containing transformed values for elements that weren't filtered
       */
     def collect[E, A, B, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Maybe[B] < (Abort[E] & Async & S)
     )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
@@ -479,7 +478,7 @@ object Async extends AsyncPlatformSpecific:
       *   Chunk containing results in the original sequence order
       */
     def collectAll[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using
         Frame
     ): Chunk[A] < (Abort[E] & Async & S) =
@@ -493,7 +492,7 @@ object Async extends AsyncPlatformSpecific:
       *   Maximum number of concurrent computations (defaults to defaultConcurrency)
       */
     def collectAllDiscard[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using Frame): Unit < (Abort[E] & Async & S) =
         foreachDiscard(iterable, concurrency)(identity)
 
@@ -509,7 +508,7 @@ object Async extends AsyncPlatformSpecific:
       *   Chunk containing results of all iterations
       */
     def fill[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(n: Int, concurrency: Int = defaultConcurrency)(
         f: => A < (Abort[E] & Async & S)
     )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
@@ -530,7 +529,7 @@ object Async extends AsyncPlatformSpecific:
       *   Chunk containing results of all iterations in index order
       */
     def fillIndexed[E, A, S](
-        using isolate: Isolate.Stateful[S, Abort[E] & Async]
+        using isolate: Isolate[S, Abort[E] & Async, S]
     )(n: Int, concurrency: Int = defaultConcurrency)(
         f: Int => A < (Abort[E] & Async & S)
     )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
@@ -745,18 +744,18 @@ object Async extends AsyncPlatformSpecific:
       */
     def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
         Sync.Unsafe {
-            val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[Nothing, A]])
+            val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
                     case Present(v) => v.safe.get
                     case Absent =>
-                        val promise = Promise.Unsafe.init[Nothing, A]()
+                        val promise = Promise.Unsafe.init[A, Any]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
                                 Sync.Unsafe {
                                     if !r.isSuccess then
                                         ref.set(Absent)
-                                    promise.completeDiscard(r)
+                                    promise.completeDiscard(r.map(Kyo.lift))
                                     Abort.get(r)
                                 }
                             }.handle(Sync.ensure {
@@ -769,24 +768,6 @@ object Async extends AsyncPlatformSpecific:
                             loop()
                         end if
             Kyo.lift(Sync.defer(loop()))
-        }
-
-    /** Runs an asynchronous computation in a new fiber and blocks until completion or timeout.
-      *
-      * @param timeout
-      *   The maximum duration to wait
-      * @param v
-      *   The computation to run
-      * @return
-      *   The result of the computation, or a Timeout error
-      */
-    def runAndBlock[E, A, S](
-        using isolate: Isolate.Contextual[S, Sync]
-    )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
-    ): A < (Abort[E | Timeout] & Sync & S) =
-        Fiber.init(v).map { fiber =>
-            fiber.block(timeout).map(Abort.get(_))
         }
 
     /** Converts a Future to an asynchronous computation.
@@ -802,28 +783,18 @@ object Async extends AsyncPlatformSpecific:
     def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
         Fiber.fromFuture(f).map(_.get)
 
-    private[kyo] def get[E, A](v: IOPromise[? <: E, ? <: A])(
-        using
-        reduce: Reducible[Abort[E]],
-        frame: Frame
-    ): A < (reduce.SReduced & Async) =
+    private[kyo] inline def get[E, A](v: IOPromise[? <: E, ? <: A])(using Frame): A < (Abort[E] & Async) =
         use(v)(identity)
 
-    private[kyo] def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(
-        using
-        reduce: Reducible[Abort[E]],
-        frame: Frame
-    ): B < (S & reduce.SReduced & Async) =
-        val x = useResult(v)(_.fold(f, Abort.fail, Abort.panic))
-        reduce(x)
-    end use
+    private[kyo] inline def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(using Frame): B < (Abort[E] & Async & S) =
+        useResult(v)(_.fold(f, Abort.fail, Abort.panic))
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
 
-    private[kyo] def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
+    private[kyo] inline def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
         ArrowEffect.suspend[A](Tag[Join], v)
 
-    private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
+    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
         ArrowEffect.suspendWith[A](Tag[Join], v)(f)
 
 end Async

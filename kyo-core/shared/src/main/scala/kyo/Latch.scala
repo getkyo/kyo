@@ -67,7 +67,7 @@ object Latch:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
-        def await()(using AllowUnsafe): Fiber.Unsafe[Nothing, Unit]
+        def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Any]
         def release()(using AllowUnsafe): Unit
         def pending()(using AllowUnsafe): Int
         def safe: Latch = Latch(this)
@@ -85,7 +85,7 @@ object Latch:
             if n <= 0 then noop
             else
                 new Unsafe:
-                    val promise = Promise.Unsafe.init[Nothing, Unit]()
+                    val promise = Promise.Unsafe.init[Unit, Any]()
                     val count   = AtomicInt.Unsafe.init(n)
 
                     def await()(using AllowUnsafe) = promise
@@ -95,7 +95,7 @@ object Latch:
                             if c > 0 && !count.compareAndSet(c, c - 1) then
                                 loop(count.get())
                             else if c == 1 then
-                                promise.completeDiscard(Result.unit)
+                                promise.completeUnitDiscard()
                         loop(count.get())
                     end release
 
