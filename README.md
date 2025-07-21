@@ -1900,26 +1900,26 @@ val a: Unit < Sync =
 
 // Recurring task with a delay between
 // executions
-val b: Fiber[Unit, Any] < Sync =
+val b: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatWithDelay(
         startAfter = 1.minute,
         delay = 1.minute
     )(a)
 
 // Without an initial delay
-val c: Fiber[Unit, Any] < Sync =
+val c: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatWithDelay(1.minute)(a)
 
 // Schedule at a specific interval, regardless
 // of the duration of each execution
-val d: Fiber[Unit, Any] < Sync =
+val d: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatAtInterval(
         startAfter = 1.minute,
         interval = 1.minute
     )(a)
 
 // Without an initial delay
-val e: Fiber[Unit, Any] < Sync =
+val e: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatAtInterval(1.minute)(a)
 ```
 
@@ -1929,15 +1929,15 @@ Use the returned `Fiber` to control scheduled tasks.
 import kyo.*
 
 // Example task
-val a: Fiber[Unit, Any] < Sync =
+val a: Fiber[Unit, Abort[Nothing]] < Sync =
     Clock.repeatAtInterval(1.second)(())
 
 // Try to cancel a task
-def b(task: Fiber[Unit, Any]): Boolean < Sync =
+def b(task: Fiber[Unit, Abort[Nothing]]): Boolean < Sync =
     task.interrupt
 
 // Check if a task is done
-def c(task: Fiber[Unit, Any]): Boolean < Sync =
+def c(task: Fiber[Unit, Abort[Nothing]]): Boolean < Sync =
     task.done
 ```
 
@@ -2243,7 +2243,7 @@ import kyo.*
 // Fork a computation. The parameter is
 // taken by reference and automatically
 // suspended with 'Sync'
-val a: Fiber[Int, Any] < Sync =
+val a: Fiber[Int, Abort[Nothing]] < Sync =
     Fiber.initUnscoped(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a
@@ -2327,7 +2327,7 @@ import scala.concurrent.Future
 val a: Future[Int] = Future.successful(42)
 
 // Transform a 'Future' into a 'Fiber'
-val b: Fiber[Int, Any] < Sync =
+val b: Fiber[Int, Abort[Nothing]] < Sync =
     Fiber.fromFuture(a)
 ```
 
@@ -2340,7 +2340,7 @@ import kyo.*
 import scala.concurrent.*
 
 // An example fiber
-val a: Fiber[Int, Any] = Fiber.succeed(42)
+val a: Fiber[Int, Abort[Nothing]] = Fiber.succeed(42)
 
 // Check if the fiber is done
 val b: Boolean < Sync =
@@ -2370,8 +2370,8 @@ val h: Future[Int] < Sync =
 
 // 'Fiber' provides a monadic API with both
 // 'map' and 'flatMap'
-val i: Fiber[Int, Any] < Sync =
-    a.flatMap(v => Fiber.succeed(v.eval + 1))
+val i: Fiber[Int, Abort[Nothing]] < Sync =
+    a.flatMap(v => Fiber.fromResult(Abort.run(v).eval.map(_ + 1)))
 ```
 
 Similarly to `Sync`, users should avoid handling the `Async` effect directly and rely on `KyoApp` instead. If strictly necessary, there are two methods to handle the `Async` effect:
@@ -2387,7 +2387,7 @@ val a: Int < Async =
     Fiber.initUnscoped(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Async' directly
-val b: Fiber[Int, Any] < Sync =
+val b: Fiber[Int, Abort[Nothing]] < Sync =
     Fiber.initUnscoped(a)
 
 // The 'runAndBlock' method accepts
