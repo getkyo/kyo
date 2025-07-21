@@ -163,7 +163,7 @@ object Scope:
                         val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
                             Access.MultiProducerSingleConsumer
                         )
-                        val promise = Promise.Unsafe.init[Unit, Any]().safe
+                        val promise = Promise.Unsafe.init[Unit, Abort[Nothing]]().safe
 
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                             Sync.Unsafe {

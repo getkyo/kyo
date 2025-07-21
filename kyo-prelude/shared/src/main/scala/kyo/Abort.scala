@@ -603,4 +603,60 @@ object Abort:
 
     end literal
 
+    sealed class CanMaskAbort
+
+    /** A function to apply a mask to any failures of type [[E]] than may or may not be possible for a generic error effect [[Abort[EG]]].
+      */
+    sealed abstract class MaskAbort[E, EG]:
+        /* Masked error type */
+        type Masked <: Product
+
+        /** @param effect
+          *   Effect including [[Abort[EG]]] which may or may not include error subtype [[E]]
+          * @return
+          *   An effect with any [[Abort[E]]] failures masked as [[Masked]]
+          */
+        def apply[A, S](effect: A < (Abort[EG] & S)): A < (Abort[EG | Masked] & S)
+
+        given tag: ConcreteTag[Masked]
+
+    end MaskAbort
+
+    /** Use an effect with a generic error type [[EG]], ensuring that you will never accidentally handle a specific error type [[E]] that
+      * may or may not be a subtype of [[EG]]. Accepts a function from a [[MaskAbort]] utility that allows you to apply the mask to any
+      * effect using the effect [[Abort[EG]]], masking [[E]]. Unmasks the masked abort effect after the function returns.
+      *
+      * @tparam E
+      *   Specific error type to be masked
+      * @tparam EG
+      *   Generic error type that may or may not include [[EG]] as a subtype
+      * @param f
+      *   Function using a [[MaskAbort]] input to mask [[E]] errors
+      */
+    def withMask[E, EG](using
+        ConcreteTag[E],
+        Frame
+    )[A, S](f: CanMaskAbort ?=> (mask: MaskAbort[E, EG]) => A < (Abort[EG | mask.Masked] & S)): A < (Abort[EG] & S) =
+        given CanMaskAbort {}
+        case class Wr(e: E)
+
+        val wrTag: ConcreteTag[Wr] = summon
+
+        val mask = new MaskAbort[E, EG]:
+            type Masked = Wr
+            def apply[A, S](effect: A < (Abort[EG] & S)): A < (Abort[EG | Masked] & S) =
+                Abort.runPartial[E](effect).map:
+                    case Result.Success(a) => a
+                    case Result.Failure(e) => Abort.fail(Wr(e))
+            given tag: ConcreteTag[Wr] = wrTag
+
+        val masked = f(mask)
+
+        val unmasked: A < (Abort[EG | E] & S) = Abort.runPartial[Wr](masked).map:
+            case Result.Success(a)  => a
+            case Result.Failure(wr) => Abort.fail(wr.e)
+
+        unmasked.asInstanceOf[A < (Abort[EG] & S)]
+    end withMask
+
 end Abort

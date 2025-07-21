@@ -443,16 +443,16 @@ class AsyncTest extends Test:
             "run" in {
                 val v: Int < Abort[Int] = 1
 
-                val _: Fiber[Fiber[Int, Abort[Int]], Any] < Sync      = Fiber.initUnscoped(Fiber.initUnscoped(v))
-                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.initUnscoped(KyoApp.runAndBlock(1.second)(v))
-                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.mask(v))
-                val _: Fiber[Int, Abort[Int | Timeout]] < Sync        = Fiber.initUnscoped(Async.timeout(1.second)(v))
-                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.race(Seq(v)))
-                val _: Fiber[Int, Abort[Int]] < Sync                  = Fiber.initUnscoped(Async.race(v, v))
-                val x: Fiber[Seq[Int], Abort[Int]] < Sync             = Fiber.initUnscoped(Async.collectAll(Seq(v)))
-                val _: Fiber[(Int, Int), Abort[Int]] < Sync           = Fiber.initUnscoped(Async.zip(v, v))
-                val _: Fiber[(Int, Int, Int), Abort[Int]] < Sync      = Fiber.initUnscoped(Async.zip(v, v, v))
-                val _: Fiber[(Int, Int, Int, Int), Abort[Int]] < Sync = Fiber.initUnscoped(Async.zip(v, v, v, v))
+                val _: Fiber[Fiber[Int, Abort[Int]], Abort[Nothing]] < Sync = Fiber.initUnscoped(Fiber.initUnscoped(v))
+                val _: Fiber[Int, Abort[Int | Timeout]] < Sync              = Fiber.initUnscoped(KyoApp.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Sync                        = Fiber.initUnscoped(Async.mask(v))
+                val _: Fiber[Int, Abort[Int | Timeout]] < Sync              = Fiber.initUnscoped(Async.timeout(1.second)(v))
+                val _: Fiber[Int, Abort[Int]] < Sync                        = Fiber.initUnscoped(Async.race(Seq(v)))
+                val _: Fiber[Int, Abort[Int]] < Sync                        = Fiber.initUnscoped(Async.race(v, v))
+                val x: Fiber[Seq[Int], Abort[Int]] < Sync                   = Fiber.initUnscoped(Async.collectAll(Seq(v)))
+                val _: Fiber[(Int, Int), Abort[Int]] < Sync                 = Fiber.initUnscoped(Async.zip(v, v))
+                val _: Fiber[(Int, Int, Int), Abort[Int]] < Sync            = Fiber.initUnscoped(Async.zip(v, v, v))
+                val _: Fiber[(Int, Int, Int, Int), Abort[Int]] < Sync       = Fiber.initUnscoped(Async.zip(v, v, v, v))
                 succeed
             }
 

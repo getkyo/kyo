@@ -1413,4 +1413,34 @@ class AbortTest extends Test:
         }
     }
 
+    "withMask" - {
+        def genericFunction[E, S](effect: Int < (Abort[E] & S)): Int < (Abort[E] & S) =
+            Abort.withMask[String, E]: mask =>
+                Abort.runPartial[String] {
+                    mask(effect).map: i =>
+                        if i < 0 then Abort.fail("failure")
+                        else
+                            mask(effect).map: j =>
+                                i + j
+                }.map:
+                    case Result.Success(v) => v
+                    case Result.Failure(e) => 0
+
+        "works with no masked effect" in {
+            val eff = 4
+            assert(Abort.run[Nothing](genericFunction(eff)).eval == Result.Success(8))
+        }
+
+        "is able to handle masked effect type within scope" in {
+            val eff = -5
+            assert(Abort.run[Nothing](genericFunction(eff)).eval == Result.Success(0))
+        }
+
+        "protects masked effect" in {
+            val eff                         = Abort.fail("string")
+            val result: Int < Abort[String] = genericFunction(eff)
+            assert(Abort.run[String](result).eval == Result.Failure("string"))
+        }
+    }
+
 end AbortTest
