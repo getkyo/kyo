@@ -38,7 +38,7 @@ import scala.util.NotGiven
   * @see
   *   [[Fiber.Unsafe]] for low-level operations requiring [[AllowUnsafe]]
   */
-opaque type Fiber[+A, -S] = IOPromiseBase[Any, A < (Async & S)]
+opaque type Fiber[+A, -S <: Abort[Nothing]] = IOPromiseBase[Any, A < (Async & S)]
 
 export Fiber.Promise
 
@@ -51,7 +51,7 @@ object Fiber:
       * @return
       *   A Fiber that completes with unit
       */
-    def unit: Fiber[Unit, Any] = _unit
+    def unit: Fiber[Unit, Abort[Nothing]] = _unit
 
     /** Creates a successful Fiber.
       *
@@ -60,7 +60,7 @@ object Fiber:
       * @return
       *   A Fiber that completes successfully with the given value
       */
-    def succeed[A](v: A): Fiber[A, Any] = fromResult(Result.succeed(v))
+    def succeed[A](v: A): Fiber[A, Abort[Nothing]] = fromResult(Result.succeed(v))
 
     /** Creates a failed Fiber.
       *
@@ -78,14 +78,14 @@ object Fiber:
       * @return
       *   A Fiber that panics with the given throwable
       */
-    def panic(ex: Throwable): Fiber[Nothing, Any] = fromResult(Result.panic(ex))
+    def panic(ex: Throwable): Fiber[Nothing, Abort[Nothing]] = fromResult(Result.panic(ex))
 
     /** Creates a never-completing Fiber.
       *
       * @return
       *   A Fiber that never completes
       */
-    def never(using Frame): Fiber[Nothing, Any] < Sync =
+    def never(using Frame): Fiber[Nothing, Abort[Nothing]] < Sync =
         Sync.defer(IOPromise[Nothing, Nothing < Any]())
 
     /** Creates a Fiber from a Result.
@@ -113,7 +113,7 @@ object Fiber:
       * @return
       *   A Fiber that completes with the result of the Future
       */
-    def fromFuture[A](future: => Future[A])(using Frame): Fiber[A, Any] < Sync =
+    def fromFuture[A](future: => Future[A])(using Frame): Fiber[A, Abort[Nothing]] < Sync =
         Sync.Unsafe(Unsafe.fromFuture(future))
 
     /** Runs an asynchronous computation in a new Fiber guaranteeing eventual interruption via the [[Scope]] effect.
@@ -170,7 +170,7 @@ object Fiber:
             }
         )
 
-    extension [A, S](self: Fiber[A, S])
+    extension [A, S <: Abort[Nothing]](self: Fiber[A, S])
         /** Checks if the Fiber is done.
           *
           * @return
@@ -196,7 +196,7 @@ object Fiber:
           * @return
           *   A new Fiber with the flat mapped result
           */
-        def flatMap[B, S2](f: A < S => Fiber[B, S2] < Sync)(using Frame): Fiber[B, S & S2] < Sync =
+        def flatMap[B, S2 <: Abort[Nothing]](f: A < S => Fiber[B, S2] < Sync)(using Frame): Fiber[B, S & S2] < Sync =
             Sync.Unsafe(Unsafe.flatMap(self)(r => Sync.Unsafe.evalOrThrow(f(r))))
 
         /** Creates a new Fiber that runs with interrupt masking.
@@ -373,7 +373,7 @@ object Fiber:
             p
         end fromFuture
 
-        extension [A, S](self: Unsafe[A, S])
+        extension [A, S <: Abort[Nothing]](self: Unsafe[A, S])
             def done()(using AllowUnsafe): Boolean      = self.lower.done()
             def mask()(using AllowUnsafe): Unsafe[A, S] = self.lower.mask()
 
@@ -427,7 +427,7 @@ object Fiber:
         end extension
     end Unsafe
 
-    opaque type Promise[A, S] <: Fiber[A, S] = IOPromise[Any, A < S]
+    opaque type Promise[A, S] <: Fiber[A, Abort[Nothing] & S] = IOPromise[Any, A < S]
 
     object Promise:
 
@@ -481,7 +481,7 @@ object Fiber:
               * @return
               *   Whether the Promise successfully became the other Fiber
               */
-            def become(other: Fiber[A, S])(using Frame): Boolean < Sync =
+            def become(other: Fiber[A, Abort[Nothing] & S])(using Frame): Boolean < Sync =
                 Sync.Unsafe(Unsafe.become(self)(other))
 
             /** Makes this Promise become another Fiber, discarding the return value.
@@ -489,7 +489,7 @@ object Fiber:
               * @param other
               *   The Fiber to become
               */
-            def becomeDiscard(other: Fiber[A, S])(using Frame): Unit < Sync =
+            def becomeDiscard(other: Fiber[A, Abort[Nothing] & S])(using Frame): Unit < Sync =
                 Sync.Unsafe(Unsafe.becomeDiscard(self)(other))
 
             /** Polls the Promise for a result without blocking.
@@ -600,9 +600,9 @@ object Fiber:
                     self.lower.complete(v)
                 def completeDiscard(v: Result[Nothing, A < S])(using AllowUnsafe): Unit =
                     discard(self.lower.complete(v))
-                def become(other: Fiber[A, S])(using AllowUnsafe): Boolean =
+                def become(other: Fiber[A, Abort[Nothing] & S])(using AllowUnsafe): Boolean =
                     self.lower.become(Fiber.lower(other))
-                def becomeDiscard(other: Fiber[A, S])(using AllowUnsafe): Unit =
+                def becomeDiscard(other: Fiber[A, Abort[Nothing] & S])(using AllowUnsafe): Unit =
                     discard(lower.become(Fiber.lower(other)))
                 def waiters()(using AllowUnsafe): Int =
                     self.lower.waiters()

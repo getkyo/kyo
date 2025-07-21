@@ -523,8 +523,8 @@ class FiberTest extends Test:
     "variance" - {
         given [A, B]: CanEqual[A, B] = CanEqual.derived
         "covariance of A" in run {
-            val f                      = Fiber.succeed("Hello")
-            val f2: Fiber[AnyRef, Any] = f
+            val f                                 = Fiber.succeed("Hello")
+            val f2: Fiber[AnyRef, Abort[Nothing]] = f
             f2.get.map { result =>
                 assert(result == "Hello")
             }
@@ -540,16 +540,16 @@ class FiberTest extends Test:
         }
 
         "variance with map" in run {
-            val f                      = Fiber.succeed("Hello")
-            val f2: Fiber[AnyRef, Any] = f
+            val f                                 = Fiber.succeed("Hello")
+            val f2: Fiber[AnyRef, Abort[Nothing]] = f
             f2.get.map { result =>
                 assert(result == "Hello")
             }
         }
 
         "variance with flatMap" in run {
-            val f                      = Fiber.succeed("Hello")
-            val f2: Fiber[AnyRef, Any] = f
+            val f                                 = Fiber.succeed("Hello")
+            val f2: Fiber[AnyRef, Abort[Nothing]] = f
             f2.flatMap(s => Fiber.succeed(s.asInstanceOf[String])).map(_.get).map { result =>
                 assert(result == "Hello")
             }
@@ -563,8 +563,8 @@ class FiberTest extends Test:
         }
 
         "variance with use" in run {
-            val f                      = Fiber.succeed("Hello")
-            val f2: Fiber[AnyRef, Any] = f
+            val f                                 = Fiber.succeed("Hello")
+            val f2: Fiber[AnyRef, Abort[Nothing]] = f
             f2.use(s => "!" + s).map { result =>
                 assert(result == "!Hello")
             }

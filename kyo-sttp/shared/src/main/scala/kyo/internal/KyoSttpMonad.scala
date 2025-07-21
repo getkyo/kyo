@@ -24,7 +24,7 @@ sealed class KyoSttpMonad(using Frame) extends MonadAsyncError[M]:
         handleWrappedError(rt)(h)
 
     def ensure[A](f: M[A], e: => M[Unit]) =
-        Promise.initWith[Unit, Any] { p =>
+        Promise.initWith[Unit, Abort[Nothing]] { p =>
             def run =
                 Fiber.initUnscoped(e).map(p.becomeDiscard)
             Sync.ensure(run)(f).map(r => p.get.andThen(r))
