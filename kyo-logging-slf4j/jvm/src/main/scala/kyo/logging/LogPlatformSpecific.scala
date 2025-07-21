@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.logging
 
 import kyo.AllowUnsafe
 import kyo.Frame
@@ -6,12 +6,9 @@ import kyo.Log
 import kyo.Log.Level
 import kyo.Text
 
-trait LogPlatformSpecific:
-    val live: Log = Log(LogPlatformSpecific.Unsafe.SLF4J("kyo.logs"))
-
 object LogPlatformSpecific:
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
         object SLF4J:

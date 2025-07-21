@@ -398,7 +398,7 @@ private[kyo] object IOPromise:
             case ex if NonFatal(ex) =>
                 given Frame = Frame.internal
                 import AllowUnsafe.embrace.danger
-                Log.live.unsafe.error("uncaught exception", ex)
+                Log.error("uncaught exception", ex).unsafeGet
         end try
     end eval
 end IOPromise

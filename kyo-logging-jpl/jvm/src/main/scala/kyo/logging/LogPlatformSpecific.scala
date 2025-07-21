@@ -1,0 +1,59 @@
+package kyo.logging
+
+import System.Logger.Level
+import kyo.AllowUnsafe
+import kyo.Frame
+import kyo.Log
+import kyo.Text
+
+object LogPlatformSpecific:
+
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    object Unsafe:
+
+        object JPL:
+            def apply(name: String) = new JPL(System.getLogger(name))
+
+        final class JPL(logger: System.Logger) extends Log.Unsafe:
+
+            val level: Log.Level =
+                if logger.isLoggable(Level.TRACE) then Log.Level.trace
+                else if logger.isLoggable(Level.DEBUG) then Log.Level.debug
+                else if logger.isLoggable(Level.INFO) then Log.Level.info
+                else if logger.isLoggable(Level.WARNING) then Log.Level.warn
+                else if logger.isLoggable(Level.ERROR) then Log.Level.error
+                else Log.Level.silent
+
+            inline def trace(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.TRACE) then logger.log(Level.TRACE, s"[${frame.position.show}] $msg")
+
+            inline def trace(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.TRACE) then logger.log(Level.TRACE, s"[${frame.position.show}] $msg", t)
+
+            inline def debug(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.DEBUG) then logger.log(Level.DEBUG, s"[${frame.position.show}] $msg")
+
+            inline def debug(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.DEBUG) then logger.log(Level.DEBUG, s"[${frame.position.show}] $msg", t)
+
+            inline def info(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.INFO) then logger.log(Level.INFO, s"[${frame.position.show}] $msg")
+
+            inline def info(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.INFO) then logger.log(Level.INFO, s"[${frame.position.show}] $msg", t)
+
+            inline def warn(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.WARNING) then logger.log(Level.WARNING, s"[${frame.position.show}] $msg")
+
+            inline def warn(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.WARNING) then logger.log(Level.WARNING, s"[${frame.position.show}] $msg", t)
+
+            inline def error(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.ERROR) then logger.log(Level.ERROR, s"[${frame.position.show}] $msg")
+
+            inline def error(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if logger.isLoggable(Level.ERROR) then logger.log(Level.ERROR, s"[${frame.position.show}] $msg", t)
+
+        end JPL
+    end Unsafe
+end LogPlatformSpecific
