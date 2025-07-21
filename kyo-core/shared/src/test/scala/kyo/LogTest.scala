@@ -22,21 +22,6 @@ class LogTest extends Test:
         end for
     }
 
-    "unsafe" in {
-        import AllowUnsafe.embrace.danger
-        Log.live.unsafe.trace("trace")
-        Log.live.unsafe.debug("debug")
-        Log.live.unsafe.info("info")
-        Log.live.unsafe.warn("warn")
-        Log.live.unsafe.error("error")
-        Log.live.unsafe.trace("trace", ex)
-        Log.live.unsafe.debug("debug", ex)
-        Log.live.unsafe.info("info", ex)
-        Log.live.unsafe.warn("warn", ex)
-        Log.live.unsafe.error("error", ex)
-        succeed
-    }
-
     "withConsoleLogger" in {
         val output = new StringBuilder
         scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:

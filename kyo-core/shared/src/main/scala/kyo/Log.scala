@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.internal.LogPlatformSpecific
-
 final case class Log(unsafe: Log.Unsafe):
     def level: Log.Level                                                          = unsafe.level
     inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.trace(msg))
@@ -19,7 +17,7 @@ final case class Log(unsafe: Log.Unsafe):
 end Log
 
 /** Logging utility object for Kyo applications. */
-object Log extends LogPlatformSpecific:
+object Log:
 
     enum Level(private val priority: Int) derives CanEqual:
         def enabled(other: Level): Boolean = other.priority <= priority
@@ -31,7 +29,7 @@ object Log extends LogPlatformSpecific:
         case silent extends Level(60)
     end Level
 
-    private val local = Local.init(live)
+    private val local = Local.init(Log(Unsafe.ConsoleLogger("kyo.logs", Level.debug)))
 
     /** Executes a function with a custom Unsafe logger.
       *
@@ -60,6 +58,16 @@ object Log extends LogPlatformSpecific:
       *   The result of the function execution
       */
     def use[A, S](f: Log => A < S)(using Frame): A < S = local.use(f)
+
+    /** Executes an effect with a custom logger.
+      *
+      * @param v
+      *   The effect to execute with the given logger
+      * @return
+      *   The result of executing the effect with the given logger
+      */
+    def withLogger[A, S](logger: Log)(v: A < S)(using Frame): A < S =
+        let(logger)(v)
 
     /** Executes an effect with a console logger using the default name "kyo.logs" and debug level.
       *
