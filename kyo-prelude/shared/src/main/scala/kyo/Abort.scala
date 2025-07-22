@@ -656,6 +656,7 @@ object Abort:
             case Result.Success(a)  => a
             case Result.Failure(wr) => Abort.fail(wr.e)
 
+        // Cast is acceptable because E is either part of EG or never happens
         unmasked.asInstanceOf[A < (Abort[EG] & S)]
     end withMask
 
