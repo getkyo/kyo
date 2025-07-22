@@ -11,13 +11,13 @@ import scala.collection.immutable.HashMap
 import scala.quoted.{Type as SType, *}
 
 private[kyo] object TagMacro:
-    def deriveImpl[A: SType](using Quotes): Expr[String | Tag.internal.Dynamic] =
+    def deriveImpl[A: SType](allowDynamic: Boolean)(using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
         val (staticDB, dynamicDB) = deriveDB[A]
         val encoded               = Expr(Tag.internal.encode(staticDB))
         if dynamicDB.isEmpty then
             encoded
-        else if FindEnclosing.isInternal then
+        else if !allowDynamic && FindEnclosing.isInternal then
             val missing =
                 dynamicDB.map {
                     case (_, (tpe, _)) =>

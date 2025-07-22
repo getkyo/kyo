@@ -93,7 +93,7 @@ object Routes:
 
     given isolate: Isolate[Routes, Async, Emit[Route]] =
         Emit.isolate.merge[Route].use {
-            Isolate[Emit[Route] & Async, Async, Emit[Route]]
+            Isolate.derive[Emit[Route] & Async, Async, Emit[Route]]
         }
 
 end Routes
