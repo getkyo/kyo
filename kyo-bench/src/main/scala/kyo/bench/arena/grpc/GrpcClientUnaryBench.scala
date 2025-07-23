@@ -32,7 +32,8 @@ class GrpcClientUnaryBench extends ArenaBench2(response):
     def kyoBench(warmup: KyoForkWarmup, state: KyoState): Response =
         import state.*
         forkKyo:
-            client.oneToOne(request)
+            Env.run(Metadata()):
+                client.oneToOne(request)
     end kyoBench
 
     @Benchmark

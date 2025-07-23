@@ -1,5 +1,6 @@
 package kyo.grpc
 
+import io.grpc.Metadata
 import io.grpc.StatusException
 import io.grpc.StatusRuntimeException
 import kyo.*
@@ -15,7 +16,7 @@ import scala.concurrent.Future
   *
   * Clients will typically handle the effect of calling a gRPC method using functions such as [[Abort.run]].
   */
-type Grpc = Async & Abort[GrpcFailure]
+type Grpc = Async & Abort[GrpcFailure] & Env[Metadata]
 
 object Grpc:
 
@@ -33,6 +34,7 @@ object Grpc:
       */
     def fromFuture[A](f: Future[A])(using Frame): A < Grpc =
         Abort.recoverError[Throwable] {
+            // TODO: Fix match not exhaustive warning
             case Result.Error(t) => Abort.fail(GrpcFailure.fromThrowable(t))
         }(Async.fromFuture(f))
     end fromFuture

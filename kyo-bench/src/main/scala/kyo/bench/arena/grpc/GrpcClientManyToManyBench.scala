@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit
 import kgrpc.bench.*
 import kgrpc.bench.TestServiceGrpc.*
 import kyo.*
+import kyo.Scope
 import kyo.bench.arena.ArenaBench2
 import kyo.bench.arena.ArenaBench2.*
 import kyo.bench.arena.WarmupJITProfile.CatsForkWarmup
@@ -32,7 +33,8 @@ class GrpcClientManyToManyBench extends ArenaBench2[Long](sizeSquared):
     def kyoBench(warmup: KyoForkWarmup, state: KyoState): Long =
         import state.*
         forkKyo:
-            client.manyToMany(Stream.init(requests)).map(_.into(Sink.count.map(_.toLong)))
+            Env.run(Metadata()):
+                client.manyToMany(Stream.init(requests)).into(Sink.count.map(_.toLong))
     end kyoBench
 
     @Benchmark

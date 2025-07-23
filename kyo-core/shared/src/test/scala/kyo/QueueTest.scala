@@ -899,10 +899,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 _     <- Kyo.foreach(1 to (size min 5))(i => queue.offer(i))
                 latch <- Latch.init(1)
-                closeAwaitEmptyFiber <- Fiber.run(
+                closeAwaitEmptyFiber <- Fiber.initUnscoped(
                     latch.await.andThen(queue.closeAwaitEmptyFiber.map(_.get))
                 )
-                closeFiber <- Fiber.run(
+                closeFiber <- Fiber.initUnscoped(
                     latch.await.andThen(queue.close)
                 )
                 _        <- latch.release
@@ -924,20 +924,20 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 
-                producerFiber1 <- Fiber.run(
+                producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmptyFiber.map(_.get))
                     )
                 )
-                producerFiber2 <- Fiber.run(
+                producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmptyFiber.map(_.get))
                     )
                 )
 
-                consumerFiber <- Fiber.run(
+                consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
                     )
@@ -963,20 +963,20 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
 
-                producerFiber1 <- Fiber.run(
+                producerFiber1 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(1 to 25, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.closeAwaitEmptyFiber.map(_.get))
                     )
                 )
-                producerFiber2 <- Fiber.run(
+                producerFiber2 <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(26 to 50, 10)(i => Abort.run(queue.offer(i)))
                             .andThen(queue.close)
                     )
                 )
 
-                consumerFiber <- Fiber.run(
+                consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
                     )

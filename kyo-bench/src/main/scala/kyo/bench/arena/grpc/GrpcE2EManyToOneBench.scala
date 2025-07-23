@@ -5,6 +5,7 @@ import io.grpc.Metadata
 import kgrpc.*
 import kgrpc.bench.*
 import kyo.*
+import kyo.Scope
 import kyo.bench.arena.ArenaBench
 import kyo.grpc.Grpc
 import org.openjdk.jmh.annotations.*
@@ -33,12 +34,13 @@ class GrpcE2EManyToOneBench extends ArenaBench.ForkOnly(response):
                 client.manyToOne(requestStream, Metadata())
     end catsBench
 
-    override def kyoBenchFiber(): Response < Grpc =
-        Resource.run:
-            for
-                _      <- createKyoServer(port, static = false)
-                client <- createKyoClient(port)
-            yield client.manyToOne(Stream.init(requests))
+    override def kyoBenchFiber(): Response < (Async & Abort[Throwable]) =
+        Scope.run:
+            Env.run(Metadata()):
+                for
+                    _      <- createKyoServer(port, static = false)
+                    client <- createKyoClient(port)
+                yield client.manyToOne(Stream.init(requests))
 
     override def zioBench(): UIO[Response] =
         ZIO.scoped:

@@ -211,10 +211,7 @@ private[compiler] case class ServicePrinter(
             case StreamType.Unary | StreamType.ClientStreaming =>
                 Types.pendingGrpcRequest(method.outputType.scalaType)
             case StreamType.ServerStreaming | StreamType.Bidirectional =>
-                Types.pending(
-                    Types.streamGrpcRequest(method.outputType.scalaType),
-                    Types.scope
-                )
+                Types.streamGrpcRequest(method.outputType.scalaType)
         }
     }
 

@@ -1270,7 +1270,7 @@ class ChannelTest extends Test:
                 c      <- Channel.init[Int](10)
                 _      <- c.put(1)
                 _      <- c.put(2)
-                fiber  <- Fiber.run(Async.fill(10)(c.closeAwaitEmpty))
+                fiber  <- Fiber.initUnscoped(Async.fill(10)(c.closeAwaitEmpty))
                 _      <- c.take
                 _      <- c.take
                 closes <- fiber.get

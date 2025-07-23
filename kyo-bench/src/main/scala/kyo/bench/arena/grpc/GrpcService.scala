@@ -17,7 +17,6 @@ import scala.language.implicitConversions
 import scalapb.zio_grpc
 import scalapb.zio_grpc.ScopedServer
 import scalapb.zio_grpc.ZChannel
-import zio.Scope
 import zio.ZIO
 import zio.given
 import zio.stream
@@ -60,20 +59,20 @@ object GrpcService:
             .flatMap(TestServiceFs2Grpc.stubResource[CIO](_))
     end createCatsClient
 
-    def createKyoServer(port: Int, static: Boolean): grpc.Server < (Resource & Sync) =
+    def createKyoServer(port: Int, static: Boolean): grpc.Server < (Scope & Sync) =
         val service = if static then StaticKyoTestService(size) else KyoTestService(size)
         kyo.grpc.Server.start(port)(_.addService(service))
     end createKyoServer
 
-    def createKyoClient(port: Int): TestService.Client < (Resource & Sync) =
+    def createKyoClient(port: Int): TestService.Client < (Scope & Sync) =
         TestService.managedClient(host, port)(_.usePlaintext())
 
-    def createZioServer(port: Int, static: Boolean): ZIO[Scope, Throwable, zio_grpc.Server] =
+    def createZioServer(port: Int, static: Boolean): ZIO[zio.Scope, Throwable, zio_grpc.Server] =
         val service = if static then StaticZIOTestService(size) else ZIOTestService(size)
         ScopedServer.fromService(ServerBuilder.forPort(port), service)
     end createZioServer
 
-    def createZioClient(port: Int): ZIO[Scope, Throwable, ZioBench.TestServiceClient] =
+    def createZioClient(port: Int): ZIO[zio.Scope, Throwable, ZioBench.TestServiceClient] =
         val builder = ManagedChannelBuilder.forAddress(host, port).usePlaintext()
         val channel = ZIO.acquireRelease {
             ZIO.attempt(ZChannel(builder.build(), None, Nil))

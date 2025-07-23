@@ -32,7 +32,8 @@ class GrpcClientManyToOneBench extends ArenaBench2(response):
     def kyoBench(warmup: KyoForkWarmup, state: KyoState): Response =
         import state.*
         forkKyo:
-            client.manyToOne(Stream.init(requests))
+            Env.run(Metadata()):
+                client.manyToOne(Stream.init(requests))
     end kyoBench
 
     @Benchmark

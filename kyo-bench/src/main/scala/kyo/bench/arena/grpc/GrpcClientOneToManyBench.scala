@@ -32,7 +32,8 @@ class GrpcClientOneToManyBench extends ArenaBench2[Long](size):
     def kyoBench(warmup: KyoForkWarmup, state: KyoState): Long =
         import state.*
         forkKyo:
-            client.oneToMany(request).map(_.into(Sink.count.map(_.toLong)))
+            Env.run(Metadata()):
+                client.oneToMany(request).into(Sink.count.map(_.toLong))
     end kyoBench
 
     @Benchmark

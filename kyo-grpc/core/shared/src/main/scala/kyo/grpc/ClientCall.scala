@@ -102,7 +102,7 @@ object ClientCall:
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         request: Request
-    )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] < Scope =
+    )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
         ???
 //        val responses: Stream[Response, Abort[GrpcFailure] & Async] < (Sync & Scope) =
 //            for

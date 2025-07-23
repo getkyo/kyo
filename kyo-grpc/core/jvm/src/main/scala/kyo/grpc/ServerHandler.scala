@@ -32,7 +32,7 @@ object ServerHandler:
       *   a gRPC [[ServerCallHandler]] for unary calls
       */
     def unary[Request, Response](f: Request => Response < Grpc)(using Frame): ServerCallHandler[Request, Response] =
-        UnaryServerCallHandler()
+        UnaryServerCallHandler(f)
 //        ServerCalls.asyncUnaryCall { (request, responseObserver) =>
 //            val response  = f(request)
 //            val completed = StreamNotifier.notifyObserver(response, responseObserver)
@@ -82,11 +82,12 @@ object ServerHandler:
         Frame,
         Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
-        ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
-            val responses = Stream.unwrap(f(request))
-            val completed = StreamNotifier.notifyObserver(responses, responseObserver)
-            KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
-        }
+        ???
+//        ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
+//            val responses = Stream.unwrap(f(request))
+//            val completed = StreamNotifier.notifyObserver(responses, responseObserver)
+//            KyoApp.Unsafe.runAndBlock(Duration.Infinity)(completed).getOrThrow
+//        }
 
     /** Creates a server handler for bidirectional streaming gRPC calls.
       *

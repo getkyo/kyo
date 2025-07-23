@@ -7,17 +7,18 @@ import java.util.concurrent.TimeUnit
 import kgrpc.bench.*
 import kgrpc.bench.TestServiceGrpc.*
 import kyo.*
+import kyo.Scope
 import kyo.bench.arena.ArenaBench2.*
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
-import org.openjdk.jmh.annotations.Scope
+import org.openjdk.jmh.annotations.{Scope => JmhScope}
 import scala.compiletime.uninitialized
 import scalapb.zio_grpc
 import zio.ZIO
 
 object GrpcServerBench:
 
-    @State(Scope.Benchmark)
+    @State(JmhScope.Benchmark)
     abstract class BaseState:
 
         protected var port: Int     = uninitialized
@@ -48,7 +49,7 @@ object GrpcServerBench:
 
     end BaseState
 
-    @State(Scope.Benchmark)
+    @State(JmhScope.Benchmark)
     class CatsState extends BaseState:
 
         var ioRuntime: cats.effect.unsafe.IORuntime = uninitialized
@@ -68,7 +69,7 @@ object GrpcServerBench:
 
     end CatsState
 
-    @State(Scope.Benchmark)
+    @State(JmhScope.Benchmark)
     class KyoState extends BaseState:
 
         @Setup
@@ -77,9 +78,9 @@ object GrpcServerBench:
 
             import AllowUnsafe.embrace.danger
 
-            val finalizer = Resource.Finalizer.Awaitable.Unsafe.init(1)
+            val finalizer = Scope.Finalizer.Awaitable.Unsafe.init(1)
             val kyoServer = createKyoServer(port, static = true)
-            val result    = ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(kyoServer)
+            val result    = ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(kyoServer)
             val _: Server = Abort.run(Sync.Unsafe.run(result)).eval.getOrThrow
 
             addFinalizer:
@@ -88,7 +89,7 @@ object GrpcServerBench:
 
     end KyoState
 
-    @State(Scope.Benchmark)
+    @State(JmhScope.Benchmark)
     class ZIOState extends BaseState:
 
         var zioRuntime: zio.Runtime[Any] = uninitialized

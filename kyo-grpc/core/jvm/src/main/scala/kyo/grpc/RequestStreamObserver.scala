@@ -59,15 +59,16 @@ private[kyo] object RequestStreamObserver:
         f: Stream[Request, Grpc] => Response < Grpc,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]]): RequestStreamObserver[Request] < (Sync & Scope) =
-        for
-            requestChannel <- StreamChannel.init[Request, GrpcFailure]
-            response = f(requestChannel.stream)
-            _ <- Fiber.init(
-                StreamNotifier.notifyObserver(response, responseObserver)
-                    // Make sure to close the channel explicitly in case the function produced a result without consuming the entire stream.
-                    .andThen(requestChannel.close)
-            )
-        yield RequestStreamObserver(requestChannel)
+//        for
+//            requestChannel <- StreamChannel.init[Request, GrpcFailure]
+//            response = f(requestChannel.stream)
+//            _ <- Fiber.init(
+//                StreamNotifier.notifyObserver(response, responseObserver)
+//                    // Make sure to close the channel explicitly in case the function produced a result without consuming the entire stream.
+//                    .andThen(requestChannel.close)
+//            )
+//        yield RequestStreamObserver(requestChannel)
+        ???
     end one
 
     /** Initializes a [[RequestStreamObserver]] for an 'inbound', server-side observer that receives a stream of requests and sends a stream
@@ -95,15 +96,16 @@ private[kyo] object RequestStreamObserver:
         f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame, AllowUnsafe, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): RequestStreamObserver[Request] < (Sync & Scope) =
-        for
-            requestChannel <- StreamChannel.init[Request, GrpcFailure]
-            responses = Stream.unwrap(f(requestChannel.stream))
-            _ <- Fiber.init(
-                StreamNotifier.notifyObserver(responses, responseObserver)
-                    // Make sure to close the channel explicitly in case the function produced a result without consuming the entire stream.
-                    .andThen(requestChannel.close)
-            )
-        yield RequestStreamObserver(requestChannel)
+//        for
+//            requestChannel <- StreamChannel.init[Request, GrpcFailure]
+//            responses = Stream.unwrap(f(requestChannel.stream))
+//            _ <- Fiber.init(
+//                StreamNotifier.notifyObserver(responses, responseObserver)
+//                    // Make sure to close the channel explicitly in case the function produced a result without consuming the entire stream.
+//                    .andThen(requestChannel.close)
+//            )
+//        yield RequestStreamObserver(requestChannel)
+        ???
     end many
 
 end RequestStreamObserver
