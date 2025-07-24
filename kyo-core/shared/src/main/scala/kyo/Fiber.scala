@@ -195,7 +195,7 @@ object Fiber:
           * @return
           *   A new Fiber with the flat mapped result
           */
-        def flatMap[B, S2](f: A < (Async & S) => Fiber[B, S2] < Sync)(using Frame): Fiber[B, S & S2] < Sync =
+        def flatMap[B, S2](f: A < S => Fiber[B, S2] < Sync)(using Frame): Fiber[B, S & S2] < Sync =
             Sync.Unsafe(Unsafe.flatMap(self)(r => Sync.Unsafe.evalOrThrow(f(r))))
 
         /** Creates a new Fiber that runs with interrupt masking.
