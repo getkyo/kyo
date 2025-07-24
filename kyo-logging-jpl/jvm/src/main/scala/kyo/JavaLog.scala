@@ -1,20 +1,22 @@
-package kyo.logging
+package kyo
 
-import System.Logger.Level
+import java.lang.System.Logger
+import java.lang.System.Logger.Level
 import kyo.AllowUnsafe
 import kyo.Frame
 import kyo.Log
 import kyo.Text
 
-object LogPlatformSpecific:
+object JavaLog:
+
+    def apply(name: String): Log = Log(new Unsafe.JPL(java.lang.System.getLogger(name)))
+
+    def apply(logger: Logger): Log = Log(new Unsafe.JPL(logger))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
-        object JPL:
-            def apply(name: String) = new JPL(System.getLogger(name))
-
-        final class JPL(logger: System.Logger) extends Log.Unsafe:
+        final class JPL(logger: Logger) extends Log.Unsafe:
 
             val level: Log.Level =
                 if logger.isLoggable(Level.TRACE) then Log.Level.trace
@@ -56,4 +58,4 @@ object LogPlatformSpecific:
 
         end JPL
     end Unsafe
-end LogPlatformSpecific
+end JavaLog

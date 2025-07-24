@@ -1,6 +1,6 @@
-package kyo.logging
+package kyo
 
-import System.Logger.Level
+import java.lang.System.Logger.Level
 import java.util.logging.Level as jul
 import java.util.logging.Logger
 import java.util.logging.SimpleFormatter
@@ -10,7 +10,7 @@ import kyo.Test
 import kyo.Text
 import scala.util.control.NoStackTrace
 
-class LogPlatformSpecificTest extends Test:
+class JavaLogTest extends Test:
 
     case object ex extends NoStackTrace
 
@@ -27,9 +27,9 @@ class LogPlatformSpecificTest extends Test:
         case Level.OFF     => jul.OFF
 
     private def loggerWithLevel(level: Level) =
-        val logger = System.getLogger("kyo.logging")
+        val logger = java.lang.System.getLogger("kyo.logging")
         Logger.getLogger("kyo.logging").setLevel(toJUL(level))
-        new LogPlatformSpecific.Unsafe.JPL(logger)
+        new JavaLog.Unsafe.JPL(logger)
     end loggerWithLevel
 
     "trace" in {
@@ -83,8 +83,8 @@ class LogPlatformSpecificTest extends Test:
                 assert(logs(1).matches("FINE: \\[.*\\] test message"))
                 assert(logs(3).matches("INFO: \\[.*\\] info message"))
                 assert(logs(5).matches("WARNING: \\[.*\\] warning"))
-                assert(logs(6).matches("kyo.logging.LogPlatformSpecificTest\\$ex\\$"))
+                assert(logs(6).matches("kyo.JavaLogTest\\$ex\\$"))
             end for
         }
     }
-end LogPlatformSpecificTest
+end JavaLogTest

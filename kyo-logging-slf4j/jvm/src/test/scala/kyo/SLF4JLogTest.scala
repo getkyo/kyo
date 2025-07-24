@@ -1,4 +1,4 @@
-package kyo.logging
+package kyo
 
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
@@ -15,14 +15,14 @@ import kyo.Text
 import org.slf4j.LoggerFactory
 import scala.util.control.NoStackTrace
 
-class LogPlatformSpecificTest extends Test:
+class SLF4JLogTest extends Test:
 
     case object ex extends NoStackTrace
 
     private def loggerWithLevel(level: Level) =
         val logger = LoggerFactory.getLogger("kyo.logging")
         logger.asInstanceOf[Logger].setLevel(level)
-        new LogPlatformSpecific.Unsafe.SLF4J(logger)
+        new SLF4JLog.Unsafe.SLF4J(logger)
     end loggerWithLevel
 
     "trace" in {
@@ -72,7 +72,7 @@ class LogPlatformSpecificTest extends Test:
         logger.addAppender(appender)
 
         val text: Text = "info message - hidden"
-        Log.withLogger(Log(LogPlatformSpecific.Unsafe.SLF4J("kyo.logging"))) {
+        Log.withLogger(SLF4JLog("kyo.logging")) {
             for
                 _ <- Log.trace("won't show up")
                 _ <- Log.debug("test message")
@@ -85,8 +85,8 @@ class LogPlatformSpecificTest extends Test:
                 assert(logs(0).matches("DEBUG kyo.logging \\[.*\\] test message"))
                 assert(logs(1).matches("INFO kyo.logging \\[.*\\] info message"))
                 assert(logs(2).matches("WARN kyo.logging \\[.*\\] warning"))
-                assert(logs(3).matches("kyo.logging.LogPlatformSpecificTest\\$ex\\$: null"))
+                assert(logs(3).matches("kyo.SLF4JLogTest\\$ex\\$: null"))
             end for
         }
     }
-end LogPlatformSpecificTest
+end SLF4JLogTest

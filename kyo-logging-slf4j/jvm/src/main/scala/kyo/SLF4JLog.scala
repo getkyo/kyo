@@ -1,20 +1,23 @@
-package kyo.logging
+package kyo
 
 import kyo.AllowUnsafe
 import kyo.Frame
 import kyo.Log
 import kyo.Log.Level
 import kyo.Text
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
-object LogPlatformSpecific:
+object SLF4JLog:
+
+    def apply(name: String): Log = Log(new Unsafe.SLF4J(LoggerFactory.getLogger(name)))
+
+    def apply(logger: Logger): Log = Log(new Unsafe.SLF4J(logger))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
-        object SLF4J:
-            def apply(name: String) = new SLF4J(org.slf4j.LoggerFactory.getLogger(name))
-
-        final class SLF4J(logger: org.slf4j.Logger) extends Log.Unsafe:
+        final class SLF4J(logger: Logger) extends Log.Unsafe:
             val level =
                 if logger.isTraceEnabled() then Level.trace
                 else if logger.isDebugEnabled() then Level.debug
@@ -54,4 +57,4 @@ object LogPlatformSpecific:
                 if Level.error.enabled(level) then logger.error(s"[${frame.position.show}] $msg", t)
         end SLF4J
     end Unsafe
-end LogPlatformSpecific
+end SLF4JLog
