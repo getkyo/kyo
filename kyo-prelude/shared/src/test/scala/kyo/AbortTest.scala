@@ -1414,8 +1414,8 @@ class AbortTest extends Test:
     }
 
     "withMask" - {
-        def genericFunction[E, S](effect: Int < (Abort[E] & S)): Int < (Abort[E] & S) =
-            Abort.withMask[String, E]: mask =>
+        def genericFunction[E: ConcreteTag, S](effect: Int < (Abort[E] & S)): Int < (Abort[E] & S) =
+            Abort.withMask[E]: mask =>
                 Abort.runPartial[String] {
                     mask(effect).map: i =>
                         if i < 0 then Abort.fail("failure")
