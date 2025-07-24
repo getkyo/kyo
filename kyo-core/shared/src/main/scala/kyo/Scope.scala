@@ -163,7 +163,7 @@ object Scope:
                         val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
                             Access.MultiProducerSingleConsumer
                         )
-                        val promise = Promise.Unsafe.init[Unit, Abort[Nothing]]().safe
+                        val promise = Promise.Unsafe.init[Unit, Any]().safe
 
                         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
                             Sync.Unsafe {
@@ -190,8 +190,9 @@ object Scope:
                                                     .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
                                             }
                                                 .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                .map(promise.becomeDiscard)
+                                                .map(v => promise.becomeDiscard(v.reduced))
                             }
+                        end close
 
                         def await(using Frame): Unit < Async = promise.get
                 end init

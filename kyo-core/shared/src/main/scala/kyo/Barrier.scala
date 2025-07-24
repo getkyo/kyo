@@ -61,7 +61,7 @@ object Barrier:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
-        def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Abort[Nothing]]
+        def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Any]
         def pending()(using AllowUnsafe): Int
         def safe: Barrier = Barrier(this)
     end Unsafe

@@ -67,7 +67,7 @@ object Latch:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
-        def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Abort[Nothing]]
+        def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Any]
         def release()(using AllowUnsafe): Unit
         def pending()(using AllowUnsafe): Int
         def safe: Latch = Latch(this)

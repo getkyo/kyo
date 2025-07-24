@@ -104,7 +104,7 @@ final case class Clock(unsafe: Clock.Unsafe):
       */
     def deadline(duration: Duration)(using Frame): Clock.Deadline < Sync = Sync.Unsafe(unsafe.deadline(duration).safe)
 
-    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Unit, Abort[Nothing]] < Sync =
+    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Unit, Any] < Sync =
         if duration == Duration.Zero then Fiber.unit
         else if !duration.isFinite then Fiber.never
         else Sync.Unsafe(unsafe.sleep(duration).safe)
@@ -389,7 +389,7 @@ object Clock:
     def nowMonotonic(using Frame): Duration < Sync =
         Sync.Unsafe.withLocal(local)(_.unsafe.nowMonotonic())
 
-    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Unit, Abort[Nothing]] < Sync =
+    private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Unit, Any] < Sync =
         Sync.Unsafe.withLocal(local)(_.unsafe.sleep(duration).safe)
 
     /** Creates a new stopwatch using the local Clock instance.
