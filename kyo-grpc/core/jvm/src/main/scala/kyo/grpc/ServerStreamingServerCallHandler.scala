@@ -4,16 +4,16 @@ import io.grpc.*
 import kyo.*
 import kyo.grpc.Grpc
 
-private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Response < Grpc) extends ServerCallHandler[Request, Response]:
+private[grpc] class ServerStreamingServerCallHandler[Request, Response](f: Request => Stream[Response, Grpc] < Grpc)(using Tag[Emit[Chunk[Response]]]) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] = {
         call.request(1)
-        UnaryServerCallListener(call, headers)
+        ServerStreamingServerCallListener(call, headers)
     }
 
-    class UnaryServerCallListener(call: ServerCall[Request, Response], headers: Metadata)
+    class ServerStreamingServerCallListener(call: ServerCall[Request, Response], headers: Metadata)
         extends ServerCall.Listener[Request]:
 
         private val interrupt: Promise[Nothing, Any] = Promise.Unsafe.initMasked[Nothing, Any]().safe
@@ -27,11 +27,12 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
             val sent =
                 Env.run(headers):
                     for
-                        response <- f(message)
+                        responses <- f(message)
                         _ <- Var.use[ServerCallOptions](_.sendHeaders(call))
                         // This might throw an exception if the call is already closed which is OK.
                         // If it is closed then it is because it was interrupted in which case we lost the race.
-                        _ <- Sync.defer(call.sendMessage(response))
+                        _ <- responses.foreach: response =>
+                            Sync.defer(call.sendMessage(response))
                     yield Status.OK
 
             val cancelled =
@@ -63,7 +64,7 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
 
         override def onReady(): Unit = ()
 
-    end UnaryServerCallListener
+    end ServerStreamingServerCallListener
 
     private def errorStatus(error: Result.Error[Throwable])(using Frame): Status < Var[ServerCallOptions] =
         val t = error.failureOrPanic
@@ -74,4 +75,4 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
                 Var.update[ServerCallOptions](_.mergeTrailers(trailers))
                     .andThen(status)
 
-end UnaryServerCallHandler
+end ServerStreamingServerCallHandler
