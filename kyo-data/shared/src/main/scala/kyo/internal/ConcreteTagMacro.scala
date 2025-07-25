@@ -5,7 +5,7 @@ import kyo.ConcreteTag
 import kyo.ConcreteTag.*
 import scala.quoted.*
 
-private[kyo] object SafeClassTagMacro:
+private[kyo] object ConcreteTagMacro:
 
     def derive[A: Type](using Quotes): Expr[ConcreteTag[A]] =
         import quotes.reflect.*
@@ -99,4 +99,4 @@ private[kyo] object SafeClassTagMacro:
         val result = create(TypeRepr.of[A].dealias)
         '{ $result.asInstanceOf[ConcreteTag[A]] }
     end derive
-end SafeClassTagMacro
+end ConcreteTagMacro

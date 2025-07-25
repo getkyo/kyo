@@ -1,7 +1,7 @@
 package kyo
 
 import kyo.Maybe
-import kyo.internal.SafeClassTagMacro
+import kyo.internal.ConcreteTagMacro
 import scala.quoted.*
 
 /** An alternative to ClassTag that supports union and intersection types.
@@ -42,7 +42,7 @@ object ConcreteTag:
     case object AnyValTag  extends Element
     case object NothingTag extends Element
 
-    inline given apply[A]: ConcreteTag[A] = ${ SafeClassTagMacro.derive[A] }
+    inline given apply[A]: ConcreteTag[A] = ${ ConcreteTagMacro.derive[A] }
 
     extension [A](self: ConcreteTag[A])
 
