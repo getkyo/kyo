@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.internal.LogPlatformSpecific
-
 final case class Log(unsafe: Log.Unsafe):
     def level: Log.Level                                                          = unsafe.level
     inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < Sync = Sync.Unsafe(unsafe.trace(msg))
@@ -19,7 +17,7 @@ final case class Log(unsafe: Log.Unsafe):
 end Log
 
 /** Logging utility object for Kyo applications. */
-object Log extends LogPlatformSpecific:
+object Log:
 
     enum Level(private val priority: Int) derives CanEqual:
         def enabled(other: Level): Boolean = other.priority <= priority
@@ -31,18 +29,20 @@ object Log extends LogPlatformSpecific:
         case silent extends Level(60)
     end Level
 
+    val live: Log = Log(Unsafe.ConsoleLogger("kyo.logs", Level.debug))
+
     private val local = Local.init(live)
 
-    /** Executes a function with a custom Unsafe logger.
+    /** Executes a function with a custom logger.
       *
-      * @param u
-      *   The Unsafe logger to use
+      * @param log
+      *   The custom logger to use
       * @param f
       *   The function to execute
       * @return
       *   The result of the function execution
       */
-    def let[A, S](log: Log)(f: => A < S)(using Frame): A < S =
+    def let[A, S](log: Log)(f: A < S)(using Frame): A < S =
         local.let(log)(f)
 
     /** Gets the current logger from the local context.
@@ -60,6 +60,18 @@ object Log extends LogPlatformSpecific:
       *   The result of the function execution
       */
     def use[A, S](f: Log => A < S)(using Frame): A < S = local.use(f)
+
+    /** Executes an effect with a custom logger. Alias for [[Log.let]].
+      *
+      * @param log
+      *   The custom logger to use
+      * @param v
+      *   The effect to execute with the given logger
+      * @return
+      *   The result of executing the effect with the given logger
+      */
+    def withLogger[A, S](log: Log)(v: A < S)(using Frame): A < S =
+        let(log)(v)
 
     /** Executes an effect with a console logger using the default name "kyo.logs" and debug level.
       *
