@@ -17,7 +17,6 @@ private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: Strea
         call.request(1)
 
         // TODO: Capacity
-        // TODO: Cleanup
         val channel: StreamChannel.Unsafe[Request, GrpcFailure] =
             StreamChannel.Unsafe.init(capacity = 42)
 
@@ -26,7 +25,7 @@ private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: Strea
                 for
                     response <- f(channel.safe.stream)
                     _ <- Var.use[ServerCallOptions](_.sendHeaders(call))
-                    // This might throw an exception if the call is already closed which is OK.
+                    // sendMessage might throw an exception if the call is already closed which is OK.
                     // If it is closed then it is because it was interrupted in which case we lost the race.
                     _ <- Sync.defer(call.sendMessage(response))
                 yield Status.OK

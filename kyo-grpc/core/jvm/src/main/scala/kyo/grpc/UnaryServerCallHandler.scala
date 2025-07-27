@@ -9,6 +9,7 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
     import AllowUnsafe.embrace.danger
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] = {
+        // WARNING: call is not guaranteed to be thread-safe.
         call.request(1)
         UnaryServerCallListener(call, headers)
     }
@@ -28,7 +29,7 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
                     for
                         response <- f(message)
                         _ <- Var.use[ServerCallOptions](_.sendHeaders(call))
-                        // This might throw an exception if the call is already closed which is OK.
+                        // sendMessage might throw an exception if the call is already closed which is OK.
                         // If it is closed then it is because it was interrupted in which case we lost the race.
                         _ <- Sync.defer(call.sendMessage(response))
                     yield Status.OK
@@ -40,6 +41,8 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
                             status <- Abort.recoverError(ServerCallHandlers.errorStatus):
                                 Async.raceFirst(sent, interrupt.get)
                             trailers <- Var.get[ServerCallOptions].map(_.trailers)
+                            // TODO: Is it safe to call close here?
+                            //  Does interrupt guarantee that other fiber has stopped?
                             _ <- Sync.defer(call.close(status, trailers))
                         yield ()
 
@@ -56,6 +59,8 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
             if messageReceived.unsafe.get() then
                 interrupt.unsafe.completeDiscard(Result.succeed(status))
             else
+                // It is safe to call close here as the listener is not called concurrently so we know there is no other
+                // fiber processing a message.
                 call.close(status, Metadata())
         end onCancel
 

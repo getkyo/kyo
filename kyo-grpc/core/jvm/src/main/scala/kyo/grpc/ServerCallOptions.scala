@@ -10,7 +10,8 @@ final case class ServerCallOptions(
     headers: Metadata = Metadata(),
     trailers: Metadata = Metadata(),
     messageCompression: Maybe[Boolean] = Maybe.empty,
-    compression: Maybe[String] = Maybe.empty
+    compression: Maybe[String] = Maybe.empty,
+    onReadyThreshold: Maybe[Int] = Maybe.empty
 ):
     
     def mergeTrailers(trailers: Metadata): ServerCallOptions =
@@ -22,6 +23,7 @@ final case class ServerCallOptions(
         Sync.defer:
             messageCompression.foreach(call.setMessageCompression)
             compression.foreach(call.setCompression)
+            onReadyThreshold.foreach(call.setOnReadyThreshold)
             // May only be called once and must be called before sendMessage.
             call.sendHeaders(headers)
     end sendHeaders
