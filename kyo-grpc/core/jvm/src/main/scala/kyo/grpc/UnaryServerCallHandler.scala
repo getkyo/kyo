@@ -4,7 +4,7 @@ import io.grpc.*
 import kyo.*
 import kyo.grpc.Grpc
 
-private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Response < Grpc) extends ServerCallHandler[Request, Response]:
+private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Response < Grpc)(using Frame) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
@@ -13,17 +13,16 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
         UnaryServerCallListener(call, headers)
     }
 
-    class UnaryServerCallListener(call: ServerCall[Request, Response], headers: Metadata)
+    private class UnaryServerCallListener(call: ServerCall[Request, Response], headers: Metadata)
         extends ServerCall.Listener[Request]:
 
-        private val interrupt: Promise[Nothing, Any] = Promise.Unsafe.initMasked[Nothing, Any]().safe
+        private val interrupt: Promise[Status, Any] =
+            Promise.Unsafe.initMasked[Status, Any]().safe
 
-        private val messageReceived: AtomicBoolean = AtomicBoolean.Unsafe.init(false).safe
+        private val messageReceived: AtomicBoolean =
+            AtomicBoolean.Unsafe.init(false).safe
 
         override def onMessage(message: Request): Unit =
-            // TODO: What frame to use here?
-            given Frame = Frame.internal
-
             val sent =
                 Env.run(headers):
                     for
@@ -34,16 +33,12 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
                         _ <- Sync.defer(call.sendMessage(response))
                     yield Status.OK
 
-            val cancelled =
-                interrupt.get
-                    .andThen(Status.CANCELLED.withDescription("Call was cancelled."))
-
             val closed =
                 Var.isolate.update.use:
                     Var.run(ServerCallOptions()):
                         for
-                            status <- Abort.recoverError(errorStatus):
-                                Async.raceFirst(sent, cancelled)
+                            status <- Abort.recoverError(ServerCallHandlers.errorStatus):
+                                Async.raceFirst(sent, interrupt.get)
                             trailers <- Var.get[ServerCallOptions].map(_.trailers)
                             _ <- Sync.defer(call.close(status, trailers))
                         yield ()
@@ -57,21 +52,17 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: Request => Resp
         override def onHalfClose(): Unit = ()
 
         override def onCancel(): Unit =
-            interrupt.unsafe.completeDiscard(Result.panic(Interrupted(Frame.internal, "Unary call cancelled")))
+            val status = Status.CANCELLED.withDescription("Call was cancelled.")
+            if messageReceived.unsafe.get() then
+                interrupt.unsafe.completeDiscard(Result.succeed(status))
+            else
+                call.close(status, Metadata())
+        end onCancel
 
         override def onComplete(): Unit = ()
 
         override def onReady(): Unit = ()
 
     end UnaryServerCallListener
-
-    private def errorStatus(error: Result.Error[Throwable])(using Frame): Status < Var[ServerCallOptions] =
-        val t = error.failureOrPanic
-        val status = Status.fromThrowable(t)
-        Maybe(Status.trailersFromThrowable(t)) match
-            case Maybe.Absent => status
-            case Maybe.Present(trailers) =>
-                Var.update[ServerCallOptions](_.mergeTrailers(trailers))
-                    .andThen(status)
 
 end UnaryServerCallHandler

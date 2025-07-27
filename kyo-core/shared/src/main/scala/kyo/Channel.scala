@@ -227,6 +227,7 @@ object Channel:
           */
         def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe(self.closeAwaitEmpty().safe.get)
 
+        // TODO: I think this can be removed now.
         /** Closes the channel and returns the [[Fiber]] waits until it's empty.
           *
           * This method closes the channel to new elements and returns a `Fiber` that completes when all elements have been consumed. Unlike

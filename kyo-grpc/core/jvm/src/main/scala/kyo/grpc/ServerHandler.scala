@@ -52,7 +52,7 @@ object ServerHandler:
         Frame,
         Tag[Emit[Chunk[Request]]]
     ): ServerCallHandler[Request, Response] =
-        ???
+        ClientStreamingServerCallHandler(f)
 //        ServerCalls.asyncClientStreamingCall(responseObserver =>
 //            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
 //            val requestObserver        = RequestStreamObserver.one(f, serverResponseObserver)
