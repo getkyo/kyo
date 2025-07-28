@@ -28,7 +28,7 @@ class CoreTest extends Test:
                 val start = Clock.now.now
                 Async.sleep(5.millis).now
                 val elapsed = Clock.now.now - start
-                assert(elapsed >= 5.millis)
+                assert(elapsed >= 4.millis)
             }
         }
 

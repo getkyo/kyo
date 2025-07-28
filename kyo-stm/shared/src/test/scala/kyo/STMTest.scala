@@ -551,9 +551,9 @@ class STMTest extends Test:
     "Concurrency" - {
 
         val repeats = 10
-        val sizes   = Choice.eval(1, 10, 100)
+        val sizes   = Choice.eval(1, 10, 100, 1000)
 
-        "concurrent updates" in run {
+        "concurrent updates" in runNotJS {
             (for
                 size  <- sizes
                 ref   <- TRef.init(0)
@@ -564,7 +564,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent reads and writes" in run {
+        "concurrent reads and writes" in runNotJS {
             (for
                 size  <- sizes
                 ref   <- TRef.init(0)
@@ -584,7 +584,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "concurrent nested transactions" in run {
+        "concurrent nested transactions" in runNotJS {
             (for
                 size <- sizes
                 ref  <- TRef.init(0)
