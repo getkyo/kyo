@@ -70,7 +70,7 @@ class JavaLogTest extends Test:
         handler.setLevel(toJUL(Level.DEBUG)) // logger.setLevel isn't enough
         logger.addHandler(handler)
         val text: Text = "info message - hidden"
-        Log.withLogger(Log(loggerWithLevel(Level.DEBUG))) {
+        Log.let(Log(loggerWithLevel(Level.DEBUG))) {
             for
                 _ <- Log.trace("won't show up")
                 _ <- Log.debug("test message")

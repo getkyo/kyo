@@ -61,18 +61,6 @@ object Log:
       */
     def use[A, S](f: Log => A < S)(using Frame): A < S = local.use(f)
 
-    /** Executes an effect with a custom logger. Alias for [[Log.let]].
-      *
-      * @param log
-      *   The custom logger to use
-      * @param v
-      *   The effect to execute with the given logger
-      * @return
-      *   The result of executing the effect with the given logger
-      */
-    def withLogger[A, S](log: Log)(v: A < S)(using Frame): A < S =
-        let(log)(v)
-
     /** Executes an effect with a console logger using the default name "kyo.logs" and debug level.
       *
       * @param v

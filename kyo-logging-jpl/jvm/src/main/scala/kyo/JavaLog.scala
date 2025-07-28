@@ -27,34 +27,34 @@ object JavaLog:
                 else Log.Level.silent
 
             inline def trace(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.TRACE) then logger.log(Level.TRACE, s"[${frame.position.show}] $msg")
+                logger.log(Level.TRACE, s"[${frame.position.show}] $msg")
 
             inline def trace(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.TRACE) then logger.log(Level.TRACE, s"[${frame.position.show}] $msg", t)
+                logger.log(Level.TRACE, s"[${frame.position.show}] $msg", t)
 
             inline def debug(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.DEBUG) then logger.log(Level.DEBUG, s"[${frame.position.show}] $msg")
+                logger.log(Level.DEBUG, s"[${frame.position.show}] $msg")
 
             inline def debug(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.DEBUG) then logger.log(Level.DEBUG, s"[${frame.position.show}] $msg", t)
+                logger.log(Level.DEBUG, s"[${frame.position.show}] $msg", t)
 
             inline def info(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.INFO) then logger.log(Level.INFO, s"[${frame.position.show}] $msg")
+                logger.log(Level.INFO, s"[${frame.position.show}] $msg")
 
             inline def info(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.INFO) then logger.log(Level.INFO, s"[${frame.position.show}] $msg", t)
+                logger.log(Level.INFO, s"[${frame.position.show}] $msg", t)
 
             inline def warn(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.WARNING) then logger.log(Level.WARNING, s"[${frame.position.show}] $msg")
+                logger.log(Level.WARNING, s"[${frame.position.show}] $msg")
 
             inline def warn(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.WARNING) then logger.log(Level.WARNING, s"[${frame.position.show}] $msg", t)
+                logger.log(Level.WARNING, s"[${frame.position.show}] $msg", t)
 
             inline def error(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.ERROR) then logger.log(Level.ERROR, s"[${frame.position.show}] $msg")
+                logger.log(Level.ERROR, s"[${frame.position.show}] $msg")
 
             inline def error(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if logger.isLoggable(Level.ERROR) then logger.log(Level.ERROR, s"[${frame.position.show}] $msg", t)
+                logger.log(Level.ERROR, s"[${frame.position.show}] $msg", t)
 
         end JPL
     end Unsafe
