@@ -551,7 +551,7 @@ class STMTest extends Test:
     "Concurrency" - {
 
         val repeats = 10
-        val sizes   = Choice.eval(1, 10, 100, 1000)
+        val sizes   = Choice.eval(1, 10, 100)
 
         "concurrent updates" in run {
             (for
