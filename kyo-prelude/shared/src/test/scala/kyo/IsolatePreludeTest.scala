@@ -1,6 +1,6 @@
 package kyo
 
-class IsolateTest extends Test:
+class IsolatePreludeTest extends Test:
 
     "run" - {
         "with Var isolate" in run {
@@ -261,4 +261,4 @@ class IsolateTest extends Test:
             assert(memoCount == 2)
         }
     }
-end IsolateTest
+end IsolatePreludeTest

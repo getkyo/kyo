@@ -5,7 +5,7 @@ import kyo.ConcreteTag
 import kyo.ConcreteTag.*
 import scala.quoted.*
 
-private[kyo] object SafeClassTagMacro:
+private[kyo] object ConcreteTagMacro:
 
     def derive[A: Type](using Quotes): Expr[ConcreteTag[A]] =
         import quotes.reflect.*
@@ -55,43 +55,48 @@ private[kyo] object SafeClassTagMacro:
         end create
 
         def createSingle(tpe: TypeRepr): Expr[ConcreteTag[Any]] =
-            checkType(tpe)
-            tpe match
-                case ConstantType(const) =>
-                    val value =
-                        const.value match
-                            case x: Int     => Expr(x)
-                            case x: Long    => Expr(x)
-                            case x: Float   => Expr(x)
-                            case x: Double  => Expr(x)
-                            case x: Boolean => Expr(x)
-                            case x: Char    => Expr(x)
-                            case x: String  => Expr(x)
-                            case x          => report.errorAndAbort(s"Unsupported literal type: $x")
-                    '{ LiteralTag($value) }
+            Implicits.search(TypeRepr.of[[A] =>> ConcreteTag[A]].appliedTo(tpe)) match
+                case result: ImplicitSearchSuccess =>
+                    val tagExpr: Expr[Any] = result.tree.asExpr
+                    '{ $tagExpr.asInstanceOf[ConcreteTag[Any]] }
                 case _ =>
-                    tpe.asType match
-                        case '[Nothing]                       => '{ NothingTag }
-                        case '[Unit]                          => '{ UnitTag }
-                        case '[Int]                           => '{ IntTag }
-                        case '[Long]                          => '{ LongTag }
-                        case '[Double]                        => '{ DoubleTag }
-                        case '[Float]                         => '{ FloatTag }
-                        case '[Byte]                          => '{ ByteTag }
-                        case '[Short]                         => '{ ShortTag }
-                        case '[Char]                          => '{ CharTag }
-                        case '[Boolean]                       => '{ BooleanTag }
-                        case _ if tpe =:= TypeRepr.of[AnyVal] => '{ AnyValTag }
-                        case '[t] =>
-                            val classOfSym = Symbol.requiredMethod("scala.Predef.classOf")
-                            val classOfExpr = Select(Ref(Symbol.requiredModule("scala.Predef")), classOfSym)
-                                .appliedToType(TypeRepr.of[t])
-                            val expr = classOfExpr.asExprOf[Any]
-                            '{ $expr.asInstanceOf[ConcreteTag[Any]] }
-            end match
+                    checkType(tpe)
+                    tpe match
+                        case ConstantType(const) =>
+                            val value =
+                                const.value match
+                                    case x: Int     => Expr(x)
+                                    case x: Long    => Expr(x)
+                                    case x: Float   => Expr(x)
+                                    case x: Double  => Expr(x)
+                                    case x: Boolean => Expr(x)
+                                    case x: Char    => Expr(x)
+                                    case x: String  => Expr(x)
+                                    case x          => report.errorAndAbort(s"Unsupported literal type: $x")
+                            '{ LiteralTag($value) }
+                        case _ =>
+                            tpe.asType match
+                                case '[Nothing]                       => '{ NothingTag }
+                                case '[Unit]                          => '{ UnitTag }
+                                case '[Int]                           => '{ IntTag }
+                                case '[Long]                          => '{ LongTag }
+                                case '[Double]                        => '{ DoubleTag }
+                                case '[Float]                         => '{ FloatTag }
+                                case '[Byte]                          => '{ ByteTag }
+                                case '[Short]                         => '{ ShortTag }
+                                case '[Char]                          => '{ CharTag }
+                                case '[Boolean]                       => '{ BooleanTag }
+                                case _ if tpe =:= TypeRepr.of[AnyVal] => '{ AnyValTag }
+                                case '[t] =>
+                                    val classOfSym = Symbol.requiredMethod("scala.Predef.classOf")
+                                    val classOfExpr = Select(Ref(Symbol.requiredModule("scala.Predef")), classOfSym)
+                                        .appliedToType(TypeRepr.of[t])
+                                    val expr = classOfExpr.asExprOf[Any]
+                                    '{ $expr.asInstanceOf[ConcreteTag[Any]] }
+                    end match
         end createSingle
 
         val result = create(TypeRepr.of[A].dealias)
         '{ $result.asInstanceOf[ConcreteTag[A]] }
     end derive
-end SafeClassTagMacro
+end ConcreteTagMacro

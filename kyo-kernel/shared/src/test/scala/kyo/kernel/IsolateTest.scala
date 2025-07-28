@@ -212,4 +212,129 @@ class IsolateTest extends Test:
         }
     }
 
+    "variance" - {
+        "Remove parameter (invariant)" - {
+            "cannot accept supertypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[TestEffect1, Any, Any] = Isolate.derive[TestEffect1, Any, Any]
+                    val _: Isolate[Any, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[Any, Any, Any]"
+                )
+            }
+
+            "cannot accept subtypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[Any, Any, Any] = Isolate.Identity
+                    val _: Isolate[TestEffect1, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
+                )
+            }
+        }
+
+        "Keep parameter (contravariant)" - {
+            "accepts subtypes" in {
+                val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, TestEffect2, Any] = isolate
+                succeed
+            }
+
+            "does not accept supertypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[TestEffect1, TestEffect2, Any] = Isolate.derive[TestEffect1, TestEffect2, Any]
+                    val _: Isolate[TestEffect1, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
+                )
+            }
+        }
+
+        "Restore parameter (covariant)" - {
+            "accepts supertypes" in {
+                val isolate: Isolate[TestEffect1, Any, Any]   = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, Any, TestEffect1] = isolate
+                succeed
+            }
+
+            "does not accept subtypes" in {
+                typeCheckFailure("""
+                    val isolate: Isolate[TestEffect1, Any, TestEffect1] = Isolate.derive[TestEffect1, Any, TestEffect1]
+                    val _: Isolate[TestEffect1, Any, Any] = isolate
+                """)(
+                    "Required: kyo.kernel.Isolate[IsolateTest.this.TestEffect1, Any, Any]"
+                )
+            }
+        }
+
+        "mixed variance scenarios" - {
+            "contravariant Keep with covariant Restore" in {
+                val isolate: Isolate[TestEffect1, Any, Any]           = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, TestEffect2, TestEffect1] = isolate
+                succeed
+            }
+
+            "variance preserved through andThen" in {
+                val isolate1: Isolate[TestEffect1, Any, Any] = Isolate.derive[TestEffect1, Any, Any]
+                val isolate2: Isolate[TestEffect2, Any, Any] = Isolate.derive[TestEffect2, Any, Any]
+
+                val composed                                                                      = isolate1.andThen(isolate2)
+                val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1 & TestEffect2] = composed
+                succeed
+            }
+
+            "complex intersection types" in {
+                val isolate: Isolate[TestEffect1 & TestEffect2, Any, Any] =
+                    Isolate.derive[TestEffect1 & TestEffect2, Any, Any]
+                val _: Isolate[TestEffect1 & TestEffect2, TestEffect3, TestEffect1] = isolate
+                succeed
+            }
+
+            "all three variance interactions" in {
+                val isolate: Isolate[TestEffect1, Any, Any]                                       = Isolate.derive[TestEffect1, Any, Any]
+                val _: Isolate[TestEffect1, TestEffect2 & TestEffect3, TestEffect1 & TestEffect2] = isolate
+                succeed
+            }
+        }
+    }
+
+    "nest" - {
+        "tunnels effects through isolation" in {
+            val isolate                   = Isolate.derive[TestEffect1, Any, TestEffect1]
+            val effect: Int < TestEffect1 = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+
+            val nested: Int < TestEffect1 < TestEffect1 = isolate.nest(effect)
+            val flattened: Int < TestEffect1            = nested.flatten
+
+            val result = ContextEffect.handle(Tag[TestEffect1], 42, _ + 1)(flattened)
+            assert(result.eval == 42)
+        }
+
+        "allows effect handling between nest and flatten" in {
+            val isolate = Isolate.derive[TestEffect1, TestEffect2, Any]
+            val effect: Int < (TestEffect1 & TestEffect2) =
+                for
+                    x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                    y <- ContextEffect.suspend[String, TestEffect2](Tag[TestEffect2])
+                yield x + y.length
+
+            val nested = isolate.nest(effect)
+
+            val handled   = ContextEffect.handle(Tag[TestEffect2], "hello", _.toUpperCase)(nested)
+            val flattened = handled.flatten
+
+            val result = ContextEffect.handle(Tag[TestEffect1], 10, _ + 1)(flattened)
+            assert(result.eval == 15)
+        }
+
+        "transforms Remove to Restore in type signature" in {
+            val isolate                   = Isolate.derive[TestEffect1, Any, TestEffect2]
+            val effect: Int < TestEffect1 = ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+
+            val nested: Int < TestEffect2 < TestEffect1 = isolate.nest(effect)
+            val _: Int < TestEffect2 < TestEffect1      = nested
+            succeed
+        }
+    }
+
 end IsolateTest
