@@ -2,6 +2,7 @@ package kyo
 
 import java.util.concurrent.ConcurrentHashMap
 import kyo.Tag.internal.Type.Entry.*
+import kyo.internal.Platform
 import kyo.internal.TagMacro
 import scala.annotation.tailrec
 import scala.collection.immutable.HashMap
@@ -295,7 +296,10 @@ object Tag:
             end Entry
         end Type
 
-        private val threadSlots  = Runtime.getRuntime().availableProcessors() * 8
+        private val threadSlots =
+            if Platform.isJS then 1
+            else Runtime.getRuntime().availableProcessors() * 8
+
         private val cacheEntries = 128
         private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
 
