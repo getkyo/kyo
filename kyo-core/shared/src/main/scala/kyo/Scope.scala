@@ -17,10 +17,14 @@ import kyo.kernel.ContextEffect
   *   - Compositional API allowing resource dependencies to be built up safely with `acquireRelease` and `acquire`
   *   - Support for parallel cleanup through configurable concurrency levels with `run(closeParallelism)(...)`
   *   - Declarative cleanup registration using `Scope.ensure` for custom finalizers
+  *   - Hierarchical scope management where child scopes are automatically closed when parent scopes close
   *
   * The Scope effect follows the bracket pattern (acquire-use-release) but with improved interruption handling and parallel cleanup
   * capabilities. Scope finalizers registered with `ensure` are guaranteed to run exactly once when the associated scope completes, with
   * failures in finalizers logged rather than thrown to avoid masking the primary computation result.
+  *
+  * Scope supports hierarchical nesting where child scopes are automatically closed when their parent scope closes. This ensures that
+  * resources acquired in child scopes are properly cleaned up even if the parent scope completes or fails.
   *
   * Typically, you would use `acquireRelease` to pair resource acquisition with its cleanup function, then compose multiple resources
   * together before running the combined effect with `Scope.run`.
@@ -34,43 +38,39 @@ import kyo.kernel.ContextEffect
   * @see
   *   [[kyo.Scope.run]] For executing resource-managed computations
   */
-sealed trait Scope extends ContextEffect[Scope.Finalizer]
-
-@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
-type Resource = Scope
-
-@deprecated("Will be removed in 1.0. Use `Scope` instead.", "1.0-RC")
-val Resource = Scope
+opaque type Scope <: Sync = Sync
 
 object Scope:
 
-    /** Ensures that the given effect is executed when the resource is released.
+    private val local = Local.init(Maybe.empty[Finalizer])
+
+    /** Ensures that the given effect is executed when the scope is released.
       *
       * @param v
-      *   The effect to be executed on resource release.
+      *   The effect to be executed on scope release.
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   A unit value wrapped in Resource and Sync effects.
+      *   A unit value wrapped in Scope effect.
       */
-    inline def ensure(inline v: => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Scope & Sync) =
-        ContextEffect.suspendWith(Tag[Scope])(_.ensure(_ => v))
+    def ensure(v: => Any < (Async & Abort[Throwable]))(using Frame): Unit < Scope =
+        ensure(_ => v)
 
-    /** Ensures that the given effect is executed when the resource is released, with information about the computation's outcome.
+    /** Ensures that the given effect is executed when the scope is released, with information about the computation's outcome.
       *
       * This version provides the finalizer with information about whether the computation completed successfully or failed with an
       * exception. The finalizer receives a `Maybe[Error[Any]]` which will be `Absent` if the computation succeeded, or `Present` if it
       * failed.
       *
-      * @param f
+      * @param callback
       *   The finalizer function that receives information about the computation's outcome and performs cleanup actions.
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   A unit value wrapped in Resource and Sync effects.
+      *   A unit value wrapped in Scope effect.
       */
-    inline def ensure(inline f: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Scope & Sync) =
-        ContextEffect.suspendWith(Tag[Scope])(_.ensure(f))
+    def ensure(callback: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Scope =
+        withFinalizerUnsafe(_.ensure(callback))
 
     /** Acquires a resource and provides a release function.
       *
@@ -81,12 +81,13 @@ object Scope:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   The acquired resource wrapped in Resource, Sync, and S effects.
+      *   The acquired resource wrapped in Scope and S effects.
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & Sync & S) =
-        Sync.defer {
-            acquire.map { resource =>
-                ensure(release(resource)).andThen(resource)
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Any < (Async & Abort[Throwable]))(using Frame): A < (Scope & S) =
+        withFinalizerUnsafe { finalizer =>
+            acquire.ensureMap { resource =>
+                finalizer.ensure(_ => release(resource))
+                resource
             }
         }
 
@@ -97,27 +98,27 @@ object Scope:
       * @param frame
       *   The implicit Frame for context.
       * @return
-      *   The acquired Closeable resource wrapped in Resource, Sync, and S effects.
+      *   The acquired Closeable resource wrapped in Scope and S effects.
       */
-    def acquire[A <: java.lang.AutoCloseable, S](resource: => A < S)(using Frame): A < (Scope & Sync & S) =
+    def acquire[A <: AutoCloseable, S](resource: => A < S)(using Frame): A < (Scope & S) =
         acquireRelease(resource)(_.close())
 
-    /** Runs a resource-managed effect with default parallelism of 1.
+    /** Runs a scope-managed effect with default parallelism of 1.
       *
       * This method collects all resources used within the computation and ensures they are properly closed when the computation completes
       * (either successfully or with an error). Resources are closed sequentially (parallelism = 1).
       *
       * @param v
-      *   The effect to run with resource management.
+      *   The effect to run with scope management.
       * @param frame
       *   The implicit Frame for context.
       * @return
       *   The result of the effect wrapped in Async and S effects.
       */
-    def run[A, S](v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
-        run(1)(v)
+    def run[A, S](v: A < (Scope & S))(using Frame): A < (Async & S) =
+        run(1, true)(v)
 
-    /** Runs a resource-managed effect with specified parallelism for cleanup.
+    /** Runs a scope-managed effect with specified parallelism for cleanup.
       *
       * This method tracks all resources acquired during the computation and ensures they are properly closed when the computation completes
       * (either successfully or with an error). The cleanup phase runs resource finalizers in parallel, grouped according to the specified
@@ -125,78 +126,144 @@ object Scope:
       *
       * @param closeParallelism
       *   The number of parallel tasks to use when running finalizers. This controls how many resources can be cleaned up simultaneously.
+      * @param awaitClose
+      *   Whether to wait for all finalizers to complete before returning the result.
       * @param v
-      *   The effect to run with resource management.
+      *   The effect to run with scope management.
       * @param frame
       *   The implicit Frame for context.
       * @return
       *   The result of the effect wrapped in Async and S effects.
       */
-    def run[A, S](closeParallelism: Int)(v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
-        Sync.Unsafe {
-            val finalizer = Finalizer.Awaitable.Unsafe.init(closeParallelism)
-            ContextEffect.handle(Tag[Scope], finalizer, _ => finalizer)(v)
-                .handle(
-                    Sync.ensure(finalizer.close),
-                    Abort.run[Any]
-                ).map { result =>
-                    finalizer
-                        .close(result.error)
-                        .andThen(finalizer.await)
-                        .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
-                }
+    def run[A, S](closeParallelism: Int, awaitClose: Boolean = true)(v: A < (Scope & S))(using Frame): A < (Async & S) =
+        runLocally(closeParallelism, awaitClose) { finalizer =>
+            local.let(Present(finalizer))(v)
         }
 
-    /** Represents a finalizer for a resource. */
-    sealed abstract class Finalizer:
-        def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
+    /** Runs a scope-managed effect with local finalizer management.
+      *
+      * This is an advanced method that is useful for library functions that need to acquire temporary resources (like database connections,
+      * caches, etc.) but want to ensure these resources don't interfere with other scope-managed resources. The temporary resources are
+      * cleaned up when the function completes, regardless of the outer scope state, and resources in child scopes are left untouched.
+      *
+      * @param f
+      *   The function that receives a finalizer and returns the effect to run.
+      * @param frame
+      *   The implicit Frame for context.
+      * @return
+      *   The result of the effect wrapped in Async and S effects.
+      */
+    def runLocally[A, S](f: Finalizer => A < (Scope & S))(using Frame): A < (Async & S) =
+        runLocally(1)(f)
+
+    /** Runs a scope-managed effect with local finalizer management and specified parallelism.
+      *
+      * This is an advanced method that is useful for library functions that need to acquire temporary resources (like database connections,
+      * caches, etc.) but want to ensure these resources don't interfere with other scope-managed resources. The temporary resources are
+      * cleaned up when the function completes, regardless of the outer scope state, and resources in child scopes are left untouched.
+      *
+      * @param closeParallelism
+      *   The number of parallel tasks to use when running finalizers.
+      * @param awaitClose
+      *   Whether to wait for all finalizers to complete before returning the result.
+      * @param f
+      *   The function that receives a finalizer and returns the effect to run.
+      * @param frame
+      *   The implicit Frame for context.
+      * @return
+      *   The result of the effect wrapped in Async and S effects.
+      */
+    def runLocally[A, S](closeParallelism: Int, awaitClose: Boolean = true)(f: Finalizer => A < (Scope & S))(
+        using Frame
+    ): A < (Async & S) =
+        Sync.withLocal(local) { parent =>
+            import AllowUnsafe.embrace.danger
+            val finalizer = new Finalizer.Unsafe
+            parent.foreach(p => discard(p.tryEnsure(finalizer.close(_, closeParallelism))))
+            f(finalizer).handle(
+                Sync.ensure(finalizer.close(_, closeParallelism)),
+                Abort.run[Any]
+            ).map { result =>
+                finalizer.close(result.error, closeParallelism)
+                Kyo.when(awaitClose)(finalizer.await().safe.get)
+                    .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+            }
+        }
+
+    private def withFinalizerUnsafe[A, S](f: AllowUnsafe ?=> Finalizer => A < S)(using Frame): A < (Scope & S) =
+        local.use {
+            case Present(finalizer) => f(using AllowUnsafe.embrace.danger)(finalizer)
+            case Absent             => bug("Missing finalizer from context")
+        }
+
+    given isolate[S <: Scope]: Isolate[Scope, Sync, S] = Isolate.derive[Sync, Sync, Any]
+
+    /** Represents a finalizer for a scope. */
+    opaque type Finalizer = Finalizer.Unsafe
 
     object Finalizer:
-        sealed abstract class Awaitable extends Finalizer:
-            def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync
-            def await(using Frame): Unit < Async
 
-        object Awaitable:
-            object Unsafe:
-                def init(parallelism: Int)(using frame: Frame, u: AllowUnsafe): Awaitable =
-                    new Awaitable:
-                        val queue = Queue.Unbounded.Unsafe.init[Maybe[Error[Any]] => Any < (Async & Abort[Throwable])](
-                            Access.MultiProducerSingleConsumer
-                        )
-                        val promise = Promise.Unsafe.init[Unit, Any]().safe
+        extension (self: Finalizer)
 
-                        def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync =
-                            Sync.Unsafe {
-                                if !queue.offer(v).contains(true) then
-                                    Abort.panic(new Closed(
-                                        "Finalizer",
-                                        frame,
-                                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
-                                    ))
-                                else ()
-                            }
-                        end ensure
+            /** Ensures that the given callback is executed when the scope is released.
+              *
+              * @param callback
+              *   The callback function to be executed on scope release.
+              * @param frame
+              *   The implicit Frame for context.
+              * @return
+              *   A unit value wrapped in Sync effect.
+              */
+            def ensure(callback: Callback)(using Frame): Unit < Sync =
+                Sync.Unsafe(self.ensure(callback))
 
-                        def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
-                            Sync.Unsafe {
-                                queue.close() match
-                                    case Absent => ()
-                                    case Present(tasks) =>
-                                        if tasks.isEmpty then
-                                            promise.completeUnitDiscard
-                                        else
-                                            Async.foreachDiscard(tasks, parallelism) { task =>
-                                                Abort.run[Throwable](task(ex))
-                                                    .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
-                                            }
-                                                .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                .map(promise.becomeDiscard)
-                            }
+            def unsafe: Unsafe = self
 
-                        def await(using Frame): Unit < Async = promise.get
-                end init
-            end Unsafe
-        end Awaitable
+        end extension
+
+        /** Type alias for the callback function used in finalizers. */
+        type Callback = Maybe[Error[Any]] => Any < (Async & Abort[Throwable])
+
+        /** Unsafe implementation of a finalizer. */
+        final class Unsafe private[Scope] (using frame: Frame):
+            import AllowUnsafe.embrace.danger
+
+            private val queue   = Queue.Unbounded.Unsafe.init[Callback](Access.MultiProducerSingleConsumer)
+            private val promise = Promise.Unsafe.init[Unit, Any]()
+
+            private[Scope] def tryEnsure(callback: Callback): Unit =
+                discard(queue.offer(callback))
+
+            def ensure(callback: Callback)(using AllowUnsafe): Unit =
+                if !queue.offer(callback).contains(true) then
+                    throw new Closed(
+                        "Finalizer",
+                        frame,
+                        "This finalizer is already closed. This may happen if a background fiber escapes the scope of a 'Scope.run' call."
+                    )
+
+            def close(ex: Maybe[Error[Any]], parallelism: Int)(using AllowUnsafe): Unit =
+                queue.close() match
+                    case Absent => ()
+                    case Present(tasks) =>
+                        if tasks.isEmpty then
+                            promise.completeDiscard(Result.succeed(()))
+                        else
+                            Sync.Unsafe.evalOrThrow(
+                                Async.foreachDiscard(tasks, parallelism) { task =>
+                                    Abort.run[Throwable](task(ex))
+                                        .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
+                                }
+                                    .handle(Fiber.init[Nothing, Unit, Any, Any])
+                                    .map(promise.safe.becomeDiscard)
+                            )
+
+            def await()(using AllowUnsafe): Fiber.Unsafe[Unit, Any] =
+                promise
+
+            def safe: Finalizer = this
+        end Unsafe
+
     end Finalizer
 
 end Scope

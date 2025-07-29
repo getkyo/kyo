@@ -382,9 +382,10 @@ object `<`:
         inline def eval(using inline frame: Frame): A =
             @tailrec def evalLoop(kyo: A < Any)(using Safepoint): A =
                 kyo match
-                    case kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any] @unchecked
-                        if kyo.tag =:= Tag[Defer] =>
+                    case kyo: KyoDefer[A, Any] @unchecked =>
                         evalLoop(kyo((), Context.empty))
+                    case kyo: KyoBraket[?, A, Any] @unchecked =>
+                        braket(kyo)
                     case kyo: KyoSuspend[?, ?, ?, ?, A, Any] @unchecked =>
                         bug.failTag(kyo, Tag[Any])
                     case v =>
@@ -393,7 +394,17 @@ object `<`:
             end evalLoop
             Safepoint.eval(evalLoop(v))
         end eval
+
     end extension
+
+    private def braket[A, B](kyo: KyoBraket[A, B, Any])(using Frame, Safepoint): B =
+        val resource = kyo.acquire.eval
+        try
+            kyo.continue(resource).eval
+        finally
+            discard(kyo.release(resource).eval)
+        end try
+    end braket
 
     implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
 

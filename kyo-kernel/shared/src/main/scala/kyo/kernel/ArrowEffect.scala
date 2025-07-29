@@ -608,22 +608,21 @@ object ArrowEffect:
             if stop then v
             else
                 v match
+                    case kyo: KyoDefer[A, E1 & E2 & S] =>
+                        partialLoop(kyo((), context), context)
+                    case kyo: KyoBraket[?, A, E1 & E2 & S] =>
+                        ???
                     case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] =>
                         type Suspend[I[_], O[_], E <: ArrowEffect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & S & S2]
-                        if kyo.tag <:< Tag[Defer] then
-                            val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
-                            partialLoop(k((), context), context)
+                        safepoint.pushFrame(kyo.frame)
+                        if tag1 <:< kyo.tag then
+                            val k = kyo.asInstanceOf[Suspend[I1, O1, E1]]
+                            partialLoop(handle1[Any](k.input, k(_, context)), context)
+                        else if tag2 <:< kyo.tag then
+                            val k = kyo.asInstanceOf[Suspend[I2, O2, E2]]
+                            partialLoop(handle2[Any](k.input, k(_, context)), context)
                         else
-                            safepoint.pushFrame(kyo.frame)
-                            if tag1 <:< kyo.tag then
-                                val k = kyo.asInstanceOf[Suspend[I1, O1, E1]]
-                                partialLoop(handle1[Any](k.input, k(_, context)), context)
-                            else if tag2 <:< kyo.tag then
-                                val k = kyo.asInstanceOf[Suspend[I2, O2, E2]]
-                                partialLoop(handle2[Any](k.input, k(_, context)), context)
-                            else
-                                v
-                            end if
+                            v
                         end if
                     case _ =>
                         v

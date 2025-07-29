@@ -86,3 +86,13 @@ abstract private[kernel] class KyoDefer[A, S] extends KyoSuspend[Const[Unit], Co
     final def tag   = Tag[Defer]
     final def input = ()
 end KyoDefer
+
+abstract private[kernel] class KyoBraket[A, B, S] extends KyoSuspend[Const[Unit], Const[Unit], Defer, Any, B, S]:
+    final def tag   = Tag[Defer]
+    final def input = ()
+    def acquire: A < S
+    def release(v: A): Any < S
+    def continue: A => B < S
+
+
+
