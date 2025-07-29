@@ -330,10 +330,7 @@ lazy val `kyo-core` =
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .jsSettings(
-            `js-settings`,
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
-        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-offheap` =
     crossProject(JVMPlatform, NativePlatform)
