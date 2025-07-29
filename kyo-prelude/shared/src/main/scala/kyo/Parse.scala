@@ -42,8 +42,7 @@ opaque type Parse[A] <: (Var[Parse.State[A]] & Choice & Abort[ParseFailed]) =
 
 object Parse:
 
-    type StateTag[A]  = Tag[Var[State[A]]]
-    type AspectTag[A] = Tag[(Chunk[A], Maybe[(Chunk[A], Any)])]
+    type StateTag[A] = Tag[Var[State[A]]]
 
     /** Aspect that modifies how text is read and parsed. This is the core parsing aspect that other parsing operations build upon. It takes
       * the current text input and a parsing function, allowing for preprocessing of input or postprocessing of results.
@@ -51,11 +50,8 @@ object Parse:
       * @return
       *   An Aspect that transforms from Const[Text] to Maybe[(Text, C)]
       */
-    def readAspect[A](using
-        Tag[A],
-        AspectTag[A],
-        Frame
-    ): Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]] =
+    def readAspect[A: Tag]: Aspect[Const[Chunk[A]], [C] =>> Maybe[(Chunk[A], C)], Parse[A]] =
+        given Frame = Frame.internal
         Aspect.init
 
     /** Attempts to parse input using the provided parsing function
@@ -70,8 +66,7 @@ object Parse:
     def read[A, In](f: Chunk[In] => Maybe[(Chunk[In], A)])(using
         Frame,
         Tag[In],
-        StateTag[In],
-        Tag[(Chunk[In], Maybe[(Chunk[In], Any)])]
+        StateTag[In]
     ): A < Parse[In] =
         Var.use[State[In]] { state =>
             readAspect[In](state.remaining)(f).map {
@@ -117,7 +112,7 @@ object Parse:
       * @return
       *   The matched text containing all consecutive characters that satisfied the predicate
       */
-    def readWhile[A](f: A => Boolean)(using Frame, Tag[A], AspectTag[A], StateTag[A]): Chunk[A] < Parse[A] =
+    def readWhile[A](f: A => Boolean)(using Frame, Tag[A], StateTag[A]): Chunk[A] < Parse[A] =
         Parse.read { s =>
             val (matched, rest) = s.span(f(_))
             Maybe((rest, matched))
@@ -897,7 +892,7 @@ object Parse:
       * @return
       *   Unit if text matches
       */
-    def literal[In](expected: In)(using Frame, CanEqual[In, In], Tag[In], StateTag[In], AspectTag[In]): In < Parse[In] =
+    def literal[In](expected: In)(using Frame, CanEqual[In, In], Tag[In], StateTag[In]): In < Parse[In] =
         Parse.read { s =>
             Maybe.fromOption(s.headOption.filter(_ == expected).map(_ => (s.drop(1), expected)))
         }
@@ -930,7 +925,7 @@ object Parse:
       * @return
       *   The consumed input element
       */
-    def any[In](using Frame, Tag[In], StateTag[In], AspectTag[In]): In < Parse[In] =
+    def any[In](using Frame, Tag[In], StateTag[In]): In < Parse[In] =
         Parse.read(s => s.headMaybe.map(c => (s.drop(1), c)))
 
     /** Consumes a character matching predicate
@@ -950,10 +945,10 @@ object Parse:
       * @return
       *   Matching character
       */
-    def anyIf[In](p: In => Boolean)(using Frame, Tag[In], StateTag[In], AspectTag[In]): In < Parse[In] =
+    def anyIf[In](p: In => Boolean)(using Frame, Tag[In], StateTag[In]): In < Parse[In] =
         Parse.read(s => s.headMaybe.filter(p).map(c => (s.drop(1), c)))
 
-    def anyMatch[A](using Frame)[In](pf: PartialFunction[In, A])(using Tag[In], StateTag[In], AspectTag[In]): A < Parse[In] =
+    def anyMatch[A](using Frame)[In](pf: PartialFunction[In, A])(using Tag[In], StateTag[In]): A < Parse[In] =
         Parse.read(s => Maybe.fromOption(s.headOption.flatMap(pf.lift)).map(c => (s.drop(1), c)))
 
     /** Matches text using regex pattern
@@ -1016,7 +1011,7 @@ object Parse:
       * @return
       *   Unit if at end of input
       */
-    def end[In](using Frame, Tag[In], StateTag[In], AspectTag[In]): Unit < Parse[In] =
+    def end[In](using Frame, Tag[In], StateTag[In]): Unit < Parse[In] =
         Parse.read(s => if s.isEmpty then Maybe((s, ())) else Maybe.empty)
 
 end Parse
