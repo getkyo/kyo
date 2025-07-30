@@ -5,7 +5,7 @@ import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.reflect.ClassTag
 
-/** An efficient, immutable array-backed sequence of elements optimized for anti-boxing performance.
+/** An efficient, immutable array-backed sequence of elements optimized to avoid boxing.
   *
   * Span is similar to Scala's built-in IArray (immutable array), but provides optimized methods for common operations and additional
   * utility functions. It offers better performance characteristics than standard Scala collections for many use cases while maintaining
