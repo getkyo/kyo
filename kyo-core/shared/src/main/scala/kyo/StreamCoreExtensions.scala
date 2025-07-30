@@ -40,7 +40,8 @@ object StreamCoreExtensions:
     )(
         using
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[Chunk[A]]]]
+        Tag[Emit[Chunk[Chunk[A]]]],
+        Tag[Abort[E]]
     ) extends StreamHub[A, E]:
         private def emit(listener: Hub.Listener[Result.Partial[E, Maybe[Chunk[A]]]])(using Frame) =
             listener
@@ -64,7 +65,7 @@ object StreamCoreExtensions:
                     emit(listener)
 
         def subscribe(using Frame): Stream[A, Abort[E] & Async] < (Scope & Async) =
-            Abort.runPartial[Closed](hub.listen).map:
+            Abort.run[Closed](hub.listen).map:
                 case Result.Success(listener) =>
                     Stream:
                         latch.release.andThen:
@@ -74,7 +75,7 @@ object StreamCoreExtensions:
                                     emitWithStatus(listener)
                                 else emit(listener)
 
-                case Result.Failure(e) => Abort.panic(e)
+                case error: Result.Error[Closed] @unchecked => Abort.panic(error.exception)
 
         def consume[S](stream: Stream[A, Abort[E] & S & Async])(
             using
@@ -99,10 +100,10 @@ object StreamCoreExtensions:
     private object StreamHubImpl:
         def init[A, E](bufferSize: Int)(
             using
-            Tag[A],
+            Frame,
             Tag[Emit[Chunk[A]]],
             Tag[Emit[Chunk[Chunk[A]]]],
-            Frame
+            Tag[Abort[E]]
         ): StreamHubImpl[A, E] < (Async & Scope) =
             Sync.Unsafe:
                 Latch.initWith(1): latch =>
@@ -125,9 +126,10 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(
             using
+            Frame,
             Isolate[S, Sync, S],
             Tag[Emit[Chunk[V]]],
-            Frame
+            Tag[Abort[E]]
         ): Stream[V, S & Async] =
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
@@ -136,7 +138,7 @@ object StreamCoreExtensions:
                             Async.foreachDiscard(streams)(
                                 _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
                             )
-                        }.andThen(Abort.run(channel.put(Absent)).unit))
+                        }.andThen(Abort.run(channel.put(Absent))).unit)
                         _ <- emitMaybeChunksFromChannel(channel)
                     yield ()
 
@@ -243,7 +245,8 @@ object StreamCoreExtensions:
             using
             Isolate[S, Sync, S],
             Tag[Emit[Chunk[V]]],
-            Frame
+            Frame,
+            Tag[Abort[E]]
         ): Stream[V, S & Async] =
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
@@ -278,7 +281,8 @@ object StreamCoreExtensions:
             Isolate[S, Sync, S],
             ConcreteTag[E],
             Tag[Emit[Chunk[V]]],
-            Frame
+            Frame,
+            Tag[Abort[E]]
         ): Stream[V, Abort[E] & S & Async] =
             val streams: Seq[Stream[V, Abort[E] & S & Async]] = Seq(stream, other)
             Stream.collectAll[V, E, S](streams)
@@ -299,7 +303,8 @@ object StreamCoreExtensions:
             Isolate[S, Sync, S],
             ConcreteTag[E],
             Tag[Emit[Chunk[V]]],
-            Frame
+            Frame,
+            Tag[Abort[E]]
         ): Stream[V, Abort[E] & S & S2 & Async] =
             Stream.collectAllHalting[V, E, S](Seq(stream, other))
 
@@ -320,7 +325,9 @@ object StreamCoreExtensions:
             Isolate[S, Sync, S],
             ConcreteTag[E],
             Tag[Emit[Chunk[V]]],
-            Frame
+            Frame,
+            Tag[Abort[E]],
+            Tag[Abort[E | Closed]]
         ): Stream[V, Abort[E] & S & Async] =
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
@@ -352,9 +359,11 @@ object StreamCoreExtensions:
             i: Isolate[S, Sync, S],
             sct: ConcreteTag[E],
             t: Tag[Emit[Chunk[V]]],
-            f: Frame
+            f: Frame,
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V, Abort[E] & S & Async] =
-            other.mergeHaltingLeft(stream)(using i, sct, t, f)
+            other.mergeHaltingLeft(stream)(using i, sct, t, f, tag, tag2)
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Preserves chunk boundaries.
           *
@@ -367,12 +376,14 @@ object StreamCoreExtensions:
           */
         def mapPar[V2, S2](parallel: Int, bufferSize: Int = defaultAsyncStreamBufferSize)(f: V => V2 < (Abort[E] & Async & S2))(
             using
+            frame: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
             given CanEqual[Boolean | Chunk[V2], Boolean | Chunk[V2]] = CanEqual.derived
             Stream[V2, S & S2 & Abort[E] & Async]:
@@ -435,14 +446,16 @@ object StreamCoreExtensions:
           */
         def mapPar[V2, S2](f: V => V2 < (Abort[E] & Async & S2))(
             using
+            frame: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
-            mapPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i, ev, frame)
+            mapPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using frame, t1, t2, t3, i, ev, tag, tag2)
 
         /** Applies effectful transformation of stream elements asynchronously, mapping them in parallel. Does not preserve chunk
           * boundaries.
@@ -456,12 +469,14 @@ object StreamCoreExtensions:
           */
         def mapParUnordered[V2, S2](parallel: Int, bufferSize: Int = defaultAsyncStreamBufferSize)(f: V => V2 < (Abort[E] & Async & S2))(
             using
+            fr: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
                 // Output channel containing transformed values
@@ -528,14 +543,16 @@ object StreamCoreExtensions:
           */
         def mapParUnordered[V2, S2](f: V => V2 < (Abort[E] & Async & S2))(
             using
+            frame: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
-            mapParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i, ev, frame)
+            mapParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using frame, t1, t2, t3, i, ev, tag, tag2)
 
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunks in parallel. Preserves chunk boundaries.
           *
@@ -551,12 +568,14 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(f: Chunk[V] => Chunk[V2] < (Abort[E] & Async & S2))(
             using
+            frame: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
                 // Emit from channel of fibers to allow parallel transformations while preserving order
@@ -616,14 +635,16 @@ object StreamCoreExtensions:
           */
         def mapChunkPar[V2, S2](f: Chunk[V] => Chunk[V2] < (Abort[E] & Async & S2))(
             using
+            frame: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
-            mapChunkPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i, ev, frame)
+            mapChunkPar(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using frame, t1, t2, t3, i, ev, tag, tag2)
 
         /** Applies effectful transformation of stream chunks asynchronously, mapping chunks in parallel. Does not preserve chunk
           * boundaries.
@@ -643,12 +664,14 @@ object StreamCoreExtensions:
             bufferSize: Int = defaultAsyncStreamBufferSize
         )(f: Chunk[V] => Chunk[V2] < (Abort[E] & Async & S2))(
             using
+            frame: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
             Stream[V2, S & S2 & Abort[E] & Async]:
                 // Output channel containing transformed values
@@ -724,14 +747,16 @@ object StreamCoreExtensions:
           */
         def mapChunkParUnordered[V2, S2](f: Chunk[V] => Chunk[V2] < (Abort[E] & Async & S2))(
             using
+            frame: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[V2]]],
             t3: Tag[V2],
             i: Isolate[S & S2, Sync, S & S2],
             ev: ConcreteTag[E | Closed],
-            frame: Frame
+            tag: Tag[Abort[E]],
+            tag2: Tag[Abort[E | Closed]]
         ): Stream[V2, Abort[E] & Async & S & S2] =
-            mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using t1, t2, t3, i, ev, frame)
+            mapChunkParUnordered(Async.defaultConcurrency, defaultAsyncStreamBufferSize)(f)(using frame, t1, t2, t3, i, ev, tag, tag2)
 
         /** Broadcast to two streams that can be evaluated in parallel. Original stream begins to run as soon as either of the original
           * streams does.
@@ -743,30 +768,32 @@ object StreamCoreExtensions:
           */
         def broadcast2(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): (Stream[V, Abort[E] & Async], Stream[V, Abort[E] & Scope & Async]) < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
                 for
                     s1 <- streamHub.subscribe
                     s2 <- streamHub.subscribe
                 yield (s1, s2)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using fr, i, t1, t2, t3, t4, tag)
 
         /** Broadcast to three streams that can be evaluated in parallel.
           */
         def broadcast3(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): (
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async],
@@ -778,18 +805,19 @@ object StreamCoreExtensions:
                     s2 <- streamHub.subscribe
                     s3 <- streamHub.subscribe
                 yield (s1, s2, s3)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using fr, i, t1, t2, t3, t4, tag)
 
         /** Broadcast to four streams that can be evaluated in parallel.
           */
         def broadcast4(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): (
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async],
@@ -803,18 +831,19 @@ object StreamCoreExtensions:
                     s3 <- streamHub.subscribe
                     s4 <- streamHub.subscribe
                 yield (s1, s2, s3, s4)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using fr, i, t1, t2, t3, t4, tag)
 
         /** Broadcast to five streams that can be evaluated in parallel.
           */
         def broadcast5(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): (
             Stream[V, Abort[E] & Async],
             Stream[V, Abort[E] & Async],
@@ -830,7 +859,7 @@ object StreamCoreExtensions:
                     s4 <- streamHub.subscribe
                     s5 <- streamHub.subscribe
                 yield (s1, s2, s3, s4, s5)
-            }(using i, t1, t2, t3, t4, fr)
+            }(using fr, i, t1, t2, t3, t4, tag)
 
         /** Broadcast to a specified number of streams that can be evaluated in parallel.
           *
@@ -843,12 +872,13 @@ object StreamCoreExtensions:
           */
         def broadcastN(numStreams: Int, bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): Chunk[Stream[V, Abort[E] & Scope & Async]] < (Scope & Async & S) =
             broadcastDynamicWith(bufferSize) { streamHub =>
                 val builder = Chunk.newBuilder[Stream[V, Abort[E] & Scope & Async]]
@@ -858,7 +888,7 @@ object StreamCoreExtensions:
                     else
                         streamHub.subscribe.map: stream =>
                             Sync.defer(builder.addOne(stream)).andThen(Loop.continue(remaining - 1))
-            }(using i, t1, t2, t3, t4, fr)
+            }(using fr, i, t1, t2, t3, t4, tag)
 
         /** Convert to a reusable stream that can be run multiple times in parallel to consume the same original elements. Original stream
           * begins to run as soon as the broadcasted stream is run for the first time.
@@ -875,12 +905,13 @@ object StreamCoreExtensions:
           */
         def broadcasted(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): Stream[V, Abort[E] & Async & Scope] < (Scope & Async & S) =
             broadcastDynamic(bufferSize).map: streamHub =>
                 Stream:
@@ -901,12 +932,13 @@ object StreamCoreExtensions:
           */
         def broadcastDynamic(bufferSize: Int = defaultAsyncStreamBufferSize)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): StreamHub[V, E] < (Scope & Async & S) =
             Latch.initWith(1): latch =>
                 StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
@@ -927,12 +959,13 @@ object StreamCoreExtensions:
           */
         def broadcastDynamicWith[A, S1](bufferSize: Int)(fn: StreamHub[V, E] => A < S1)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): A < (Scope & Async & S & S1) =
             StreamHubImpl.init[V, E](bufferSize).map: streamHub =>
                 fn(streamHub).map: a =>
@@ -951,12 +984,13 @@ object StreamCoreExtensions:
           */
         def broadcastDynamicWith[A, S1](fn: StreamHub[V, E] => A < S1)(
             using
+            fr: Frame,
             i: Isolate[S, Sync, S],
             t1: Tag[V],
             t2: Tag[Emit[Chunk[V]]],
             t3: Tag[Emit[Chunk[Chunk[V]]]],
             t4: ConcreteTag[E],
-            fr: Frame
+            tag: Tag[Abort[E]]
         ): A < (Scope & Async & S & S1) =
             StreamHubImpl.init[V, E](defaultAsyncStreamBufferSize).map: streamHub =>
                 fn(streamHub).map: a =>
@@ -976,11 +1010,12 @@ object StreamCoreExtensions:
           *   A new stream that emits collected chunks of elements
           */
         def groupedWithin(maxSize: Int, maxTime: Duration, bufferSize: Int = defaultAsyncStreamBufferSize)(using
+            fr: Frame,
             t1: Tag[Emit[Chunk[V]]],
             t2: Tag[Emit[Chunk[Chunk[V]]]],
             i: Isolate[S, Sync, S],
             ct: ConcreteTag[Closed | E],
-            fr: Frame
+            tag: Tag[Abort[E | Closed]]
         ): Stream[Chunk[V], S & Abort[E] & Async] =
             import Event.*
             enum Event derives CanEqual:

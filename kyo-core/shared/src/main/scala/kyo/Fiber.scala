@@ -239,7 +239,7 @@ object Fiber:
           * @return
           *   The result of the Fiber
           */
-        def get(using Frame): A < (Abort[E] & Async & S) =
+        def get(using Frame, Tag[Abort[E]]): A < (Abort[E] & Async & S) =
             Async.use(self.lower)(identity)
 
         /** Uses the result of the Fiber to compute a new value.
@@ -249,7 +249,7 @@ object Fiber:
           * @return
           *   The result of applying the function to the Fiber's result
           */
-        def use[B, S2](f: A => B < S2)(using Frame): B < (Abort[E] & Async & S & S2) =
+        def use[B, S2](f: A => B < S2)(using Frame, Tag[Abort[E]]): B < (Abort[E] & Async & S & S2) =
             Async.use(self.lower)(_.map(f))
 
         /** Gets the result of the Fiber as a Result.
