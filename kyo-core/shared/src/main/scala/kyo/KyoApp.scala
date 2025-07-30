@@ -91,7 +91,7 @@ object KyoApp:
 
         /** Unsafely exits the application. */
         protected def exit(code: Int)(using AllowUnsafe): Unit =
-            kernel.Platform.exit(code)
+            internal.Platform.exit(code)
 
         /** Unified handling logic for supporting arbitrary effects. */
         protected def handle[A](v: A < S)(using Frame): A < (Async & Abort[Throwable])
