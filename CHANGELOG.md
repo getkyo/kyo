@@ -21,4 +21,5 @@ All breaking API changes to this project will be documented in this file.
 
 - [kyo-core] `Fiber.init`: use `Scope` effect to guarantee termination of forked fiber
 - [kyo-combinators] `.fork`: apply `Fiber.init` (formerly `.forkScoped`)
+- [kyo-prelude] The `Parse` effect has been moved to a new `kyo-parse` module
 - [kyo-core] `Log.live`: defaulting to `Unsafe.ConsoleLogger` for all platforms
