@@ -102,6 +102,7 @@ lazy val kyoJVM = project
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
+        `kyo-parse`.jvm,
         `kyo-core`.jvm,
         `kyo-offheap`.jvm,
         `kyo-direct`.jvm,
@@ -136,6 +137,7 @@ lazy val kyoJS = project
         `kyo-data`.js,
         `kyo-kernel`.js,
         `kyo-prelude`.js,
+        `kyo-parse`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
         `kyo-stm`.js,
@@ -158,6 +160,7 @@ lazy val kyoNative = project
     .aggregate(
         `kyo-data`.native,
         `kyo-prelude`.native,
+        `kyo-parse`.native,
         `kyo-kernel`.native,
         `kyo-stats-registry`.native,
         `kyo-scheduler`.native,
@@ -312,6 +315,17 @@ lazy val `kyo-prelude` =
             libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC41" % Test,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-parse` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-prelude`)
+        .in(file("kyo-parse"))
+        .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
