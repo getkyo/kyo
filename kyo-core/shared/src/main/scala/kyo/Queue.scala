@@ -557,13 +557,15 @@ object Queue:
             end close
 
             final def closeAwaitEmpty()(using frame: Frame, allow: AllowUnsafe): Fiber.Unsafe[Boolean, Any] =
+                import scala.language.implicitConversions
+
                 val fail = Result.Failure(Closed("Queue", initFrame))
                 val p    = Promise.Unsafe.init[Boolean, Any]()
                 if state.compareAndSet(State.Open, State.HalfOpen(p, fail)) then
                     handleHalfOpen()
                     p
                 else
-                    Fiber.Unsafe.init(Result.succeed(false))
+                    Fiber.Unsafe.init(Result.succeed(false)).reduced
                 end if
             end closeAwaitEmpty
 

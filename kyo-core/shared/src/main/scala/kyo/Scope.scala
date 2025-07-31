@@ -190,8 +190,9 @@ object Scope:
                                                     .map(_.foldError(_ => (), ex => Log.error("Scope finalizer failed", ex.exception)))
                                             }
                                                 .handle(Fiber.initUnscoped[Nothing, Unit, Any, Any])
-                                                .map(promise.becomeDiscard)
+                                                .map(v => promise.becomeDiscard(v.reduced))
                             }
+                        end close
 
                         def await(using Frame): Unit < Async = promise.get
                 end init

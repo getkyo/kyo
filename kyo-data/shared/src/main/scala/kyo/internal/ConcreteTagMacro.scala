@@ -50,7 +50,7 @@ private[kyo] object ConcreteTagMacro:
                             case _             => Chunk(tpe)
                     val exprs = flatten(tpe).map(create)
                     '{ Intersection(Set(${ Varargs(exprs) }*)) }
-                case _ => createSingle(tpe)
+                case _ => createSingle(tpe).asInstanceOf[Expr[ConcreteTag[Any]]]
             end match
         end create
 
