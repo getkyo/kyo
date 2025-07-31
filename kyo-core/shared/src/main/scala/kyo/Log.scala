@@ -106,66 +106,35 @@ object Log:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         case class ConsoleLogger(name: String, level: Level) extends Log.Unsafe:
-            inline def trace(msg: => Text)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.position.show}] $msg")
+            inline def trace(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"TRACE $name -- [${frame.position.show}] $msg")
 
-            inline def trace(msg: => Text, t: => Throwable)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.position.show}] $msg $t")
+            inline def trace(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"TRACE $name -- [${frame.position.show}] $msg $t")
 
-            inline def debug(msg: => Text)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit =
-                if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.position.show}] $msg")
+            inline def debug(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"DEBUG $name -- [${frame.position.show}] $msg")
 
-            inline def debug(msg: => Text, t: => Throwable)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.position.show}] $msg $t")
+            inline def debug(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"DEBUG $name -- [${frame.position.show}] $msg $t")
 
-            inline def info(msg: => Text)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.info.enabled(level) then println(s"INFO $name -- [${frame.position.show}] $msg")
+            inline def info(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"INFO $name -- [${frame.position.show}] $msg")
 
-            inline def info(msg: => Text, t: => Throwable)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.info.enabled(level) then println(s"INFO $name -- [${frame.position.show}] $msg $t")
+            inline def info(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"INFO $name -- [${frame.position.show}] $msg $t")
 
-            inline def warn(msg: => Text)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.position.show}] $msg")
+            inline def warn(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"WARN $name -- [${frame.position.show}] $msg")
 
-            inline def warn(msg: => Text, t: => Throwable)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.position.show}] $msg $t")
+            inline def warn(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"WARN $name -- [${frame.position.show}] $msg $t")
 
-            inline def error(msg: => Text)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.position.show}] $msg")
+            inline def error(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"ERROR $name -- [${frame.position.show}] $msg")
 
-            inline def error(msg: => Text, t: => Throwable)(
-                using
-                frame: Frame,
-                allow: AllowUnsafe
-            ): Unit = if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.position.show}] $msg $t")
+            inline def error(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                println(s"ERROR $name -- [${frame.position.show}] $msg $t")
         end ConsoleLogger
     end Unsafe
 
@@ -175,9 +144,7 @@ object Log:
         Sync.Unsafe.withLocal(local) { log =>
             if level.enabled(log.level) then
                 doLog(log)
-            else
-                (
-            )
+            else ()
         }
 
     /** Logs a trace message.
