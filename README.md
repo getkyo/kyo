@@ -139,6 +139,10 @@ These flags help catch three common issues in Kyo applications:
 
 In Kyo, computations are expressed via the infix type `<`, known as "Pending". It takes two type parameters:
 
+```scala 
+opaque type <[+A, -S]
+```
+
 1. `A` - The type of the expected output.
 2. `S` - The pending effects that need to be handled. Effects are represented by an unordered type-level set via a type intersection.
 
