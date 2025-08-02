@@ -2,7 +2,6 @@ package kyo.scheduler.top
 
 import javax.management.MBeanServerConnection
 import javax.management.ObjectName
-import javax.management.remote
 import javax.management.remote.JMXConnectorFactory
 import javax.management.remote.JMXServiceURL
 import scala.concurrent.duration.*
