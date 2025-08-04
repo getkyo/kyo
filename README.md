@@ -36,6 +36,7 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-data        | ✅   | ✅   | ✅      | Efficient `Maybe`, `Result`, `Duration`, and other data types |
 | kyo-kernel      | ✅   | ✅   | ✅      | Core algebraic effects engine and type-level effect tracking  |
 | kyo-prelude     | ✅   | ✅   | ✅      | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc.   |
+| kyo-parse       | ✅   | ✅   | ✅      | Effects for parsing                                           |
 | kyo-core        | ✅   | ✅   | ✅      | Side-effectful computations: `Sync`, `Async`, `Scope`, etc.   |
 | kyo-direct      | ✅   | ✅   | ✅      | Direct-style syntax using `.await` and control flow           |
 | kyo-combinators | ✅   | ✅   | ✅      | ZIO-like effect combinators and utility methods               |
