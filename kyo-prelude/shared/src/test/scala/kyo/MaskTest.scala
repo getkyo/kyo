@@ -1,6 +1,6 @@
 package kyo
 
-class GuardTest extends Test:
+class MaskTest extends Test:
 
     "unprotected arrow effect" in {
         def genericFn[S](intEffect: Int < S)(using Tag[S]): Int < S =
@@ -16,10 +16,10 @@ class GuardTest extends Test:
 
     "protects arrow effect" in {
         def genericFn[S](intEffect: Int < S)(using Tag[S]): Int < S =
-            Guard.use[S]: guard =>
+            Mask.use[S]: mask =>
                 Var.run(2):
                     Var.get[Int].map: i =>
-                        guard(intEffect).map: j =>
+                        mask(intEffect).map: j =>
                             i + j
 
         val eff = Var.update[Int](_ + 1)
@@ -39,12 +39,12 @@ class GuardTest extends Test:
         assert(Env.run(10)(genericFn(eff)).eval == 10)
     }
 
-    "guard protects context effect" in {
+    "mask protects context effect" in {
         def genericFn[S](intEffect: Int < S)(using Tag[S]): Int < S =
-            Guard.use[S]: guard =>
+            Mask.use[S]: mask =>
                 Env.run(5):
                     Env.get[Int].map: i =>
-                        guard(intEffect).map: j =>
+                        mask(intEffect).map: j =>
                             i + j
 
         val eff = Env.get[Int]
@@ -67,16 +67,16 @@ class GuardTest extends Test:
         assert(Env.run(10)(Var.run(20)(genericFn(eff))).eval == 39)
     }
 
-    "guard protects complex effect" in {
+    "mask protects complex effect" in {
         def genericFn[S](intEffect: Int < S)(using Tag[S]): Int < S =
-            Guard.use[S]: guard =>
-                val guardedEffect = guard(intEffect)
+            Mask.use[S]: mask =>
+                val maskedEffect = mask(intEffect)
                 Env.run(5):
                     Env.get[Int].map: i =>
-                        guardedEffect.map: j =>
+                        maskedEffect.map: j =>
                             Var.run(2):
                                 Var.get[Int].map: k =>
-                                    guardedEffect.map: l =>
+                                    maskedEffect.map: l =>
                                         i + j + k + l
 
         val eff = Env.get[Int].map(i => Var.get[Int].map(j => i + j))
@@ -84,12 +84,30 @@ class GuardTest extends Test:
         assert(Env.run(10)(Var.run(20)(genericFn(eff))).eval == 67)
     }
 
-    "cannot be used outside of scope" in {
-        def genericFunction[S](using Tag[S]): Guard[S] < S =
-            Guard.use[S](g => g)
+    "combined masked and unmasked effects" in {
+        def genericFn[S](eff1: Int < S, eff2: Int < S)(using Tag[S]): Int < S =
+            Mask.use[S]: mask =>
+                val eff1Masked = mask(eff1)
+                Env.run(5):
+                    Env.get[Int].map: i =>   // 5
+                        eff1Masked.map: j => // 10
+                            Var.run(2):
+                                Var.get[Int].map: k => // 2
+                                    eff2.map: l =>     // 2
+                                        i + j + k + l
 
-        assertDoesNotCompile:
-            """genericFunction[Any].map(guard => guard(42))"""
+        val eff1 = Env.get[Int]
+        val eff2 = Var.get[Int]
+
+        assert(Env.run(10)(Var.run(10)(genericFn(eff1, eff2))).eval == 19)
     }
 
-end GuardTest
+    "cannot be used outside of scope" in {
+        def genericFunction[S](using Tag[S]): Mask[S] < S =
+            Mask.use[S](g => g)
+
+        assertDoesNotCompile:
+            """genericFunction[Any].map(mask => mask(42))"""
+    }
+
+end MaskTest
