@@ -1650,6 +1650,10 @@ class SpanTest extends Test:
         }
     }
 
+    sealed trait Shape
+    case class Circle(radius: Double) extends Shape
+    case class Square(side: Double)   extends Shape
+
     "variance" - {
 
         given [A, B]: CanEqual[A, B] = CanEqual.derived
@@ -1766,10 +1770,6 @@ class SpanTest extends Test:
         }
 
         "type inference" - {
-
-            sealed trait Shape
-            case class Circle(radius: Double) extends Shape
-            case class Square(side: Double)   extends Shape
 
             "infers most specific common supertype" in {
                 val dogs = Span(Dog("Rex"), Dog("Max"))

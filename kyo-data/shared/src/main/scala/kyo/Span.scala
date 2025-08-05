@@ -232,14 +232,14 @@ object Span:
           * @return
           *   true if the Span contains no elements, false otherwise
           */
-        inline def isEmpty: Boolean = Span.size(self) == 0
+        inline def isEmpty: Boolean = size == 0
 
         /** Tests whether the Span is not empty.
           *
           * @return
           *   true if the Span contains at least one element, false otherwise
           */
-        inline def nonEmpty: Boolean = !Span.isEmpty(self)
+        inline def nonEmpty: Boolean = !isEmpty
 
         /** Returns the element at the specified index.
           *
@@ -248,7 +248,7 @@ object Span:
           * @return
           *   the element at the specified index
           */
-        inline def apply(idx: Int): A = Span(self)(idx)
+        inline def apply(idx: Int): A = self(idx)
 
         /** Selects the first element.
           *
@@ -256,7 +256,7 @@ object Span:
           *   the first element if the Span is not empty, Absent otherwise
           */
         inline def head: Maybe[A] =
-            Maybe.when(nonEmpty)(Span(self)(0))
+            Maybe.when(nonEmpty)(self(0))
 
         /** Selects the last element.
           *
@@ -264,7 +264,7 @@ object Span:
           *   the last element if the Span is not empty, Absent otherwise
           */
         inline def last: Maybe[A] =
-            Maybe.when(nonEmpty)(Span(self)(size - 1))
+            Maybe.when(nonEmpty)(self(size - 1))
 
         /** The rest of the Span without its first element.
           *
