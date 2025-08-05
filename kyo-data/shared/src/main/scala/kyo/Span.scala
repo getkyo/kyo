@@ -160,11 +160,9 @@ object Span:
           *
           * @return
           *   a new Span containing all elements except the first
-          * @throws UnsupportedOperationException
-          *   if the Span is empty
           */
-        inline def tail(using ct: ClassTag[A]): Maybe[Span[A]] =
-            Maybe.when(nonEmpty)(slice(1, size)(using ct))
+        inline def tail(using ClassTag[A]): Maybe[Span[A]] =
+            Maybe.when(nonEmpty)(slice(1, size))
 
         /** Tests whether this Span contains a given value as an element.
           *
@@ -310,11 +308,13 @@ object Span:
           *   true if the Spans contain the same elements in the same order, false otherwise
           */
         inline def is(other: Span[A])(using CanEqual[A, A]): Boolean =
-            val size = self.length
-            size == other.length && {
-                @tailrec def loop(idx: Int): Boolean =
-                    idx == size || (self(idx) == other(idx) && loop(idx + 1))
-                loop(0)
+            (self eq other) || {
+                val size = self.length
+                size == other.length && {
+                    @tailrec def loop(idx: Int): Boolean =
+                        idx == size || (self(idx) == other(idx) && loop(idx + 1))
+                    loop(0)
+                }
             }
         end is
 
@@ -441,8 +441,8 @@ object Span:
           * @return
           *   a new Span containing all elements that do not satisfy the predicate
           */
-        inline def filterNot(inline p: A => Boolean)(using ct: ClassTag[A]): Span[A] =
-            self.filter(!p(_))(using ct)
+        inline def filterNot(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
+            self.filter(!p(_))
 
         /** Selects the interval of elements between the given indices.
           *
@@ -473,8 +473,8 @@ object Span:
           * @return
           *   a Span containing the first n elements
           */
-        inline def take(n: Int)(using ct: ClassTag[A]): Span[A] =
-            slice(0, n)(using ct)
+        inline def take(n: Int)(using ClassTag[A]): Span[A] =
+            slice(0, n)
 
         /** An Span containing the last n elements of this Span.
           *
@@ -483,8 +483,8 @@ object Span:
           * @return
           *   a Span containing the last n elements
           */
-        inline def takeRight(n: Int)(using ct: ClassTag[A]): Span[A] =
-            slice(math.max(0, size - n), size)(using ct)
+        inline def takeRight(n: Int)(using ClassTag[A]): Span[A] =
+            slice(math.max(0, size - n), size)
 
         /** Takes longest prefix of elements that satisfy a predicate.
           *
@@ -493,7 +493,7 @@ object Span:
           * @return
           *   the longest prefix of this Span whose elements all satisfy the predicate p
           */
-        inline def takeWhile(inline p: A => Boolean)(using ct: ClassTag[A]): Span[A] =
+        inline def takeWhile(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
             val size = self.length
             @tailrec def findEnd(idx: Int): Int =
                 if idx >= size then size
@@ -516,8 +516,8 @@ object Span:
           * @return
           *   a Span containing all elements except the first n ones
           */
-        inline def drop(n: Int)(using ct: ClassTag[A]): Span[A] =
-            slice(n, size)(using ct)
+        inline def drop(n: Int)(using ClassTag[A]): Span[A] =
+            slice(n, size)
 
         /** The rest of the Span without its n last elements.
           *
@@ -526,8 +526,8 @@ object Span:
           * @return
           *   a Span containing all elements except the last n ones
           */
-        inline def dropRight(n: Int)(using ct: ClassTag[A]): Span[A] =
-            slice(0, size - n)(using ct)
+        inline def dropRight(n: Int)(using ClassTag[A]): Span[A] =
+            slice(0, size - n)
 
         /** Drops longest prefix of elements that satisfy a predicate.
           *
@@ -536,7 +536,7 @@ object Span:
           * @return
           *   the longest suffix of this Span whose first element does not satisfy the predicate p
           */
-        inline def dropWhile(inline p: A => Boolean)(using ct: ClassTag[A]): Span[A] =
+        inline def dropWhile(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
             val size = self.length
             @tailrec def findStart(idx: Int): Int =
                 if idx >= size then size
@@ -593,8 +593,8 @@ object Span:
           * @return
           *   a pair of Spans consisting of the first n elements and the remaining elements
           */
-        inline def splitAt(n: Int)(using ct: ClassTag[A]): (Span[A], Span[A]) =
-            (take(n)(using ct), drop(n)(using ct))
+        inline def splitAt(n: Int)(using ClassTag[A]): (Span[A], Span[A]) =
+            (take(n), drop(n))
 
         /** Splits this Span into a prefix/suffix pair according to a predicate.
           *
@@ -603,7 +603,7 @@ object Span:
           * @return
           *   a pair consisting of the longest prefix satisfying p and the remainder
           */
-        inline def span(inline p: A => Boolean)(using ct: ClassTag[A]): (Span[A], Span[A]) =
+        inline def span(inline p: A => Boolean)(using ClassTag[A]): (Span[A], Span[A]) =
             val size = self.length
             @tailrec def findSplit(idx: Int): Int =
                 if idx >= size then size
@@ -1008,7 +1008,7 @@ object Span:
           * @return
           *   an iterator producing Spans of size size, except the last element which may be smaller
           */
-        def sliding(size: Int, step: Int = 1)(using ct: ClassTag[A]): Iterator[Span[A]] =
+        def sliding(size: Int, step: Int = 1)(using ClassTag[A]): Iterator[Span[A]] =
             if size <= 0 then throw new IllegalArgumentException("size must be positive")
             if step <= 0 then throw new IllegalArgumentException("step must be positive")
             val offset = size
@@ -1017,7 +1017,7 @@ object Span:
                 def hasNext: Boolean = pos < self.length
                 def next(): Span[A] =
                     if !hasNext then throw new NoSuchElementException
-                    val result = self.slice(pos, pos + offset)(using ct)
+                    val result = self.slice(pos, pos + offset)
                     pos += step
                     result
                 end next
