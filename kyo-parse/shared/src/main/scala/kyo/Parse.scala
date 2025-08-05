@@ -4,6 +4,7 @@ import kyo.*
 import kyo.kernel.ArrowEffect
 import scala.annotation.tailrec
 import scala.annotation.targetName
+import scala.util.matching.Regex
 
 /** Parser combinator effect for compositional text parsing.
   *
@@ -26,7 +27,7 @@ import scala.annotation.targetName
   * @see
   *   [[kyo.Parse.read]] for the fundamental parsing operation that other combinators build upon
   * @see
-  *   [[kyo.Parse.firstOf]], [[kyo.Parse.anyOf]], [[kyo.Parse.inOrder]] for combining parsers
+  *   [[kyo.Parse.firstOf]], [[kyo.Parse.literalIn]], [[kyo.Parse.inOrder]] for combining parsers
   * @see
   *   [[kyo.Parse.attempt]], [[kyo.Parse.peek]] for parsers with look-ahead and backtracking
   * @see
@@ -38,7 +39,7 @@ object Parse:
 
     enum Op[In, +Out]:
         case ModifyState(modify: ParseState[In] => (ParseState[In], Maybe[Out]))
-        case Or[In, A, S](branches: Chunk[() => A < (Parse[In] & S)])                                    extends Op[In, A < S]
+        case Attempt[In, A, S](parser: A < (Parse[In] & S))                                              extends Op[In, Maybe[A] < S]
         case RecoverWith[In, A, S](parser: A < (Parse[In] & S), recoverStrategy: RecoverStrategy[In, A]) extends Op[In, A < S]
     end Op
 
@@ -49,24 +50,26 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    inline def firstOf[In, Out, S](parsers: Seq[() => Out < (Parse[In] & S)])(using
-        inline tag: Tag[Parse[In]],
-        inline frame: Frame
-    ): Out < (Parse[In] & S) =
-        ArrowEffect.suspendWith(tag, Op.Or(Chunk.from(parsers)))(x => x)
+    def firstOf[In, Out, S](parsers: Seq[() => Out < (Parse[In] & S)])(using Tag[Parse[In]], Frame): Out < (Parse[In] & S) =
+        Loop(parsers):
+            case Seq() => fail("No branch succeeded")
+            case head +: tail =>
+                attempt(head()).map:
+                    case Present(value) => Loop.done(value)
+                    case Absent         => Loop.continue(tail)
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -79,9 +82,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -99,9 +102,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -120,9 +123,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -142,9 +145,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -165,9 +168,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -189,9 +192,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
-      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
-      * no parsers succeed, the parse branch is dropped.
+      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
+      * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -220,11 +223,17 @@ object Parse:
 
     def readOne[In, Out](f: In => Result[Chunk[String], Out])(using Tag[Parse[In]], Frame): Out < Parse[In] =
         read(input =>
-            if input.done then Result.fail(Chunk(ParseError("EOF", input.position)))
+            if input.done then Result.fail(Chunk(ParseFailure("EOF", input.position)))
             else
                 f(input.remaining.head) match
-                    case Result.Failure(messages) => Result.fail(messages.map(ParseError(_, input.position)))
+                    case Result.Failure(messages) => Result.fail(messages.map(ParseFailure(_, input.position)))
                     case Result.Success(out)      => Result.succeed((input.advance(1), out))
+        )
+
+    def readWhile[A](f: A => Boolean)(using Tag[Parse[A]], Frame): Chunk[A] < Parse[A] =
+        read(input =>
+            val matched = input.remaining.takeWhile(f)
+            Result.succeed((input.advance(matched.length), matched))
         )
 
     /** Attempts to parse input using the provided parsing function
@@ -236,12 +245,15 @@ object Parse:
       * @return
       *   Parsed value if successful, drops the current parse branch if unsuccessful
       */
-    def read[In, Out](f: ParseInput[In] => Result[Chunk[ParseError], (ParseInput[In], Out)])(using Tag[Parse[In]], Frame): Out < Parse[In] =
+    def read[In, Out](f: ParseInput[In] => Result[Chunk[ParseFailure], (ParseInput[In], Out)])(using
+        Tag[Parse[In]],
+        Frame
+    ): Out < Parse[In] =
         modifyState(state =>
             f(state.input) match
                 case Result.Panic(error) => throw error
-                case Result.Failure(errors) =>
-                    (state.copy(errors = state.errors ++ errors), Absent)
+                case Result.Failure(failures) =>
+                    (state.copy(failures = state.failures ++ failures), Absent)
                 case Result.Success((newInput, out)) =>
                     (state.copy(input = newInput), Present(out))
         )
@@ -253,7 +265,7 @@ object Parse:
       */
     def fail[In](message: String)(using Tag[Parse[In]], Frame): Nothing < Parse[In] =
         modifyState(state =>
-            (state.copy(errors = state.errors :+ ParseError(message, state.input.position)), Absent)
+            (state.copy(failures = state.failures :+ ParseFailure(message, state.input.position)), Absent)
         )
 
     /** Get the position of the next token to parse.
@@ -294,21 +306,34 @@ object Parse:
 
     def anyMatch[A](using Frame)[In](pf: PartialFunction[In, A])(using Tag[Parse[In]]): A < Parse[In] =
         Parse.read(in =>
-            if in.done then Result.fail(Chunk(ParseError("Unexpected token, got EOF", in.position)))
+            if in.done then Result.fail(Chunk(ParseFailure("Unexpected token, got EOF", in.position)))
             else if pf.isDefinedAt(in.remaining.head) then Result.succeed((in.advance(1), pf(in.remaining.head)))
-            else Result.fail(Chunk(ParseError("Unexpected token", in.position)))
+            else Result.fail(Chunk(ParseFailure("Unexpected token", in.position)))
         )
 
-    @targetName("anyOfSeq")
-    def anyOf[A](values: Seq[A])(using Tag[Parse[A]], Frame): A < Parse[A] =
+    @targetName("anyInSeq")
+    def anyIn[A](values: Seq[A])(using Tag[Parse[A]], Frame): A < Parse[A] =
         anyIf(values.contains)(in => s"Expected: ${values.mkString(", ")}, Got: $in")
 
-    @targetName("anyOfString")
-    def anyOf(values: String)(using Frame): Char < Parse[Char] =
+    @targetName("anyInString")
+    def anyIn(values: String)(using Frame): Char < Parse[Char] =
         anyIf[Char](values.contains(_))(in => s"Expected: ${values.mkString(", ")}, Got: $in")
 
-    def anyOf[A](values: A*)(using Tag[Parse[A]], Frame): A < Parse[A] =
-        anyOf(values)
+    @targetName("anyInVarargs")
+    def anyIn[A](values: A*)(using Tag[Parse[A]], Frame): A < Parse[A] =
+        anyIn(values)
+
+    @targetName("anyNotInSeq")
+    def anyNotIn[A](values: Seq[A])(using Tag[Parse[A]], Frame): A < Parse[A] =
+        anyIf[A](!values.contains(_))(in => s"Expected something else than: ${values.mkString(", ")}, Got: $in")
+
+    @targetName("anyNotInString")
+    def anyNotIn(values: String)(using Frame): Char < Parse[Char] =
+        anyIf[Char](!values.contains(_))(in => s"Expected something else than: ${values.mkString(", ")}, Got: $in")
+
+    @targetName("anyNotInVarargs")
+    def anyNotIn[A](values: A*)(using Tag[Parse[A]], Frame): A < Parse[A] =
+        anyNotIn(values)
 
     /** Matches exact input
       *
@@ -319,6 +344,21 @@ object Parse:
       */
     def literal[A](value: A)(using CanEqual[A, A], Tag[Parse[A]], Frame): A < Parse[A] =
         anyIf[A](_ == value)(in => s"Expected: $value, Got: $in")
+
+    /** Matches exact text
+      *
+      * @param str
+      *   Text to match
+      * @return
+      *   Unit if text matches
+      */
+    def literal(text: Text)(using Frame): Text < Parse[Char] =
+        read(in =>
+            if in.remaining.startsWith(text.toString) then
+                Result.succeed((in.advance(text.length), text))
+            else
+                Result.fail(Chunk(ParseFailure(s"Expected: $text", in.position)))
+        )
 
     private def inOrder[A, In, S](parsers: Seq[() => A < (Parse[In] & S)])(using Tag[Parse[In]], Frame): Chunk[A] < (Parse[In] & S) =
         Kyo.foldLeft(parsers)(Chunk.empty[A])((acc, parser) => parser().map(acc :+ _))
@@ -542,13 +582,27 @@ object Parse:
       *   Chunk of all successful results
       */
     def repeat[Out](using Frame)[In, S](element: => Out < (Parse[In] & S))(using Tag[Parse[In]]): Chunk[Out] < (Parse[In] & S) =
-        firstOf(
-            for
-                head <- element
-                tail <- repeat(element)
-            yield head +: tail,
-            Chunk.empty[Out]
-        )
+        Loop(Chunk.empty[Out]): acc =>
+            attempt(element).map:
+                case Present(a) => Loop.continue(acc.append(a))
+                case Absent     => Loop.done(acc)
+
+        /** Repeats a parser exactly n times
+          *
+          * @param n
+          *   Number of repetitions required
+          * @param p
+          *   Parser to repeat
+          * @return
+          *   Chunk of n results, fails if can't get n results
+          */
+    def repeat[Out](using Frame)[In, S](n: Int)(element: Out < (Parse[In] & S))(using Tag[Parse[In]]): Chunk[Out] < (Parse[In] & S) =
+        Loop.indexed(Chunk.empty[Out]): (idx, acc) =>
+            if idx == n then Loop.done(acc)
+            else
+                attempt(element).map:
+                    case Present(a) => Loop.continue(acc.append(a))
+                    case Absent     => fail("Unexpected token")
 
     def repeatUntil[Out](using
         Frame
@@ -564,14 +618,15 @@ object Parse:
             yield head +: tail
         )
 
-    def skipUntil[In](
-        skip: => Any < Parse[In],
-        until: => Any < Parse[In]
-    )(using Tag[Parse[In]], Frame): Unit < Parse[In] =
-        firstOf(
-            until.andThen(()),
-            skip.andThen(skipUntil(skip, until))
-        )
+    def skipUntil[In, Out](
+        until: => Out < Parse[In]
+    )(using Tag[Parse[In]], Frame): Out < Parse[In] =
+        attempt(until).map:
+            case Absent =>
+                attempt(end).map:
+                    case Absent     => any.andThen(skipUntil(until))
+                    case Present(_) => fail("End of File")
+            case Present(result) => result
 
     /** Parses a sequence of elements separated by a delimiter. For example, parsing comma-separated values or space-separated words.
       *
@@ -594,17 +649,19 @@ object Parse:
         separator: => Any < (Parse[In] & S),
         allowTrailing: Boolean = false
     )(using Tag[Parse[In]]): Chunk[Out] < (Parse[In] & S) =
-        firstOf(
-            for
-                head <- element
-                tail <- separator.andThen(separatedBy(element, separator, allowTrailing))
-                _ <-
-                    if tail.isEmpty && !allowTrailing then fail("Trailing separator")
-                    else Kyo.lift(())
-            yield head +: tail,
-            element.map(Chunk(_)),
-            Chunk.empty[Out]
-        )
+        attempt(element).map:
+            case Absent => Chunk.empty
+            case Present(first) =>
+                Loop(Chunk(first)): acc =>
+                    attempt(separator).map:
+                        case Absent => Loop.done(acc)
+                        case Present(_) =>
+                            attempt(element).map:
+                                case Present(next) =>
+                                    Loop.continue(acc.append(next))
+                                case Absent =>
+                                    if allowTrailing then Loop.done(acc)
+                                    else fail("Trailing separator not allowed")
 
     /** Parses content between a left and right delimiter.
       *
@@ -638,7 +695,7 @@ object Parse:
     def end[In](using Tag[Parse[In]], Frame): Unit < Parse[In] =
         read(input =>
             if input.done then Result.succeed(input, ())
-            else Result.fail(Chunk(ParseError(s"Expected: EOF, Got: ${input.remaining.head}", input.position)))
+            else Result.fail(Chunk(ParseFailure(s"Expected: EOF, Got: ${input.remaining.head}", input.position)))
         )
 
     /** Tries a parser without consuming input
@@ -672,11 +729,10 @@ object Parse:
       * @return
       *   Maybe containing the result if successful, Absent if parser failed
       */
-    def attempt[Out](using Frame)[In, S](parser: Out < (Parse[In] & S))(using Tag[Parse[In]]): Maybe[Out] < (Parse[In] & S) =
-        firstOf(
-            parser.map(Present.apply),
-            Absent
-        )
+    inline def attempt[Out](using
+        inline frame: Frame
+    )[In, S](parser: Out < (Parse[In] & S))(using inline tag: Tag[Parse[In]]): Maybe[Out] < (Parse[In] & S) =
+        ArrowEffect.suspendWith(tag, Op.Attempt(parser))(x => x)
 
     def andIs[Out](using
         Frame
@@ -693,6 +749,14 @@ object Parse:
             _      <- rewind(resPos)
         yield result
 
+    /** Consumes whitespace characters
+      *
+      * @return
+      *   Unit after consuming whitespace
+      */
+    def whitespaces(using Frame): Text < Parse[Char] =
+        Parse.readWhile[Char](_.isWhitespace).map(c => Text(c.mkString))
+
     /** Parses an integer
       *
       * @return
@@ -703,7 +767,7 @@ object Parse:
             val num = in.remaining.takeWhile(c => c.isDigit || c == '-')
             Maybe
                 .fromOption(num.mkString.toIntOption)
-                .toResult(Result.fail(Chunk(ParseError("Invalid int", in.position))))
+                .toResult(Result.fail(Chunk(ParseFailure("Invalid int", in.position))))
                 .map(res => (in.advance(num.length), res))
 
     /** Parses a decimal number
@@ -716,7 +780,7 @@ object Parse:
             val num = in.remaining.takeWhile(c => c.isDigit || c == '.' || c == '-')
             Maybe
                 .fromOption(num.mkString.toDoubleOption)
-                .toResult(Result.fail(Chunk(ParseError("Invalid decimal", in.position))))
+                .toResult(Result.fail(Chunk(ParseFailure("Invalid decimal", in.position))))
                 .map(res => (in.advance(num.length), res))
 
     /** Parses a boolean ("true" or "false")
@@ -725,10 +789,47 @@ object Parse:
       *   Parsed boolean value
       */
     def boolean(using Frame): Boolean < Parse[Char] =
-        read: in =>
+        read(in =>
             if in.remaining.startsWith("true") then Result.succeed((in.advance(4), true))
             else if in.remaining.startsWith("false") then Result.succeed((in.advance(5), false))
-            else Result.fail(Chunk(ParseError("Invalid boolean", in.position)))
+            else Result.fail(Chunk(ParseFailure("Invalid boolean", in.position)))
+        )
+
+    /** Parses an identifier (letter/underscore followed by letters/digits/underscores)
+      *
+      * @return
+      *   Parsed identifier text
+      */
+    def identifier(using Frame): Text < Parse[Char] =
+        Parse.read: in =>
+            val remaining = in.remaining
+            remaining.headMaybe.filter(c => c.isLetter || c == '_').map(_ =>
+                val text = remaining.takeWhile(c => c.isLetterOrDigit || c == '_')
+                (in.advance(text.length), Text(text.mkString))
+            ).toResult(Result.fail(Chunk(ParseFailure("Invalid identifier", in.position))))
+
+    /** Matches text using regex pattern
+      *
+      * @param pattern
+      *   Regex pattern
+      * @return
+      *   Matched text
+      */
+    def regex(pattern: Regex)(using Frame): Text < Parse[Char] =
+        Parse.read(in =>
+            Maybe.fromOption(pattern.findPrefixOf(in.remaining.mkString).map(m => (in.advance(m.length), Text(m))))
+                .toResult(Result.fail(Chunk(ParseFailure("Regex didn't match", in.position))))
+        )
+
+    /** Matches text using regex pattern
+      *
+      * @param pattern
+      *   Regex pattern string
+      * @return
+      *   Matched text
+      */
+    def regex(pattern: String)(using Frame): Text < Parse[Char] =
+        regex(pattern.r)
 
     private[kyo] def runWith[In, Out, S, Out2, S2](state: ParseState[In])(parser: Out < (Parse[In] & S))(f: Out => Out2 < S2)(using
         tag: Tag[Parse[In]],
@@ -737,49 +838,53 @@ object Parse:
         extension [X, S1](v: X < (S1 & Parse[In]))
             def castS: X < Parse[In] = v.asInstanceOf
 
-        ArrowEffect.handleLoop(tag, state, parser)(
+        ArrowEffect.handleLoop[
+            [in] =>> Parse.Op[In, in],
+            Id,
+            Parse[In],
+            Out,
+            (ParseState[In], ParseResult[Out2]),
+            S,
+            S2,
+            ParseState[In]
+        ](tag, state, parser)(
             [C] =>
                 (input, state, cont) =>
                     input match
                         case Op.ModifyState(modify) =>
                             val (newState, optOut) = modify(state)
                             optOut match
-                                case Absent       => Loop.done((newState, ParseResult.failure(newState.errors)))
+                                case Absent       => Loop.done((newState, ParseResult.failure(newState.failures)))
                                 case Present(out) => Loop.continue(newState, cont(out))
 
-                        case Op.Or(branches: Chunk[() => C < (Parse[In] & S)] @unchecked) =>
-
-                            def rec(branches: Chunk[() => C < (Parse[In] & S)])
-                                : Loop.Outcome2[ParseState[In], Out < (Parse[In] & S), (ParseState[In], ParseResult[Out2])] < (S & S2) =
-                                branches match
-                                    case head +: tail =>
-                                        runState(state)(head())
-                                            .map((state, result) =>
-                                                result.out match
-                                                    case None      => rec(tail)
-                                                    case Some(out) => Loop.continue(state, cont(out))
-                                            )
-                                    case _ => Loop.done((state, ParseResult.failure(state.errors)))
-
-                            rec(branches)
+                        case Op.Attempt(parser: (Out < Parse[In]) @unchecked) =>
+                            runState(state)(parser)
+                                .map((parseState, result) =>
+                                    result.out match
+                                        case None =>
+                                            Loop.continue(state, cont(Kyo.lift(Absent)))
+                                        case Some(out) =>
+                                            Loop.continue(parseState, cont(Kyo.lift(Present(out))))
+                                    end match
+                                )
 
                         case Op.RecoverWith(parser: (Out < Parse[In]) @unchecked, recoverStrategy) =>
                             runState(state)(parser)
                                 .map((parseState, result) =>
                                     result.out match
                                         case None =>
-                                            runState(state.copy(errors = Chunk.empty))(recoverStrategy(parser))
+                                            runState(state.copy(failures = Chunk.empty))(recoverStrategy(parser))
                                                 .map((recoverState, recoverResult) =>
                                                     recoverResult.out match
-                                                        case None => Loop.done((parseState, ParseResult.failure(parseState.errors)))
+                                                        case None => Loop.done((parseState, ParseResult.failure(parseState.failures)))
                                                         case Some(recouverOut) => Loop.continue(
-                                                                recoverState.copy(errors = recoverState.errors ++ parseState.errors),
+                                                                recoverState.copy(failures = recoverState.failures ++ parseState.failures),
                                                                 cont(Kyo.lift(recouverOut))
                                                             )
                                                 )
                                         case Some(out) => Loop.continue(parseState, cont(Kyo.lift(out)))
                                 ),
-            done = (s, r) => f(r).map(out => (s, ParseResult.success(s.errors, out)))
+            done = (s, r) => f(r).map(out => (s, ParseResult.success(s.failures, out)))
         )
     end runWith
 
@@ -789,24 +894,34 @@ object Parse:
     ): (ParseState[In], ParseResult[Out]) < S =
         runWith(state)(parser)(identity)
 
-    def run[In, Out, S](state: ParseState[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
+    def runResult[In, Out, S](state: ParseState[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
         runState(state)(parser).map(_._2)
 
-    def run[In, Out, S](input: ParseInput[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
-        run(ParseState(input, Chunk.empty))(parser)
+    def runResult[In, Out, S](input: ParseInput[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
+        runResult(ParseState(input, Chunk.empty))(parser)
 
-    def run[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
-        run(ParseInput(input, 0))(parser)
+    def runResult[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
+        runResult(ParseInput(input, 0))(parser)
 
-    def run[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Tag[Parse[Char]], Frame): ParseResult[Out] < S =
-        run(Chunk.from(input))(parser)
+    def runResult[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Tag[Parse[Char]], Frame): ParseResult[Out] < S =
+        runResult(Chunk.from(input))(parser)
+
+    def runOrAbort[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using
+        Tag[Parse[In]],
+        Frame
+    ): Out < (Abort[ParseError] & S) =
+        runResult(input)(parser).map(_.orAbort)
+
+    def runOrAbort[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Frame): Out < (Abort[ParseError] & S) =
+        runResult(input)(parser).map(_.orAbort)
 
     // TODO Rework
-    def debug[In, Out](name: String, parser: Out < Parse[In])(using Tag[Parse[In]], Frame): Out < Parse[In] =
+    def debug[In, Out](name: String, parser: => Out < Parse[In])(using Tag[Parse[In]], Frame): Out < Parse[In] =
         for
             start <- position
-            _ = println(s"$name <= $start")
-            res <- parser
-            _ = println(s"$name => $res")
+            _ = println(s"$name:$start")
+            res    <- parser
+            endPos <- position
+            _ = println(s"$name:$start-$endPos => $res")
         yield res
 end Parse

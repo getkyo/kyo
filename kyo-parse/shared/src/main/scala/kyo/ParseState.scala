@@ -2,4 +2,4 @@ package kyo.parse
 
 import kyo.Chunk
 
-case class ParseState[In](input: ParseInput[In], errors: Chunk[ParseError])
+case class ParseState[In](input: ParseInput[In], failures: Chunk[ParseFailure])
