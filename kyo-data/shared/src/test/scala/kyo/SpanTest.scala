@@ -1650,4 +1650,187 @@ class SpanTest extends Test:
         }
     }
 
+    "variance" - {
+
+        given [A, B]: CanEqual[A, B] = CanEqual.derived
+
+        sealed trait Animal
+        case class Dog(name: String)  extends Animal
+        case class Cat(name: String)  extends Animal
+        case class Bird(name: String) extends Animal
+
+        "basic subtyping" - {
+
+            "allows Span[Dog] to be used as Span[Animal]" in {
+                val dogs: Span[Dog]       = Span(Dog("Rex"), Dog("Max"))
+                val animals: Span[Animal] = dogs
+                assert(animals.size == 2)
+                assert(animals(0) == Dog("Rex"))
+                assert(animals(1) == Dog("Max"))
+            }
+
+            "allows Span[Cat] to be used as Span[Animal]" in {
+                val cats: Span[Cat]       = Span(Cat("Whiskers"), Cat("Fluffy"))
+                val animals: Span[Animal] = cats
+                assert(animals.size == 2)
+                assert(animals.contains(Cat("Whiskers")))
+                assert(animals.contains(Cat("Fluffy")))
+            }
+
+            "preserves element access through supertype reference" in {
+                val birds: Span[Bird]     = Span(Bird("Tweety"), Bird("Polly"))
+                val animals: Span[Animal] = birds
+                animals.foreach { animal =>
+                    assert(animal.isInstanceOf[Bird])
+                }
+                succeed
+            }
+
+            "works with empty spans" in {
+                val emptyDogs: Span[Dog]       = Span.empty[Dog]
+                val emptyAnimals: Span[Animal] = emptyDogs
+                assert(emptyAnimals.isEmpty)
+                assert(emptyAnimals.size == 0)
+            }
+        }
+
+        "method compatibility" - {
+            sealed trait Animal
+            case class Dog(name: String) extends Animal
+            case class Cat(name: String) extends Animal
+
+            "startsWith accepts supertype spans" in {
+                val dogs                  = Span(Dog("Rex"), Dog("Max"), Dog("Buddy"))
+                val animals: Span[Animal] = dogs
+                val prefix                = Span(Dog("Rex"), Dog("Max"))
+                assert(animals.startsWith(prefix))
+            }
+
+            "endsWith works with mixed hierarchies" in {
+                val mixed  = Span[Animal](Dog("Rex"), Cat("Whiskers"), Dog("Max"))
+                val suffix = Span[Animal](Cat("Whiskers"), Dog("Max"))
+                assert(mixed.endsWith(suffix))
+            }
+
+            "copyToArray accepts supertype arrays" in {
+                val dogs                  = Span(Dog("Rex"), Dog("Max"))
+                val animals: Span[Animal] = dogs
+                val animalArray           = new Array[Animal](5)
+                val copied                = animals.copyToArray(animalArray, 1, 2)
+                assert(copied == 2)
+                assert(animalArray(1) == Dog("Rex"))
+                assert(animalArray(2) == Dog("Max"))
+            }
+        }
+
+        "composition operations" - {
+            sealed trait Animal
+            case class Dog(name: String) extends Animal
+            case class Cat(name: String) extends Animal
+
+            "concatenation infers common supertype" in {
+                val dogs: Span[Dog]        = Span(Dog("Rex"))
+                val cats: Span[Cat]        = Span(Cat("Whiskers"))
+                val combined: Span[Animal] = dogs ++ cats
+                assert(combined.size == 2)
+                assert(combined(0) == Dog("Rex"))
+                assert(combined(1) == Cat("Whiskers"))
+            }
+
+            "append with supertype elements" in {
+                val dogs: Span[Dog]       = Span(Dog("Rex"))
+                val withCat: Span[Animal] = dogs :+ Cat("Whiskers")
+                assert(withCat.size == 2)
+                assert(withCat(0) == Dog("Rex"))
+                assert(withCat(1) == Cat("Whiskers"))
+            }
+
+            "prepend with supertype elements" in {
+                val cats: Span[Cat]       = Span(Cat("Fluffy"))
+                val withDog: Span[Animal] = Dog("Rex") +: cats
+                assert(withDog.size == 2)
+                assert(withDog(0) == Dog("Rex"))
+                assert(withDog(1) == Cat("Fluffy"))
+            }
+
+            "concat multiple spans with mixed types" in {
+                val dogs     = Span(Dog("Rex"))
+                val cats     = Span(Cat("Whiskers"))
+                val moreDogs = Span(Dog("Max"))
+                val combined = Span.concat[Animal](dogs, cats, moreDogs)
+                assert(combined.size == 3)
+                assert(combined(0) == Dog("Rex"))
+                assert(combined(1) == Cat("Whiskers"))
+                assert(combined(2) == Dog("Max"))
+            }
+        }
+
+        "type inference" - {
+
+            sealed trait Shape
+            case class Circle(radius: Double) extends Shape
+            case class Square(side: Double)   extends Shape
+
+            "infers most specific common supertype" in {
+                val dogs = Span(Dog("Rex"), Dog("Max"))
+                val cats = Span(Cat("Whiskers"))
+
+                def processAnimals(animals: Span[Animal]): Int = animals.size
+
+                assert(processAnimals(dogs) == 2)
+                assert(processAnimals(cats) == 1)
+            }
+
+            "handles complex type hierarchies correctly" in {
+                val shapes: Span[Shape] = Span(Circle(5.0), Square(3.0))
+                val anys: Span[Any]     = shapes
+                assert(anys.size == 2)
+                assert(anys.forall(_.isInstanceOf[Shape]))
+            }
+
+            "works with explicit type annotations" in {
+                val mixed: Span[Animal] = Span[Animal](Dog("Rex"), Cat("Whiskers"))
+                assert(mixed.size == 2)
+                assert(mixed.exists(_.isInstanceOf[Dog]))
+                assert(mixed.exists(_.isInstanceOf[Cat]))
+            }
+
+            "preserves type information in transformations" in {
+                val dogs: Span[Dog]       = Span(Dog("Rex"), Dog("Max"))
+                val animals: Span[Animal] = dogs
+                val names                 = animals.map(_.toString)
+                assert(names.size == 2)
+                assert(names.forall(_.contains("Dog")))
+            }
+        }
+
+        "fromUnsafe safety" - {
+
+            "fromUnsafe with covariant usage patterns" in {
+                val dogArray                 = Array(Dog("Rex"), Dog("Max"))
+                val dogSpan                  = Span.fromUnsafe(dogArray)
+                val animalSpan: Span[Animal] = dogSpan
+                assert(animalSpan.size == 2)
+                assert(animalSpan(0) == Dog("Rex"))
+            }
+
+            "maintains type safety in typical scenarios" in {
+                val catArray                 = Array(Cat("Whiskers"), Cat("Fluffy"))
+                val catSpan                  = Span.fromUnsafe(catArray)
+                val animalSpan: Span[Animal] = catSpan
+
+                assert(animalSpan.exists(_.toString.contains("Cat")))
+                assert(animalSpan.forall(_.isInstanceOf[Animal]))
+            }
+
+            "works correctly with subtype arrays" in {
+                val animals: Array[Animal] = Array(Dog("Rex"), Cat("Whiskers"))
+                val animalSpan             = Span.fromUnsafe(animals)
+                assert(animalSpan.size == 2)
+                assert(animalSpan(0).isInstanceOf[Dog])
+                assert(animalSpan(1).isInstanceOf[Cat])
+            }
+        }
+    }
+
 end SpanTest

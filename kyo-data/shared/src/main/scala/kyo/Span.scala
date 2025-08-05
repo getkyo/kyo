@@ -25,30 +25,19 @@ import scala.reflect.ClassTag
   * this would box primitives. Instead, specialized methods like `existsZip` and `forallZip` accept functions with multiple parameters to
   * operate on corresponding elements without creating intermediate objects.
   *
-  * Span is also invariant due to the underlying specialized array implementation - you cannot treat a Span[Int] as a Span[AnyVal] without
-  * losing specialization benefits. Consider using Chunk instead when you need compatibility with Scala's collection library or when you
-  * require efficient structural operations like slicing without copying data.
+  * Span is covariant, meaning that if Dog <: Animal, then Span[Dog] <: Span[Animal]. This enables flexible subtyping relationships while
+  * maintaining type safety through careful method design. However, covariance may impact primitive specialization in some cases. Consider
+  * using Chunk instead when you need compatibility with Scala's collection library or when you require efficient structural operations like
+  * slicing without copying data.
   *
   * @tparam A
   *   the type of elements in this Span
   */
-opaque type Span[A] = Array[A]
+opaque type Span[+A] = Array[? <: A]
 
 object Span:
 
     import internal.*
-
-    /** Creates a new Span containing the given elements.
-      *
-      * @param values
-      *   the elements to include in the Span
-      * @return
-      *   a new Span containing the specified elements
-      */
-    def apply[A: ClassTag](values: A*): Span[A] =
-        values match
-            case values: ArraySeq[A] => values.unsafeArray.asInstanceOf[Array[A]]
-            case values              => values.toArray
 
     /** Returns an empty Span.
       *
@@ -61,10 +50,131 @@ object Span:
         else
             Array.empty
 
+    /** Creates an empty Span.
+      *
+      * @return
+      *   an empty Span of type A
+      */
+    inline def apply[A: ClassTag](): Span[A] = empty[A]
+
+    /** Creates a new Span containing a single element.
+      *
+      * @param a0
+      *   the element to include in the Span
+      * @return
+      *   a new Span containing the specified element
+      */
+    inline def apply[A: ClassTag](a0: A): Span[A] =
+        val arr = new Array[A](1)
+        arr(0) = a0
+        arr
+    end apply
+
+    /** Creates a new Span containing two elements.
+      *
+      * @param a0
+      *   the first element
+      * @param a1
+      *   the second element
+      * @return
+      *   a new Span containing the specified elements
+      */
+    inline def apply[A: ClassTag](a0: A, a1: A): Span[A] =
+        val arr = new Array[A](2)
+        arr(0) = a0
+        arr(1) = a1
+        arr
+    end apply
+
+    /** Creates a new Span containing three elements.
+      *
+      * @param a0
+      *   the first element
+      * @param a1
+      *   the second element
+      * @param a2
+      *   the third element
+      * @return
+      *   a new Span containing the specified elements
+      */
+    inline def apply[A: ClassTag](a0: A, a1: A, a2: A): Span[A] =
+        val arr = new Array[A](3)
+        arr(0) = a0
+        arr(1) = a1
+        arr(2) = a2
+        arr
+    end apply
+
+    /** Creates a new Span containing four elements.
+      *
+      * @param a0
+      *   the first element
+      * @param a1
+      *   the second element
+      * @param a2
+      *   the third element
+      * @param a3
+      *   the fourth element
+      * @return
+      *   a new Span containing the specified elements
+      */
+    inline def apply[A: ClassTag](a0: A, a1: A, a2: A, a3: A): Span[A] =
+        val arr = new Array[A](4)
+        arr(0) = a0
+        arr(1) = a1
+        arr(2) = a2
+        arr(3) = a3
+        arr
+    end apply
+
+    /** Creates a new Span containing five elements.
+      *
+      * @param a0
+      *   the first element
+      * @param a1
+      *   the second element
+      * @param a2
+      *   the third element
+      * @param a3
+      *   the fourth element
+      * @param a4
+      *   the fifth element
+      * @return
+      *   a new Span containing the specified elements
+      */
+    inline def apply[A: ClassTag](a0: A, a1: A, a2: A, a3: A, a4: A): Span[A] =
+        val arr = new Array[A](5)
+        arr(0) = a0
+        arr(1) = a1
+        arr(2) = a2
+        arr(3) = a3
+        arr(4) = a4
+        arr
+    end apply
+
+    /** Creates a new Span containing the given elements.
+      *
+      * Note: This vararg method will box primitive values. For better performance with primitives, prefer the specialized apply methods for
+      * small collections (1-5 elements) or use other factory methods.
+      *
+      * @param values
+      *   the elements to include in the Span
+      * @return
+      *   a new Span containing the specified elements
+      */
+    def apply[A: ClassTag](values: A*): Span[A] =
+        values match
+            case values: ArraySeq[A] => values.unsafeArray.asInstanceOf[Array[A]]
+            case values              => values.toArray
+
     /** Creates a Span from an Array without copying the array.
       *
       * Note: This method does not create a defensive copy of the array, so changes to the original array will be reflected in the Span. Use
       * with caution.
+      *
+      * Variance Safety Warning: Due to Span's covariance, be extra careful when using this method with arrays that may be mutated. Since
+      * Span[A] is covariant in A, a Span[Dog] can be treated as Span[Animal], but the underlying array remains Array[Dog]. Mutations
+      * through a wider type could lead to ClassCastException at runtime if not handled properly.
       *
       * @param array
       *   the Array to create the Span from
@@ -162,7 +272,7 @@ object Span:
           *   a new Span containing all elements except the first
           */
         inline def tail(using ClassTag[A]): Maybe[Span[A]] =
-            Maybe.when(nonEmpty)(slice(1, size))
+            Maybe.when(nonEmpty)(Span.slice(self)(1, size))
 
         /** Tests whether this Span contains a given value as an element.
           *
@@ -442,7 +552,7 @@ object Span:
           *   a new Span containing all elements that do not satisfy the predicate
           */
         inline def filterNot(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
-            self.filter(!p(_))
+            Span.filter(self)(!p(_))
 
         /** Selects the interval of elements between the given indices.
           *
@@ -474,7 +584,7 @@ object Span:
           *   a Span containing the first n elements
           */
         inline def take(n: Int)(using ClassTag[A]): Span[A] =
-            slice(0, n)
+            Span.slice(self)(0, n)
 
         /** An Span containing the last n elements of this Span.
           *
@@ -484,7 +594,7 @@ object Span:
           *   a Span containing the last n elements
           */
         inline def takeRight(n: Int)(using ClassTag[A]): Span[A] =
-            slice(math.max(0, size - n), size)
+            Span.slice(self)(math.max(0, size - n), size)
 
         /** Takes longest prefix of elements that satisfy a predicate.
           *
@@ -517,7 +627,7 @@ object Span:
           *   a Span containing all elements except the first n ones
           */
         inline def drop(n: Int)(using ClassTag[A]): Span[A] =
-            slice(n, size)
+            Span.slice(self)(n, size)
 
         /** The rest of the Span without its n last elements.
           *
@@ -527,7 +637,7 @@ object Span:
           *   a Span containing all elements except the last n ones
           */
         inline def dropRight(n: Int)(using ClassTag[A]): Span[A] =
-            slice(0, size - n)
+            Span.slice(self)(0, size - n)
 
         /** Drops longest prefix of elements that satisfy a predicate.
           *
@@ -594,7 +704,7 @@ object Span:
           *   a pair of Spans consisting of the first n elements and the remaining elements
           */
         inline def splitAt(n: Int)(using ClassTag[A]): (Span[A], Span[A]) =
-            (take(n), drop(n))
+            (Span.take(self)(n), Span.drop(self)(n))
 
         /** Splits this Span into a prefix/suffix pair according to a predicate.
           *
@@ -690,7 +800,7 @@ object Span:
           *   true if this Span has that as a suffix, false otherwise
           */
         inline def endsWith[B >: A](that: Span[B])(using CanEqual[A, B]): Boolean =
-            startsWith(that, size - that.length)
+            Span.startsWith(self)(that, size - that.length)
 
         /** Folds the elements of this Span using the specified associative binary operator.
           *
@@ -702,7 +812,7 @@ object Span:
           *   the result of applying the fold operator between all elements and z
           */
         inline def fold[B >: A](z: B)(inline op: (B, B) => B): B =
-            foldLeft(z)(op)
+            Span.foldLeft(self)(z)(op)
 
         /** Applies a binary operator to a start value and all elements of this Span, going left to right.
           *
@@ -789,14 +899,14 @@ object Span:
           *   a string representation of this Span
           */
         def mkString(start: String, sep: String, end: String): String =
-            start + mkString(sep) + end
+            start + Span.mkString(self)(sep) + end
 
         /** Converts this Span to a String.
           *
           * @return
           *   a string representation of this Span with no separator
           */
-        def mkString: String = mkString("")
+        def mkString: String = Span.mkString(self)("")
 
         /** Returns a copy of the underlying array.
           *
@@ -838,7 +948,7 @@ object Span:
           *   a new Span with suffix appended
           */
         inline infix def ++(suffix: Span[A])(using ClassTag[A]): Span[A] =
-            concat(suffix)
+            Span.concat(self)(suffix)
 
         /** Returns a new Span with an element appended.
           *
@@ -862,7 +972,8 @@ object Span:
           * @return
           *   a new Span with x appended
           */
-        inline def :+(x: A)(using ClassTag[A]): Span[A] = append(x)
+        inline def :+(x: A)(using ClassTag[A]): Span[A] =
+            Span.append(self)(x)
 
         /** Returns a new Span with an element prepended.
           *
@@ -1017,7 +1128,7 @@ object Span:
                 def hasNext: Boolean = pos < self.length
                 def next(): Span[A] =
                     if !hasNext then throw new NoSuchElementException
-                    val result = self.slice(pos, pos + offset)
+                    val result = Span.slice(self)(pos, pos + offset)
                     pos += step
                     result
                 end next
@@ -1034,7 +1145,7 @@ object Span:
           *   a new Span containing the prefix scan of the elements in this Span
           */
         inline def scan(z: A)(inline op: (A, A) => A)(using ClassTag[A]): Span[A] =
-            scanLeft(z)(op)
+            Span.scanLeft(self)(z)(op)
 
         /** Produces a Span containing cumulative results of applying the binary operator going left to right.
           *
@@ -1138,12 +1249,13 @@ object Span:
           */
         inline def padTo(len: Int, elem: A)(using ClassTag[A]): Span[A] =
             if len <= size then self
-            else concat(Span.fill(len - size)(elem))
+            else Span.concat(self)(Span.fill(len - size)(elem))
 
     end extension
 
     extension [B](x: B)
-        def +:[A >: B: ClassTag](span: Span[A]): Span[A] = span.prepend(x)
+        inline def +:[A >: B: ClassTag](span: Span[A]): Span[A] =
+            Span.prepend(span)(x)
 
     /** Returns a Span that contains the results of some element computation a number of times.
       *
