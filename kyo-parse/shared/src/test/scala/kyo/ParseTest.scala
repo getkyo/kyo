@@ -843,107 +843,107 @@ class ParseTest extends Test:
 
         }
 
-        // "spaced" - {
-        //     "handles surrounding whitespace" in run {
-        //         val parser = Parse.spaced(Parse.literal("test"))
-        //         Parse.runOrAbort("  test  ")(parser).map(_ => succeed)
-        //     }
+        "spaced" - {
+            "handles surrounding whitespace" in run {
+                val parser = Parse.spaced(Parse.literal("test"))
+                Parse.runOrAbort("  test  ")(parser).map(_ => succeed)
+            }
 
-        //     "preserves inner content" in run {
-        //         val parser = Parse.spaced(Parse.literal("hello world"))
-        //         Parse.runOrAbort("  hello world  ")(parser).map(_ => succeed)
-        //     }
+            "preserves inner content" in run {
+                val parser = Parse.spaced(Parse.literal("hello world"))
+                Parse.runOrAbort("  hello world  ")(parser).map(_ => succeed)
+            }
 
-        //     "handles no whitespace" in run {
-        //         val parser = Parse.spaced(Parse.int)
-        //         Parse.runOrAbort("42")(parser).map { result =>
-        //             assert(result == 42)
-        //         }
-        //     }
+            "handles no whitespace" in run {
+                val parser = Parse.spaced(Parse.int)
+                Parse.runOrAbort("42")(parser).map { result =>
+                    assert(result == 42)
+                }
+            }
 
-        //     "handles different whitespace types" in run {
-        //         val parser = Parse.spaced(Parse.int)
-        //         Parse.runOrAbort("\t\n\r 42 \t\n\r")(parser).map { result =>
-        //             assert(result == 42)
-        //         }
-        //     }
+            "handles different whitespace types" in run {
+                val parser = Parse.spaced(Parse.int)
+                Parse.runOrAbort("\t\n\r 42 \t\n\r")(parser).map { result =>
+                    assert(result == 42)
+                }
+            }
 
-        //     "preserves failure" in run {
-        //         val parser = Parse.spaced(Parse.literal("test"))
-        //         Parse.runResult("  fail  ")(parser)).map { result =>
-        //             assert(result.isFailure)
-        //         }
-        //     }
+            "preserves failure" in run {
+                val parser = Parse.spaced(Parse.literal("test"))
+                Parse.runResult("  fail  ")(parser).map { result =>
+                    assert(result.isFailure)
+                }
+            }
 
-        //     "composes with other parsers" in run {
-        //         val parser = Parse.inOrder(
-        //             Parse.spaced(Parse.int),
-        //             Parse.spaced(Parse.literal("+")),
-        //             Parse.spaced(Parse.int)
-        //         )
-        //         Parse.runOrAbort(" 1  +  2 ")(parser).map { case (n1, _, n2) =>
-        //             assert(n1 == 1)
-        //             assert(n2 == 2)
-        //         }
-        //     }
+            "composes with other parsers" in run {
+                val parser = Parse.inOrder(
+                    Parse.spaced(Parse.int),
+                    Parse.spaced(Parse.literal("+")),
+                    Parse.spaced(Parse.int)
+                )
+                Parse.runOrAbort(" 1  +  2 ")(parser).map { case (n1, _, n2) =>
+                    assert(n1 == 1)
+                    assert(n2 == 2)
+                }
+            }
 
-        //     "mathematical expression with optional whitespace" in run {
-        //         def eval(left: Double, op: Char, right: Double): Double = op match
-        //             case '+' => left + right
-        //             case '-' => left - right
-        //             case '*' => left * right
-        //             case '/' => left / right
+            "mathematical expression with optional whitespace" in run {
+                def eval(left: Double, op: Char, right: Double): Double = op match
+                    case '+' => left + right
+                    case '-' => left - right
+                    case '*' => left * right
+                    case '/' => left / right
 
-        //         def parens: Double < Parse[Char] =
-        //             Parse.between(
-        //                 Parse.literal('('),
-        //                 add,
-        //                 Parse.literal(')')
-        //             )
+                def parens: Double < Parse[Char] =
+                    Parse.between(
+                        Parse.literal('('),
+                        add,
+                        Parse.literal(')')
+                    )
 
-        //         def factor: Double < Parse[Char] =
-        //             Parse.firstOf(Parse.decimal, parens)
+                def factor: Double < Parse[Char] =
+                    Parse.firstOf(Parse.decimal, parens)
 
-        //         def addOp: Char < Parse[Char] = Parse.literalIn("+-")
+                def addOp: Char < Parse[Char] = Parse.anyIn("+-")
 
-        //         def mult: Double < Parse[Char] =
-        //             for
-        //                 init <- factor
-        //                 rest <- Parse.repeat(
-        //                     for
-        //                         op    <- Parse.literalIn("*/")
-        //                         right <- factor
-        //                     yield (op, right)
-        //                 )
-        //             yield rest.foldLeft(init)((acc, pair) => eval(acc, pair._1, pair._2))
+                def mult: Double < Parse[Char] =
+                    for
+                        init <- factor
+                        rest <- Parse.repeat(
+                            for
+                                op    <- Parse.anyIn("*/")
+                                right <- factor
+                            yield (op, right)
+                        )
+                    yield rest.foldLeft(init)((acc, pair) => eval(acc, pair._1, pair._2))
 
-        //         def add: Double < Parse[Char] =
-        //             for
-        //                 init <- mult
-        //                 rest <- Parse.repeat(
-        //                     for
-        //                         op    <- addOp
-        //                         right <- mult
-        //                     yield (op, right)
-        //                 )
-        //             yield rest.foldLeft(init)((acc, pair) => eval(acc, pair._1, pair._2))
+                def add: Double < Parse[Char] =
+                    for
+                        init <- mult
+                        rest <- Parse.repeat(
+                            for
+                                op    <- addOp
+                                right <- mult
+                            yield (op, right)
+                        )
+                    yield rest.foldLeft(init)((acc, pair) => eval(acc, pair._1, pair._2))
 
-        //         val expr = Parse.spaced(add)
+                val expr = Parse.spaced(add)
 
-        //         for
-        //             r1 <- Parse.runOrAbort("2 * (3 + 4)")(expr)
-        //             r2 <- Parse.runOrAbort(" 2*(3+4) ")(expr)
-        //             r3 <- Parse.runOrAbort("2*( 3 + 4 )/( 1 + 2 )")(expr)
-        //             r4 <- Parse.runOrAbort("1 + 2 * 3 + 4")(expr)
-        //         yield
-        //             assert(r1 == 14.0)
-        //             assert(r2 == 14.0)
-        //             assert(r3 == 14.0 / 3.0)
-        //             assert(r4 == 11.0)
-        //         end for
-        //     }
+                for
+                    r1 <- Parse.runOrAbort("2 * (3 + 4)")(expr)
+                    r2 <- Parse.runOrAbort(" 2*(3+4) ")(expr)
+                    r3 <- Parse.runOrAbort("2*( 3 + 4 )/( 1 + 2 )")(expr)
+                    r4 <- Parse.runOrAbort("1 + 2 * 3 + 4")(expr)
+                yield
+                    assert(r1 == 14.0)
+                    assert(r2 == 14.0)
+                    assert(r3 == 14.0 / 3.0)
+                    assert(r4 == 11.0)
+                end for
+            }
 
-        // }
+        }
 
         // "custom whitespace predicate" - {
         //     "only spaces" in run {

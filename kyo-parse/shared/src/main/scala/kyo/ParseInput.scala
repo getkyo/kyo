@@ -16,6 +16,14 @@ case class ParseInput[In](tokens: Chunk[In], position: Int):
     def advance(n: Int): ParseInput[In] =
         copy(position = Math.min(tokens.length, position + n))
 
+    def advanceWhile(f: In => Boolean): ParseInput[In] =
+        var pos = position
+        while pos < tokens.length && f(tokens(pos)) do
+            pos += 1
+
+        copy(position = pos)
+    end advanceWhile
+
     /** Checks if all input has been consumed
       *
       * @return
