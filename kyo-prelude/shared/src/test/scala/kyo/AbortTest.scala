@@ -695,6 +695,16 @@ class AbortTest extends Test:
                     val r = Abort.run(Abort.catching(throw new RuntimeException)).eval
                     assert(r.isPanic)
                 }
+                "Panic" in pendingUntilFixed {
+                    class Distinct1 extends Throwable derives CanEqual
+
+                    val d1: Distinct1                 = new Distinct1
+                    val a: Boolean < Abort[Distinct1] = Abort.catching[Distinct1](Abort.panic(d1)).andThen(true)
+                    val r: Result[Distinct1, Boolean] = Abort.run(a).eval
+
+                    assert(r == Result.fail(d1))
+                    ()
+                }
             }
             "with other effect" - {
                 def test(v: Int < Env[Int]): Int < Env[Int] =
