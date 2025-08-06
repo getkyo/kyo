@@ -37,6 +37,16 @@ sealed trait Parse[In] extends ArrowEffect[[in] =>> Parse.Op[In, in], Id]
 
 object Parse:
 
+    /** Aspect that modifies how text is read and parsed. This is the core parsing aspect that other parsing operations build upon. It takes
+      * the current text input and a parsing function, allowing for preprocessing of input or postprocessing of results.
+      *
+      * @return
+      *   An Aspect that transforms from Const[ParseState[In]] to (ParseState[In], Maybe[C])
+      */
+    def readAspect[In: Tag]: Aspect[Const[ParseState[In]], [C] =>> (ParseState[In], Maybe[C]), Any] =
+        given Frame = Frame.internal
+        Aspect.init
+
     enum Op[In, +Out]:
         case ModifyState(modify: ParseState[In] => (ParseState[In], Maybe[Out]))
         case Attempt[In, A, S](parser: A < (Parse[In] & S))                                              extends Op[In, Maybe[A] < S]
@@ -235,6 +245,28 @@ object Parse:
             val matched = input.remaining.takeWhile(f)
             Result.succeed((input.advance(matched.length), matched))
         )
+
+    /** Modifies a computation to automatically handle whitespace in all its parsing operations. Any parser used within the computation will
+      * consume and discard leading and trailing whitespace around its expected input.
+      *
+      * Since this operates through the Aspect effect, it affects all parsing operations within the computation, not just the immediate
+      * parser. This makes it particularly useful for complex parsers like those for mathematical expressions or programming languages where
+      * whitespace should be uniformly handled.
+      *
+      * @param v
+      *   Computation containing parsing operations
+      * @return
+      *   A computation where all parsing operations handle surrounding whitespace
+      */
+    def spaced[A, S](v: A < (Parse[Char] & S), isWhitespace: Char => Boolean = _.isWhitespace)(using Frame): A < (Parse[Char] & S) =
+        readAspect[Char].let([C] =>
+            (state, cont) =>
+                println(s"State: ${state.input.position}")
+                cont(state.copy(input = state.input.advanceWhile(isWhitespace(_)))).map((newState, value) =>
+                    println(s"State ${newState.input.position}")
+                    (newState.copy(input = newState.input.advanceWhile(isWhitespace(_))), value)
+            ))(v)
+    end spaced
 
     /** Attempts to parse input using the provided parsing function
       *
@@ -832,6 +864,7 @@ object Parse:
         regex(pattern.r)
 
     private[kyo] def runWith[In, Out, S, Out2, S2](state: ParseState[In])(parser: Out < (Parse[In] & S))(f: Out => Out2 < S2)(using
+        inTag: Tag[In],
         tag: Tag[Parse[In]],
         frame: Frame
     ): (ParseState[In], ParseResult[Out2]) < (S & S2) =
@@ -852,10 +885,16 @@ object Parse:
                 (input, state, cont) =>
                     input match
                         case Op.ModifyState(modify) =>
-                            val (newState, optOut) = modify(state)
-                            optOut match
-                                case Absent       => Loop.done((newState, ParseResult.failure(newState.failures)))
-                                case Present(out) => Loop.continue(newState, cont(out))
+                            readAspect[In](state)(modify).map((newState, optOut) =>
+                                optOut match
+                                    case Absent => Loop.done[
+                                            ParseState[In],
+                                            Out < (Parse[In] & S),
+                                            (ParseState[In], ParseResult[Out2])
+                                        ]((newState, ParseResult.failure(newState.failures)))
+                                    case Present(out) => Loop.continue(newState, cont(out))
+                                end match
+                            )
 
                         case Op.Attempt(parser: (Out < Parse[In]) @unchecked) =>
                             runState(state)(parser)
@@ -889,24 +928,34 @@ object Parse:
     end runWith
 
     def runState[In, Out, S](state: ParseState[In])(parser: Out < (Parse[In] & S))(using
+        Tag[In],
         Tag[Parse[In]],
         Frame
     ): (ParseState[In], ParseResult[Out]) < S =
         runWith(state)(parser)(identity)
 
-    def runResult[In, Out, S](state: ParseState[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
+    def runResult[In, Out, S](state: ParseState[In])(parser: Out < (Parse[In] & S))(using
+        Tag[In],
+        Tag[Parse[In]],
+        Frame
+    ): ParseResult[Out] < S =
         runState(state)(parser).map(_._2)
 
-    def runResult[In, Out, S](input: ParseInput[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
+    def runResult[In, Out, S](input: ParseInput[In])(parser: Out < (Parse[In] & S))(using
+        Tag[In],
+        Tag[Parse[In]],
+        Frame
+    ): ParseResult[Out] < S =
         runResult(ParseState(input, Chunk.empty))(parser)
 
-    def runResult[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using Tag[Parse[In]], Frame): ParseResult[Out] < S =
+    def runResult[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using Tag[In], Tag[Parse[In]], Frame): ParseResult[Out] < S =
         runResult(ParseInput(input, 0))(parser)
 
-    def runResult[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Tag[Parse[Char]], Frame): ParseResult[Out] < S =
+    def runResult[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Frame): ParseResult[Out] < S =
         runResult(Chunk.from(input))(parser)
 
     def runOrAbort[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using
+        Tag[In],
         Tag[Parse[In]],
         Frame
     ): Out < (Abort[ParseError] & S) =
@@ -916,7 +965,7 @@ object Parse:
         runResult(input)(parser).map(_.orAbort)
 
     // TODO Rework
-    def debug[In, Out](name: String, parser: => Out < Parse[In])(using Tag[Parse[In]], Frame): Out < Parse[In] =
+    def debug[In, Out](name: String, parser: => Out < Parse[In])(using Tag[In], Tag[Parse[In]], Frame): Out < Parse[In] =
         for
             start <- position
             _ = println(s"$name:$start")
