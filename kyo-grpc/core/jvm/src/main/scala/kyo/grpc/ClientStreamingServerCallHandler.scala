@@ -2,61 +2,74 @@ package kyo.grpc
 
 import io.grpc.*
 import kyo.*
-import kyo.Access.MultiProducerSingleConsumer
 import kyo.grpc.Grpc
 
 // TODO: Do we ever emit an error now?
 //  If not then we should remove the `GrpcFailure` type from the stream.
-private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: Stream[Request, Grpc] => Response < Grpc)(using Frame, Tag[Emit[Chunk[Request]]]) extends ServerCallHandler[Request, Response]:
+private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: GrpcHandlerInit[Stream[Request, Grpc], Response])(using Frame, Tag[Emit[Chunk[Request]]]) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] = {
         // WARNING: call is not guaranteed to be thread-safe.
+        // WARNING: headers are definitely not thread-safe.
+        // This handler has ownership of the call and headers, so we can use them with care.
 
-        call.request(1)
+        def onChunk(chunk: Chunk[Request]) =
+            Sync.defer(call.request(chunk.size))
 
-        // TODO: Capacity
-        val channel: StreamChannel.Unsafe[Request, GrpcFailure] =
-            StreamChannel.Unsafe.init(capacity = 42)
+        def sent(handler: GrpcHandler[Stream[Request, Grpc], Response], channel: StreamChannel[Request, GrpcFailure]) =
+            for
+                response <- handler(channel.stream.tapChunk(onChunk))
+                // sendMessage might throw an exception if the call is already closed which is OK.
+                // If it is closed then it is because it was interrupted in which case we lost the race.
+                _ <- Sync.defer(call.sendMessage(response))
+            yield Status.OK
 
-        val sent =
-            Env.run(headers):
-                for
-                    response <- f(channel.safe.stream)
-                    _ <- Var.use[ServerCallOptions](_.sendHeaders(call))
-                    // sendMessage might throw an exception if the call is already closed which is OK.
-                    // If it is closed then it is because it was interrupted in which case we lost the race.
-                    _ <- Sync.defer(call.sendMessage(response))
-                yield Status.OK
+        def closed(handler: GrpcHandler[Stream[Request, Grpc], Response], channel: StreamChannel[Request, GrpcFailure]) =
+            for
+                (trailers, status) <-
+                    sent(handler, channel).handle(
+                        Abort.recoverError(ServerCallHandlers.errorStatus),
+                        Emit.runFold[Metadata](Metadata())(_.mergeSafe(_))
+                    )
+                _ <- Sync.defer(call.close(status, trailers))
+            yield ()
 
-        val closed =
-            Var.isolate.update.use:
-                Var.run(ServerCallOptions()):
-                    for
-                        status <- Abort.recoverError(ServerCallHandlers.errorStatus)(sent)
-                        trailers <- Var.get[ServerCallOptions].map(_.trailers)
-                        _ <- Sync.defer(call.close(status, trailers))
-                    yield ()
+        def start(handler: GrpcHandler[Stream[Request, Grpc], Response], channel: StreamChannel[Request, GrpcFailure]) =
+            for
+                fiber <- Fiber.initUnscoped(closed(handler, channel))
+                _ <- fiber.onInterrupt: _ =>
+                    val status = Status.CANCELLED.withDescription("Call was cancelled.")
+                    call.close(status, Metadata())
+                _ <- fiber.onComplete: _ =>
+                    channel.close
+            yield fiber
 
-        val sentFiber =
-            Fiber.initUnscoped(closed)
-                .handle(
+        val init =
+            for
+                // Request 1 up front to ensure that we get the headers.
+                _ <- Sync.defer(call.request(1))
+                (options, handler) <- f.handle(
                     Env.run(headers),
-                    Sync.Unsafe.evalOrThrow,
+                    ResponseOptions.run
                 )
+                requestBuffer = options.requestBufferOrDefault
+                _ <- options.sendHeaders(call)
+                // Request the remaining messages to fill the request buffer.
+                _ <- Sync.defer(if requestBuffer > 1 then call.request(requestBuffer - 1) else ())
+                channel <- StreamChannel.initUnscoped[Request, GrpcFailure](capacity = requestBuffer)
+                sentFiber <- start(handler, channel)
+            yield ClientStreamingServerCall(channel.unsafe, sentFiber.unsafe)
 
-        sentFiber.unsafe.onInterrupt: _ =>
-            val status = Status.CANCELLED.withDescription("Call was cancelled.")
-            call.close(status, Metadata())
-
-        sentFiber.unsafe.onComplete: _ =>
-            channel.close()
-
-        ClientStreamingServerCall(channel, sentFiber.unsafe)
+        init.handle(
+            Sync.Unsafe.run,
+            Abort.run,
+            _.eval.getOrThrow
+        )
     }
 
-    private class ClientStreamingServerCall(channel: StreamChannel.Unsafe[Request, GrpcFailure], fiber: Fiber.Unsafe[Unit, Any])
+    class ClientStreamingServerCall(channel: StreamChannel.Unsafe[Request, GrpcFailure], fiber: Fiber.Unsafe[Unit, Any])
         extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =

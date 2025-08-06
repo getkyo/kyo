@@ -4,48 +4,65 @@ import io.grpc.*
 import kyo.*
 import kyo.grpc.Grpc
 
-private[grpc] class ServerStreamingServerCallHandler[Request, Response](f: Request => Stream[Response, Grpc] < Grpc)(using Frame, Tag[Emit[Chunk[Response]]]) extends ServerCallHandler[Request, Response]:
+private[grpc] class ServerStreamingServerCallHandler[Request, Response](f: GrpcHandlerInit[Request, Stream[Response, Grpc]])(using
+    Frame,
+    Tag[Emit[Chunk[Response]]]
+) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
-    override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] = {
+    override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
         // WARNING: call is not guaranteed to be thread-safe.
-        call.request(1)
-        ServerStreamingServerCallListener(call, headers)
-    }
+        // WARNING: headers are definitely not thread-safe.
+        // This handler has ownership of the call and headers, so we can use them with care.
 
-    private class ServerStreamingServerCallListener(call: ServerCall[Request, Response], headers: Metadata)
-        extends ServerCall.Listener[Request]:
+        val init =
+            for
+                _ <- Sync.defer(call.request(1))
+                handler <- f.handle(
+                    Env.run(headers),
+                    ResponseOptions.runSend(call)
+                )
+                interrupt       <- Promise.init[Status, Any]
+                messageReceived <- AtomicBoolean.init(false)
+                pendingSend     <- AtomicRef.init(Maybe.empty)
+            yield ServerStreamingServerCallListener(call, handler, interrupt, messageReceived, pendingSend)
 
-        private val interrupt: Promise[Status, Any] =
-            Promise.Unsafe.initMasked[Status, Any]().safe
+        init.handle(
+            Sync.Unsafe.run,
+            Abort.run,
+            _.eval.getOrThrow
+        )
+    end startCall
 
-        private val messageReceived: AtomicBoolean =
-            AtomicBoolean.Unsafe.init(false).safe
-
-        private val pendingSend: AtomicRef[Maybe[Latch]] =
-            AtomicRef.Unsafe.init(Maybe.empty).safe
+    class ServerStreamingServerCallListener(
+        call: ServerCall[Request, Response],
+        handler: GrpcHandler[Request, Stream[Response, Grpc]],
+        interrupt: Promise[Status, Any],
+        messageReceived: AtomicBoolean,
+        pendingSend: AtomicRef[Maybe[Latch]]
+    ) extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
             val sent =
-                Env.run(headers):
-                    for
-                        responses <- f(message)
-                        _ <- Var.use[ServerCallOptions](_.sendHeaders(call))
-                        _ <- responses.foreach(sendResponse)
-                    yield Status.OK
+                for
+                    responses <- handler(message)
+                    _         <- responses.foreach(sendResponse)
+                yield Status.OK
 
             val closed =
-                Var.isolate.update.use:
-                    Var.run(ServerCallOptions()):
-                        for
-                            status <- Abort.recoverError(ServerCallHandlers.errorStatus):
-                                Async.raceFirst(sent, interrupt.get)
-                            trailers <- Var.get[ServerCallOptions].map(_.trailers)
-                            // TODO: Is it safe to call close here?
-                            //  Does interrupt guarantee that other fiber has stopped?
-                            _ <- Sync.defer(call.close(status, trailers))
-                        yield ()
+                for
+                    (trailers, status) <-
+                        Emit.isolate.merge[Metadata].use(
+                            Async.raceFirst[GrpcFailure, Status, Emit[Metadata]](sent, interrupt.get)
+                        ).handle(
+                            Abort.recoverError(ServerCallHandlers.errorStatus),
+                            Emit.runFold[Metadata](Metadata())(_.mergeSafe(_))
+                        )
+                    // TODO: Is it safe to call close here?
+                    //  Does interrupt guarantee that other fiber has stopped?
+                    _ <- Sync.defer(call.close(status, trailers))
+                yield ()
 
             val closedOrSkipped =
                 Kyo.unless(messageReceived.getAndSet(true))(closed).unit
@@ -62,7 +79,7 @@ private[grpc] class ServerStreamingServerCallHandler[Request, Response](f: Reque
             else
                 for
                     latch <- Latch.init(1)
-                    _ <- pendingSend.set(Maybe.Present(latch))
+                    _     <- pendingSend.set(Maybe.Present(latch))
                     _ <-
                         if call.isReady then
                             pendingSend.set(Maybe.Absent).andThen(send)
@@ -82,6 +99,7 @@ private[grpc] class ServerStreamingServerCallHandler[Request, Response](f: Reque
                 // It is safe to call close here as the listener is not called concurrently so we know there is no other
                 // fiber processing a message.
                 call.close(status, Metadata())
+            end if
         end onCancel
 
         override def onComplete(): Unit = ()

@@ -16,7 +16,7 @@ import scala.concurrent.Future
   *
   * Clients will typically handle the effect of calling a gRPC method using functions such as [[Abort.run]].
   */
-type Grpc = Async & Abort[GrpcFailure] & Env[Metadata]
+type Grpc = Async & Abort[GrpcFailure]
 
 object Grpc:
 

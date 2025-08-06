@@ -1,5 +1,10 @@
 package kyo.grpc
 
+import io.grpc.{Metadata, ServerCall}
 import kyo.*
 
-type GrpcHandler = Grpc & Var[ServerCallOptions]
+type GrpcMeta = Env[Metadata] & Emit[ResponseOptions]
+
+type GrpcHandler[Requests, Responses] = Requests => Responses < (Grpc & Emit[Metadata])
+
+type GrpcHandlerInit[Requests, Responses] = GrpcHandler[Requests, Responses] < GrpcMeta
