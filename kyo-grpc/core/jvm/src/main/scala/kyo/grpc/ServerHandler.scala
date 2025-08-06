@@ -53,11 +53,6 @@ object ServerHandler:
         Tag[Emit[Chunk[Request]]]
     ): ServerCallHandler[Request, Response] =
         ClientStreamingServerCallHandler(f)
-//        ServerCalls.asyncClientStreamingCall(responseObserver =>
-//            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-//            val requestObserver        = RequestStreamObserver.one(f, serverResponseObserver)
-//            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
-//        )
 
     /** Creates a server handler for server streaming gRPC calls.
       *
@@ -99,10 +94,6 @@ object ServerHandler:
         Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
         ???
-//        ServerCalls.asyncBidiStreamingCall(responseObserver =>
-//            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
-//            val requestObserver        = RequestStreamObserver.many(f, serverResponseObserver)
-//            Abort.run(Sync.Unsafe.run(requestObserver)).eval.getOrThrow
-//        )
+//        BidiStreamingServerCallHandler(f)
 
 end ServerHandler
