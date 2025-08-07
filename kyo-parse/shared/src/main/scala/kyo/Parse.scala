@@ -37,20 +37,11 @@ sealed trait Parse[In] extends ArrowEffect[[in] =>> Parse.Op[In, in], Id]
 
 object Parse:
 
-    /** Aspect that modifies how text is read and parsed. This is the core parsing aspect that other parsing operations build upon. It takes
-      * the current text input and a parsing function, allowing for preprocessing of input or postprocessing of results.
-      *
-      * @return
-      *   An Aspect that transforms from Const[ParseState[In]] to (ParseState[In], Maybe[C])
-      */
-    def readAspect[In: Tag]: Aspect[Const[ParseState[In]], [C] =>> (ParseState[In], Maybe[C]), Any] =
-        given Frame = Frame.internal
-        Aspect.init
-
     enum Op[In, +Out]:
         case ModifyState(modify: ParseState[In] => (ParseState[In], Maybe[Out]))
         case Attempt[In, A, S](parser: A < (Parse[In] & S))                                              extends Op[In, Maybe[A] < S]
         case RecoverWith[In, A, S](parser: A < (Parse[In] & S), recoverStrategy: RecoverStrategy[In, A]) extends Op[In, A < S]
+        case Discard[In, A, S](parser: A < (Parse[In] & S), isDiscarded: In => Boolean)                  extends Op[In, A < S]
     end Op
 
     inline def modifyState[Out](using
@@ -231,6 +222,24 @@ object Parse:
     )(using inline tag: Tag[Parse[In]], inline frame: Frame): Out < (Parse[In] & S) =
         ArrowEffect.suspendWith(tag, Op.RecoverWith(parser, recoverStrategy))(x => x)
 
+    /** Modifies a computation to automatically handle whitespace in all its parsing operations. Any parser used within the computation will
+      * consume and discard leading and trailing whitespace around its expected input.
+      *
+      * Since this operates through the Aspect effect, it affects all parsing operations within the computation, not just the immediate
+      * parser. This makes it particularly useful for complex parsers like those for mathematical expressions or programming languages where
+      * whitespace should be uniformly handled.
+      *
+      * @param v
+      *   Computation containing parsing operations
+      * @return
+      *   A computation where all parsing operations handle surrounding whitespace
+      */
+    inline def spaced[In, Out, S](parser: Out < (Parse[In] & S), isWhitespace: In => Boolean = (_: Char).isWhitespace)(using
+        inline tag: Tag[Parse[In]],
+        frame: Frame
+    ): Out < (Parse[In] & S) =
+        ArrowEffect.suspendWith(tag, Op.Discard(parser, isWhitespace))(x => x)
+
     def readOne[In, Out](f: In => Result[Chunk[String], Out])(using Tag[Parse[In]], Frame): Out < Parse[In] =
         read(input =>
             if input.done then Result.fail(Chunk(ParseFailure("EOF", input.position)))
@@ -245,28 +254,6 @@ object Parse:
             val matched = input.remaining.takeWhile(f)
             Result.succeed((input.advance(matched.length), matched))
         )
-
-    /** Modifies a computation to automatically handle whitespace in all its parsing operations. Any parser used within the computation will
-      * consume and discard leading and trailing whitespace around its expected input.
-      *
-      * Since this operates through the Aspect effect, it affects all parsing operations within the computation, not just the immediate
-      * parser. This makes it particularly useful for complex parsers like those for mathematical expressions or programming languages where
-      * whitespace should be uniformly handled.
-      *
-      * @param v
-      *   Computation containing parsing operations
-      * @return
-      *   A computation where all parsing operations handle surrounding whitespace
-      */
-    def spaced[A, S](v: A < (Parse[Char] & S), isWhitespace: Char => Boolean = _.isWhitespace)(using Frame): A < (Parse[Char] & S) =
-        readAspect[Char].let([C] =>
-            (state, cont) =>
-                println(s"State: ${state.input.position}")
-                cont(state.copy(input = state.input.advanceWhile(isWhitespace(_)))).map((newState, value) =>
-                    println(s"State ${newState.input.position}")
-                    (newState.copy(input = newState.input.advanceWhile(isWhitespace(_))), value)
-            ))(v)
-    end spaced
 
     /** Attempts to parse input using the provided parsing function
       *
@@ -885,16 +872,11 @@ object Parse:
                 (input, state, cont) =>
                     input match
                         case Op.ModifyState(modify) =>
-                            readAspect[In](state)(modify).map((newState, optOut) =>
-                                optOut match
-                                    case Absent => Loop.done[
-                                            ParseState[In],
-                                            Out < (Parse[In] & S),
-                                            (ParseState[In], ParseResult[Out2])
-                                        ]((newState, ParseResult.failure(newState.failures)))
-                                    case Present(out) => Loop.continue(newState, cont(out))
-                                end match
-                            )
+                            val (newState, optOut) = modify(state)
+                            optOut match
+                                case Absent       => Loop.done((newState, ParseResult.failure(newState.failures)))
+                                case Present(out) => Loop.continue(newState, cont(out))
+                            end match
 
                         case Op.Attempt(parser: (Out < Parse[In]) @unchecked) =>
                             runState(state)(parser)
@@ -922,6 +904,18 @@ object Parse:
                                                             )
                                                 )
                                         case Some(out) => Loop.continue(parseState, cont(Kyo.lift(out)))
+                                )
+
+                        case Op.Discard(parser: (Out < Parse[In]) @unchecked, isDiscarded) =>
+                            val oldIsDiscarded = state.isDiscarded
+                            runState(
+                                state.copy(isDiscarded = token => oldIsDiscarded(token) || isDiscarded(token))
+                            )(parser)
+                                .map((parseState, result) =>
+                                    val finalState = parseState.copy(isDiscarded = oldIsDiscarded)
+                                    result.out match
+                                        case None      => Loop.done((finalState, ParseResult.failure(finalState.failures)))
+                                        case Some(out) => Loop.continue(finalState, cont(Kyo.lift(out)))
                                 ),
             done = (s, r) => f(r).map(out => (s, ParseResult.success(s.failures, out)))
         )
