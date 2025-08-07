@@ -43,7 +43,6 @@ opaque type Fiber[+A, -S] = IOPromiseBase[Any, A < (Async & S)]
 export Fiber.Promise
 
 object Fiber:
-
     private val _unit = IOPromise(Result.succeed((): Unit < Any))
 
     /** Creates a unit Fiber.
@@ -91,14 +90,14 @@ object Fiber:
     /** Creates a Fiber from a Result.
       *
       * This method creates a Fiber that is immediately completed with the provided Result. The Fiber will have the same success and error
-      * types as the Result, with the error type reduced according to the Reducible instance.
+      * types as the Result.
       *
       * @param result
       *   The Result to create the Fiber from
       * @return
       *   A Fiber that is immediately completed with the provided Result
       */
-    def fromResult[E, A, S](result: Result[E, A < S])(using reduce: Reducible[Abort[E]]): Fiber[A, reduce.SReduced & S] =
+    def fromResult[E, A, S](result: Result[E, A < S]): Fiber[A, Abort[E] & S] =
         IOPromise(result)
 
     /** Creates a Fiber from a Future.
@@ -128,10 +127,8 @@ object Fiber:
     )(
         v: => A < (Abort[E] & Async & S)
     )(
-        using
-        reduce: Reducible[Abort[E]],
-        frame: Frame
-    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
+        using frame: Frame
+    ): Fiber[A, Abort[E] & S2] < (Sync & S & Scope) =
         Scope.acquireRelease(initUnscoped[E, A, S, S2](v))(_.interrupt)
 
     /** Use an asynchronous computation running in a new Fiber, interrupting the fiber after usage.
@@ -144,11 +141,10 @@ object Fiber:
     def use[E, A, S, S2](
         using
         isolate: Isolate[S, Sync, S2],
-        reduce: Reducible[Abort[E]],
         frame: Frame
     )(
         v: => A < (Abort[E] & Async & S)
-    )[B, S3](f: Fiber[A, reduce.SReduced & S2] => B < S3): B < (Sync & S & S3) =
+    )[B, S3](f: Fiber[A, Abort[E] & S2] => B < S3): B < (Sync & S & S3) =
         initUnscoped[E, A, S, S2](v).map: fiber =>
             Sync.ensure(fiber.interrupt)(f(fiber))
 
@@ -164,14 +160,12 @@ object Fiber:
     )(
         v: => A < (Abort[E] & Async & S)
     )(
-        using
-        reduce: Reducible[Abort[E]],
-        frame: Frame
-    ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
+        using frame: Frame
+    ): Fiber[A, Abort[E] & S2] < (Sync & S) =
         Isolate.internal.runDetached((trace, context) =>
             isolate.capture { state =>
                 val io = isolate.isolate(state, v).map(r => Kyo.lift(isolate.restore(r)))
-                IOTask(io, trace, context).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
+                IOTask(io, trace, context)
             }
         )
 
@@ -226,6 +220,11 @@ object Fiber:
           */
         def waiters(using Frame): Int < Sync =
             Sync.Unsafe(Unsafe.waiters(self)())
+
+        /** Reduce the Fiber's effect type. Useful especially to convert `Fiber[A, Abort[Nothing]]` to `Fiber[A, Any]`
+          */
+        def reduced(using reduce: Reducible[S]): Fiber[A, reduce.SReduced] =
+            self.asInstanceOf[Fiber[A, reduce.SReduced]]
 
         def unsafe: Fiber.Unsafe[A, S] =
             self
@@ -361,7 +360,7 @@ object Fiber:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        def init[E, A, S](result: Result[E, A < S])(using allow: AllowUnsafe, reduce: Reducible[Abort[E]]): Unsafe[A, reduce.SReduced & S] =
+        def init[E, A, S](result: Result[E, A < S])(using allow: AllowUnsafe): Unsafe[A, Abort[E] & S] =
             IOPromise(result)
 
         def fromFuture[A](f: => Future[A])(using AllowUnsafe): Unsafe[A, Any] =
@@ -399,6 +398,9 @@ object Fiber:
             def safe: Fiber[A, S] = self
 
             def waiters()(using AllowUnsafe): Int = self.lower.waiters()
+
+            def reduced(using reduce: Reducible[S]): Unsafe[A, reduce.SReduced] =
+                self.asInstanceOf[Unsafe[A, reduce.SReduced]]
         end extension
 
         extension [E, A, S](self: Unsafe[A, Abort[E] & S])

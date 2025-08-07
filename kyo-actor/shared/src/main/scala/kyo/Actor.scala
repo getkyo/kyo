@@ -436,7 +436,7 @@ object Actor:
         for
             mailbox <-
                 // Create a bounded channel to serve as the actor's mailbox
-                Channel.init[A](capacity, Access.MultiProducerSingleConsumer)
+                Channel.initUnscoped[A](capacity, Access.MultiProducerSingleConsumer)
             _subject =
                 // Create the actor's message interface (Subject)
                 // Messages sent through this subject are queued in the mailbox
@@ -452,7 +452,7 @@ object Actor:
                 }.handle(
                     Sync.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
                     Env.run(_subject),          // Provide the actor's Subject to the environment so it can be accessed via Actor.self
-                    Scope.run,                  // Close used resources
+                    Scope.run,                  // Clean up resources
                     Fiber.init                  // Start the actor's processing loop in an async context
                 )
         yield new Actor[E, A, B](_subject, _consumer):

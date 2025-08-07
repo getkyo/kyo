@@ -177,6 +177,24 @@ class StreamCoreExtensionsTest extends Test:
 
                 Choice.run(test).andThen(succeed)
             }
+
+            "should propagate Abort[Closed]" in run {
+                val failure = Closed("failure", summon[Frame])
+                val stream  = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapPar(par, buf)(i => if i == 5 then Abort.fail(failure) else i + 1)
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure(failure)
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
         }
 
         "mapParUnordered" - {
@@ -225,6 +243,24 @@ class StreamCoreExtensionsTest extends Test:
                         res <- Abort.run(s2.run)
                     yield assert(
                         res == Result.Failure("failure")
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+
+            "should propagate Abort[Closed]" in run {
+                val failure = Closed("failure", summon[Frame])
+                val stream  = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapParUnordered(par, buf)(i => if i == 5 then Abort.fail(failure) else i + 1)
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure(failure)
                     )
                     end for
                 end test
@@ -285,6 +321,24 @@ class StreamCoreExtensionsTest extends Test:
 
                 Choice.run(test).andThen(succeed)
             }
+
+            "should propagate Abort[Closed]" in run {
+                val failure = Closed("failure", summon[Frame])
+                val stream  = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapChunkPar(par, buf)(chunk => if chunk.contains(5) then Abort.fail(failure) else chunk.map(_ + 1))
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure(failure)
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
         }
 
         "mapChunkParUnordered" - {
@@ -337,6 +391,26 @@ class StreamCoreExtensionsTest extends Test:
                         res <- Abort.run(s2.run)
                     yield assert(
                         res == Result.Failure("failure")
+                    )
+                    end for
+                end test
+
+                Choice.run(test).andThen(succeed)
+            }
+
+            "should propagate Abort[Closed]" in run {
+                val failure = Closed("failure", summon[Frame])
+                val stream  = Stream.init(1 to 4).concat(Stream.init(5 to 8)).concat(Stream.init(9 to 12))
+                val test =
+                    for
+                        par <- Choice.eval(2, 4, Async.defaultConcurrency, 1024)
+                        buf <- Choice.eval(1, par, 4, 5, 8, 12, Int.MaxValue)
+                        s2 = stream.mapChunkParUnordered(par, buf)(chunk =>
+                            if chunk.contains(5) then Abort.fail(failure) else chunk.map(_ + 1)
+                        )
+                        res <- Abort.run(s2.run)
+                    yield assert(
+                        res == Result.Failure(failure)
                     )
                     end for
                 end test
