@@ -9,12 +9,12 @@ import java.util.concurrent.TimeUnit
 import kgrpc.bench.TestServiceFs2Grpc
 import kgrpc.bench.ZioBench
 import kyo.*
+import kyo.Scope
 import kyo.bench.arena.ArenaBench2.*
 import kyo.grpc.Grpc
-import kyo.Scope
 import kyo.kernel.ContextEffect
 import org.openjdk.jmh.annotations.*
-import org.openjdk.jmh.annotations.{Scope => JmhScope}
+import org.openjdk.jmh.annotations.Scope as JmhScope
 import scala.compiletime.uninitialized
 import scala.concurrent.Future
 import scalapb.zio_grpc

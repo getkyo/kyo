@@ -5,20 +5,20 @@ import kyo.Clock.Deadline
 import kyo.kernel.Loop.Outcome
 
 /** A channel that is consumed as a stream.
- *
- * The producer side of the channel can put elements into the channel and then close or signal an error. If an error is signaled, the
- * producer side of the channel is closed. Once the consumer side has consumed all elements, it will then abort with the error if one was
- * signaled, or with [[Closed]] if no error was signaled.
- *
- * @tparam A
- *   the type of values that can be put into and taken from the channel
- * @tparam E
- *   the type of errors that can be signaled through the channel
- */
+  *
+  * The producer side of the channel can put elements into the channel and then close or signal an error. If an error is signaled, the
+  * producer side of the channel is closed. Once the consumer side has consumed all elements, it will then abort with the error if one was
+  * signaled, or with [[Closed]] if no error was signaled.
+  *
+  * @tparam A
+  *   the type of values that can be put into and taken from the channel
+  * @tparam E
+  *   the type of errors that can be signaled through the channel
+  */
 private[kyo] opaque type StreamChannel[A, E] = StreamChannel.Unsafe[A, E]
 
 /** Companion object for [[StreamChannel]] providing factory methods and extensions.
- */
+  */
 private[kyo] object StreamChannel:
 
     extension [A, E](self: StreamChannel[A, E])
@@ -35,7 +35,8 @@ private[kyo] object StreamChannel:
 
         /** Signals an error and closes the producer side of the channel.
           *
-          * Once an error is signaled, subsequent [[take]] operations will abort with the error after all remaining element have been consumed.
+          * Once an error is signaled, subsequent [[take]] operations will abort with the error after all remaining element have been
+          * consumed.
           *
           * @param e
           *   the error to signal
@@ -92,8 +93,8 @@ private[kyo] object StreamChannel:
 
         /** Checks if the channel is completely closed.
           *
-          * A channel is considered completely closed when the underlying channel is closed, which happens when the producer was closed and the
-          * consumer has consumed all elements.
+          * A channel is considered completely closed when the underlying channel is closed, which happens when the producer was closed and
+          * the consumer has consumed all elements.
           *
           * @return
           *   a pending computation that produces `true` if the channel is closed, `false` otherwise
@@ -104,8 +105,8 @@ private[kyo] object StreamChannel:
 
         /** Creates a stream from this channel.
           *
-          * This method can only be called once and is mutually exclusive with `take` operations. The stream will emit chunks of values as they
-          * become available.
+          * This method can only be called once and is mutually exclusive with `take` operations. The stream will emit chunks of values as
+          * they become available.
           *
           * @return
           *   a stream that emits values from the channel
@@ -123,7 +124,10 @@ private[kyo] object StreamChannel:
           * @return
           *   a pending computation that emits chunks of values
           */
-        private def emitChunks(maxChunkSize: Int = Int.MaxValue)(using Frame, Tag[Emit[Chunk[A]]]): Unit < (Emit[Chunk[A]] & Abort[E] & Async) =
+        private def emitChunks(maxChunkSize: Int = Int.MaxValue)(using
+            Frame,
+            Tag[Emit[Chunk[A]]]
+        ): Unit < (Emit[Chunk[A]] & Abort[E] & Async) =
             if maxChunkSize <= 0 then ()
             else
                 Loop.foreach:
@@ -144,12 +148,12 @@ private[kyo] object StreamChannel:
         end emitChunks
 
         /** Converts the `StreamChannel` to its unsafe representation.
-         *
-         * This is a low-level operation that should only be used when necessary, such as in integrations or performance-sensitive code.
-         *
-         * @return
-         *   the unsafe representation of the channel
-         */
+          *
+          * This is a low-level operation that should only be used when necessary, such as in integrations or performance-sensitive code.
+          *
+          * @return
+          *   the unsafe representation of the channel
+          */
         def unsafe: Unsafe[A, E] = self
     end extension
 
@@ -179,10 +183,10 @@ private[kyo] object StreamChannel:
       * This factory method initializes a new channel with the specified capacity and creates the necessary error tracking. The channel is
       * configured for single producer, single consumer access pattern.
       *
-     * @param capacity
-     *   The capacity of the channel. Note that this will be rounded up to the next power of two.
-     * @param access
-     *   The access mode for the channel (default is [[Access.SingleProducerSingleConsumer]]).
+      * @param capacity
+      *   The capacity of the channel. Note that this will be rounded up to the next power of two.
+      * @param access
+      *   The access mode for the channel (default is [[Access.SingleProducerSingleConsumer]]).
       * @tparam A
       *   the type of values that will flow through the channel
       * @tparam E
@@ -204,21 +208,22 @@ private[kyo] object StreamChannel:
         def putFiber(value: A)(using Frame, AllowUnsafe): Fiber.Unsafe[Unit, Abort[Closed]] =
             channel.offer(value).foldOrThrow(
                 {
-                    case true => Fiber.unit.unsafe
+                    case true  => Fiber.unit.unsafe
                     case false => channel.putFiber(value)
                 },
                 Fiber.fail(_).unsafe
             )
 
         /** Signals an error and closes the producer side of the channel.
-         *
-         * Once an error is signaled, subsequent [[take]] operations will abort with the error after all remaining element have been consumed.
-         *
-         * @param e
-         *   the error to signal
-         * @return
-         *   a pending computation that completes with [[Unit]] or aborts with [[Closed]]
-         */
+          *
+          * Once an error is signaled, subsequent [[take]] operations will abort with the error after all remaining element have been
+          * consumed.
+          *
+          * @param e
+          *   the error to signal
+          * @return
+          *   a pending computation that completes with [[Unit]] or aborts with [[Closed]]
+          */
         def fail(e: E)(using Frame, AllowUnsafe): Result[Closed, Fiber.Unsafe[Boolean, Any]] =
             if !channel.open() then
                 Result.fail(Closed("StreamChannel", initFrame))
@@ -227,32 +232,33 @@ private[kyo] object StreamChannel:
             else
                 Result.succeed(closeProducerFiber())
             end if
+        end fail
 
         /** Closes the producer side of the channel.
-         *
-         * This method closes the channel without draining the remaining elements or waiting for it to be emptied.
-         *
-         * After calling this method, no more values can be put into the channel.
-         *
-         * @return
-         *   a pending computation that completes with [[Unit]] when the channel is closed
-         */
+          *
+          * This method closes the channel without draining the remaining elements or waiting for it to be emptied.
+          *
+          * After calling this method, no more values can be put into the channel.
+          *
+          * @return
+          *   a pending computation that completes with [[Unit]] when the channel is closed
+          */
         def closeProducerFiber()(using Frame, AllowUnsafe): Fiber.Unsafe[Boolean, Any] =
             channel.closeAwaitEmpty()
 
         /** Closes the channel immediately and discards any elements or error that have yet to be consumed.
-         */
+          */
         def close()(using Frame, AllowUnsafe): Unit =
             discard(channel.close())
 
         /** Checks if the channel is completely closed.
-         *
-         * A channel is considered completely closed when the underlying channel is closed, which happens when the producer was closed and the
-         * consumer has consumed all elements.
-         *
-         * @return
-         *   a pending computation that produces `true` if the channel is closed, `false` otherwise
-         */
+          *
+          * A channel is considered completely closed when the underlying channel is closed, which happens when the producer was closed and
+          * the consumer has consumed all elements.
+          *
+          * @return
+          *   a pending computation that produces `true` if the channel is closed, `false` otherwise
+          */
         def closed()(using Frame, AllowUnsafe): Boolean =
             channel.closed() && failure.get().isEmpty
 
@@ -262,12 +268,13 @@ private[kyo] object StreamChannel:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def init[A, E](
-                       capacity: Int,
-                       access: Access = Access.SingleProducerSingleConsumer
-                   )(using Frame, AllowUnsafe): Unsafe[A, E] =
+            capacity: Int,
+            access: Access = Access.SingleProducerSingleConsumer
+        )(using Frame, AllowUnsafe): Unsafe[A, E] =
             val channel = Channel.Unsafe.init[A](capacity, access)
-            val error = AtomicRef.Unsafe.init(Maybe.empty[E])
+            val error   = AtomicRef.Unsafe.init(Maybe.empty[E])
             Unsafe(channel, error)
+        end init
     end Unsafe
 
 end StreamChannel

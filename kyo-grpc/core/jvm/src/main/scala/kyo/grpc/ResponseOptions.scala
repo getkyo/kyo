@@ -13,7 +13,7 @@ final case class ResponseOptions(
     messageCompression: Maybe[Boolean] = Maybe.empty,
     compression: Maybe[String] = Maybe.empty,
     onReadyThreshold: Maybe[Int] = Maybe.empty,
-    requestBuffer: Maybe[Int] = Maybe.empty,
+    requestBuffer: Maybe[Int] = Maybe.empty
 ):
 
     def requestBufferOrDefault: Int =
@@ -26,7 +26,7 @@ final case class ResponseOptions(
                 messageCompression = that.messageCompression.orElse(this.messageCompression),
                 compression = that.compression.orElse(this.compression),
                 onReadyThreshold = that.onReadyThreshold.orElse(this.onReadyThreshold),
-                requestBuffer = that.requestBuffer.orElse(this.requestBuffer),
+                requestBuffer = that.requestBuffer.orElse(this.requestBuffer)
             )
     end combine
 

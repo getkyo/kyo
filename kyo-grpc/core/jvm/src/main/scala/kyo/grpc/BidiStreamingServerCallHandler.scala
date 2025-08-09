@@ -6,9 +6,11 @@ import kyo.grpc.Grpc
 
 // TODO: Do we ever emit an error now?
 //  If not then we should remove the `GrpcFailure` type from the stream.
-private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: GrpcHandlerInit[Stream[Request, Grpc], Response])(using
+private[grpc] class BidiStreamingServerCallHandler[Request, Response](f: GrpcHandlerInit[Stream[Request, Grpc], Stream[Response, Grpc]])(
+    using
     Frame,
-    Tag[Emit[Chunk[Request]]]
+    Tag[Emit[Chunk[Request]]],
+    Tag[Emit[Chunk[Response]]]
 ) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
@@ -21,13 +23,13 @@ private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: GrpcH
         def onChunk(chunk: Chunk[Request]) =
             Sync.defer(call.request(chunk.size))
 
-        def sent(handler: GrpcHandler[Stream[Request, Grpc], Response], channel: StreamChannel[Request, GrpcFailure]) =
+        def sent(handler: GrpcHandler[Stream[Request, Grpc], Stream[Response, Grpc]], channel: StreamChannel[Request, GrpcFailure]) =
             for
-                response <- handler(channel.stream.tapChunk(onChunk))
-                _        <- Sync.defer(call.sendMessage(response))
+                responses <- handler(channel.stream.tapChunk(onChunk))
+                _         <- responses.foreach(response => Sync.defer(call.sendMessage(response)))
             yield Status.OK
 
-        def closed(handler: GrpcHandler[Stream[Request, Grpc], Response], channel: StreamChannel[Request, GrpcFailure]) =
+        def closed(handler: GrpcHandler[Stream[Request, Grpc], Stream[Response, Grpc]], channel: StreamChannel[Request, GrpcFailure]) =
             for
                 (trailers, status) <-
                     sent(handler, channel).handle(
@@ -37,7 +39,7 @@ private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: GrpcH
                 _ <- Sync.defer(call.close(status, trailers))
             yield ()
 
-        def start(handler: GrpcHandler[Stream[Request, Grpc], Response], channel: StreamChannel[Request, GrpcFailure]) =
+        def start(handler: GrpcHandler[Stream[Request, Grpc], Stream[Response, Grpc]], channel: StreamChannel[Request, GrpcFailure]) =
             for
                 fiber <- Fiber.initUnscoped(closed(handler, channel))
                 _ <- fiber.onInterrupt: _ =>
@@ -88,4 +90,4 @@ private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: GrpcH
 
     end ClientStreamingServerCallListener
 
-end ClientStreamingServerCallHandler
+end BidiStreamingServerCallHandler

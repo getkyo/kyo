@@ -1,6 +1,7 @@
 package kyo.grpc
 
-import io.grpc.{Metadata, ServerCall}
+import io.grpc.Metadata
+import io.grpc.ServerCall
 import kyo.*
 
 type GrpcMeta = Env[Metadata] & Emit[ResponseOptions]

@@ -9,18 +9,16 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: GrpcHandlerInit
 
     import AllowUnsafe.embrace.danger
 
-    override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] = {
+    override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
         // WARNING: call is not guaranteed to be thread-safe.
         // WARNING: headers are definitely not thread-safe.
         // This handler has ownership of the call and headers, so we can use them with care.
 
         def sent(handler: GrpcHandler[Request, Response], promise: Promise[Request, Abort[Status]]) =
             for
-                request <- promise.get
+                request  <- promise.get
                 response <- handler(request)
-                // sendMessage might throw an exception if the call is already closed which is OK.
-                // If it is closed then it is because it was interrupted in which case we lost the race.
-                _ <- Sync.defer(call.sendMessage(response))
+                _        <- Sync.defer(call.sendMessage(response))
             yield Status.OK
 
         def closed(handler: GrpcHandler[Request, Response], promise: Promise[Request, Abort[Status]]) =
@@ -48,7 +46,7 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: GrpcHandlerInit
                     Env.run(headers),
                     ResponseOptions.run
                 )
-                _ <- options.sendHeaders(call)
+                _         <- options.sendHeaders(call)
                 promise   <- Promise.init[Request, Abort[Status]]
                 sentFiber <- start(handler, promise)
             yield UnaryServerCallListener(promise.unsafe, sentFiber.unsafe)
@@ -58,7 +56,7 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: GrpcHandlerInit
             Abort.run,
             _.eval.getOrThrow
         )
-    }
+    end startCall
 
     class UnaryServerCallListener(promise: Promise.Unsafe[Request, Abort[Status]], fiber: Fiber.Unsafe[Any, Nothing])
         extends ServerCall.Listener[Request]:

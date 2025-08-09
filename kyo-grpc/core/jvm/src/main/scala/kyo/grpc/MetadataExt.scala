@@ -26,6 +26,6 @@ extension (metadata: Metadata)
     inline def mergeIfDefined(maybeOther: Maybe[Metadata])(using Frame): Metadata < Sync =
         maybeOther match
             case Maybe.Present(other) => mergeSafe(other)
-            case Maybe.Absent => metadata
+            case Maybe.Absent         => metadata
 
 end extension
