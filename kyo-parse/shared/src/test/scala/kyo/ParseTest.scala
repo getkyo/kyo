@@ -121,7 +121,9 @@ class ParseTest extends Test:
                         Parse.literal("[]")
                     )
 
-                val deeplyNested = "[" * 1000 + "[]" + "]" * 1000
+                val n = 1 << 13 // doesn't work for 1 << 14, loop in Parse.runWith
+
+                val deeplyNested = "[" * n + "]" * n
                 Parse.runOrAbort(deeplyNested)(nested).map(_ => succeed)
             }
 
