@@ -2,6 +2,7 @@ package kyo.parse
 
 import kyo.*
 import kyo.kernel.ArrowEffect
+import kyo.kernel.Effect
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.matching.Regex
@@ -59,12 +60,13 @@ object Parse:
       *   Result from first successful parser, drops the parse branch if none succeed
       */
     def firstOf[In, Out, S](parsers: Seq[() => Out < (Parse[In] & S)])(using Tag[Parse[In]], Frame): Out < (Parse[In] & S) =
-        Loop(parsers):
-            case Seq() => fail("No branch succeeded")
-            case head +: tail =>
-                attempt(head()).map:
-                    case Present(value) => Loop.done(value)
-                    case Absent         => Loop.continue(tail)
+        kyo.kernel.Effect.defer:
+            Loop(parsers):
+                case Seq() => fail("No branch succeeded")
+                case head +: tail =>
+                    attempt(head()).map:
+                        case Present(value) => Loop.done(value)
+                        case Absent         => Loop.continue(tail)
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
@@ -857,7 +859,6 @@ object Parse:
     ): (ParseState[In], ParseResult[Out2]) < (S & S2) =
         extension [X, S1](v: X < (S1 & Parse[In]))
             def castS: X < Parse[In] = v.asInstanceOf
-
         ArrowEffect.handleLoop[
             [in] =>> Parse.Op[In, in],
             Id,
