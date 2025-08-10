@@ -873,10 +873,11 @@ object Parse:
                 (input, state, cont) =>
                     input match
                         case Op.ModifyState(modify) =>
-                            val (newState, optOut) = modify(state)
+                            val (newState, optOut) = modify(state.copy(input = state.input.advanceWhile(state.isDiscarded)))
                             optOut match
-                                case Absent       => Loop.done((newState, ParseResult.failure(newState.failures)))
-                                case Present(out) => Loop.continue(newState, cont(out))
+                                case Absent => Loop.done((newState, ParseResult.failure(newState.failures)))
+                                case Present(out) =>
+                                    Loop.continue(newState.copy(input = newState.input.advanceWhile(newState.isDiscarded)), cont(out))
                             end match
 
                         case Op.Attempt(parser: (Out < Parse[In]) @unchecked) =>
