@@ -852,6 +852,15 @@ object Parse:
     def regex(pattern: String)(using Frame): Text < Parse[Char] =
         regex(pattern.r)
 
+    def entireInput[Out](using Frame)[In, S](parser: Out < (Parse[In] & S))(using Tag[Parse[In]]): Out < (Parse[In] & S) =
+        for
+            result   <- parser
+            maybeEnd <- attempt(end)
+            _ <-
+                if maybeEnd.isDefined then Kyo.lift(())
+                else fail("Incomplete parse - remaining input not consumed")
+        yield result
+
     private[kyo] def runWith[In, Out, S, Out2, S2](state: ParseState[In])(parser: Out < (Parse[In] & S))(f: Out => Out2 < S2)(using
         inTag: Tag[In],
         tag: Tag[Parse[In]],
@@ -950,6 +959,9 @@ object Parse:
     def runResult[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Frame): ParseResult[Out] < S =
         runResult(Chunk.from(input))(parser)
 
+    def runResult[Out, S](input: Text)(parser: Out < (Parse[Char] & S))(using Frame): ParseResult[Out] < S =
+        runResult(input.toChunk)(parser)
+
     def runOrAbort[In, Out, S](input: Chunk[In])(parser: Out < (Parse[In] & S))(using
         Tag[In],
         Tag[Parse[In]],
@@ -960,6 +972,57 @@ object Parse:
     def runOrAbort[Out, S](input: String)(parser: Out < (Parse[Char] & S))(using Frame): Out < (Abort[ParseError] & S) =
         runResult(input)(parser).map(_.orAbort)
 
+    def runOrAbort[Out, S](input: Text)(parser: Out < (Parse[Char] & S))(using Frame): Out < (Abort[ParseError] & S) =
+        runResult(input)(parser).map(_.orAbort)
+
+    /** Runs a parser on a stream of text input, emitting parsed results as they become available. This streaming parser accumulates text
+      * chunks and continuously attempts to parse complete results, handling partial inputs and backtracking as needed.
+      *
+      * @param input
+      *   Stream of text chunks to parse
+      * @param v
+      *   Parser to run on the accumulated text
+      * @tparam A
+      *   Type of parsed result
+      * @tparam S
+      *   Effects required by input stream
+      * @tparam S2
+      *   Effects required by parser
+      * @return
+      *   Stream of successfully parsed results, which can abort with ParseFailed
+      */
+    def runStream[A, S, S2](input: Stream[Text, S])(v: A < (Parse[Char] & S2))(
+        using
+        Frame,
+        Tag[Emit[Chunk[Text]]],
+        Tag[Emit[Chunk[A]]]
+    ): Stream[A, S & S2 & Abort[ParseError]] =
+        Stream {
+            input.emit.handle {
+                // Maintains a running buffer of text and repeatedly attempts parsing
+                Emit.runFold[Chunk[Text]](Text.empty) {
+                    (acc: Text, curr: Chunk[Text]) =>
+                        // Concatenate new chunks with existing accumulated text
+                        val text = acc + curr.foldLeft(Text.empty)(_ + _)
+                        if text.isEmpty then
+                            // If no text to parse, request more input
+                            text
+                        else
+                            runState(ParseState(ParseInput(text.toChunk, 0), Chunk.empty))(v).map((state, result) =>
+                                if result.isFailure || state.input.done then
+                                    // Parser failed or consumed all input - might need more text to complete
+                                    // the next parse, so continue
+                                    text
+                                else
+                                    // Successfully parsed a value with remaining text.
+                                    // Emit the parsed value and continue with unconsumed text
+                                    Emit.valueWith(Chunk(result.out.get))(Text(state.input.remaining.mkString))
+                            )
+                        end if
+                }
+            }.map { (text, _) => runOrAbort(text)(Parse.entireInput(repeat(v))).map(Emit.value(_)) }
+        }
+
     // TODO Rework
     def debug[In, Out](name: String, parser: => Out < Parse[In])(using Tag[In], Tag[Parse[In]], Frame): Out < Parse[In] =
         for
@@ -969,4 +1032,5 @@ object Parse:
             endPos <- position
             _ = println(s"$name:$start-$endPos => $res")
         yield res
+
 end Parse
