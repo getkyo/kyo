@@ -60,7 +60,7 @@ object Parse:
       *   Result from first successful parser, drops the parse branch if none succeed
       */
     def firstOf[In, Out, S](parsers: Seq[() => Out < (Parse[In] & S)])(using Tag[Parse[In]], Frame): Out < (Parse[In] & S) =
-        kyo.kernel.Effect.defer:
+        Effect.defer:
             Loop(parsers):
                 case Seq() => fail("No branch succeeded")
                 case head +: tail =>
