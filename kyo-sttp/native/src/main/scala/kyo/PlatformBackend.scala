@@ -8,7 +8,7 @@ object PlatformBackend:
         new Backend:
             val b = CurlBackend()
             def send[A](r: Request[A, Any])(using Frame) =
-                def call    = r.send(b)
+                def call = r.send(b)
                 Abort.run[Throwable](Sync.defer(call))
                     .map(_.foldError(identity, ex => Abort.fail(FailedRequest(ex.failureOrPanic))))
             end send
