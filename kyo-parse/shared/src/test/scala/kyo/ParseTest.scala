@@ -947,38 +947,38 @@ class ParseTest extends Test:
 
         }
 
-        // "custom whitespace predicate" - {
-        //     "only spaces" in run {
-        //         val parser = Parse.spaced(Parse.int, _ == ' ')
-        //         Parse.runOrAbort("  42  ")(parser).map { result =>
-        //             assert(result == 42)
-        //         }
-        //     }
+        "custom whitespace predicate" - {
+            "only spaces" in run {
+                val parser = Parse.spaced(Parse.int, _ == ' ')
+                Parse.runOrAbort("  42  ")(parser).map { result =>
+                    assert(result == 42)
+                }
+            }
 
-        //     "custom multi-char predicate" in run {
-        //         val customWhitespace = Set('_', '-', '~')
-        //         val parser           = Parse.spaced(Parse.int, customWhitespace.contains)
-        //         Parse.runOrAbort("__42~~--")(parser).map { result =>
-        //             assert(result == 42)
-        //         }
-        //     }
+            "custom multi-char predicate" in run {
+                val customWhitespace = Set('_', '-', '~')
+                val parser           = Parse.spaced(Parse.int, customWhitespace.contains)
+                Parse.runOrAbort("__42~~--")(parser).map { result =>
+                    assert(result == 42)
+                }
+            }
 
-        //     "complex parser with custom whitespace" in run {
-        //         val customWhitespace = Set('.', '*')
-        //         val parser = Parse.spaced(
-        //             Parse.inOrder(
-        //                 Parse.int,
-        //                 Parse.literal("+"),
-        //                 Parse.int
-        //             ),
-        //             customWhitespace.contains
-        //         )
-        //         Parse.runOrAbort("..1**+**2..")(parser).map { case (n1, _, n2) =>
-        //             assert(n1 == 1)
-        //             assert(n2 == 2)
-        //         }
-        //     }
-        // }
+            "complex parser with custom whitespace" in run {
+                val customWhitespace = Set('.', '*')
+                val parser = Parse.spaced(
+                    Parse.inOrder(
+                        Parse.int,
+                        Parse.literal("+"),
+                        Parse.int
+                    ),
+                    customWhitespace.contains
+                )
+                Parse.runOrAbort("..1**+**2..")(parser).map { case (n1, _, n2) =>
+                    assert(n1 == 1)
+                    assert(n2 == 2)
+                }
+            }
+        }
     }
 
     "standard parsers" - {
@@ -1349,180 +1349,180 @@ class ParseTest extends Test:
         }
     }
 
-    // "streaming" - {
+    "streaming" - {
 
-    //     "basic streaming" in run {
-    //         val parser = Parse.int
-    //         val input  = Stream.init(Seq[Text]("1", "2", "3"))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk(123))
-    //         }
-    //     }
+        "basic streaming" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("1", "2", "3"))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk(123))
+            }
+        }
 
-    //     "partial inputs" in run {
-    //         val parser =
-    //             for
-    //                 r <- Parse.int
-    //                 _ <- Parse.attempt(Parse.literal(' '))
-    //             yield r
-    //         val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk(12, 34, 5))
-    //         }
-    //     }
+        "partial inputs" in run {
+            val parser =
+                for
+                    r <- Parse.int
+                    _ <- Parse.attempt(Parse.literal(' '))
+                yield r
+            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk(12, 34, 5))
+            }
+        }
 
-    //     "with whitespace" in run {
-    //         val parser =
-    //             for
-    //                 _ <- Parse.whitespaces
-    //                 n <- Parse.int
-    //                 _ <- Parse.whitespaces
-    //             yield n
+        "with whitespace" in run {
+            val parser =
+                for
+                    _ <- Parse.whitespaces
+                    n <- Parse.int
+                    _ <- Parse.whitespaces
+                yield n
 
-    //         val input = Stream.init(Seq[Text](" 1 ", "  2  ", " 3 "))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk(1, 2, 3))
-    //         }
-    //     }
+            val input = Stream.init(Seq[Text](" 1 ", "  2  ", " 3 "))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk(1, 2, 3))
+            }
+        }
 
-    //     "error handling" in run {
-    //         val parser = Parse.int
-    //         val input  = Stream.init(Seq[Text]("1", "abc", "3"))
+        "error handling" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("1", "abc", "3"))
 
-    //         Parse.runResult(input)(parser).run).map { result =>
-    //             assert(result.isFailure)
-    //         }
-    //     }
+            Abort.run(Parse.runStream(input)(parser).run).map { result =>
+                assert(result.isFailure)
+            }
+        }
 
-    //     "ambiguous parse" in run {
-    //         val parser = Parse.anyOf(
-    //             Parse.literal("ab").andThen(1),
-    //             Parse.literal("abc").andThen(2)
-    //         )
-    //         val input = Stream.init(Seq("abc").map(Text(_)))
+        // "ambiguous parse" in run {
+        //     val parser = Parse.anyOf(
+        //         Parse.literal("ab").andThen(1),
+        //         Parse.literal("abc").andThen(2)
+        //     )
+        //     val input = Stream.init(Seq("abc").map(Text(_)))
 
-    //         Parse.runResult(input)(parser).run).map { result =>
-    //             assert(result.isFailure)
-    //             assert(result.failure.get.getMessage().contains("Ambiguous"))
-    //         }
-    //     }
+        //     Parse.runResult(input)(parser).run).map { result =>
+        //         assert(result.isFailure)
+        //         assert(result.failure.get.getMessage().contains("Ambiguous"))
+        //     }
+        // }
 
-    //     "incomplete parse" in run {
-    //         val parser = Parse.literal("abc")
-    //         val input  = Stream.init(Seq("ab").map(Text(_)))
+        "incomplete parse" in run {
+            val parser = Parse.literal("abc")
+            val input  = Stream.init(Seq("ab").map(Text(_)))
 
-    //         Parse.runResult(input)(parser).run).map { result =>
-    //             assert(result.isFailure)
-    //             assert(result.failure.get.getMessage().contains("Incomplete"))
-    //         }
-    //     }
+            Abort.run(Parse.runStream(input)(parser).run).map { result =>
+                assert(result.isFailure)
+                assert(result.failure.get.getMessage().contains("Incomplete"))
+            }
+        }
 
-    //     "large input stream" in run {
-    //         val size = 20
-    //         val parser =
-    //             for
-    //                 r <- Parse.int
-    //                 _ <- Parse.whitespaces
-    //             yield r
-    //         val numbers = (1 to size).map(_.toString)
-    //         val chunks  = numbers.grouped(size / 10).map(seq => Text(seq.map(n => s"$n ").mkString)).toSeq
-    //         val input   = Stream.init(chunks)
+        "large input stream" in run {
+            val size = 20
+            val parser =
+                for
+                    r <- Parse.int
+                    _ <- Parse.whitespaces
+                yield r
+            val numbers = (1 to size).map(_.toString)
+            val chunks  = numbers.grouped(size / 10).map(seq => Text(seq.map(n => s"$n ").mkString)).toSeq
+            val input   = Stream.init(chunks)
 
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk.from(1 to size))
-    //         }
-    //     }
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk.from(1 to size))
+            }
+        }
 
-    //     "empty chunks handling" in run {
-    //         val parser = Parse.int
-    //         val input  = Stream.init(Seq[Text]("", "1", "", "2", ""))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk(12))
-    //         }
-    //     }
+        "empty chunks handling" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("", "1", "", "2", ""))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk(12))
+            }
+        }
 
-    //     "partial token across chunks" in run {
-    //         val parser = Parse.int
-    //         val input  = Stream.init(Seq[Text]("1", "2", "34", "5"))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk(12345))
-    //         }
-    //     }
+        "partial token across chunks" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("1", "2", "34", "5"))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk(12345))
+            }
+        }
 
-    //     "complex token splitting" in run {
-    //         val parser = Parse.literal("hello world")
-    //         val input  = Stream.init(Seq[Text]("he", "llo", " wo", "rld"))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result.size == 1)
-    //             assert(result(0).is("hello world"))
-    //         }
-    //     }
+        "complex token splitting" in run {
+            val parser = Parse.literal("hello world")
+            val input  = Stream.init(Seq[Text]("he", "llo", " wo", "rld"))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result.size == 1)
+                assert(result(0).is("hello world"))
+            }
+        }
 
-    //     "accumulated state handling" in run {
-    //         val parser =
-    //             for
-    //                 _ <- Parse.whitespaces
-    //                 n <- Parse.int
-    //                 _ <- Parse.whitespaces
-    //                 _ <- Parse.literal(",")
-    //             yield n
+        "accumulated state handling" in run {
+            val parser =
+                for
+                    _ <- Parse.whitespaces
+                    n <- Parse.int
+                    _ <- Parse.whitespaces
+                    _ <- Parse.literal(",")
+                yield n
 
-    //         val input = Stream.init(Seq[Text]("1,", " 2 ,", "  3,"))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk(1, 2, 3))
-    //         }
-    //     }
+            val input = Stream.init(Seq[Text]("1,", " 2 ,", "  3,"))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk(1, 2, 3))
+            }
+        }
 
-    //     "nested parsers with streaming" in run {
-    //         val numberList =
-    //             for
-    //                 _ <- Parse.literal('[')
-    //                 n <- Parse.int
-    //                 _ <- Parse.literal(']')
-    //             yield n
+        "nested parsers with streaming" in run {
+            val numberList =
+                for
+                    _ <- Parse.literal('[')
+                    n <- Parse.int
+                    _ <- Parse.literal(']')
+                yield n
 
-    //         val input = Stream.init(Seq[Text]("[1]", "[2", "]", "[3]"))
-    //         Parse.runOrAbort(input)(numberList).run.map { result =>
-    //             assert(result == Chunk(1, 2, 3))
-    //         }
-    //     }
+            val input = Stream.init(Seq[Text]("[1]", "[2", "]", "[3]"))
+            Parse.runStream(input)(numberList).run.map { result =>
+                assert(result == Chunk(1, 2, 3))
+            }
+        }
 
-    //     "backtracking across chunks" in run {
-    //         val parser = Parse.firstOf(
-    //             Parse.literal("foo bar").andThen(1),
-    //             Parse.literal("foo baz").andThen(2)
-    //         )
-    //         val input = Stream.init(Seq[Text]("foo ", "ba", "z"))
-    //         Parse.runOrAbort(input)(parser).run.map { result =>
-    //             assert(result == Chunk(2))
-    //         }
-    //     }
+        "backtracking across chunks" in run {
+            val parser = Parse.firstOf(
+                Parse.literal("foo bar").andThen(1),
+                Parse.literal("foo baz").andThen(2)
+            )
+            val input = Stream.init(Seq[Text]("foo ", "ba", "z"))
+            Parse.runStream(input)(parser).run.map { result =>
+                assert(result == Chunk(2))
+            }
+        }
 
-    //     "with Var effect" in run {
-    //         val parser =
-    //             for
-    //                 r <- Parse.int
-    //                 _ <- Parse.attempt(Parse.literal(' '))
-    //                 _ <- Var.update[Int](_ + 1)
-    //             yield r
-    //         val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
-    //         Var.runTuple(0)(Parse.runOrAbort(input)(parser).run).map { (count, result) =>
-    //             assert(result == Chunk(12, 34, 5))
-    //             assert(count == 3)
-    //         }
-    //     }
+        "with Var effect" in run {
+            val parser =
+                for
+                    r <- Parse.int
+                    _ <- Parse.attempt(Parse.literal(' '))
+                    _ <- Var.update[Int](_ + 1)
+                yield r
+            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            Var.runTuple(0)(Parse.runStream(input)(parser).run).map { (count, result) =>
+                assert(result == Chunk(12, 34, 5))
+                assert(count == 3)
+            }
+        }
 
-    //     "with Env effect" in run {
-    //         val parser =
-    //             for
-    //                 r         <- Parse.int
-    //                 separator <- Env.get[Char]
-    //                 _         <- Parse.attempt(Parse.literal(separator))
-    //             yield r
-    //         val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
-    //         Env.run(' ')(Parse.runOrAbort(input)(parser).run).map { result =>
-    //             assert(result == Chunk(12, 34, 5))
-    //         }
-    //     }
-    // }
+        "with Env effect" in run {
+            val parser =
+                for
+                    r         <- Parse.int
+                    separator <- Env.get[Char]
+                    _         <- Parse.attempt(Parse.literal(separator))
+                yield r
+            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            Env.run(' ')(Parse.runStream(input)(parser).run).map { result =>
+                assert(result == Chunk(12, 34, 5))
+            }
+        }
+    }
 end ParseTest
