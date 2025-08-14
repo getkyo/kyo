@@ -103,7 +103,7 @@ private[compiler] case class ServicePrinter(
             case StreamType.ServerStreaming => "serverStreaming"
             case StreamType.Bidirectional   => "bidiStreaming"
         }
-        val handler = s"${Types.serverHandler}.$methodName(serviceImpl.${method.name})"
+        val handler = s"${Types.serverCallHandlers}.$methodName(serviceImpl.${method.name})"
         _.add(".addMethod(")
             .indented(
                 _.add(s"${method.grpcDescriptor.fullNameWithMaybeRoot},")

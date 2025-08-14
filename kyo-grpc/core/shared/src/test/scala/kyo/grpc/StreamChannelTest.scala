@@ -33,20 +33,20 @@ class StreamChannelTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "fails after error" in run {
+        "fails after failure" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                _       <- channel.error("error")
+                _       <- channel.fail("error")
                 result  <- Abort.run[Closed](channel.put(1))
             yield assert(result.isFailure)
         }
     }
 
-    "error" - {
+    "fail" - {
         "does not close" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                _       <- channel.error("error")
+                _       <- channel.fail("error")
                 closed  <- channel.closed
             yield assert(!closed)
         }
@@ -54,8 +54,8 @@ class StreamChannelTest extends Test:
         "fails when called more than once when empty" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                _       <- channel.error("error 1")
-                result  <- Abort.run[Closed](channel.error("error 2"))
+                _       <- channel.fail("error 1")
+                result  <- Abort.run[Closed](channel.fail("error 2"))
             yield assert(result.isFailure)
         }
 
@@ -63,8 +63,8 @@ class StreamChannelTest extends Test:
             for
                 channel <- StreamChannel.init[Int, String]
                 _       <- channel.put(1)
-                _       <- channel.error("error 1")
-                result  <- Abort.run[Closed](channel.error("error 2"))
+                _       <- channel.fail("error 1")
+                result  <- Abort.run[Closed](channel.fail("error 2"))
             yield assert(result.isFailure)
         }
 
@@ -72,7 +72,7 @@ class StreamChannelTest extends Test:
             for
                 channel <- StreamChannel.init[Int, String]
                 _       <- channel.closeProducer
-                result  <- Abort.run[Closed](channel.error("error"))
+                result  <- Abort.run[Closed](channel.fail("error"))
             yield assert(result.isFailure)
         }
 
@@ -81,15 +81,15 @@ class StreamChannelTest extends Test:
                 channel <- StreamChannel.init[Int, String]
                 _       <- channel.put(1)
                 _       <- channel.closeProducer
-                result  <- Abort.run[Closed](channel.error("error"))
+                result  <- Abort.run[Closed](channel.fail("error"))
             yield assert(result.isFailure)
         }
 
         "interrupts take" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Fiber.run(channel.take)
-                _       <- Async.delay(delay)(channel.error("error"))
+                fiber   <- Fiber.init(channel.take)
+                _       <- Async.delay(delay)(channel.fail("error"))
                 result  <- Abort.run(fiber.get)
             yield assert(result == Result.fail("error"))
         }
@@ -97,8 +97,8 @@ class StreamChannelTest extends Test:
         "interrupts stream" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Fiber.run(channel.stream.run)
-                _       <- Async.delay(delay)(channel.error("error"))
+                fiber   <- Fiber.init(channel.stream.run)
+                _       <- Async.delay(delay)(channel.fail("error"))
                 result  <- Abort.run(fiber.get)
             yield assert(result == Result.fail("error"))
         }
@@ -125,7 +125,7 @@ class StreamChannelTest extends Test:
         "interrupts take" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Fiber.run(channel.take)
+                fiber   <- Fiber.init(channel.take)
                 _       <- Async.delay(delay)(channel.closeProducer)
                 result  <- Abort.run[Closed](fiber.get)
             yield assert(result.isFailure)
@@ -134,7 +134,7 @@ class StreamChannelTest extends Test:
         "interrupts stream" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Fiber.run(channel.stream.run)
+                fiber   <- Fiber.init(channel.stream.run)
                 _       <- Async.delay(delay)(channel.closeProducer)
                 result  <- fiber.get
             yield assert(result == Chunk.empty)
@@ -170,7 +170,7 @@ class StreamChannelTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "fails put after close" in run {
+        "put fails after close" in run {
             for
                 channel <- StreamChannel.init[Int, String]
                 _       <- channel.close
@@ -178,18 +178,18 @@ class StreamChannelTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "fails error after close" in run {
+        "fail fails after close" in run {
             for
                 channel <- StreamChannel.init[Int, String]
                 _       <- channel.close
-                result  <- Abort.run[Closed](channel.error("error"))
+                result  <- Abort.run[Closed](channel.fail("error"))
             yield assert(result.isFailure)
         }
 
         "interrupts take" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Fiber.run(channel.take)
+                fiber   <- Fiber.init(channel.take)
                 _       <- Async.delay(delay)(channel.close)
                 result  <- Abort.run[Closed](fiber.get)
             yield assert(result.isFailure)
@@ -198,7 +198,7 @@ class StreamChannelTest extends Test:
         "interrupts stream" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Fiber.run(channel.stream.run)
+                fiber   <- Fiber.init(channel.stream.run)
                 _       <- Async.delay(delay)(channel.close)
                 result  <- fiber.get
             yield assert(result == Chunk.empty)
@@ -239,11 +239,11 @@ class StreamChannelTest extends Test:
                 assert(isClosed)
         }
 
-        "last error closes" in run {
+        "last failure closes" in run {
             for
                 channel   <- StreamChannel.init[Int, String]
                 _         <- channel.put(1)
-                _         <- channel.error("error")
+                _         <- channel.fail("error")
                 _         <- channel.take
                 wasClosed <- channel.closed
                 _         <- Abort.run(channel.take)
@@ -271,19 +271,19 @@ class StreamChannelTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "fails with error when empty" in run {
+        "fails with failure when empty" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                _       <- channel.error("error")
+                _       <- channel.fail("error")
                 result  <- Abort.run(channel.take)
             yield assert(result == Result.fail("error"))
         }
 
-        "fails with error after last take" in run {
+        "fails with failure after last take" in run {
             for
                 channel <- StreamChannel.init[Int, String]
                 _       <- channel.put(1)
-                _       <- channel.error("error")
+                _       <- channel.fail("error")
                 _       <- channel.take
                 result  <- Abort.run(channel.take)
             yield assert(result == Result.fail("error"))
@@ -304,7 +304,7 @@ class StreamChannelTest extends Test:
         "stops when producer closes" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                fiber   <- Fiber.run(channel.stream.run)
+                fiber   <- Fiber.init(channel.stream.run)
                 _       <- channel.put(1)
                 _       <- channel.put(2)
                 _       <- channel.put(3)
@@ -319,7 +319,7 @@ class StreamChannelTest extends Test:
         "closes when done" in run {
             for
                 channel   <- StreamChannel.init[Int, String]
-                fiber     <- Fiber.run(channel.stream.run)
+                fiber     <- Fiber.init(channel.stream.run)
                 _         <- channel.put(1)
                 _         <- channel.put(2)
                 _         <- channel.put(3)
@@ -336,17 +336,17 @@ class StreamChannelTest extends Test:
             for
                 channel <- StreamChannel.init[Int, String]
                 // Don't forget to only use a single producer.
-                _      <- Fiber.run(Loop(1)(i => channel.put(i).andThen(Loop.continue(i + 1))))
+                _      <- Fiber.init(Loop(1)(i => channel.put(i).andThen(Loop.continue(i + 1))))
                 result <- channel.stream.take(10).run
             yield assert(result == Chunk.from(1 to 10))
         }
 
-        "last error closes" in run {
+        "last failure closes" in run {
             for
                 channel   <- StreamChannel.init[Int, String]
-                fiber     <- Fiber.run(channel.stream.splitAt(1))
+                fiber     <- Fiber.init(channel.stream.splitAt(1))
                 _         <- channel.put(1)
-                _         <- channel.error("error")
+                _         <- channel.fail("error")
                 (_, tail) <- fiber.get
                 wasClosed <- channel.closed
                 _         <- Abort.run(tail.run)
@@ -356,21 +356,21 @@ class StreamChannelTest extends Test:
                 assert(isClosed)
         }
 
-        "fails with error when empty" in run {
+        "fails with failure when empty" in run {
             for
                 channel <- StreamChannel.init[Int, String]
-                _       <- channel.error("error")
+                _       <- channel.fail("error")
                 result  <- Abort.run(channel.stream.run)
             yield assert(result == Result.fail("error"))
         }
 
-        "fails with error after last take" in run {
+        "fails with failure after last take" in run {
             for
                 channel      <- StreamChannel.init[Int, String]
-                fiber        <- Fiber.run(channel.stream.splitAt(1))
+                fiber        <- Fiber.init(channel.stream.splitAt(1))
                 _            <- channel.put(1)
                 (head, tail) <- fiber.get
-                _            <- channel.error("error")
+                _            <- channel.fail("error")
                 result       <- Abort.run(tail.run)
             yield
                 assert(head == Chunk(1))

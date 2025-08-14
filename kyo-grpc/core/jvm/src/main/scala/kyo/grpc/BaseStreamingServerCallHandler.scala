@@ -4,7 +4,7 @@ import io.grpc.*
 import kyo.*
 import kyo.grpc.Grpc
 
-private[grpc] abstract class BaseUnaryClientServerCallHandler[Request, Response, Handler](f: Handler < GrpcMeta)(using Frame) extends ServerCallHandler[Request, Response]:
+private[grpc] abstract class BaseStreamingServerCallHandler[Request, Response, Handler](f: Handler < GrpcMeta)(using Frame) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
@@ -49,7 +49,7 @@ private[grpc] abstract class BaseUnaryClientServerCallHandler[Request, Response,
                 _ <- Sync.defer(if requestBuffer > 1 then call.request(requestBuffer - 1) else ())
                 channel <- StreamChannel.initUnscoped[Request, GrpcFailure](capacity = requestBuffer)
                 sentFiber <- start(handler, channel)
-            yield ClientStreamingServerCallListener(channel.unsafe, sentFiber.unsafe)
+            yield StreamingServerCallListener(channel.unsafe, sentFiber.unsafe)
 
         init.handle(
             Sync.Unsafe.run,
@@ -58,7 +58,7 @@ private[grpc] abstract class BaseUnaryClientServerCallHandler[Request, Response,
         )
     end startCall
 
-    class ClientStreamingServerCallListener(channel: StreamChannel.Unsafe[Request, ?], fiber: Fiber.Unsafe[Any, Nothing])
+    private class StreamingServerCallListener(channel: StreamChannel.Unsafe[Request, ?], fiber: Fiber.Unsafe[Any, Nothing])
         extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
@@ -74,6 +74,6 @@ private[grpc] abstract class BaseUnaryClientServerCallHandler[Request, Response,
 
         override def onReady(): Unit = ()
 
-    end ClientStreamingServerCallListener
+    end StreamingServerCallListener
 
-end BaseUnaryClientServerCallHandler
+end BaseStreamingServerCallHandler
