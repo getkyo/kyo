@@ -403,23 +403,23 @@ class ParseTest extends Test:
             }
         }
 
-        // "require" - {
-        //     "succeeds with match" in run {
-        //         val parser = Parse.require(Parse.literal("test"))
-        //         Parse.runOrAbort("test")(parser).map(_ => succeed)
-        //     }
+        "require" - {
+            "succeeds with match" in run {
+                val parser = Parse.require(Parse.literal("test"))
+                Parse.runOrAbort("test")(parser).map(_ => succeed)
+            }
 
-        //     "fails without backtracking" in run {
-        //         val parser =
-        //             Parse.firstOf(
-        //                 Parse.require(Parse.literal("test")),
-        //                 Parse.literal("world")
-        //             )
-        //         Parse.runResult("world")(parser)).map { result =>
-        //             assert(result.isFailure)
-        //         }
-        //     }
-        // }
+            "fails without backtracking" in run {
+                val parser =
+                    Parse.firstOf(
+                        Parse.require(Parse.literal("test")),
+                        Parse.literal("world")
+                    )
+                Parse.runResult("world")(parser).map { result =>
+                    assert(result.isFailure)
+                }
+            }
+        }
 
         "separatedBy" - {
             "comma separated numbers" in run {
