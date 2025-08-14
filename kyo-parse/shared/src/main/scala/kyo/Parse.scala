@@ -41,6 +41,7 @@ object Parse:
     enum Op[In, +Out]:
         case ModifyState(modify: ParseState[In] => (ParseState[In], Maybe[Out]))
         case Attempt[In, A, S](parser: A < (Parse[In] & S))                                              extends Op[In, Maybe[A] < S]
+        case Require[In, A, S](parser: A < (Parse[In] & S))                                              extends Op[In, A < S]
         case RecoverWith[In, A, S](parser: A < (Parse[In] & S), recoverStrategy: RecoverStrategy[In, A]) extends Op[In, A < S]
         case Discard[In, A, S](parser: A < (Parse[In] & S), isDiscarded: In => Boolean)                  extends Op[In, A < S]
     end Op
@@ -719,22 +720,6 @@ object Parse:
             else Result.fail(Chunk(ParseFailure(s"Expected: EOF, Got: ${input.remaining.head}", input.position)))
         )
 
-    /** Tries a parser without consuming input
-      *
-      * @param parser
-      *   Parser to peek with
-      * @return
-      *   Maybe containing the result if successful
-      */
-    def peek[Out](using Frame)[In, S](parser: Out < (Parse[In] & S))(using Tag[Parse[In]]): Maybe[Out] < (Parse[In] & S) =
-        attempt(
-            for
-                pos    <- position
-                result <- parser
-                _      <- rewind(pos)
-            yield result
-        )
-
     def not[In, S](parser: Any < (Parse[In] & S))(using Tag[Parse[In]], Frame): Unit < (Parse[In] & S) =
         attempt(parser).map(result =>
             if result.isDefined then fail("Not supposed to parse")
@@ -754,6 +739,38 @@ object Parse:
         inline frame: Frame
     )[In, S](parser: Out < (Parse[In] & S))(using inline tag: Tag[Parse[In]]): Maybe[Out] < (Parse[In] & S) =
         ArrowEffect.suspendWith(tag, Op.Attempt(parser))(x => x)
+
+    /** Like attempt but requires the parse to succeed, failing instead of returning Maybe.empty. Use this when a parser must succeed at
+      * this point - if it fails, the entire parse fails with no possibility of backtracking. However, the AST is still recoverable via
+      * `recoverWith`.
+      *
+      * This operation is sometimes known as a "cut" in other parsing libraries, as it cuts off the possibility of backtracking.
+      *
+      * @param v
+      *   Parser to run
+      * @return
+      *   Parser result, fails if parser fails with no possibility of backtracking
+      */
+    inline def require[Out](using
+        inline frame: Frame
+    )[In, S](parser: Out < (Parse[In] & S))(using inline tag: Tag[Parse[In]]): Out < (Parse[In] & S) =
+        ArrowEffect.suspendWith(tag, Op.Require(parser))(x => x)
+
+    /** Tries a parser without consuming input
+      *
+      * @param parser
+      *   Parser to peek with
+      * @return
+      *   Maybe containing the result if successful
+      */
+    def peek[Out](using Frame)[In, S](parser: Out < (Parse[In] & S))(using Tag[Parse[In]]): Maybe[Out] < (Parse[In] & S) =
+        attempt(
+            for
+                pos    <- position
+                result <- parser
+                _      <- rewind(pos)
+            yield result
+        )
 
     def andIs[Out](using
         Frame
@@ -894,11 +911,22 @@ object Parse:
                                 .map((parseState, result) =>
                                     result.out match
                                         case None =>
-                                            Loop.continue(state, cont(Kyo.lift(Absent)))
+                                            if result.fatal then
+                                                Loop.done((parseState, ParseResult.failure(result.errors, true)))
+                                            else
+                                                Loop.continue(state, cont(Kyo.lift(Absent)))
+                                            end if
                                         case Some(out) =>
                                             Loop.continue(parseState, cont(Kyo.lift(Present(out))))
                                     end match
                                 )
+
+                        case Op.Require(parser: (Out < Parse[In]) @unchecked) =>
+                            runState(state)(parser).map((parseState, result) =>
+                                result.out match
+                                    case None      => Loop.done((parseState, ParseResult.failure(parseState.failures, fatal = true)))
+                                    case Some(out) => Loop.continue(parseState, cont(Kyo.lift(out)))
+                            )
 
                         case Op.RecoverWith(parser: (Out < Parse[In]) @unchecked, recoverStrategy) =>
                             runState(state)(parser)
