@@ -53,9 +53,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -71,9 +71,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -86,9 +86,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -106,9 +106,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -127,9 +127,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -149,9 +149,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -172,9 +172,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
@@ -196,9 +196,9 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
-      * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
-      * failed attempt. If no parsers succeed, the parse branch is dropped.
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed

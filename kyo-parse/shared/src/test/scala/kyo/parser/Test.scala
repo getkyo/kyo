@@ -1,5 +1,6 @@
-package kyo
+package kyo.parse
 
+import kyo.*
 import kyo.internal.BaseKyoKernelTest
 import kyo.internal.Platform
 import org.scalatest.NonImplicitAssertions

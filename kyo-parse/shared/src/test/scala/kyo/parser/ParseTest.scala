@@ -1,6 +1,6 @@
-package kyo
+package kyo.parse
 
-import kyo.parse.*
+import kyo.*
 
 class ParseTest extends Test:
 
