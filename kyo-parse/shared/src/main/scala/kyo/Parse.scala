@@ -28,7 +28,7 @@ import scala.util.matching.Regex
   * @see
   *   [[kyo.Parse.read]] for the fundamental parsing operation that other combinators build upon
   * @see
-  *   [[kyo.Parse.firstOf]], [[kyo.Parse.literalIn]], [[kyo.Parse.inOrder]] for combining parsers
+  *   [[kyo.Parse.firstOf]], [[kyo.Parse.anyIn]], [[kyo.Parse.inOrder]] for combining parsers
   * @see
   *   [[kyo.Parse.attempt]], [[kyo.Parse.peek]] for parsers with look-ahead and backtracking
   * @see
@@ -53,7 +53,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
@@ -71,7 +71,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
@@ -86,7 +86,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
@@ -106,7 +106,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
@@ -127,7 +127,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
@@ -149,7 +149,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
@@ -172,7 +172,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
@@ -196,7 +196,7 @@ object Parse:
 
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * Unlike literalIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
+      * Unlike anyIn, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered
       * alternatives where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each
       * failed attempt. If no parsers succeed, the parse branch is dropped.
       *
