@@ -609,15 +609,15 @@ object Parse:
                 case Present(a) => Loop.continue(acc.append(a))
                 case Absent     => Loop.done(acc)
 
-        /** Repeats a parser exactly n times
-          *
-          * @param n
-          *   Number of repetitions required
-          * @param p
-          *   Parser to repeat
-          * @return
-          *   Chunk of n results, fails if can't get n results
-          */
+    /** Repeats a parser exactly n times
+      *
+      * @param n
+      *   Number of repetitions required
+      * @param p
+      *   Parser to repeat
+      * @return
+      *   Chunk of n results, fails if can't get n results
+      */
     def repeat[Out](using Frame)[In, S](n: Int)(element: Out < (Parse[In] & S))(using Tag[Parse[In]]): Chunk[Out] < (Parse[In] & S) =
         Loop.indexed(Chunk.empty[Out]): (idx, acc) =>
             if idx == n then Loop.done(acc)
