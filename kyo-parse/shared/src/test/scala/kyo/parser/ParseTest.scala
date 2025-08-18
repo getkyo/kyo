@@ -5,27 +5,6 @@ import kyo.*
 class ParseTest extends Test:
 
     "combinators" - {
-        // "anyOf" - {
-        //     "matches any parser" in run {
-        //         val parser = Parse.anyOf(
-        //             Parse.literal("hello"),
-        //             Parse.literal("world"),
-        //             Parse.literal("test")
-        //         )
-        //         Parse.runOrAbort("test")(parser).map(_ => succeed)
-        //     }
-
-        //     "fails when no parser matches" in run {
-        //         val parser = Parse.anyOf(
-        //             Parse.literal("hello"),
-        //             Parse.literal("world")
-        //         )
-        //         Parse.runResult("test")(parser)).map { result =>
-        //             assert(result.isFailure)
-        //         }
-        //     }
-        // }
-
         "firstOf" - {
             "takes first match" in run {
                 val parser = Parse.firstOf(
@@ -463,7 +442,7 @@ class ParseTest extends Test:
             "missing separator fails" in run {
                 val parser = Parse
                     .separatedBy(Parse.int.andThen(Parse.literal(' ')), Parse.literal(','))
-                    .andThen(Parse.end[Char]) // TODO Should `run`(s) check for ending?
+                    .andThen(Parse.end[Char])
 
                 Parse.runResult("1 2 ,3 ")(parser).map { result =>
                     assert(result.isFailure)
@@ -1393,19 +1372,6 @@ class ParseTest extends Test:
                 assert(result.isFailure)
             }
         }
-
-        // "ambiguous parse" in run {
-        //     val parser = Parse.anyOf(
-        //         Parse.literal("ab").andThen(1),
-        //         Parse.literal("abc").andThen(2)
-        //     )
-        //     val input = Stream.init(Seq("abc").map(Text(_)))
-
-        //     Parse.runResult(input)(parser).run).map { result =>
-        //         assert(result.isFailure)
-        //         assert(result.failure.get.getMessage().contains("Ambiguous"))
-        //     }
-        // }
 
         "incomplete parse" in run {
             val parser = Parse.literal("abc")
