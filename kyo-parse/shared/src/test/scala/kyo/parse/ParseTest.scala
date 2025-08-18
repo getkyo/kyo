@@ -2,7 +2,7 @@ package kyo.parse
 
 import kyo.*
 
-class ParseTest extends Test:
+trait ParseTest(lazyTestLength: Int) extends Test:
 
     "combinators" - {
         "firstOf" - {
@@ -100,9 +100,7 @@ class ParseTest extends Test:
                         Parse.literal("[]")
                     )
 
-                val n = 1 << 13 // doesn't work for 1 << 14, loop in Parse.runWith
-
-                val deeplyNested = "[" * n + "]" * n
+                val deeplyNested = "[" * lazyTestLength + "]" * lazyTestLength
                 Parse.runOrAbort(deeplyNested)(nested).map(_ => succeed)
             }
 
