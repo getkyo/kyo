@@ -1,7 +1,6 @@
 package kyo.bench
 
 import kyo.*
-import kyo.parse.*
 import org.openjdk.jmh.annotations.*
 import org.openjdk.jmh.infra.Blackhole
 import scala.io.Source
@@ -13,9 +12,6 @@ import zio.parser.*
 Inspired by ZIO-Parser's benchmarks: https://github.com/zio/zio-parser/tree/master/benchmarks/
  */
 class ParseBench extends BaseBench:
-
-    // println(s"Logback: ${classOf[BaseBench].getResourceAsStream("logback.xml")}")
-    // println(s"Bar.json: ${classOf[BaseBench].getResourceAsStream("/json/bar.json")}")
 
     val repeatAnyCharInput: String                                 = "hello" * 1000
     val repeatAnyCharKyoParser: Chunk[Char] < Parse[Char]          = Parse.repeat(Parse.any[Char])
