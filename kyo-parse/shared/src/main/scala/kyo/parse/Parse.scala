@@ -883,8 +883,6 @@ object Parse:
         tag: Tag[Parse[In]],
         frame: Frame
     ): (ParseState[In], ParseResult[Out2]) < (S & S2) =
-        extension [X, S1](v: X < (S1 & Parse[In]))
-            def castS: X < Parse[In] = v.asInstanceOf
         ArrowEffect.handleLoop[
             [in] =>> Parse.Op[In, in],
             Id,
@@ -1050,15 +1048,5 @@ object Parse:
                 }
             }.map { (text, _) => runOrAbort(text)(Parse.entireInput(repeat(v))).map(Emit.value(_)) }
         }
-
-    // TODO Rework
-    def debug[In, Out](name: String, parser: => Out < Parse[In])(using Tag[In], Tag[Parse[In]], Frame): Out < Parse[In] =
-        for
-            start <- position
-            _ = println(s"$name:$start")
-            res    <- parser
-            endPos <- position
-            _ = println(s"$name:$start-$endPos => $res")
-        yield res
 
 end Parse
