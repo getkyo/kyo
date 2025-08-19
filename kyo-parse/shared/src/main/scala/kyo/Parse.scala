@@ -907,13 +907,13 @@ object Parse:
                             runState(state)(parser)
                                 .map((parseState, result) =>
                                     result.out match
-                                        case None =>
+                                        case Absent =>
                                             if result.fatal then
                                                 Loop.done((parseState, ParseResult.failure(result.errors, true)))
                                             else
                                                 Loop.continue(state, cont(Kyo.lift(Absent)))
                                             end if
-                                        case Some(out) =>
+                                        case Present(out) =>
                                             Loop.continue(parseState, cont(Kyo.lift(Present(out))))
                                     end match
                                 )
@@ -921,25 +921,25 @@ object Parse:
                         case Op.Require(parser: (Out < Parse[In]) @unchecked) =>
                             runState(state)(parser).map((parseState, result) =>
                                 result.out match
-                                    case None      => Loop.done((parseState, ParseResult.failure(parseState.failures, fatal = true)))
-                                    case Some(out) => Loop.continue(parseState, cont(Kyo.lift(out)))
+                                    case Absent       => Loop.done((parseState, ParseResult.failure(parseState.failures, fatal = true)))
+                                    case Present(out) => Loop.continue(parseState, cont(Kyo.lift(out)))
                             )
 
                         case Op.RecoverWith(parser: (Out < Parse[In]) @unchecked, recoverStrategy) =>
                             runState(state)(parser)
                                 .map((parseState, result) =>
                                     result.out match
-                                        case None =>
+                                        case Absent =>
                                             runState(state.copy(failures = Chunk.empty))(recoverStrategy(parser))
                                                 .map((recoverState, recoverResult) =>
                                                     recoverResult.out match
-                                                        case None => Loop.done((parseState, ParseResult.failure(parseState.failures)))
-                                                        case Some(recouverOut) => Loop.continue(
+                                                        case Absent => Loop.done((parseState, ParseResult.failure(parseState.failures)))
+                                                        case Present(recouverOut) => Loop.continue(
                                                                 recoverState.copy(failures = recoverState.failures ++ parseState.failures),
                                                                 cont(Kyo.lift(recouverOut))
                                                             )
                                                 )
-                                        case Some(out) => Loop.continue(parseState, cont(Kyo.lift(out)))
+                                        case Present(out) => Loop.continue(parseState, cont(Kyo.lift(out)))
                                 )
 
                         case Op.Discard(parser: (Out < Parse[In]) @unchecked, isDiscarded) =>
@@ -950,8 +950,8 @@ object Parse:
                                 .map((parseState, result) =>
                                     val finalState = parseState.copy(isDiscarded = oldIsDiscarded)
                                     result.out match
-                                        case None      => Loop.done((finalState, ParseResult.failure(finalState.failures)))
-                                        case Some(out) => Loop.continue(finalState, cont(Kyo.lift(out)))
+                                        case Absent       => Loop.done((finalState, ParseResult.failure(finalState.failures)))
+                                        case Present(out) => Loop.continue(finalState, cont(Kyo.lift(out)))
                                 ),
             done = (s, r) => f(r).map(out => (s, ParseResult.success(s.failures, out)))
         )

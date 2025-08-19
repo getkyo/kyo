@@ -1,6 +1,6 @@
 package kyo
 
-case class ParseResult[+Out](errors: Chunk[ParseFailure], out: Option[Out], fatal: Boolean = false):
+case class ParseResult[+Out](errors: Chunk[ParseFailure], out: Maybe[Out], fatal: Boolean = false):
 
     def isFailure: Boolean = errors.nonEmpty || out.isEmpty
 
@@ -13,8 +13,8 @@ end ParseResult
 
 object ParseResult:
     def success[Out](errors: Chunk[ParseFailure], out: Out): ParseResult[Out] =
-        ParseResult(errors, Some(out))
+        ParseResult(errors, Present(out))
 
     def failure(errors: Chunk[ParseFailure], fatal: Boolean = false): ParseResult[Nothing] =
-        ParseResult(errors, None, fatal)
+        ParseResult(errors, Absent, fatal)
 end ParseResult
