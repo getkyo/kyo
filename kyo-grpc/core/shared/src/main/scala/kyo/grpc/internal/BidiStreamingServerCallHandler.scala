@@ -1,8 +1,8 @@
-package kyo.grpc
+package kyo.grpc.internal
 
 import io.grpc.*
 import kyo.*
-import kyo.grpc.Grpc
+import kyo.grpc.{Grpc, *}
 
 private[grpc] class BidiStreamingServerCallHandler[Request, Response](f: GrpcHandlerInit[Stream[Request, Grpc], Stream[Response, Grpc]])(
     using
@@ -11,7 +11,7 @@ private[grpc] class BidiStreamingServerCallHandler[Request, Response](f: GrpcHan
     Tag[Emit[Chunk[Response]]]
 ) extends BaseStreamingServerCallHandler[Request, Response, GrpcHandler[Stream[Request, Grpc], Stream[Response, Grpc]]](f):
 
-    override def sent(call: ServerCall[Request, Response], handler: GrpcHandler[Stream[Request, Grpc], Stream[Response, Grpc]], channel: StreamChannel[Request, GrpcFailure]): Status < (Grpc & Emit[Metadata]) =
+    override protected def send(call: ServerCall[Request, Response], handler: GrpcHandler[Stream[Request, Grpc], Stream[Response, Grpc]], channel: StreamChannel[Request, GrpcFailure]): Status < (Grpc & Emit[Metadata]) =
         def onChunk(chunk: Chunk[Request]) =
             Sync.defer(call.request(chunk.size))
             
@@ -19,6 +19,6 @@ private[grpc] class BidiStreamingServerCallHandler[Request, Response](f: GrpcHan
             responses <- handler(channel.stream.tapChunk(onChunk))
             _ <- responses.foreach(response => Sync.defer(call.sendMessage(response)))
         yield Status.OK
-    end sent
+    end send
 
 end BidiStreamingServerCallHandler

@@ -1,24 +1,24 @@
-package kyo.grpc
+package kyo.grpc.internal
 
 import io.grpc.*
 import kyo.*
-import kyo.grpc.Grpc
+import kyo.grpc.{Grpc, *}
 
-private[grpc] abstract class BaseStreamingServerCallHandler[Request, Response, Handler](f: Handler < GrpcMeta)(using Frame) extends ServerCallHandler[Request, Response]:
+private[grpc] abstract class BaseStreamingServerCallHandler[Request, Response, Handler](f: Handler < GrpcResponseMeta)(using Frame) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
-    def sent(call: ServerCall[Request, Response], handler: Handler, channel: StreamChannel[Request, GrpcFailure]): Status < (Grpc & Emit[Metadata])
+    protected def send(call: ServerCall[Request, Response], handler: Handler, channel: StreamChannel[Request, GrpcFailure]): Status < (Grpc & Emit[Metadata])
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
         // WARNING: call is not guaranteed to be thread-safe.
         // WARNING: headers are definitely not thread-safe.
         // This handler has ownership of the call and headers, so we can use them with care.
 
-        def closed(handler: Handler, channel: StreamChannel[Request, GrpcFailure]) =
+        def sendAndClose(handler: Handler, channel: StreamChannel[Request, GrpcFailure]) =
             for
                 (trailers, status) <-
-                    sent(call, handler, channel).handle(
+                    send(call, handler, channel).handle(
                         Abort.recoverError(ServerCallHandlers.errorStatus),
                         Emit.runFold[Metadata](Metadata())(_.mergeSafe(_))
                     )
@@ -27,7 +27,7 @@ private[grpc] abstract class BaseStreamingServerCallHandler[Request, Response, H
 
         def start(handler: Handler, channel: StreamChannel[Request, GrpcFailure]) =
             for
-                fiber <- Fiber.initUnscoped(closed(handler, channel))
+                fiber <- Fiber.initUnscoped(sendAndClose(handler, channel))
                 _ <- fiber.onInterrupt: _ =>
                     val status = Status.CANCELLED.withDescription("Call was cancelled.")
                     call.close(status, Metadata())
@@ -58,20 +58,21 @@ private[grpc] abstract class BaseStreamingServerCallHandler[Request, Response, H
         )
     end startCall
 
-    private class StreamingServerCallListener(channel: StreamChannel.Unsafe[Request, ?], fiber: Fiber.Unsafe[Any, Nothing])
+    private class StreamingServerCallListener(requests: StreamChannel.Unsafe[Request, ?], fiber: Fiber.Unsafe[Any, Nothing])
         extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
-            discard(channel.putFiber(message))
+            discard(requests.putFiber(message))
 
         override def onHalfClose(): Unit =
-            discard(channel.closeProducerFiber())
+            discard(requests.closeProducerFiber())
 
         override def onCancel(): Unit =
             discard(fiber.interrupt())
 
         override def onComplete(): Unit = ()
 
+        // FIXME: Use a Signal here.
         override def onReady(): Unit = ()
 
     end StreamingServerCallListener

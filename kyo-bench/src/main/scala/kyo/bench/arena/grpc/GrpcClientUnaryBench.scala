@@ -33,7 +33,8 @@ class GrpcClientUnaryBench extends ArenaBench2(response):
         import state.*
         forkKyo:
             Env.run(Metadata()):
-                client.oneToOne(request)
+                // TODO: Can we avoid the lift here?
+                client.oneToOne(Kyo.lift(request))
     end kyoBench
 
     @Benchmark

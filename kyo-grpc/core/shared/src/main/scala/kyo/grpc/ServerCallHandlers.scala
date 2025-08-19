@@ -2,12 +2,14 @@ package kyo.grpc
 
 import io.grpc.{Metadata, ServerCallHandler, Status}
 import kyo.*
+import kyo.grpc.*
+import kyo.grpc.internal.{BidiStreamingServerCallHandler, ClientStreamingServerCallHandler, ServerStreamingServerCallHandler, UnaryServerCallHandler}
 
-type GrpcMeta = Env[Metadata] & Emit[ResponseOptions]
+type GrpcResponseMeta = Env[Metadata] & Emit[ResponseOptions]
 
 type GrpcHandler[Requests, Responses] = Requests => Responses < (Grpc & Emit[Metadata])
 
-type GrpcHandlerInit[Requests, Responses] = GrpcHandler[Requests, Responses] < GrpcMeta
+type GrpcHandlerInit[Requests, Responses] = GrpcHandler[Requests, Responses] < GrpcResponseMeta
 
 /** Factory for creating gRPC server call handlers that integrate with Kyo.
   *
@@ -17,6 +19,9 @@ type GrpcHandlerInit[Requests, Responses] = GrpcHandler[Requests, Responses] < G
   * All handlers are designed to work with the [[Grpc]] effect type and handle exceptions and stream completion appropriately.
   */
 object ServerCallHandlers:
+    
+    // TODO: Update the docs for f
+    // TODO: Update the callers to include metadata and response options.
 
     /** Creates a server handler for unary gRPC calls.
       *
@@ -32,7 +37,7 @@ object ServerCallHandlers:
       * @return
       *   a gRPC [[ServerCallHandler]] for unary calls
       */
-    def unary[Request, Response](f: Request => Response < Grpc)(using Frame): ServerCallHandler[Request, Response] =
+    def unary[Request, Response](f: GrpcHandlerInit[Request, Response])(using Frame): ServerCallHandler[Request, Response] =
         UnaryServerCallHandler(f)
 
     /** Creates a server handler for client streaming gRPC calls.
@@ -49,7 +54,7 @@ object ServerCallHandlers:
       * @return
       *   a gRPC [[ServerCallHandler]] for client streaming calls
       */
-    def clientStreaming[Request, Response](f: Stream[Request, Grpc] => Response < Grpc)(using
+    def clientStreaming[Request, Response](f: GrpcHandlerInit[Stream[Request, Grpc], Response])(using
         Frame,
         Tag[Emit[Chunk[Request]]]
     ): ServerCallHandler[Request, Response] =
@@ -69,7 +74,7 @@ object ServerCallHandlers:
       * @return
       *   a gRPC [[ServerCallHandler]] for server streaming calls
       */
-    def serverStreaming[Request, Response](f: Request => Stream[Response, Grpc] < Grpc)(using
+    def serverStreaming[Request, Response](f: GrpcHandlerInit[Request, Stream[Response, Grpc]])(using
         Frame,
         Tag[Emit[Chunk[Response]]]
     ): ServerCallHandler[Request, Response] =
@@ -89,7 +94,7 @@ object ServerCallHandlers:
       * @return
       *   a gRPC [[ServerCallHandler]] for bidirectional streaming calls
       */
-    def bidiStreaming[Request, Response](f: Stream[Request, Grpc] => Stream[Response, Grpc] < Grpc)(using
+    def bidiStreaming[Request, Response](f: GrpcHandlerInit[Stream[Request, Grpc], Stream[Response, Grpc]])(using
         Frame,
         Tag[Emit[Chunk[Request]]],
         Tag[Emit[Chunk[Response]]]

@@ -36,7 +36,8 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(response):
                 for
                     _      <- createKyoServer(port, static = false)
                     client <- createKyoClient(port)
-                yield client.oneToOne(request)
+                // TODO: Can we avoid the lift here?
+                yield client.oneToOne(Kyo.lift(request))
 
     override def zioBench(): UIO[Response] =
         ZIO.scoped:

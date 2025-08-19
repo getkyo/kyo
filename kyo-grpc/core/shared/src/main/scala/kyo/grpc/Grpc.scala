@@ -6,6 +6,7 @@ import io.grpc.StatusRuntimeException
 import kyo.*
 import scala.concurrent.Future
 
+// TODO: Document how to include trailers in error.
 /** Effect of sending or receiving a gRPC message.
   *
   * Service method implementations will be [[Async]] effects that either succeed with some `Response` or terminate early with a

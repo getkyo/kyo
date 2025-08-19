@@ -54,7 +54,7 @@ private[compiler] case class ServicePrinter(
             }
 
     private def printServiceMethod(method: MethodDescriptor): PrinterEndo = {
-        val parameters = methodParameters(method)
+        val parameters = serverMethodParameters(method)
         val returnType = serviceMethodReturnType(method)
         _.call(printScalaDoc(method))
             .addMethod(method.name)
@@ -150,7 +150,7 @@ private[compiler] case class ServicePrinter(
             }
 
     private def printClientServiceMethod(method: MethodDescriptor): PrinterEndo = {
-        val parameters = methodParameters(method)
+        val parameters = clientMethodParameters(method)
         val returnType = clientMethodReturnType(method)
         _.call(printScalaDoc(method))
             .addMethod(method.name)
@@ -173,7 +173,7 @@ private[compiler] case class ServicePrinter(
             }
 
     private def printClientImplMethod(method: MethodDescriptor): PrinterEndo = {
-        val parameters = methodParameters(method)
+        val parameters = clientMethodParameters(method)
         val returnType = clientMethodReturnType(method)
         val delegateName = method.streamType match {
             case StreamType.Unary           => "unary"
@@ -197,7 +197,16 @@ private[compiler] case class ServicePrinter(
             )
     }
 
-    private def methodParameters(method: MethodDescriptor): Seq[Parameter] = {
+    private def clientMethodParameters(method: MethodDescriptor): Seq[Parameter] = {
+        def requestParameter  = "request" :- Types.grpcRequestsInit(method.inputType.scalaType)
+        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
+        method.streamType match {
+            case StreamType.Unary | StreamType.ServerStreaming         => Seq(requestParameter)
+            case StreamType.ClientStreaming | StreamType.Bidirectional => Seq(requestsParameter)
+        }
+    }
+
+    private def serverMethodParameters(method: MethodDescriptor): Seq[Parameter] = {
         def requestParameter  = "request" :- method.inputType.scalaType
         def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
         method.streamType match {

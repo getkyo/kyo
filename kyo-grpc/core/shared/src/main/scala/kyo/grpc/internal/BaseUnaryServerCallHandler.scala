@@ -1,24 +1,24 @@
-package kyo.grpc
+package kyo.grpc.internal
 
 import io.grpc.*
 import kyo.*
-import kyo.grpc.Grpc
+import kyo.grpc.{Grpc, *}
 
-private[grpc] abstract class BaseUnaryServerCallHandler[Request, Response, Handler](f: Handler < GrpcMeta)(using Frame) extends ServerCallHandler[Request, Response]:
+private[grpc] abstract class BaseUnaryServerCallHandler[Request, Response, Handler](f: Handler < GrpcResponseMeta)(using Frame) extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
-    def sent(call: ServerCall[Request, Response], handler: Handler, promise: Promise[Request, Abort[Status]]): Status < (Grpc & Emit[Metadata])
+    protected def send(call: ServerCall[Request, Response], handler: Handler, promise: Promise[Request, Abort[Status]]): Status < (Grpc & Emit[Metadata])
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
         // WARNING: call is not guaranteed to be thread-safe.
         // WARNING: headers are definitely not thread-safe.
         // This handler has ownership of the call and headers, so we can use them with care.
 
-        def closed(handler: Handler, promise: Promise[Request, Abort[Status]]) =
+        def sendAndClose(handler: Handler, promise: Promise[Request, Abort[Status]]) =
             for
                 (trailers, status) <-
-                    sent(call, handler, promise).handle(
+                    send(call, handler, promise).handle(
                         Abort.recoverError(ServerCallHandlers.errorStatus),
                         Emit.runFold[Metadata](Metadata())(_.mergeSafe(_))
                     )
@@ -27,7 +27,7 @@ private[grpc] abstract class BaseUnaryServerCallHandler[Request, Response, Handl
 
         def start(handler: Handler, promise: Promise[Request, Abort[Status]]) =
             for
-                fiber <- Fiber.initUnscoped(closed(handler, promise))
+                fiber <- Fiber.initUnscoped(sendAndClose(handler, promise))
                 _ <- fiber.onInterrupt: _ =>
                     val status = Status.CANCELLED.withDescription("Call was cancelled.")
                     call.close(status, Metadata())
@@ -52,19 +52,16 @@ private[grpc] abstract class BaseUnaryServerCallHandler[Request, Response, Handl
         )
     end startCall
 
-    private class UnaryServerCallListener(promise: Promise.Unsafe[Request, Abort[Status]], fiber: Fiber.Unsafe[Any, Nothing])
+    private class UnaryServerCallListener(request: Promise.Unsafe[Request, Abort[Status]], fiber: Fiber.Unsafe[Any, Nothing])
         extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
-            if !promise.complete(Result.succeed(message)) then
-                throw new StatusException(
-                    Status.INVALID_ARGUMENT.withDescription("Client sent more than one request."),
-                    Metadata()
-                )
+            if !request.complete(Result.succeed(message)) then
+                throw Status.INVALID_ARGUMENT.withDescription("Client sent more than one request.").asException()
 
         override def onHalfClose(): Unit =
-            // If the promise has not been completed yet, we complete it with an error.
-            promise.completeDiscard(Result.fail(
+            // If the promise has not been completed yet, we complete it with an error, otherwise this does nothing.
+            request.completeDiscard(Result.fail(
                 Status.INVALID_ARGUMENT.withDescription("Client completed before sending a request.")
             ))
 
@@ -73,6 +70,7 @@ private[grpc] abstract class BaseUnaryServerCallHandler[Request, Response, Handl
 
         override def onComplete(): Unit = ()
 
+        // FIXME: Use a Signal here.
         override def onReady(): Unit = ()
 
     end UnaryServerCallListener

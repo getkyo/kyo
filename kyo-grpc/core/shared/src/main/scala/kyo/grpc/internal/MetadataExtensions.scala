@@ -1,4 +1,4 @@
-package kyo.grpc
+package kyo.grpc.internal
 
 import io.grpc.Metadata
 import kyo.*

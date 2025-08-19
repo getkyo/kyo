@@ -1,9 +1,8 @@
 package kyo.grpc
 
-import io.grpc.Metadata
-import io.grpc.ServerCall
+import io.grpc.{Metadata, ServerCall}
 import kyo.*
-import kyo.grpc.mergeIfDefined
+import kyo.grpc.internal.mergeIfDefined
 
 // TODO: What to call this?
 // TODO: Is this safe? Metadata is not thread-safe. We use it in Vars but I think that is OK?

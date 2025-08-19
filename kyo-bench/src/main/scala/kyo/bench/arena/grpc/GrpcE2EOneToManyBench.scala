@@ -36,7 +36,8 @@ class GrpcE2EOneToManyBench extends ArenaBench.ForkOnly[Long](size):
                 for
                     _      <- createKyoServer(port, static = false)
                     client <- createKyoClient(port)
-                yield client.oneToMany(request).into(Sink.count.map(_.toLong))
+                // TODO: Can we avoid the lift here?
+                yield client.oneToMany(Kyo.lift(request)).into(Sink.count.map(_.toLong))
 
     override def zioBench(): UIO[Long] =
         ZIO.scoped:
