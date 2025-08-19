@@ -1,6 +1,4 @@
-package kyo.parse
-
-import kyo.Chunk
+package kyo
 
 case class ParseInput[In](tokens: Chunk[In], position: Int):
 

@@ -1,6 +1,5 @@
-package kyo.parse
+package kyo
 
-import kyo.*
 import kyo.kernel.ArrowEffect
 import kyo.kernel.Effect
 import scala.annotation.tailrec

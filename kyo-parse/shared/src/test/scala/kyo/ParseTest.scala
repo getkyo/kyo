@@ -1,8 +1,6 @@
-package kyo.parse
+package kyo
 
-import kyo.*
-
-trait ParseTest(lazyTestLength: Int) extends Test:
+trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
     "combinators" - {
         "firstOf" - {

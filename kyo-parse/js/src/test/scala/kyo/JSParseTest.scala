@@ -1,3 +1,3 @@
-package kyo.parse
+package kyo
 
 class JSParseTest extends ParseTest(1 << 5)

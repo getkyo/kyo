@@ -1,6 +1,4 @@
-package kyo.parse
-
-import kyo.Chunk
+package kyo
 
 case class ParseState[In](
     input: ParseInput[In],

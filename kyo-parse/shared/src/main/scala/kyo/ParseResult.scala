@@ -1,6 +1,4 @@
-package kyo.parse
-
-import kyo.*
+package kyo
 
 case class ParseResult[+Out](errors: Chunk[ParseFailure], out: Option[Out], fatal: Boolean = false):
 

@@ -1,5 +1,3 @@
-package kyo.parse
-
-import kyo.*
+package kyo
 
 case class ParseError(failures: Chunk[ParseFailure])(using Frame) extends KyoException(failures.toString)

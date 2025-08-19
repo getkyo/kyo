@@ -1,6 +1,4 @@
-package kyo.parse
-
-import kyo.*
+package kyo
 
 @FunctionalInterface
 trait RecoverStrategy[In, Out]:
