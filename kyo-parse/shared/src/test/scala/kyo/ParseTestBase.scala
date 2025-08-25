@@ -8,7 +8,7 @@ import scala.compiletime.testing.typeCheckErrors
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
-abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoKernelTest[Abort[Throwable]]:
+abstract class ParseTestBase extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoKernelTest[Abort[Throwable]]:
 
     def run(v: Future[Assertion] < Abort[Throwable])(using Frame): Future[Assertion] =
         Abort.run(v).eval.getOrThrow
@@ -18,4 +18,4 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     def assertionFailure(msg: String) = fail(msg)
 
     override given executionContext: ExecutionContext = Platform.executionContext
-end Test
+end ParseTestBase

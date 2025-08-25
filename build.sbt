@@ -642,6 +642,7 @@ lazy val `kyo-bench` =
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
@@ -685,6 +686,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio"                 % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.7",
+            libraryDependencies += "dev.zio"              %% "zio-parser"          % "0.1.11",
             libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC41",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.12.0",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M44",
