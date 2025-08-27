@@ -17,9 +17,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     def fork[S2](
         using
         isolate: Isolate[S, Sync, S2],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
+    ): Fiber[A, Abort[E] & S2] < (Sync & S & Scope) =
         Fiber.init(effect)
 
     /** Forks this computation and uses the resulting fiber within a scoped function [[f]]. Guarantees fiber interruption after usage.
@@ -32,9 +31,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     def forkUsing[S2](
         using
         isolate: Isolate[S, Sync, S2],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    )[B, S3](f: Fiber[A, reduce.SReduced & S2] => B < S3): B < (Sync & S & S3) =
+    )[B, S3](f: Fiber[A, Abort[E] & S2] => B < S3): B < (Sync & S & S3) =
         Fiber.use(effect)(f)
 
     /** Forks this computation, returning a fiber. Does not guarantee fiber interruption.
@@ -47,7 +45,7 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
         isolate: Isolate[S, Sync, S2],
         reduce: Reducible[Abort[E]],
         frame: Frame
-    ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
+    ): Fiber[A, Abort[E] & S2] < (Sync & S) =
         Fiber.initUnscoped(effect)
 
     /** Performs this computation and then the next one in parallel, discarding the result of this computation.
