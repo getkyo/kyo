@@ -1,23 +1,23 @@
-package kyo.internal
+package kyo
 
 import kyo.AllowUnsafe
 import kyo.Frame
 import kyo.Log
 import kyo.Log.Level
 import kyo.Text
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
-trait LogPlatformSpecific:
-    val live: Log = Log(LogPlatformSpecific.Unsafe.SLF4J("kyo.logs"))
+object SLF4JLog:
 
-object LogPlatformSpecific:
+    def apply(name: String): Log = Log(new Unsafe.SLF4J(LoggerFactory.getLogger(name)))
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    def apply(logger: Logger): Log = Log(new Unsafe.SLF4J(logger))
+
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
-        object SLF4J:
-            def apply(name: String) = new SLF4J(org.slf4j.LoggerFactory.getLogger(name))
-
-        final class SLF4J(logger: org.slf4j.Logger) extends Log.Unsafe:
+        final class SLF4J(logger: Logger) extends Log.Unsafe:
             val level =
                 if logger.isTraceEnabled() then Level.trace
                 else if logger.isDebugEnabled() then Level.debug
@@ -27,34 +27,34 @@ object LogPlatformSpecific:
                 else Level.silent
 
             inline def trace(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.trace.enabled(level) then logger.trace(s"[${frame.position.show}] $msg")
+                logger.trace(s"[${frame.position.show}] $msg")
 
             inline def trace(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.trace.enabled(level) then logger.trace(s"[${frame.position.show}] $msg", t)
+                logger.trace(s"[${frame.position.show}] $msg", t)
 
             inline def debug(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.debug.enabled(level) then logger.debug(s"[${frame.position.show}] $msg")
+                logger.debug(s"[${frame.position.show}] $msg")
 
             inline def debug(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.debug.enabled(level) then logger.debug(s"[${frame.position.show}] $msg", t)
+                logger.debug(s"[${frame.position.show}] $msg", t)
 
             inline def info(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.info.enabled(level) then logger.info(s"[${frame.position.show}] $msg")
+                logger.info(s"[${frame.position.show}] $msg")
 
             inline def info(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.info.enabled(level) then logger.info(s"[${frame.position.show}] $msg", t)
+                logger.info(s"[${frame.position.show}] $msg", t)
 
             inline def warn(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.warn.enabled(level) then logger.warn(s"[${frame.position.show}] $msg")
+                logger.warn(s"[${frame.position.show}] $msg")
 
             inline def warn(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.warn.enabled(level) then logger.warn(s"[${frame.position.show}] $msg", t)
+                logger.warn(s"[${frame.position.show}] $msg", t)
 
             inline def error(msg: => Text)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.error.enabled(level) then logger.error(s"[${frame.position.show}] $msg")
+                logger.error(s"[${frame.position.show}] $msg")
 
             inline def error(msg: => Text, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if Level.error.enabled(level) then logger.error(s"[${frame.position.show}] $msg", t)
+                logger.error(s"[${frame.position.show}] $msg", t)
         end SLF4J
     end Unsafe
-end LogPlatformSpecific
+end SLF4JLog

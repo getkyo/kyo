@@ -319,8 +319,7 @@ class RecordTest extends Test:
                 Column[Value](field.name)(using summonInline[AsColumn[Value]])
 
         "build record if all inlined" in {
-            pendingUntilFixed:
-                typeCheck("""
+            typeCheck("""
             type Person = "name" ~ String & "age" ~ Int
 
             val columns = Record.stage[Person](ColumnInline)

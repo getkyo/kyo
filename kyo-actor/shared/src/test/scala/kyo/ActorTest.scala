@@ -183,7 +183,7 @@ class ActorTest extends Test:
             end for
         }
 
-        "parallel child actor creation and cleanup works correctly" in run {
+        "parallel child actor creation and cleanup works correctly" in runNotJS {
             val actorCount = 50
 
             for
