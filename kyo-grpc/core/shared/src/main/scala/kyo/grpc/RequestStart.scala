@@ -7,26 +7,26 @@ import kyo.grpc.internal.mergeIfDefined
 // TODO: What to call this?
 // TODO: Is this safe? Metadata is not thread-safe. We use it in Vars but I think that is OK?
 // TODO: Provide nicer Metadata.
-final case class RequestOptions(
+final case class RequestStart(
     headers: Maybe[Metadata] = Maybe.empty,
     messageCompression: Maybe[Boolean] = Maybe.empty
 ):
 
-    def combine(that: RequestOptions)(using Frame): RequestOptions < Sync =
+    def combine(that: RequestStart)(using Frame): RequestStart < Sync =
         this.headers.mergeIfDefined(that.headers).map: mergedHeaders =>
-            RequestOptions(
+            RequestStart(
                 headers = mergedHeaders,
                 messageCompression = that.messageCompression.orElse(this.messageCompression)
             )
     end combine
 
-end RequestOptions
+end RequestStart
 
-object RequestOptions:
+object RequestStart:
 
     val DefaultRequestBuffer: Int = 8
 
-    def run[A, S](v: A < (Emit[RequestOptions] & S))(using Frame): (RequestOptions, A) < (Sync & S) =
-        Emit.runFold[RequestOptions](RequestOptions())(_.combine(_))(v)
+    def run[A, S](v: A < (Emit[RequestStart] & S))(using Frame): (RequestStart, A) < (Sync & S) =
+        Emit.runFold[RequestStart](RequestStart())(_.combine(_))(v)
 
-end RequestOptions
+end RequestStart

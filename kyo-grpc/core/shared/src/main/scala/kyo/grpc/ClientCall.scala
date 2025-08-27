@@ -1,14 +1,20 @@
 package kyo.grpc
 
-import io.grpc.{CallOptions, Channel, Metadata, MethodDescriptor, Status}
+import io.grpc.{CallOptions, Channel, Metadata, MethodDescriptor, Status, StatusException}
 import kyo.*
 import kyo.grpc.*
 import kyo.grpc.internal.UnaryClientCallListener
 import scalapb.grpc.ClientCalls
 
-type GrpcRequests[Requests] = Requests < (Env[Metadata] & Async)
+type GrpcRequestCompletion = Unit < (Env[RequestEnd] & Async)
 
-type GrpcRequestsInit[Requests] = GrpcRequests[Requests] < Emit[RequestOptions]
+private[grpc] type GrpcResponsesAwaitingCompletion[Responses] = Result[GrpcFailure, Responses] < (Emit[GrpcRequestCompletion] & Async)
+
+private[grpc] type GrpcRequestsWithHeaders[Requests] = Requests < (Emit[GrpcRequestCompletion] & Async)
+
+type GrpcRequests[Requests] = Requests < (Env[Metadata] & Emit[GrpcRequestCompletion] & Async)
+
+type GrpcRequestsInit[Requests] = GrpcRequests[Requests] < (Emit[RequestStart] & Async)
 
 /** Provides client-side gRPC call implementations for different RPC patterns.
   *
@@ -48,26 +54,24 @@ object ClientCall:
         // TODO: Handle cancellation properly
         //call.cancel()
 
-        // TODO: Handle completion
-
-        def start(options: RequestOptions) =
+        def start(options: RequestStart) =
             for
-                responsePromise <- Promise.init[Response, Abort[Status]]
+                responsePromise <- Promise.init[Response, Abort[StatusException]]
                 headersPromise <- Promise.init[Metadata, Any]
-                completionPromise <- Promise.init[(Status, Metadata), Any]
+                completionPromise <- Promise.init[RequestEnd, Any]
                 readySignal <- Signal.initRef[Boolean](false)
                 listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
             yield listener
+        end start
 
-        def processHeaders(listener: UnaryClientCallListener[Response], requestEffect: GrpcRequests[Request]): Request < Async =
+        def processHeaders(listener: UnaryClientCallListener[Response], requestEffect: GrpcRequests[Request]): GrpcRequestsWithHeaders[Request] =
             for
                 headers <- listener.headersPromise.get
-                request <- Env.run(headers)(requestEffect)
-            yield request
+            yield Env.run(headers)(requestEffect)
 
-        def sendAndReceive(listener: UnaryClientCallListener[Response], requestEffect: Request < Async): Response < (Async & Abort[Status]) =
+        def sendAndReceive(listener: UnaryClientCallListener[Response], requestEffect: GrpcRequestsWithHeaders[Request]): GrpcResponsesAwaitingCompletion[Response] =
             for
                 // We ignore the ready signal here as we want the request ready as soon as possible,
                 // and we will only buffer at most one request.
@@ -75,15 +79,26 @@ object ClientCall:
                 _ <- Sync.defer(call.request(1))
                 _ <- Sync.defer(call.sendMessage(request))
                 _ <- Sync.defer(call.halfClose())
-                response <- listener.responsePromise.get
-            yield response
+                result <- listener.responsePromise.getResult
+            yield result
+        end sendAndReceive
 
-        val run = RequestOptions.run(request).map: (options, requestEffect) =>
-            for
-                listener <- start(options)
-                requestAsync <- processHeaders(listener, requestEffect)
-                response <- sendAndReceive(listener, requestAsync)
-            yield response
+        def processCompletion(listener: UnaryClientCallListener[Response])(completionEffect: GrpcResponsesAwaitingCompletion[Response]): Response < Grpc =
+            val done = Emit.runForeach(completionEffect): handler =>
+                listener.completionPromise.get.map: end =>
+                    Env.run(end)(handler)
+            done.map(Abort.get)
+        end processCompletion
+
+        val run =
+            RequestStart.run(request).map: (options, requestEffect) =>
+                for
+                    listener <- start(options)
+                    response <- (for
+                        requestWithHeaders <- processHeaders(listener, requestEffect)
+                        response <- sendAndReceive(listener, requestWithHeaders)
+                    yield response).handle(processCompletion(listener))
+                yield response
 
         Abort.recoverOrThrow((status: Status) => Abort.fail(status.asException))(run)
     end unary
