@@ -1,10 +1,9 @@
 package kyo.grpc
 
 import io.grpc.ServerBuilder
+import java.util.concurrent.TimeUnit
 import kyo.*
 import sun.misc.Signal
-
-import java.util.concurrent.TimeUnit
 
 /** Server utilities for managing gRPC servers in Kyo.
   *

@@ -1,9 +1,14 @@
 package kyo.grpc
 
-import io.grpc.{Metadata, ServerCallHandler, Status}
+import io.grpc.Metadata
+import io.grpc.ServerCallHandler
+import io.grpc.Status
 import kyo.*
 import kyo.grpc.*
-import kyo.grpc.internal.{BidiStreamingServerCallHandler, ClientStreamingServerCallHandler, ServerStreamingServerCallHandler, UnaryServerCallHandler}
+import kyo.grpc.internal.BidiStreamingServerCallHandler
+import kyo.grpc.internal.ClientStreamingServerCallHandler
+import kyo.grpc.internal.ServerStreamingServerCallHandler
+import kyo.grpc.internal.UnaryServerCallHandler
 
 type GrpcResponseMeta = Env[Metadata] & Emit[ResponseOptions]
 
@@ -19,7 +24,7 @@ type GrpcHandlerInit[Requests, Responses] = GrpcHandler[Requests, Responses] < G
   * All handlers are designed to work with the [[Grpc]] effect type and handle exceptions and stream completion appropriately.
   */
 object ServerCallHandlers:
-    
+
     // TODO: Update the docs for f
     // TODO: Update the callers to include metadata and response options.
 

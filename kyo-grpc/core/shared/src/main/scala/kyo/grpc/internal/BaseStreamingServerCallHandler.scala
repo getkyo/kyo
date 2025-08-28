@@ -2,13 +2,19 @@ package kyo.grpc.internal
 
 import io.grpc.*
 import kyo.*
-import kyo.grpc.{Grpc, *}
+import kyo.grpc.*
+import kyo.grpc.Grpc
 
-private[grpc] abstract class BaseStreamingServerCallHandler[Request, Response, Handler](f: Handler < GrpcResponseMeta)(using Frame) extends ServerCallHandler[Request, Response]:
+abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, Handler](f: Handler < GrpcResponseMeta)(using Frame)
+    extends ServerCallHandler[Request, Response]:
 
     import AllowUnsafe.embrace.danger
 
-    protected def send(call: ServerCall[Request, Response], handler: Handler, channel: StreamChannel[Request, GrpcFailure]): Status < (Grpc & Emit[Metadata])
+    protected def send(
+        call: ServerCall[Request, Response],
+        handler: Handler,
+        channel: StreamChannel[Request, GrpcFailure]
+    ): Status < (Grpc & Emit[Metadata])
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
         // WARNING: call is not guaranteed to be thread-safe.
@@ -46,8 +52,8 @@ private[grpc] abstract class BaseStreamingServerCallHandler[Request, Response, H
                 requestBuffer = options.requestBufferOrDefault
                 _ <- options.sendHeaders(call)
                 // Request the remaining messages to fill the request buffer.
-                _ <- Sync.defer(if requestBuffer > 1 then call.request(requestBuffer - 1) else ())
-                channel <- StreamChannel.initUnscoped[Request, GrpcFailure](capacity = requestBuffer)
+                _         <- Sync.defer(if requestBuffer > 1 then call.request(requestBuffer - 1) else ())
+                channel   <- StreamChannel.initUnscoped[Request, GrpcFailure](capacity = requestBuffer)
                 sentFiber <- start(handler, channel)
             yield StreamingServerCallListener(channel.unsafe, sentFiber.unsafe)
 

@@ -1,6 +1,7 @@
 package kyo.grpc
 
-import io.grpc.{Metadata, ServerCall}
+import io.grpc.Metadata
+import io.grpc.ServerCall
 import kyo.*
 import kyo.grpc.internal.mergeIfDefined
 

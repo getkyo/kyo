@@ -70,9 +70,7 @@ object ClientCall:
             listener: UnaryClientCallListener[Response],
             requestEffect: GrpcRequests[Request]
         ): GrpcRequestsWithHeaders[Request] =
-            for
-                headers <- listener.headersPromise.get
-            yield Env.run(headers)(requestEffect)
+            listener.headersPromise.get.map(Env.run(_)(requestEffect))
 
         def sendAndReceive(
             call: ClientCall[Request, Response],
@@ -92,11 +90,9 @@ object ClientCall:
 
         def processCompletion(listener: UnaryClientCallListener[Response])(completionEffect: GrpcResponsesAwaitingCompletion[Response])
             : Response < Grpc =
-            val done = Emit.runForeach(completionEffect): handler =>
-                listener.completionPromise.get.map: end =>
-                    Env.run(end)(handler)
-            done.map(Abort.get)
-        end processCompletion
+            Emit.runForeach(completionEffect)(handler =>
+                listener.completionPromise.get.map(Env.run(_)(handler))
+            ).map(Abort.get)
 
         def run(call: ClientCall[Request, Response]) =
             RequestStart.run(request).map: (options, requestEffect) =>
