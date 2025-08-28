@@ -2,6 +2,7 @@ package kyo.grpc
 
 import io.grpc.CallOptions
 import io.grpc.Channel
+import io.grpc.ClientCall
 import io.grpc.Metadata
 import io.grpc.MethodDescriptor
 import io.grpc.Status
@@ -53,10 +54,7 @@ object ClientCall:
         options: CallOptions,
         request: GrpcRequestsInit[Request]
     )(using Frame): Response < Grpc =
-        // TODO: This has effects.
-        val call = channel.newCall(method, options)
-
-        def start(options: RequestStart) =
+        def start(call: ClientCall[Request, Response], options: RequestStart) =
             for
                 responsePromise   <- Promise.init[Response, Abort[StatusException]]
                 headersPromise    <- Promise.init[Metadata, Any]
@@ -77,6 +75,7 @@ object ClientCall:
             yield Env.run(headers)(requestEffect)
 
         def sendAndReceive(
+            call: ClientCall[Request, Response],
             listener: UnaryClientCallListener[Response],
             requestEffect: GrpcRequestsWithHeaders[Request]
         ): GrpcResponsesAwaitingCompletion[Response] =
@@ -99,18 +98,18 @@ object ClientCall:
             done.map(Abort.get)
         end processCompletion
 
-        val run =
+        def run(call: ClientCall[Request, Response]) =
             RequestStart.run(request).map: (options, requestEffect) =>
                 for
-                    listener <- start(options)
+                    listener <- start(call, options)
                     response <- (for
                         requestWithHeaders <- processHeaders(listener, requestEffect)
-                        response           <- sendAndReceive(listener, requestWithHeaders)
+                        response           <- sendAndReceive(call, listener, requestWithHeaders)
                     yield response).handle(processCompletion(listener))
                 yield response
 
         // TODO: Is there a better way to do this?
-        val cancel =
+        def cancel(call: ClientCall[Request, Response]) =
             Fiber.initUnscoped(Async.never)
                 .map(fiber =>
                     fiber.onInterrupt(error =>
@@ -121,7 +120,8 @@ object ClientCall:
                     ).andThen(fiber)
                 ).map(_.get)
 
-        Async.raceFirst(run, cancel)
+        Sync.defer(channel.newCall(method, options)).map: call =>
+            Async.raceFirst(run(call), cancel(call))
     end unary
 
     /** Executes a client streaming gRPC call.
