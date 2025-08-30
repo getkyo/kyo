@@ -3,12 +3,11 @@ package kyo.grpc.internal
 import io.grpc.*
 import io.grpc.ClientCall.Listener
 import kyo.*
-import kyo.Channel
-import kyo.grpc.RequestEnd
+import kyo.grpc.{RequestEnd, StreamChannel}
 
-private[grpc] class UnaryClientCallListener[Response](
+private[grpc] class ServerStreamingClientCallListener[Response](
     val headersPromise: Promise[Metadata, Any],
-    val responsePromise: Promise[Response, Abort[StatusException]],
+    val responseChannel: StreamChannel[Response, StatusException],
     val completionPromise: Promise[RequestEnd, Any],
     val readySignal: SignalRef[Boolean]
 ) extends Listener[Response]:
@@ -19,16 +18,16 @@ private[grpc] class UnaryClientCallListener[Response](
         headersPromise.unsafe.completeDiscard(Result.succeed(headers))
 
     override def onMessage(message: Response): Unit =
-        if !responsePromise.unsafe.complete(Result.succeed(message)) then
-            throw Status.INVALID_ARGUMENT.withDescription("Server sent more than one response.").asException()
-    end onMessage
+        given Frame = Frame.internal
+        discard(responseChannel.unsafe.offer(message).getOrThrow)
 
     override def onClose(status: Status, trailers: Metadata): Unit =
-        responsePromise.unsafe.completeDiscard(Result.fail(status.asException(trailers)))
+        given Frame = Frame.internal
+        responseChannel.unsafe.closeProducer()
         completionPromise.unsafe.completeDiscard(Result.succeed(RequestEnd(status, trailers)))
 
     override def onReady(): Unit =
-        // May not be called if the method type is unary.
+        // May not be called if the method type is server streaming.
         readySignal.unsafe.set(true)
 
-end UnaryClientCallListener
+end ServerStreamingClientCallListener

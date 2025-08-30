@@ -201,9 +201,12 @@ private[kyo] object StreamChannel:
         yield Unsafe(channel.unsafe, error.unsafe).safe
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    final class Unsafe[A, E](val channel: Channel.Unsafe[A], val failure: AtomicRef.Unsafe[Maybe[E]])(using initFrame: Frame):
+    final class Unsafe[A, E](private[kyo] val channel: Channel.Unsafe[A], private[kyo] val failure: AtomicRef.Unsafe[Maybe[E]])(using initFrame: Frame):
 
         // TODO: Fix all the docs in here.
+
+        def offer(value: A)(using Frame, AllowUnsafe): Result[Closed, Boolean] =
+            channel.offer(value)
 
         def putFiber(value: A)(using Frame, AllowUnsafe): Fiber.Unsafe[Unit, Abort[Closed]] =
             channel.offer(value).foldOrThrow(
@@ -233,6 +236,9 @@ private[kyo] object StreamChannel:
                 Result.succeed(closeProducerFiber())
             end if
         end fail
+        
+        def closeProducer()(using Frame, AllowUnsafe): Unit =
+            discard(channel.closeAwaitEmpty())
 
         /** Closes the producer side of the channel.
           *
