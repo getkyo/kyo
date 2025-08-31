@@ -34,7 +34,8 @@ class GrpcClientManyToManyBench extends ArenaBench2[Long](sizeSquared):
         import state.*
         forkKyo:
             Env.run(Metadata()):
-                client.manyToMany(Stream.init(requests)).into(Sink.count.map(_.toLong))
+                // TODO: Can we avoid the lift here?
+                client.manyToMany(Kyo.lift(Stream.init(requests))).into(Sink.count.map(_.toLong))
     end kyoBench
 
     @Benchmark

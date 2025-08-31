@@ -21,7 +21,7 @@ final case class RequestOptions(
             RequestOptions(
                 headers = mergedHeaders,
                 messageCompression = that.messageCompression.orElse(this.messageCompression),
-                responseCapacity = that.responseCapacity.orElse(this.responseCapacity),
+                responseCapacity = that.responseCapacity.orElse(this.responseCapacity)
             )
     end combine
 
@@ -32,7 +32,7 @@ end RequestOptions
 object RequestOptions:
 
     // TODO: What are sensible defaults?
-    val DefaultRequestBuffer: Int = 8
+    val DefaultRequestBuffer: Int    = 8
     val DefaultResponseCapacity: Int = 8
 
     def run[A, S](v: A < (Emit[RequestOptions] & S))(using Frame): (RequestOptions, A) < (Sync & S) =

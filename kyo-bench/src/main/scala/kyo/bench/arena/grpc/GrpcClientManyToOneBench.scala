@@ -33,7 +33,8 @@ class GrpcClientManyToOneBench extends ArenaBench2(response):
         import state.*
         forkKyo:
             Env.run(Metadata()):
-                client.manyToOne(Stream.init(requests))
+                // TODO: Can we avoid the lift here?
+                client.manyToOne(Kyo.lift(Stream.init(requests)))
     end kyoBench
 
     @Benchmark

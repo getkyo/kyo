@@ -3,7 +3,8 @@ package kyo.grpc.internal
 import io.grpc.*
 import io.grpc.ClientCall.Listener
 import kyo.*
-import kyo.grpc.{RequestEnd, StreamChannel}
+import kyo.grpc.RequestEnd
+import kyo.grpc.StreamChannel
 
 private[grpc] class ServerStreamingClientCallListener[Response](
     val headersPromise: Promise[Metadata, Any],
@@ -25,6 +26,7 @@ private[grpc] class ServerStreamingClientCallListener[Response](
         given Frame = Frame.internal
         responseChannel.unsafe.closeProducer()
         completionPromise.unsafe.completeDiscard(Result.succeed(RequestEnd(status, trailers)))
+    end onClose
 
     override def onReady(): Unit =
         // May not be called if the method type is server streaming.
