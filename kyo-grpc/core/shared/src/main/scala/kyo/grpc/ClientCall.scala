@@ -5,13 +5,13 @@ import io.grpc.Channel
 import io.grpc.ClientCall
 import io.grpc.Metadata
 import io.grpc.MethodDescriptor
-import io.grpc.Status
 import io.grpc.StatusException
 import kyo.*
 import kyo.grpc.*
 import kyo.grpc.internal.ServerStreamingClientCallListener
 import kyo.grpc.internal.UnaryClientCallListener
-import scalapb.grpc.ClientCalls
+
+// TODO: Name these.
 
 type GrpcRequestCompletion = Unit < (Env[RequestEnd] & Async)
 
@@ -55,7 +55,7 @@ object ClientCall:
         options: CallOptions,
         requestInit: GrpcRequestsInit[Request]
     )(using Frame): Response < Grpc =
-        def start(call: ClientCall[Request, Response], options: RequestOptions) =
+        def start(call: ClientCall[Request, Response], options: RequestOptions): UnaryClientCallListener[Response] < Sync =
             for
                 headersPromise    <- Promise.init[Metadata, Any]
                 responsePromise   <- Promise.init[Response, Abort[StatusException]]
@@ -92,36 +92,26 @@ object ClientCall:
         def processCompletion(listener: UnaryClientCallListener[Response])(completionEffect: GrpcResponsesAwaitingCompletion[Result[
             GrpcFailure,
             Response
-        ]])
-            : Response < Grpc =
+        ]]): Response < Grpc =
             Emit.runForeach(completionEffect)(handler =>
                 listener.completionPromise.get.map(Env.run(_)(handler))
             ).map(Abort.get)
 
-        def run(call: ClientCall[Request, Response]) =
+        def run(call: ClientCall[Request, Response]): Response < Grpc =
             RequestOptions.run(requestInit).map: (options, requestEffect) =>
                 for
                     listener <- start(call, options)
                     response <- (for
                         requestWithHeaders <- processHeaders(listener, requestEffect)
                         response           <- sendAndReceive(call, listener, requestWithHeaders)
-                    yield response).handle(processCompletion(listener))
+                    yield response).handle(
+                        processCompletion(listener),
+                        
+                    )
                 yield response
 
-        // TODO: Is there a better way to do this?
-        def cancel(call: ClientCall[Request, Response]) =
-            Fiber.initUnscoped(Async.never)
-                .map(fiber =>
-                    fiber.onInterrupt(error =>
-                        val ex = error match
-                            case Result.Panic(e) => e
-                            case _               => null
-                        Sync.defer(call.cancel("Kyo Fiber was interrupted.", ex))
-                    ).andThen(fiber)
-                ).map(_.get)
-
         Sync.defer(channel.newCall(method, options)).map: call =>
-            Async.raceFirst(run(call), cancel(call))
+            Async.raceFirst(run(call), cancelOnInterrupt(call))
     end unary
 
     /** Executes a client streaming gRPC call.
@@ -150,7 +140,7 @@ object ClientCall:
         options: CallOptions,
         requestsInit: GrpcRequestsInit[Stream[Request, Grpc]]
     )(using Frame, Tag[Emit[Chunk[Request]]]): Response < Grpc =
-        def start(call: ClientCall[Request, Response], options: RequestOptions) =
+        def start(call: ClientCall[Request, Response], options: RequestOptions): UnaryClientCallListener[Response] < Sync =
             for
                 headersPromise    <- Promise.init[Metadata, Any]
                 responsePromise   <- Promise.init[Response, Abort[StatusException]]
@@ -176,16 +166,26 @@ object ClientCall:
             // Sends the first message regardless of readiness to ensure progress.
             val send = requests.foreach(request =>
                 for
-                    _       <- Sync.defer(call.sendMessage(request))
+                    _ <- Sync.defer(call.sendMessage(request))
+                    // There is a race condition between setting the ready signal to false and the listener setting it
+                    // to true. Either update may be lost, however, we always check isReady which is the source of
+                    // truth. The only case where the signal value matters is when isReady is false. We know that the
+                    // signal will still be false, and the listener guarantees that the ready signal will be set to true
+                    // when isReady becomes true.
                     _       <- listener.readySignal.set(false)
                     isReady <- Sync.defer(call.isReady)
-                    _       <- if isReady then Kyo.unit else listener.readySignal.next
+                    // TODO: We have to handle the case where the listener completes.
+                    _ <- if isReady then Kyo.unit else listener.readySignal.next
                 yield ()
             )
-            Abort.run(send).map:
-                case success: Result.Success[Unit] => Sync.defer(call.halfClose()).andThen(success)
-                case error: Result.Error[GrpcFailure] =>
-                    Sync.defer(call.cancel("Call was cancelled due to an error.", error.failureOrPanic)).andThen(error)
+
+            Abort.run(send).map((result: Result[GrpcFailure, Unit]) =>
+                result match
+                    case success: Result.Success[Unit] @unchecked =>
+                        Sync.defer(call.halfClose()).andThen(success)
+                    case error: Result.Error[GrpcFailure] @unchecked =>
+                        Sync.defer(call.cancel("Call was cancelled due to an error.", error.failureOrPanic)).andThen(error)
+            )
         end sendAndClose
 
         def sendAndReceive(
@@ -214,7 +214,7 @@ object ClientCall:
                 listener.completionPromise.get.map(Env.run(_)(handler))
             ).map(Abort.get)
 
-        def run(call: ClientCall[Request, Response]) =
+        def run(call: ClientCall[Request, Response]): Response < Grpc =
             RequestOptions.run(requestsInit).map: (options, requestsEffect) =>
                 for
                     listener <- start(call, options)
@@ -224,20 +224,8 @@ object ClientCall:
                     yield response).handle(processCompletion(listener))
                 yield response
 
-        // TODO: Is there a better way to do this?
-        def cancel(call: ClientCall[Request, Response]) =
-            Fiber.initUnscoped(Async.never)
-                .map(fiber =>
-                    fiber.onInterrupt(error =>
-                        val ex = error match
-                            case Result.Panic(e) => e
-                            case _               => null
-                        Sync.defer(call.cancel("Kyo Fiber was interrupted.", ex))
-                    ).andThen(fiber)
-                ).map(_.get)
-
         Sync.defer(channel.newCall(method, options)).map: call =>
-            Async.raceFirst(run(call), cancel(call))
+            Async.raceFirst(run(call), cancelOnInterrupt(call))
     end clientStreaming
 
     /** Executes a server streaming gRPC call.
@@ -266,7 +254,7 @@ object ClientCall:
         options: CallOptions,
         requestInit: GrpcRequestsInit[Request]
     )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
-        def start(call: ClientCall[Request, Response], options: RequestOptions) =
+        def start(call: ClientCall[Request, Response], options: RequestOptions): ServerStreamingClientCallListener[Response] < Sync =
             for
                 headersPromise <- Promise.init[Metadata, Any]
                 // TODO: What about the Scope?
@@ -319,21 +307,9 @@ object ClientCall:
                     yield responses).handle(processCompletion(listener))
                 yield responses
 
-        // TODO: Is there a better way to do this?
-        def cancel(call: ClientCall[Request, Response]) =
-            Fiber.initUnscoped(Async.never)
-                .map(fiber =>
-                    fiber.onInterrupt(error =>
-                        val ex = error match
-                            case Result.Panic(e) => e
-                            case _               => null
-                        Sync.defer(call.cancel("Kyo Fiber was interrupted.", ex))
-                    ).andThen(fiber)
-                ).map(_.get)
-
         Stream.unwrap:
             Sync.defer(channel.newCall(method, options)).map: call =>
-                Async.raceFirst(run(call), cancel(call))
+                Async.raceFirst(run(call), cancelOnInterrupt(call))
     end serverStreaming
 
     /** Executes a bidirectional streaming gRPC call.
@@ -362,15 +338,101 @@ object ClientCall:
         options: CallOptions,
         requestsInit: GrpcRequestsInit[Stream[Request, Grpc]]
     )(using Frame, Tag[Emit[Chunk[Request]]], Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
-        ???
-//        val responses =
-//            for
-//                responseChannel  <- StreamChannel.init[Response, GrpcFailure]
-//                responseObserver <- Sync.Unsafe(ResponseStreamObserver(responseChannel))
-//                requestObserver = ClientCalls.asyncBidiStreamingCall(channel, method, options, responseObserver)
-//                _ <- StreamNotifier.notifyObserver(requests, requestObserver)
-//            yield responseChannel.stream
-//        Stream.unwrap(responses)
+        def start(call: ClientCall[Request, Response], options: RequestOptions): ServerStreamingClientCallListener[Response] < Sync =
+            for
+                headersPromise <- Promise.init[Metadata, Any]
+                // TODO: What about the Scope?
+                // Assumption is that SPSC is fine which I think it is according to gRPC docs.
+                responseStream    <- StreamChannel.initUnscoped[Response, StatusException](options.responseCapacityOrDefault)
+                completionPromise <- Promise.init[RequestEnd, Any]
+                readySignal       <- Signal.initRef[Boolean](false)
+                listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
+                _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
+                _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
+            yield listener
+        end start
+
+        def processHeaders(
+            listener: ServerStreamingClientCallListener[Response],
+            requestsEffect: GrpcRequests[Stream[Request, Grpc]]
+        ): GrpcRequestsWithHeaders[Stream[Request, Grpc]] =
+            listener.headersPromise.get.map(Env.run(_)(requestsEffect))
+
+        def sendAndClose(
+            call: ClientCall[Request, Response],
+            listener: ServerStreamingClientCallListener[Response],
+            requests: Stream[Request, Grpc]
+        ): Result[GrpcFailure, Unit] < Async =
+            // Sends the first message regardless of readiness to ensure progress.
+            val send = requests.foreach(request =>
+                for
+                    _ <- Sync.defer(call.sendMessage(request))
+                    // There is a race condition between setting the ready signal to false and the listener setting it
+                    // to true. Either update may be lost, however, we always check isReady which is the source of
+                    // truth. The only case where the signal value matters is when isReady is false. We know that the
+                    // signal will still be false, and the listener guarantees that the ready signal will be set to true
+                    // when isReady becomes true.
+                    _       <- listener.readySignal.set(false)
+                    isReady <- Sync.defer(call.isReady)
+                    _       <- if isReady then Kyo.unit else listener.readySignal.next
+                yield ()
+            )
+
+            Abort.run(send).map((result: Result[GrpcFailure, Unit]) =>
+                result match
+                    case success: Result.Success[Unit] @unchecked =>
+                        Sync.defer(call.halfClose()).andThen(success)
+                    case error: Result.Error[GrpcFailure] @unchecked =>
+                        Sync.defer(call.cancel("Call was cancelled due to an error.", error.failureOrPanic)).andThen(error)
+            )
+        end sendAndClose
+
+        def sendAndReceive(
+            call: ClientCall[Request, Response],
+            listener: ServerStreamingClientCallListener[Response],
+            requestsEffect: GrpcRequestsWithHeaders[Stream[Request, Grpc]]
+        ): GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]] =
+            for
+                requests <- requestsEffect
+                _        <- Sync.defer(call.request(1))
+                // TODO: Is it fine for this to be unscoped?
+                _ <- Fiber.initUnscoped(sendAndClose(call, listener, requests))
+//                listener.responseChannel.stream
+            yield ???
+        end sendAndReceive
+
+        def processCompletion(listener: ServerStreamingClientCallListener[Response])(
+            completionEffect: GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]]
+        ): Stream[Response, Grpc] < Async =
+            Emit.runForeach(completionEffect)(handler =>
+                listener.completionPromise.get.map(Env.run(_)(handler))
+            )
+
+        def run(call: ClientCall[Request, Response]): Stream[Response, Grpc] < Async =
+            RequestOptions.run(requestsInit).map: (options, requestsEffect) =>
+                for
+                    listener <- start(call, options)
+                    responses <- (for
+                        requestsWithHeaders <- processHeaders(listener, requestsEffect)
+                        responses           <- sendAndReceive(call, listener, requestsWithHeaders)
+                    yield responses).handle(processCompletion(listener))
+                yield responses
+
+        Stream.unwrap:
+            Sync.defer(channel.newCall(method, options)).map: call =>
+                Async.raceFirst(run(call), cancelOnInterrupt(call))
     end bidiStreaming
+
+    // TODO: Is there a better way to do this?
+    private def cancelOnInterrupt[Response](call: ClientCall[?, ?])(using Frame): Response < Async =
+        Fiber.initUnscoped(Async.never)
+            .map(fiber =>
+                fiber.onInterrupt(error =>
+                    val ex = error match
+                        case Result.Panic(e) => e
+                        case _ => null
+                    Sync.defer(call.cancel("Kyo Fiber was interrupted.", ex))
+                ).andThen(fiber)
+            ).map(_.get)
 
 end ClientCall
