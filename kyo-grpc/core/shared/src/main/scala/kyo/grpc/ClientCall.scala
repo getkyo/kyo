@@ -106,12 +106,12 @@ object ClientCall:
                         response           <- sendAndReceive(call, listener, requestWithHeaders)
                     yield response).handle(
                         processCompletion(listener),
-                        
+                        cancelOnError(call),
+                        cancelOnInterrupt(call)
                     )
                 yield response
 
-        Sync.defer(channel.newCall(method, options)).map: call =>
-            Async.raceFirst(run(call), cancelOnInterrupt(call))
+        Sync.defer(channel.newCall(method, options)).map(run)
     end unary
 
     /** Executes a client streaming gRPC call.
@@ -221,11 +221,14 @@ object ClientCall:
                     response <- (for
                         requestsWithHeaders <- processHeaders(listener, requestsEffect)
                         response            <- sendAndReceive(call, listener, requestsWithHeaders)
-                    yield response).handle(processCompletion(listener))
+                    yield response).handle(
+                        processCompletion(listener),
+                        cancelOnError(call),
+                        cancelOnInterrupt(call)
+                    )
                 yield response
 
-        Sync.defer(channel.newCall(method, options)).map: call =>
-            Async.raceFirst(run(call), cancelOnInterrupt(call))
+        Sync.defer(channel.newCall(method, options)).map(run)
     end clientStreaming
 
     /** Executes a server streaming gRPC call.
@@ -304,12 +307,15 @@ object ClientCall:
                     responses <- (for
                         requestWithHeaders <- processHeaders(listener, requestEffect)
                         responses          <- sendAndReceive(call, listener, requestWithHeaders)
-                    yield responses).handle(processCompletion(listener))
+                    yield responses).handle(
+                        processCompletion(listener),
+                        cancelOnError(call),
+                        cancelOnInterrupt(call)
+                    )
                 yield responses
 
         Stream.unwrap:
-            Sync.defer(channel.newCall(method, options)).map: call =>
-                Async.raceFirst(run(call), cancelOnInterrupt(call))
+            Sync.defer(channel.newCall(method, options)).map(run)
     end serverStreaming
 
     /** Executes a bidirectional streaming gRPC call.
@@ -415,16 +421,28 @@ object ClientCall:
                     responses <- (for
                         requestsWithHeaders <- processHeaders(listener, requestsEffect)
                         responses           <- sendAndReceive(call, listener, requestsWithHeaders)
-                    yield responses).handle(processCompletion(listener))
+                    yield responses).handle(
+                        processCompletion(listener),
+                        cancelOnError(call),
+                        cancelOnInterrupt(call)
+                    )
                 yield responses
 
         Stream.unwrap:
-            Sync.defer(channel.newCall(method, options)).map: call =>
-                Async.raceFirst(run(call), cancelOnInterrupt(call))
+            Sync.defer(channel.newCall(method, options)).map(run)
     end bidiStreaming
 
+    private def cancelOnError[E <: Throwable : ConcreteTag, Response, S](call: ClientCall[?, ?])(v: => Response < (Abort[E] & S))(using Frame): Response < (Abort[E] & Sync & S) =
+        Abort.recoverError[E](error =>
+            Sync.defer(call.cancel("Call was cancelled due to an error.", error.failureOrPanic))
+                .andThen(Abort.error(error))
+        )(v)
+
+    private def cancelOnInterrupt[E, Response](call: ClientCall[?, ?])(v: => Response < (Abort[E] & Async))(using Frame): Response < (Abort[E] & Async) =
+        Async.raceFirst(v, cancelOnInterruptFiber(call))
+
     // TODO: Is there a better way to do this?
-    private def cancelOnInterrupt[Response](call: ClientCall[?, ?])(using Frame): Response < Async =
+    private def cancelOnInterruptFiber(call: ClientCall[?, ?])(using Frame): Nothing < Async =
         Fiber.initUnscoped(Async.never)
             .map(fiber =>
                 fiber.onInterrupt(error =>
