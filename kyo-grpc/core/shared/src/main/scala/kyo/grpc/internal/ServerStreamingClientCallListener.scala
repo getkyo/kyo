@@ -1,15 +1,14 @@
 package kyo.grpc.internal
 
-import io.grpc.*
 import io.grpc.ClientCall.Listener
+import io.grpc.{Metadata, Status}
 import kyo.*
-import kyo.grpc.RequestEnd
-import kyo.grpc.StreamChannel
+import kyo.grpc.CallClosed
 
 private[grpc] class ServerStreamingClientCallListener[Response](
     val headersPromise: Promise[Metadata, Any],
-    val responseChannel: StreamChannel[Response, StatusException],
-    val completionPromise: Promise[RequestEnd, Any],
+    val responseChannel: Channel[Response],
+    val completionPromise: Promise[CallClosed, Any],
     val readySignal: SignalRef[Boolean]
 ) extends Listener[Response]:
 
@@ -24,8 +23,8 @@ private[grpc] class ServerStreamingClientCallListener[Response](
 
     override def onClose(status: Status, trailers: Metadata): Unit =
         given Frame = Frame.internal
-        responseChannel.unsafe.closeProducer()
-        completionPromise.unsafe.completeDiscard(Result.succeed(RequestEnd(status, trailers)))
+        discard(responseChannel.unsafe.closeAwaitEmpty())
+        completionPromise.unsafe.completeDiscard(Result.succeed(CallClosed(status, trailers)))
     end onClose
 
     override def onReady(): Unit =

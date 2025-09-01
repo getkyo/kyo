@@ -1,7 +1,6 @@
 package kyo.grpc
 
 import io.grpc.CallOptions
-import io.grpc.Channel
 import io.grpc.ClientCall
 import io.grpc.Metadata
 import io.grpc.MethodDescriptor
@@ -13,7 +12,7 @@ import kyo.grpc.internal.UnaryClientCallListener
 
 // TODO: Name these.
 
-type GrpcRequestCompletion = Unit < (Env[RequestEnd] & Async)
+type GrpcRequestCompletion = Unit < (Env[CallClosed] & Async)
 
 private[grpc] type GrpcResponsesAwaitingCompletion[MaybeResponses] = MaybeResponses < (Emit[GrpcRequestCompletion] & Async)
 
@@ -50,7 +49,7 @@ object ClientCall:
       *   the response message pending [[Grpc]]
       */
     def unary[Request, Response](
-        channel: Channel,
+        channel: io.grpc.Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         requestInit: GrpcRequestsInit[Request]
@@ -59,7 +58,7 @@ object ClientCall:
             for
                 headersPromise    <- Promise.init[Metadata, Any]
                 responsePromise   <- Promise.init[Response, Abort[StatusException]]
-                completionPromise <- Promise.init[RequestEnd, Any]
+                completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
@@ -135,7 +134,7 @@ object ClientCall:
       *   the response message pending [[Grpc]]
       */
     def clientStreaming[Request: Tag, Response](
-        channel: Channel,
+        channel: io.grpc.Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         requestsInit: GrpcRequestsInit[Stream[Request, Grpc]]
@@ -144,7 +143,7 @@ object ClientCall:
             for
                 headersPromise    <- Promise.init[Metadata, Any]
                 responsePromise   <- Promise.init[Response, Abort[StatusException]]
-                completionPromise <- Promise.init[RequestEnd, Any]
+                completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
@@ -252,7 +251,7 @@ object ClientCall:
       *   a stream of response messages pending [[Grpc]]
       */
     def serverStreaming[Request, Response: Tag](
-        channel: Channel,
+        channel: io.grpc.Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         requestInit: GrpcRequestsInit[Request]
@@ -262,8 +261,8 @@ object ClientCall:
                 headersPromise <- Promise.init[Metadata, Any]
                 // TODO: What about the Scope?
                 // Assumption is that SPSC is fine which I think it is according to gRPC docs.
-                responseStream    <- StreamChannel.initUnscoped[Response, StatusException](options.responseCapacityOrDefault)
-                completionPromise <- Promise.init[RequestEnd, Any]
+                responseStream    <- Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)
+                completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
@@ -289,7 +288,7 @@ object ClientCall:
                 _       <- Sync.defer(call.request(1))
                 _       <- Sync.defer(call.sendMessage(request))
                 _       <- Sync.defer(call.halfClose())
-                stream  <- listener.responseChannel.stream
+                stream  <- listener.responseChannel.streamUntilClosed()
             yield stream
         end sendAndReceive
 
@@ -339,7 +338,7 @@ object ClientCall:
       *   a stream of response messages pending [[Grpc]]
       */
     def bidiStreaming[Request: Tag, Response: Tag](
-        channel: Channel,
+        channel: io.grpc.Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         requestsInit: GrpcRequestsInit[Stream[Request, Grpc]]
@@ -349,8 +348,8 @@ object ClientCall:
                 headersPromise <- Promise.init[Metadata, Any]
                 // TODO: What about the Scope?
                 // Assumption is that SPSC is fine which I think it is according to gRPC docs.
-                responseStream    <- StreamChannel.initUnscoped[Response, StatusException](options.responseCapacityOrDefault)
-                completionPromise <- Promise.init[RequestEnd, Any]
+                responseStream    <- Channel.initUnscoped[Response](options.responseCapacityOrDefault, access = Access.SingleProducerSingleConsumer)
+                completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
@@ -403,7 +402,7 @@ object ClientCall:
                 _        <- Sync.defer(call.request(1))
                 // TODO: Is it fine for this to be unscoped?
                 _ <- Fiber.initUnscoped(sendAndClose(call, listener, requests))
-//                listener.responseChannel.stream
+//                listener.responseChannel.streamUntilClosed()
             yield ???
         end sendAndReceive
 

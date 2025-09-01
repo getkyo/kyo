@@ -2,6 +2,7 @@ package kyo.grpc.internal
 
 import io.grpc.*
 import kyo.*
+import kyo.Channel
 import kyo.grpc.*
 import kyo.grpc.Grpc
 
@@ -13,7 +14,7 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
     protected def send(
         call: ServerCall[Request, Response],
         handler: Handler,
-        channel: StreamChannel[Request, GrpcFailure]
+        channel: Channel[Request]
     ): Status < (Grpc & Emit[Metadata])
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
@@ -21,7 +22,7 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
         // WARNING: headers are definitely not thread-safe.
         // This handler has ownership of the call and headers, so we can use them with care.
 
-        def sendAndClose(handler: Handler, channel: StreamChannel[Request, GrpcFailure]) =
+        def sendAndClose(handler: Handler, channel: Channel[Request]) =
             for
                 (trailers, status) <-
                     send(call, handler, channel).handle(
@@ -31,7 +32,7 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
                 _ <- Sync.defer(call.close(status, trailers))
             yield ()
 
-        def start(handler: Handler, channel: StreamChannel[Request, GrpcFailure]) =
+        def start(handler: Handler, channel: Channel[Request]) =
             for
                 fiber <- Fiber.initUnscoped(sendAndClose(handler, channel))
                 _ <- fiber.onInterrupt: _ =>
@@ -53,7 +54,7 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
                 _ <- options.sendHeaders(call)
                 // Request the remaining messages to fill the request buffer.
                 _         <- Sync.defer(if requestBuffer > 1 then call.request(requestBuffer - 1) else ())
-                channel   <- StreamChannel.initUnscoped[Request, GrpcFailure](capacity = requestBuffer)
+                channel   <- Channel.initUnscoped[Request](capacity = requestBuffer, access = Access.SingleProducerSingleConsumer)
                 sentFiber <- start(handler, channel)
             yield StreamingServerCallListener(channel.unsafe, sentFiber.unsafe)
 
@@ -64,14 +65,14 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
         )
     end startCall
 
-    private class StreamingServerCallListener(requests: StreamChannel.Unsafe[Request, ?], fiber: Fiber.Unsafe[Any, Nothing])
+    private class StreamingServerCallListener(requests: Channel.Unsafe[Request], fiber: Fiber.Unsafe[Any, Nothing])
         extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
             discard(requests.putFiber(message))
 
         override def onHalfClose(): Unit =
-            discard(requests.closeProducerFiber())
+            discard(requests.closeAwaitEmpty())
 
         override def onCancel(): Unit =
             discard(fiber.interrupt())
