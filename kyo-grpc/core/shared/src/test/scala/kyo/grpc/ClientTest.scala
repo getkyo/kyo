@@ -63,6 +63,12 @@ class ClientTest extends Test with AsyncMockFactory:
         val channel = mock[ManagedChannel]
         (() => channel.shutdown())
             .expects()
+            .returns(channel)
+            .once()
+
+        channel.awaitTermination
+            .expects(30000000000L, TimeUnit.NANOSECONDS)
+            .returns(true)
             .once()
 
         val unconfiguredBuilder = mock[Builder]
@@ -107,6 +113,11 @@ class ClientTest extends Test with AsyncMockFactory:
                 shutdownCount += 1
                 channel
             )
+            .once()
+
+        channel.awaitTermination
+            .expects(30000000000L, TimeUnit.NANOSECONDS)
+            .returns(true)
             .once()
 
         val builder = mock[Builder]
