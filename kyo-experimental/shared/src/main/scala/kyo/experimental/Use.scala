@@ -52,16 +52,15 @@ object UseAsync:
         Isolate.derive[SupportedEffects, kyo.Async, SupportedEffects].asInstanceOf
 
     // Async variant of Use.use that includes Async effect
-    def useAsync[R[-_]](using frame: Frame)[A, S1](f: R[UseAsync[R]] => A < S1)(using tag: Tag[R[Any]]): A < (UseAsync[R] & S1) =
+    def use[R[-_]](using frame: Frame)[A, S1](f: R[UseAsync[R]] => A < S1)(using tag: Tag[R[Any]]): A < (UseAsync[R] & S1) =
         Use.use(f)
 
     // Async variant of Use.run that be used in an Async context
-    def runAsync[R[-_], S1 >: SupportedEffects](r: R[S1])(using
+    def run[R[-_], S1 >: SupportedEffects](r: R[S1])(using
         frame: Frame
-    )[A, S2](a: A < (UseAsync[R] & S2))(using tap: Tag[R[Any]]): A < (S1 & S2 & kyo.Async) =
-        val env: TypeMap[R[Any]] = TypeMap(r.asInstanceOf[R[Any]])
-        ContextEffect.handle(Use.internal.erasedTag[R], env, _.union(env))(a)
-    end runAsync
+    )[A, S2](a: A < (UseAsync[R] & S2))(using tap: Tag[R[Any]]): A < (S1 & S2) =
+        Use.run(r)(a.asInstanceOf[A < (Use[R] & S2)])
+    end run
 
 end UseAsync
 
