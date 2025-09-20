@@ -125,6 +125,7 @@ lazy val kyoJVM = project
         `kyo-combinators`.jvm,
         `kyo-playwright`.jvm,
         `kyo-examples`.jvm,
+        `kyo-experimental`.jvm,
         `kyo-actor`.jvm
     )
 
@@ -150,6 +151,7 @@ lazy val kyoJS = project
         `kyo-zio`.js,
         `kyo-cats`.js,
         `kyo-combinators`.js,
+        `kyo-experimental`.js,
         `kyo-actor`.js
     )
 
@@ -172,6 +174,7 @@ lazy val kyoNative = project
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-sttp`.native,
+        `kyo-experimental`.native,
         `kyo-actor`.native
     )
 
@@ -394,6 +397,17 @@ lazy val `kyo-actor` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-experimental` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-experimental"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
