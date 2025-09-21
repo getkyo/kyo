@@ -80,7 +80,10 @@ abstract class Layer[+Out, -S] extends Serializable:
       * @return
       *   A new layer producing both outputs
       */
-    final infix def using[Out2, S2, In2](that: Layer[Out2, Env[In2] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
+    final infix def provide[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
+
+    @deprecated("Use `provide` instead, which is more consistent considering the argument order.")
+    final infix def using[Out2, S2](that: Layer[Out2, S2]): Layer[Out & Out2, S & S2] = self provide that
 
 end Layer
 
