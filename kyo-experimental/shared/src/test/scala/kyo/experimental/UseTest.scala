@@ -96,6 +96,8 @@ class UseTest extends kyo.Test:
         val svc = new TestInt[Var[Int]]:
             def int: Int < Var[Int] = Var.update(_ + 1)
 
-        typeCheckFailure("UseAsync.run(svc)(getIntAsync_2)")("S1 is a type variable with constraint")
+        typeCheckFailure("UseAsync.run(svc)(getIntAsync_2)")(
+            "UseAsync.run requires the service effect S to be limited to Async, Abort[Error & ...], Env[Resource & ...]"
+        )
     }
 end UseTest

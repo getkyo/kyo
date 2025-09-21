@@ -2,6 +2,7 @@ package kyo.experimental
 
 import kyo.*
 import kyo.kernel.ContextEffect
+import scala.annotation.implicitNotFound
 
 // Based on ContextEffect (which is not an ArrowEffect) - similar to what's used by Env.
 // Uses R[Any] <: R[S] because when handled, S will be added to the pending effect set.
@@ -56,8 +57,13 @@ object UseAsync:
         Use.use(f)
 
     // Async variant of Use.run that be used in an Async context
-    def run[R[-_], S1 >: SupportedEffects](r: R[S1])(using
-        frame: Frame
+    def run[R[-_], S1](r: R[S1])(using
+        frame: Frame,
+        @implicitNotFound(
+            "UseAsync.run requires the service effect S to be limited to Async, Abort[Error & ...], Env[Resource & ...]. Provided: ${S1}. " +
+                "\nHint: limit your service effect types to those effects, or use Use.run for non-async services."
+        )
+        ev: SupportedEffects <:< S1
     )[A, S2](a: A < (UseAsync[R] & S2))(using tap: Tag[R[Any]]): A < (S1 & S2) =
         Use.run(r)(a.asInstanceOf[A < (Use[R] & S2)])
     end run
