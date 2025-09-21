@@ -57,7 +57,7 @@ class LayerTest extends Test:
             val sharkLayer                    = Layer.from(Shark.apply)
             val dummy: Layer[Dummy, Any]      = Layer(new Dummy {})
 
-            val guppyAndShart: Layer[Guppy & Shark, Env[Dummy]] = guppyLayer provide dummy provide sharkLayer
+            val guppyAndShart: Layer[Guppy & Shark, Env[Dummy]] = guppyLayer provide sharkLayer
             // note: circular deps, not usable
             val _: Layer[Shark & Guppy, Env[Guppy & Dummy]] = sharkLayer using guppyLayer
 
