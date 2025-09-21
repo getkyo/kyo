@@ -8,7 +8,7 @@ class UseTest extends kyo.Test:
         def int: Int < S
 
     private val getInt: Int < Use[TestInt]             = Use.use[TestInt](_.int)
-    private val getIntAsync_1: Int < UseAsync[TestInt] = getInt
+    private val getIntAsync_1                          = getInt.toUseAsync
     private val getIntAsync_2: Int < UseAsync[TestInt] = UseAsync.use[TestInt](_.int)
 
     val svc: TestInt[Sync] = new TestInt[Sync]:
@@ -35,10 +35,12 @@ class UseTest extends kyo.Test:
     "Use: passing subclass to a super service" in run {
         trait Super[-S]:
             def i: Int < S
+            
         class Sub extends Super[Sync]:
             def i: Int < Sync = 99
+            
         val sub = new Sub
-        Use.run[Super, Sync](sub):
+        Use.run(sub):
             Use.use[Super](_.i).map(v => assert(v == 99))
     }
 
@@ -76,16 +78,17 @@ class UseTest extends kyo.Test:
     }
 
     "UseAsync: use via UseAsync.use" in run {
-        val svc = new TestInt[Async & Sync]:
-            def int: Int < (Async & Sync) = 40
-        UseAsync.run[TestInt, Async & Sync](svc) {
+        val svc = new TestInt[Async]:
+            def int: Int < Async = 40
+            
+        UseAsync.run(svc) {
             getIntAsync_2.map(_ + 2).map(v => assert(v == 42))
         }
     }
 
     "UseAsync: service method can suspend with Async.sleep" in run {
-        val svc = new TestInt[Async & Sync]:
-            def int: Int < (Async & Sync) = Async.sleep(5.millis).andThen(41).map(_ + 1)
+        val svc = new TestInt[Async]:
+            def int: Int < Async = Async.sleep(5.millis).andThen(42)
 
         UseAsync.run(svc):
             Async.zip(getIntAsync_1, getIntAsync_2).map: (a, b) =>
