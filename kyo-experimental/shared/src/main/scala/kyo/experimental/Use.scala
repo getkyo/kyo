@@ -71,8 +71,11 @@ object UseAsync:
 end UseAsync
 
 abstract class Service[+R[-_], -S] extends Serializable:
-    inline def and[R1[-_], S1](service: Service[R1, S1]): Service[R && R1, S & S1] =
+    infix def and[R1[-_], S1](service: Service[R1, S1]): Service[R && R1, S & S1] =
         Service.internal.And(this, service)
+
+    infix def provide[R1[-_], S1](that: Service[R1, S1 & Use[R]]): Service[R && R1, S & S1] =
+        Service.internal.Provide(this, that)
 
 end Service
 
@@ -82,9 +85,10 @@ object Service:
 
     private object internal:
         case class And[R0[-_], R1[-_], S0, S1](lhs: Service[R0, S0], rhs: Service[R1, S1]) extends Service[R0 && R1, S0 & S1]
+        case class Provide[R0[-_], R1[-_], S0, S1](first: Service[R0, S0], second: Service[R1, S1 & Use[R0]])
+            extends Service[R0 && R1, S0 & S1]
 
         case class FromKyo_0[Out[-_], S](v: () => TypeMap[Out[Any]] < S)(using val tag: Tag[Out[Any]]) extends Service[Out, S]
-
         case class FromKyo_1[In[-_], Out[-_], S](v: () => TypeMap[Out[Any]] < (Use[In] & S))(using val tag: Tag[Out[Any]])
             extends Service[Out, Use[In] & S]
     end internal
