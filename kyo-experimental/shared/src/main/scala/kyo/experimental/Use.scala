@@ -8,12 +8,12 @@ import kyo.kernel.ContextEffect
 opaque type Use[+R[-_]] = ContextEffect[TypeMap[R[Any]]]
 
 // Helper type alias for combining two effect requirements R1 and R2 into a single requirement
-infix type &&[R1[-_], R2[-_]] = [S] =>> R1[S] & R2[S]
+infix type &&[+R1[-_], +R2[-_]] = [S] =>> R1[S] & R2[S]
 
 object Use:
 
     // Helper type used for type erasure
-    private trait AnyT[-A]
+    private[kyo] trait AnyT[-A]
 
     // Creates a suspended computation that requests and uses a context value R.
     // The R[Use[R]] type ensures proper tracking of the Use effect in the type system,
@@ -64,9 +64,23 @@ object UseAsync:
 
 end UseAsync
 
-// Base trait for services that can provide implementations of effects
-abstract class Service[+R[-_], -S] extends Serializable
+abstract class Service[+R[-_], -S] extends Serializable:
+    inline def and[R1[-_], S1](service: Service[R1, S1]): Service[R && R1, S & S1] =
+        Service.internal.And(this, service)
+
+
+end Service
 
 object Service:
-    // TODO: Factory method to create Service instances
-    def apply[A, S](v: => A < S): Service[Const[A], S] = ??? // TODO
+    def apply[R[-_], S1, S2](v: => R[S1] < S2)(using Tag[R[Any]], Frame): Service[R, S1 & S2] =
+        internal.FromKyo_0[R, S1 & S2](() => v.map(r => TypeMap(r.asInstanceOf[R[Any]])))
+
+    private object internal:
+        case class And[R0[-_], R1[-_], S0, S1](lhs: Service[R0, S0], rhs: Service[R1, S1]) extends Service[R0 && R1, S0 & S1]
+
+        case class FromKyo_0[Out[-_], S](v: () => TypeMap[Out[Any]] < S)(using val tag: Tag[Out[Any]]) extends Service[Out, S]
+
+        case class FromKyo_1[In[-_], Out[-_], S](v: () => TypeMap[Out[Any]] < (Use[In] & S))(using val tag: Tag[Out[Any]])
+            extends Service[Out, Use[In] & S]
+    end internal
+end Service
