@@ -68,7 +68,6 @@ abstract class Service[+R[-_], -S] extends Serializable:
     inline def and[R1[-_], S1](service: Service[R1, S1]): Service[R && R1, S & S1] =
         Service.internal.And(this, service)
 
-
 end Service
 
 object Service:
