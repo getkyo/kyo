@@ -35,10 +35,10 @@ class UseTest extends kyo.Test:
     "Use: passing subclass to a super service" in run {
         trait Super[-S]:
             def i: Int < S
-            
+
         class Sub extends Super[Sync]:
             def i: Int < Sync = 99
-            
+
         val sub = new Sub
         Use.run(sub):
             Use.use[Super](_.i).map(v => assert(v == 99))
@@ -80,7 +80,7 @@ class UseTest extends kyo.Test:
     "UseAsync: use via UseAsync.use" in run {
         val svc = new TestInt[Async]:
             def int: Int < Async = 40
-            
+
         UseAsync.run(svc) {
             getIntAsync_2.map(_ + 2).map(v => assert(v == 42))
         }

@@ -75,7 +75,7 @@ extension [A, R[-_], S](v: A < (Use[R] & S))
 
 abstract class Service[+R[-_], -S] extends Serializable:
     self =>
-    
+
     infix def and[R1[-_], S1](service: Service[R1, S1]): Service[R && R1, S & S1] =
         Service.internal.Provide(self, service)
 
@@ -87,6 +87,12 @@ end Service
 object Service:
     def apply[R[-_], S1, S2](v: => R[S1] < S2)(using Tag[R[Any]], Frame): Service[R, S1 & S2] =
         internal.FromKyo_0[R, S1 & S2](() => v.map(r => TypeMap(r.asInstanceOf[R[Any]])))
+
+    def using[R0[-_]](using
+        Frame,
+        Tag[R0[Any]]
+    )[R1[-_], S1, S2](v: R0[Use[R0]] => R1[S1] < (S2 & Use[R0]))(using Tag[R1[Any]]): Service[R1, Use[R0] & S1 & S2] =
+        internal.FromKyo_1[R0, R1, S1 & S2](() => Use.use[R0](v).map(r => TypeMap(r.asInstanceOf[R1[Any]])))
 
     private object internal:
         case class Provide[R0[-_], R1[-_], S0, S1](first: Service[R0, S0], second: Service[R1, S1 & Use[R0]])
