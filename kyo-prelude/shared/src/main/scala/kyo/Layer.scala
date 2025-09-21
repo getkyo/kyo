@@ -47,12 +47,10 @@ abstract class Layer[+Out, -S] extends Serializable:
       *   The output type of the composed layer
       * @tparam S2
       *   Additional effects of the composed layer
-      * @tparam In2
-      *   The input type required by the second layer
       * @return
       *   A new layer representing the composition of both layers
       */
-    final infix def to[Out2, S2, In2](that: Layer[Out2, Env[In2] & S2]): Layer[Out2, S & S2] = To(self, that)
+    final infix def to[Out2, S2, In2](that: Layer[Out2, Env[Out] & S2]): Layer[Out2, S & S2] = To(self, that)
 
     /** Combines this layer with another independent layer.
       *
@@ -292,33 +290,27 @@ object Layer:
 
     private[kyo] object internal:
         case class And[Out1, Out2, S1, S2](lhs: Layer[Out1, S1], rhs: Layer[Out2, S2])                   extends Layer[Out1 & Out2, S1 & S2]
-        case class To[Out1, Out2, S1, S2](lhs: Layer[?, ?], rhs: Layer[?, ?])                            extends Layer[Out1 & Out2, S1 & S2]
+        case class To[Out1, Out2, S1, S2](lhs: Layer[Out1, S1], rhs: Layer[Out2, S2 & Env[Out1]])        extends Layer[Out2, S1 & S2]
         case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Env[In] & S))(using val tag: Tag[Out]) extends Layer[Out, S]
 
         class DoRun[Out, S] extends Serializable:
             private given Frame = Frame.internal
-            private val memo = Memo[Layer[Out, S], TypeMap[Out], S & Memo] { self =>
-                type Expected = TypeMap[Out] < (S & Memo)
-                self match
-                    case And(lhs, rhs) =>
-                        {
-                            for
-                                leftResult  <- doRun(lhs)
-                                rightResult <- doRun(rhs)
-                            yield leftResult.union(rightResult)
-                        }.asInstanceOf[Expected]
 
-                    case To(lhs, rhs) =>
-                        {
-                            for
-                                leftResult  <- doRun(lhs)
-                                rightResult <- Env.runAll(leftResult)(doRun(rhs))
-                            yield rightResult
-                        }.asInstanceOf[Expected]
+            private type Expected = TypeMap[Out] < (S & Memo)
+            private val memo = Memo[Layer[Out, S], TypeMap[Out], S & Memo] {
+                case And(lhs, rhs) =>
+                    for
+                        leftResult  <- doRun(lhs)
+                        rightResult <- doRun(rhs)
+                    yield leftResult.union(rightResult)
 
-                    case FromKyo(kyo) =>
-                        kyo().asInstanceOf[Expected]
-                end match
+                case To(lhs, rhs) =>
+                    for
+                        leftResult  <- doRun(lhs)
+                        rightResult <- Env.runAll(leftResult)(doRun(rhs))
+                    yield rightResult
+
+                case FromKyo(kyo) => kyo().asInstanceOf[Expected]
             }
             def apply(layer: Layer[Out, S]): TypeMap[Out] < (S & Memo) = memo(layer)
         end DoRun
