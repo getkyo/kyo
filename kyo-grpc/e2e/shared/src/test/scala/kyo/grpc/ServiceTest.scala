@@ -2,15 +2,18 @@ package kyo.grpc
 
 import io.grpc.{Server as _, *}
 import io.grpc.internal.GrpcUtil
+
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import kgrpc.*
 import kgrpc.test.*
+import kgrpc.test.TestService.*
 import kyo.*
 import kyo.grpc.*
 import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.Inspectors.*
+
 import scala.concurrent.Future
 import scala.util.chaining.scalaUtilChainingOps
 
@@ -529,17 +532,17 @@ class ServiceTest extends Test:
         assert(actual === expected)
     end assertStatusException
 
-    private def createClientAndServer =
+    private def createClientAndServer: Client < (Scope & Sync) =
         for
             port   <- findFreePort
             _      <- createServer(port)
             client <- createClient(port)
         yield client
 
-    private def createServer(port: Int) =
+    private def createServer(port: Int): Server < (Scope & Sync) =
         Server.start(port)(_.addService(TestServiceImpl.definition))
 
-    private def createClient(port: Int) =
+    private def createClient(port: Int): Client < (Scope & Sync) =
         createChannel(port).map(TestService.client(_))
 
     private def createChannel(port: Int) =

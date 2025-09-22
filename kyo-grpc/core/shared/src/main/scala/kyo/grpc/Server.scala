@@ -5,6 +5,8 @@ import java.util.concurrent.TimeUnit
 import kyo.*
 import sun.misc.Signal
 
+type Server = io.grpc.Server
+
 /** Server utilities for managing gRPC servers in Kyo.
   *
   * Provides functionality to start and gracefully shutdown gRPC servers with proper resource management.
@@ -40,7 +42,7 @@ object Server:
       * @param timeout
       *   The maximum duration to wait for graceful termination (default: 30 seconds)
       */
-    def shutdown(server: io.grpc.Server, timeout: Duration = 30.seconds)(using Frame): Unit < Sync =
+    def shutdown(server: Server, timeout: Duration = 30.seconds)(using Frame): Unit < Sync =
         Sync.defer:
             val terminated =
                 server
@@ -64,8 +66,8 @@ object Server:
       */
     def start(port: Int, timeout: Duration = 30.seconds)(
         configure: ServerBuilder[?] => ServerBuilder[?],
-        shutdown: (io.grpc.Server, Duration) => Frame ?=> Any < Sync = shutdown
-    )(using Frame): io.grpc.Server < (Scope & Sync) =
+        shutdown: (Server, Duration) => Frame ?=> Any < Sync = shutdown
+    )(using Frame): Server < (Scope & Sync) =
         Scope.acquireRelease(
             Sync.defer(configure(ServerBuilder.forPort(port)).build().start())
         )(shutdown(_, timeout))
