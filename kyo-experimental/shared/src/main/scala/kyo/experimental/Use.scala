@@ -1,8 +1,12 @@
 package kyo.experimental
 
 import kyo.*
+import kyo.experimental.Service.internal
 import kyo.kernel.ContextEffect
 import scala.annotation.implicitNotFound
+
+
+//todo : create a better Structure, ServiceMap[R, Any]
 
 // Based on ContextEffect (which is not an ArrowEffect) - similar to what's used by Env.
 // Uses R[Any] <: R[S] because when handled, S will be added to the pending effect set.
@@ -73,7 +77,7 @@ end UseAsync
 extension [A, R[-_], S](v: A < (Use[R] & S))
     def toUseAsync: A < (UseAsync[R] & S) = v
 
-abstract class Service[+R[-_], -S] extends Serializable:
+sealed abstract class Service[+R[-_], -S] extends Serializable:
     self =>
 
     infix def and[R1[-_], S1](service: Service[R1, S1]): Service[R && R1, S & S1] =
@@ -82,24 +86,32 @@ abstract class Service[+R[-_], -S] extends Serializable:
     infix def provide[R1[-_], S1](that: Service[R1, S1 & Use[R]]): Service[R && R1, S & S1] =
         Service.internal.Provide(self, that)
 
+    def run[S1, A](v: A < (S1 & Use[R]))(using frame: Frame): A < (S1 & S) =
+        this match
+            case internal.Provide(first, second) => ???
+            case k0: internal.FromKyo_0[?, ?] =>
+                import k0.tag
+                k0.v().map(r => Use.run(r)(v))
+            case internal.FromKyo_1(v) => ???
+
 end Service
 
 object Service:
     def apply[R[-_], S1, S2](v: => R[S1] < S2)(using Tag[R[Any]], Frame): Service[R, S1 & S2] =
-        internal.FromKyo_0[R, S1 & S2](() => v.map(r => TypeMap(r.asInstanceOf[R[Any]])))
+        internal.FromKyo_0[R, S1 & S2](() => v)
 
     def using[R0[-_]](using
         Frame,
         Tag[R0[Any]]
     )[R1[-_], S1, S2](v: R0[Use[R0]] => R1[S1] < (S2 & Use[R0]))(using Tag[R1[Any]]): Service[R1, Use[R0] & S1 & S2] =
-        internal.FromKyo_1[R0, R1, S1 & S2](() => Use.use[R0](v).map(r => TypeMap(r.asInstanceOf[R1[Any]])))
+        internal.FromKyo_1[R0, R1, S1 & S2](() => Use.use[R0](v))
 
     private object internal:
         case class Provide[R0[-_], R1[-_], S0, S1](first: Service[R0, S0], second: Service[R1, S1 & Use[R0]])
             extends Service[R0 && R1, S0 & S1]
 
-        case class FromKyo_0[Out[-_], S](v: () => TypeMap[Out[Any]] < S)(using val tag: Tag[Out[Any]]) extends Service[Out, S]
-        case class FromKyo_1[In[-_], Out[-_], S](v: () => TypeMap[Out[Any]] < (Use[In] & S))(using val tag: Tag[Out[Any]])
+        case class FromKyo_0[Out[-_], S](v: () => Out[S] < S)(using val tag: Tag[Out[Any]]) extends Service[Out, S]
+        case class FromKyo_1[In[-_], Out[-_], S](v: () => Out[Use[In] & S] < (Use[In] & S))
             extends Service[Out, Use[In] & S]
     end internal
 end Service
