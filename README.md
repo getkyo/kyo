@@ -1909,11 +1909,11 @@ val b: Fiber[Unit, Any] < Sync =
     Clock.repeatWithDelay(
         startAfter = 1.minute,
         delay = 1.minute
-    )(a)
+    )(a).map(_.reduced) // Note: Fiber#reduced simplifies Fiber's second type parameter
 
 // Without an initial delay
 val c: Fiber[Unit, Any] < Sync =
-    Clock.repeatWithDelay(1.minute)(a)
+    Clock.repeatWithDelay(1.minute)(a).map(_.reduced)
 
 // Schedule at a specific interval, regardless
 // of the duration of each execution
@@ -1921,11 +1921,11 @@ val d: Fiber[Unit, Any] < Sync =
     Clock.repeatAtInterval(
         startAfter = 1.minute,
         interval = 1.minute
-    )(a)
+    )(a).map(_.reduced)
 
 // Without an initial delay
 val e: Fiber[Unit, Any] < Sync =
-    Clock.repeatAtInterval(1.minute)(a)
+    Clock.repeatAtInterval(1.minute)(a).map(_.reduced)
 ```
 
 Use the returned `Fiber` to control scheduled tasks.
@@ -1935,7 +1935,7 @@ import kyo.*
 
 // Example task
 val a: Fiber[Unit, Any] < Sync =
-    Clock.repeatAtInterval(1.second)(())
+    Clock.repeatAtInterval(1.second)(()).map(_.reduced)
 
 // Try to cancel a task
 def b(task: Fiber[Unit, Any]): Boolean < Sync =
@@ -2330,7 +2330,7 @@ import kyo.*
 // taken by reference and automatically
 // suspended with 'Sync'
 val a: Fiber[Int, Any] < Sync =
-    Fiber.initUnscoped(Math.cos(42).toInt)
+    Fiber.initUnscoped(Math.cos(42).toInt).map(_.reduced)
 
 // It's possible to "extract" the value of a
 // 'Fiber' via the 'get' method. This is also
@@ -2457,7 +2457,7 @@ val h: Future[Int] < Sync =
 // 'Fiber' provides a monadic API with both
 // 'map' and 'flatMap'
 val i: Fiber[Int, Any] < Sync =
-    a.flatMap(v => Fiber.succeed(v.eval + 1))
+    a.flatMap(v => Fiber.fromResult(Abort.run(v).eval.map(_ + 1))).map(_.reduced)
 ```
 
 Similarly to `Sync`, users should avoid handling the `Async` effect directly and rely on `KyoApp` instead. If strictly necessary, there are two methods to handle the `Async` effect:
@@ -2474,7 +2474,7 @@ val a: Int < Async =
 
 // Avoid handling 'Async' directly
 val b: Fiber[Int, Any] < Sync =
-    Fiber.initUnscoped(a)
+    Fiber.initUnscoped(a).map(_.reduced)
 
 // The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
@@ -2501,7 +2501,7 @@ val b: Boolean < Sync =
 // Fullfil the promise with
 // another fiber
 val c: Boolean < Sync =
-    a.map(fiber => Fiber.initUnscoped(1).map(fiber.become(_)))
+    a.map(fiber => Fiber.initUnscoped(1).map(v => fiber.become(v.reduced)))
 ```
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.

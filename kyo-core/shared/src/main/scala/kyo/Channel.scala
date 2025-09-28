@@ -598,7 +598,7 @@ object Channel:
             end close
 
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
-                Fiber.Unsafe.init(Result.succeed(close().isDefined))
+                Fiber.Unsafe.init(Result.succeed(close().isDefined)).reduced
 
             def empty()(using AllowUnsafe, Frame) = succeedIfOpen(true)
             def full()(using AllowUnsafe, Frame)  = succeedIfOpen(true)
