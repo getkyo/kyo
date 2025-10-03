@@ -73,12 +73,10 @@ abstract class Layer[+Out, -S] extends Serializable:
       *   The output type of the other layer
       * @tparam S2
       *   Additional effects of the other layer
-      * @tparam In2
-      *   The input type required by the second layer
       * @return
       *   A new layer producing both outputs
       */
-    final infix def provide[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
+    final infix def provide[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = And(self, that)
 
     @deprecated("Use `provide` instead, which is more consistent considering the argument order.")
     final infix def using[Out2, S2](that: Layer[Out2, S2]): Layer[Out & Out2, S & S2] = self provide that
@@ -94,7 +92,7 @@ object Layer:
             reduce(doRun(layer))
 
     /** An empty layer that produces no output. */
-    val empty: Layer[Any, Any] = FromKyo { () => TypeMap.empty }
+    val empty: Layer[Any, Any] = FromKyo_0 { () => TypeMap.empty }
 
     /** Creates a layer from a Kyo effect.
       *
@@ -108,7 +106,7 @@ object Layer:
       *   A new layer wrapping the given effect
       */
     def apply[A: Tag, S](kyo: => A < S)(using Frame): Layer[A, S] =
-        FromKyo { () =>
+        FromKyo_0 { () =>
             kyo.map { result => TypeMap(result) }
         }
 
@@ -289,9 +287,10 @@ object Layer:
         kyo.internal.LayerMacros.make[Target](layers*)
 
     private[kyo] object internal:
-        case class And[Out1, Out2, S1, S2](lhs: Layer[Out1, S1], rhs: Layer[Out2, S2])                   extends Layer[Out1 & Out2, S1 & S2]
-        case class To[Out1, Out2, S1, S2](lhs: Layer[Out1, S1], rhs: Layer[Out2, S2 & Env[Out1]])        extends Layer[Out2, S1 & S2]
-        case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Env[In] & S))(using val tag: Tag[Out]) extends Layer[Out, S]
+        case class And[Out1, Out2, S1, S2](first: Layer[Out1, S1], second: Layer[Out2, S2 & Env[Out1]])  extends Layer[Out1 & Out2, S1 & S2]
+        case class To[Out1, Out2, S1, S2](first: Layer[Out1, S1], second: Layer[Out2, S2 & Env[Out1]])   extends Layer[Out2, S1 & S2]
+        case class FromKyo_0[Out, S](kyo: () => TypeMap[Out] < S)(using val tag: Tag[Out])               extends Layer[Out, S]
+        case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Env[In] & S))(using val tag: Tag[Out]) extends Layer[Out, S & Env[In]]
 
         class DoRun[Out, S] extends Serializable:
             private given Frame = Frame.internal
@@ -301,7 +300,7 @@ object Layer:
                 case And(lhs, rhs) =>
                     for
                         leftResult  <- doRun(lhs)
-                        rightResult <- doRun(rhs)
+                        rightResult <- Env.runAll(leftResult)(doRun(rhs))
                     yield leftResult.union(rightResult)
 
                 case To(lhs, rhs) =>
@@ -310,7 +309,8 @@ object Layer:
                         rightResult <- Env.runAll(leftResult)(doRun(rhs))
                     yield rightResult
 
-                case FromKyo(kyo) => kyo().asInstanceOf[Expected]
+                case FromKyo(kyo)   => kyo()
+                case FromKyo_0(kyo) => kyo()
             }
             def apply(layer: Layer[Out, S]): TypeMap[Out] < (S & Memo) = memo(layer)
         end DoRun
