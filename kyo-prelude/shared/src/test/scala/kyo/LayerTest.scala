@@ -69,6 +69,17 @@ class LayerTest extends Test:
 
         }
 
+        "provide should not allow circular deps" in pendingUntilFixed {
+            trait Dummy
+            case class Guppy(name: String)
+            case class Shark(belly: Guppy, dummy: Dummy)
+
+            val guppyLayer: Layer[Guppy, Any]                = Layer(Guppy("Tiny Guppy"))
+            val sharkLayer: Layer[Shark, Env[Guppy & Dummy]] = Layer.from(Shark.apply)
+
+            typeCheckFailure("""sharkLayer provide guppyLayer""")("???")
+        }
+
         "from 2" in:
             pendingUntilFixed:
                 case class R2(a: String, b: Int)
