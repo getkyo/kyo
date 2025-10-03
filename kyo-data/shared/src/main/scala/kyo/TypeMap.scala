@@ -66,7 +66,9 @@ object TypeMap:
           *   A new TypeMap containing all key-value pairs from both TypeMaps
           */
         inline def union[B](that: TypeMap[B]): TypeMap[A & B] =
-            self ++ that
+            if that.isEmpty then self
+            else if self.isEmpty then that
+            else self ++ that
 
         /** Filters the TypeMap to only include key-value pairs where the key is a subtype of the given type.
           *
