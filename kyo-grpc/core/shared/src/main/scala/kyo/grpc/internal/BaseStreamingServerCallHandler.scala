@@ -37,7 +37,11 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
                 fiber <- Fiber.initUnscoped(sendAndClose(handler, channel))
                 _ <- fiber.onInterrupt: _ =>
                     val status = Status.CANCELLED.withDescription("Call was cancelled.")
-                    call.close(status, Metadata())
+                    try {
+                        call.close(status, Metadata())
+                    } catch {
+                        case _: IllegalStateException => // Ignore
+                    }
                 _ <- fiber.onComplete: _ =>
                     channel.close
             yield fiber

@@ -36,7 +36,11 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
                 fiber <- Fiber.initUnscoped(sendAndClose(handler, promise))
                 _ <- fiber.onInterrupt: _ =>
                     val status = Status.CANCELLED.withDescription("Call was cancelled.")
-                    call.close(status, Metadata())
+                    try {
+                        call.close(status, Metadata())
+                    } catch {
+                        case _: IllegalStateException => // Ignore
+                    }
             yield fiber
 
         val init =
@@ -62,8 +66,11 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
         extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
-            if !request.complete(Result.succeed(message)) then
-                throw Status.INVALID_ARGUMENT.withDescription("Client sent more than one request.").asException()
+            // Unlike io.grpc.stub.ServerCalls.UnaryServerCallHandler.UnaryServerCallListener,
+            // this does not attempt to detect if the client is misbehaving by sending multiple messages.
+            // It is unnecessary as the server can reply and close the call after the first message.
+            // It should be up to the client implementation to detect that if it wants to.
+            request.completeDiscard(Result.succeed(message))
 
         override def onHalfClose(): Unit =
             // If the promise has not been completed yet, we complete it with an error, otherwise this does nothing.

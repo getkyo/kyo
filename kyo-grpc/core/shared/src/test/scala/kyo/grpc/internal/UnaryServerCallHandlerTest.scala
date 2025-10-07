@@ -1,90 +1,142 @@
 package kyo.grpc.internal
 
 import io.grpc.*
+
+import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
 import kyo.*
 import kyo.grpc.*
+import kyo.grpc.Equalities.given
 import org.scalamock.scalatest.AsyncMockFactory
+import org.scalamock.stubs.Stubs
+import org.scalatest.concurrent.Eventually
+import org.scalatest.matchers.must.Matchers.*
+import org.scalatest.time.{Seconds, Span}
 
-class UnaryServerCallHandlerTest extends kyo.grpc.Test with AsyncMockFactory:
+class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
     case class TestRequest(message: String)
     case class TestResponse(result: String)
 
+    override implicit def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
+
     "UnaryServerCallHandler" - {
 
-        "successful call" - {
-            "returns OK status when handler succeeds" in run {
-                val request = TestRequest("test")
-                val expectedResponse = TestResponse("response")
-                
-                val handler: GrpcHandler[TestRequest, TestResponse] = _ => expectedResponse
+        "startup" - {
+            "requests one message from client" in run {
+                val handler: GrpcHandler[TestRequest, TestResponse] =
+                    req => TestResponse("response")
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
+                val callHandler = UnaryServerCallHandler(handler)
 
-                val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                call.request.returnsWith(())
 
-                // Mock expectations for successful flow
-                call.request
-                    .expects(1)
-                    .once()
+                val requestHeaders = Metadata()
 
-                call.sendMessage
-                    .expects(expectedResponse)
-                    .once()
+                val listener = callHandler.startCall(call, requestHeaders)
 
-                call.close
-                    .expects(*, *)
-                    .once()
-
-                val listener = callHandler.startCall(call, headers)
-                
-                // Simulate receiving a message
-                listener.onMessage(request)
-                listener.onHalfClose()
-
-                assertionSuccess
+                assert(call.request.calls === List(1))
             }
 
-            "handles metadata emission correctly" in run {
-                val request = TestRequest("test")
-                val expectedResponse = TestResponse("response")
-                val testMetadata = Metadata()
-                testMetadata.put(Metadata.Key.of("test-key", Metadata.ASCII_STRING_MARSHALLER), "test-value")
-                
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
-                    req => 
-                        for
-                            _ <- Emit.value(testMetadata)
-                            result = expectedResponse
-                        yield result
+            "set options and sends headers" in run {
+                val handler: GrpcHandler[TestRequest, TestResponse] =
+                    req => TestResponse("response")
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
+                val requestHeaders = Metadata()
+
+                val responseHeaders = Metadata()
+                responseHeaders.put(Metadata.Key.of("custom-header", Metadata.ASCII_STRING_MARSHALLER), "custom-value")
+
+                val responseOptions = ResponseOptions(
+                    headers = Maybe.Present(responseHeaders),
+                    messageCompression = Maybe.Present(true),
+                    compression = Maybe.Present("gzip"),
+                    onReadyThreshold = Maybe.Present(16),
+                    requestBuffer = Maybe.Present(4)
+                )
+
+                val init: GrpcHandlerInit[TestRequest, TestResponse] =
+                    for
+                        actualRequestHeaders <- Env.get[Metadata]
+                        _ <- Emit.value(responseOptions)
+                    yield
+                        assert(actualRequestHeaders eq requestHeaders)
+                        handler
 
                 val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
 
-                // Mock expectations
-                call.request
-                    .expects(1)
-                    .once()
-                    
-                call.sendMessage
-                    .expects(expectedResponse)
-                    .once()
-                    
-                call.close
-                    .expects(*, *)
-                    .once()
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                call.request.returnsWith(())
+                call.setMessageCompression.returnsWith(())
+                call.setCompression.returnsWith(())
+                call.setOnReadyThreshold.returnsWith(())
+                call.sendHeaders.returnsWith(())
 
-                val listener = callHandler.startCall(call, headers)
-                
+                val listener = callHandler.startCall(call, requestHeaders)
+
+                assert(call.setMessageCompression.calls === responseOptions.messageCompression.toList)
+                assert(call.setCompression.calls === responseOptions.compression.toList)
+                assert(call.setOnReadyThreshold.calls === responseOptions.onReadyThreshold.toList)
+                assert(call.sendHeaders.calls === responseOptions.headers.toList)
+            }
+        }
+
+        "successful call" - {
+            "sends message" in run {
+                import org.scalactic.TraversableEqualityConstraints.*
+
+                val request = TestRequest("test")
+                val expectedResponse = TestResponse("response")
+
+                val handler: GrpcHandler[TestRequest, TestResponse] = _ => expectedResponse
+
+                val callHandler = UnaryServerCallHandler(handler)
+
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                call.request.returnsWith(())
+                call.sendMessage.returnsWith(())
+                call.close.returnsWith(())
+
+                val requestHeaders = Metadata()
+
+                val listener = callHandler.startCall(call, requestHeaders)
+
+                // Simulate receiving a message
                 listener.onMessage(request)
-                listener.onHalfClose()
 
-                assertionSuccess
+                eventually {
+                    assert(call.sendMessage.times === 1)
+                }
+
+                assert(call.sendMessage.calls === List(expectedResponse))
+            }
+
+            "returns OK status immediately before close" in run {
+                import org.scalactic.TraversableEqualityConstraints.*
+
+                val request = TestRequest("test")
+                val expectedResponse = TestResponse("response")
+
+                val handler: GrpcHandler[TestRequest, TestResponse] = _ => expectedResponse
+
+                val callHandler = UnaryServerCallHandler(handler)
+
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                call.request.returnsWith(())
+                call.sendMessage.returnsWith(())
+                call.close.returnsWith(())
+
+                val requestHeaders = Metadata()
+
+                val listener = callHandler.startCall(call, requestHeaders)
+
+                listener.onMessage(request)
+
+                eventually {
+                    assert(call.close.times === 1)
+                }
+
+                call.close.calls must contain theSameElementsInOrderAs List((Status.OK, Metadata()))
             }
         }
 
@@ -92,192 +144,153 @@ class UnaryServerCallHandlerTest extends kyo.grpc.Test with AsyncMockFactory:
             "handles abort failure correctly" in run {
                 val request = TestRequest("test")
                 val status = Status.INVALID_ARGUMENT.withDescription("Bad request")
-                
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
+
+                val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => Abort.fail(status.asException())
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
+                val callHandler = UnaryServerCallHandler(handler)
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
 
-                val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                call.request.returnsWith(())
+                call.close.returnsWith(())
 
-                // Mock expectations for error flow
-                call.request
-                    .expects(1)
-                    .once()
-                    
-                call.close
-                    .expects(*, *)
-                    .once()
+                val listener = callHandler.startCall(call, requestHeaders)
 
-                val listener = callHandler.startCall(call, headers)
-                
                 listener.onMessage(request)
-                listener.onHalfClose()
 
-                assertionSuccess
+                eventually {
+                    assert(call.close.times === 1)
+                }
+
+                call.close.calls must contain theSameElementsInOrderAs List((status, Metadata()))
             }
 
             "handles panic correctly" in run {
                 val request = TestRequest("test")
-                val errorMessage = "Something went wrong"
-                
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
-                    req => Abort.panic(Exception(errorMessage))
+                val cause = Exception("Something went wrong")
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
+                val handler: GrpcHandler[TestRequest, TestResponse] =
+                    req => Abort.panic(cause)
 
-                val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                val callHandler = UnaryServerCallHandler(handler)
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
 
-                // Mock expectations for panic flow
-                call.request
-                    .expects(1)
-                    .once()
-                    
-                call.close
-                    .expects(*, *)
-                    .once()
+                call.request.returnsWith(())
+                call.close.returnsWith(())
 
-                val listener = callHandler.startCall(call, headers)
-                
+                val listener = callHandler.startCall(call, requestHeaders)
+
                 listener.onMessage(request)
-                listener.onHalfClose()
 
-                assertionSuccess
+                eventually {
+                    assert(call.close.times === 1)
+                }
+
+                val status = Status.UNKNOWN.withCause(cause)
+                call.close.calls must contain theSameElementsInOrderAs List((status, Metadata()))
             }
         }
 
         "request handling" - {
-            "fails when client sends multiple requests" in run {
-                val request1 = TestRequest("first")
-                val request2 = TestRequest("second")
-                
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
-                    req => TestResponse("response")
-
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
-
-                val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
-
-                call.request
-                    .expects(1)
-                    .once()
-
-                val listener = callHandler.startCall(call, headers)
-                
-                // First message should be accepted
-                listener.onMessage(request1)
-                
-                // Second message should throw an exception
-                intercept[StatusException] {
-                    listener.onMessage(request2)
-                }
-
-                listener.onHalfClose()
-
-                assertionSuccess
-            }
-
             "fails when client completes without sending request" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
+                val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
+                val callHandler = UnaryServerCallHandler(handler)
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
 
-                val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                call.request.returnsWith(())
+                call.close.returnsWith(())
 
-                // Mock expectations for error flow when no request sent
-                call.request
-                    .expects(1)
-                    .once()
-                    
-                call.close
-                    .expects(*, *)
-                    .once()
+                val listener = callHandler.startCall(call, requestHeaders)
 
-                val listener = callHandler.startCall(call, headers)
-                
                 // Complete without sending a message
                 listener.onHalfClose()
 
-                assertionSuccess
+                eventually {
+                    assert(call.close.times === 1)
+                }
+
+                val status = Status.INVALID_ARGUMENT.withDescription("Client completed before sending a request.")
+                call.close.calls must contain theSameElementsInOrderAs List((status, Metadata()))
             }
         }
 
         "cancellation" - {
-            "handles call cancellation correctly" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
+            "interrupts when sending message" in run {
+                val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
+                val callHandler = UnaryServerCallHandler(handler)
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
 
-                val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                call.request.returnsWith(())
 
-                call.request
-                    .expects(1)
-                    .once()
+                val interrupted = new JAtomicBoolean(false)
+                call.sendMessage.returnsWith {
+                    try {
+                        Thread.sleep(Long.MaxValue)
+                    } catch {
+                        case e: InterruptedException =>
+                            interrupted.set(true)
+                            throw e
+                    }
+                }
 
-                val listener = callHandler.startCall(call, headers)
-                
-                // Cancel the call - should handle gracefully
+                val listener = callHandler.startCall(call, requestHeaders)
+
+                listener.onMessage(TestRequest("test"))
                 listener.onCancel()
 
-                assertionSuccess
+                eventually {
+                    assert(interrupted.get === true)
+                }
             }
         }
 
         "lifecycle" - {
             "handles onComplete correctly" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
+                val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
                 val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
 
                 val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
 
-                call.request
-                    .expects(1)
-                    .once()
+                call.request.returnsWith(())
 
-                val listener = callHandler.startCall(call, headers)
-                
+                val listener = callHandler.startCall(call, requestHeaders)
+
                 // Call onComplete - should not throw
                 listener.onComplete()
 
-                assertionSuccess
+                assert(call.request.times === 1)
             }
 
             "handles onReady correctly" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
+                val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => TestResponse("response")
 
                 val init: GrpcHandlerInit[TestRequest, TestResponse] = handler
 
                 val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
 
-                call.request
-                    .expects(1)
-                    .once()
+                call.request.returnsWith(())
 
-                val listener = callHandler.startCall(call, headers)
-                
+                val listener = callHandler.startCall(call, requestHeaders)
+
                 // Call onReady - should not throw
                 listener.onReady()
 
-                assertionSuccess
+                assert(call.request.times === 1)
             }
         }
 
@@ -287,42 +300,36 @@ class UnaryServerCallHandlerTest extends kyo.grpc.Test with AsyncMockFactory:
                 val expectedResponse = TestResponse("response")
                 val responseHeaders = Metadata()
                 responseHeaders.put(Metadata.Key.of("custom-header", Metadata.ASCII_STRING_MARSHALLER), "custom-value")
-                
-                val handler: GrpcHandler[TestRequest, TestResponse] = 
+
+                val handler: GrpcHandler[TestRequest, TestResponse] =
                     req => expectedResponse
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] = 
+                val init: GrpcHandlerInit[TestRequest, TestResponse] =
                     Emit.value(ResponseOptions(headers = Maybe.Present(responseHeaders))).map(_ => handler)
 
                 val callHandler = UnaryServerCallHandler(init)
-                val call = mock[ServerCall[TestRequest, TestResponse]]
-                val headers = Metadata()
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
 
-                // Mock expectations - should send headers and then response
-                call.request
-                    .expects(1)
-                    .once()
-                    
-                call.sendHeaders
-                    .expects(*)
-                    .once()
-                    
-                call.sendMessage
-                    .expects(expectedResponse)
-                    .once()
-                    
-                call.close
-                    .expects(*, *)
-                    .once()
+                call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
+                call.sendMessage.returnsWith(())
+                call.close.returnsWith(())
 
-                val listener = callHandler.startCall(call, headers)
-                
+                val listener = callHandler.startCall(call, requestHeaders)
+
                 listener.onMessage(request)
                 listener.onHalfClose()
 
-                assertionSuccess
+                assert(call.request.times === 1)
+                assert(call.sendHeaders.times === 1)
+                assert(call.sendMessage.times === 1)
+                assert(call.sendMessage.calls === List(expectedResponse))
+                assert(call.close.times === 1)
             }
         }
+
+        // TODO: Test close interrupts send if it takes too long.
     }
 
 end UnaryServerCallHandlerTest
