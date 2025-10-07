@@ -36,6 +36,7 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-data        | ✅   | ✅   | ✅      | Efficient `Maybe`, `Result`, `Duration`, and other data types |
 | kyo-kernel      | ✅   | ✅   | ✅      | Core algebraic effects engine and type-level effect tracking  |
 | kyo-prelude     | ✅   | ✅   | ✅      | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc.   |
+| kyo-parse       | ✅   | ✅   | ✅      | Effects for parsing                                           |
 | kyo-core        | ✅   | ✅   | ✅      | Side-effectful computations: `Sync`, `Async`, `Scope`, etc.   |
 | kyo-direct      | ✅   | ✅   | ✅      | Direct-style syntax using `.await` and control flow           |
 | kyo-combinators | ✅   | ✅   | ✅      | ZIO-like effect combinators and utility methods               |
@@ -138,6 +139,10 @@ These flags help catch three common issues in Kyo applications:
 ### The "Pending" type: `<`
 
 In Kyo, computations are expressed via the infix type `<`, known as "Pending". It takes two type parameters:
+
+```scala 
+opaque type <[+A, -S]
+```
 
 1. `A` - The type of the expected output.
 2. `S` - The pending effects that need to be handled. Effects are represented by an unordered type-level set via a type intersection.

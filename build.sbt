@@ -6,7 +6,7 @@ import org.typelevel.scalacoptions.ScalaVersion
 import protocbridge.Target
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version   = "3.7.1"
+val scala3Version   = "3.7.2"
 val scala213Version = "2.13.16"
 val scala212Version = "2.12.20"
 
@@ -104,12 +104,15 @@ lazy val kyoJVM = project
         `kyo-data`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
+        `kyo-parse`.jvm,
         `kyo-core`.jvm,
         `kyo-offheap`.jvm,
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
+        `kyo-logging-jpl`.jvm,
+        `kyo-logging-slf4j`.jvm,
         `kyo-cache`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
@@ -139,6 +142,7 @@ lazy val kyoJS = project
         `kyo-data`.js,
         `kyo-kernel`.js,
         `kyo-prelude`.js,
+        `kyo-parse`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
         `kyo-stm`.js,
@@ -162,6 +166,7 @@ lazy val kyoNative = project
     .aggregate(
         `kyo-data`.native,
         `kyo-prelude`.native,
+        `kyo-parse`.native,
         `kyo-kernel`.native,
         `kyo-stats-registry`.native,
         `kyo-scheduler`.native,
@@ -182,8 +187,7 @@ lazy val `kyo-scheduler` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions                     := List(scala3Version, scala213Version),
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
+            crossScalaVersions := List(scala3Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(
@@ -298,7 +302,8 @@ lazy val `kyo-kernel` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.jctools"   % "jctools-core" % "4.0.5",
-            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test
+            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test,
+            Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -319,6 +324,17 @@ lazy val `kyo-prelude` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
+lazy val `kyo-parse` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-prelude`)
+        .in(file("kyo-parse"))
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -328,9 +344,7 @@ lazy val `kyo-core` =
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.17",
-            libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
+            libraryDependencies += "dev.dirs" % "directories" % "26"
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -360,7 +374,8 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2"
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2",
+            Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -387,6 +402,28 @@ lazy val `kyo-actor` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
+
+lazy val `kyo-logging-jpl` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-logging-jpl"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-logging-slf4j` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-logging-slf4j"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.17",
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.18" % Test
+        )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-stats-registry` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)

@@ -11,12 +11,13 @@ import scala.collection.IterableOps
 trait asyncShiftLowPriorityImplicit1:
 
     transparent inline given shiftedIterableOps[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]]]
-        : KyoSeqAsyncShift[A, C, C[A]] = KyoSeqAsyncShift[A, C, C[A]]()
+        : SeqAsyncShift[A, C, C[A]] = SeqAsyncShift[A, C, C[A]]()
 
 end asyncShiftLowPriorityImplicit1
 
 object asyncShift extends asyncShiftLowPriorityImplicit1:
 
+    transparent inline given shiftedList[A]: ListAsyncShift[A]   = new ListAsyncShift[A]
     transparent inline given shiftedChunk[A]: ChunkAsyncShift[A] = new ChunkAsyncShift[A]
     transparent inline given shiftedMaybe: MaybeAsyncShift       = new MaybeAsyncShift
     transparent inline given shiftedResult: ResultAsyncShift     = new ResultAsyncShift
@@ -180,9 +181,7 @@ class MaybeAsyncShift(using Frame) extends AsyncShift[Maybe.type]:
 
 end MaybeAsyncShift
 
-class ChunkAsyncShift[A](using Frame) extends KyoSeqAsyncShift[A, Chunk, Chunk[A]]
-
-class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]](using Frame)
+class SeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]](using Frame)
     extends IterableOpsAsyncShift[A, C, CA]:
 
     extension [S, X](iterable: Iterable[X] < S)
@@ -231,7 +230,6 @@ class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C
     override def map[F[_], B](c: CA, monad: CpsMonad[F])(f: A => F[B]): F[C[B]] =
         monad match
             case _: KyoCpsMonad[?] => Kyo.foreach(c)(a => f(a)).resultInto(c)
-    end map
 
     override def flatMap[F[_], B](c: CA, monad: CpsMonad[F])(f: A => F[IterableOnce[B]]): F[C[B]] =
         monad match
@@ -287,4 +285,4 @@ class KyoSeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C
         monad match
             case _: KyoCpsMonad[?] => Kyo.foreach(c)(x => f(x).andThen(x)).resultInto(c)
 
-end KyoSeqAsyncShift
+end SeqAsyncShift

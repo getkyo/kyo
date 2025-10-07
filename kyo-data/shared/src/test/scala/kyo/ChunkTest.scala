@@ -1194,4 +1194,5 @@ class ChunkTest extends Test:
             assert(chunk.toString == "Chunk(1, 2, 3, 4)")
         }
     }
+
 end ChunkTest
