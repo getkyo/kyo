@@ -26,7 +26,7 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
     def runNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNative(v.map(Future.successful(_)))
 
     @targetName("runNotNativeAssertion")
-    def runNotNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNative(v.map(Future.successful(_)))
+    def runNotNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNotNative(v.map(Future.successful(_)))
 
     def runJVM(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
         if Platform.isJVM then
