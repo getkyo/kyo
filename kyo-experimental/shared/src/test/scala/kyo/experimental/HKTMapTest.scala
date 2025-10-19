@@ -278,18 +278,18 @@ class HKTMapTest extends Test:
             "should handle service composition with different effects" in run {
                 // Different services with different effect requirements
                 trait DatabaseService[-S]:
-                    def query(sql: String): List[String] < (S & Abort[String])
+                    def query(sql: String): List[String] < S
 
                 trait MetricsService[-S]:
-                    def recordMetric(name: String, value: Double): Unit < (S & Emit[String])
+                    def recordMetric(name: String, value: Double): Unit < S
 
-                object PostgresService extends DatabaseService[Any]:
+                object PostgresService extends DatabaseService[Abort[String]]:
                     def query(sql: String): List[String] < Abort[String] =
                         if sql.contains("DROP") then Abort.fail("Dangerous query detected")
                         else List(s"result-$sql")
                 end PostgresService
 
-                object PrometheusService extends MetricsService[Any]:
+                object PrometheusService extends MetricsService[Emit[String]]:
                     def recordMetric(name: String, value: Double): Unit < Emit[String] =
                         Emit.value(s"Metric recorded: $name = $value")
 
@@ -297,27 +297,27 @@ class HKTMapTest extends Test:
                 val dbMap: HKTMap[DatabaseService, Abort[String]]    = HKTMap[DatabaseService, Abort[String]](PostgresService)
                 val metricsMap: HKTMap[MetricsService, Emit[String]] = HKTMap[MetricsService, Emit[String]](PrometheusService)
 
+                val all: HKTMap[DatabaseService && MetricsService, Abort[String] & Emit[String]] = dbMap.union(metricsMap)
+
                 // Services can be used independently with their respective effects
-                val db      = dbMap.get[DatabaseService]
-                val metrics = metricsMap.get[MetricsService]
+                val db      = all.get[DatabaseService]
+                val metrics = all.get[MetricsService]
 
-                // Test database service
-                Abort.run {
-                    db.query("SELECT * FROM users")
-                }.map { dbResult =>
-                    assert(dbResult.isSuccess)
-                    dbResult match
-                        case Result.Success(value) => assert(value == List("result-SELECT * FROM users"))
-                        case Result.Failure(_)     => fail("Expected success")
-                    end match
+                // Compose a program using both db and metrics, then handle effects and test after
+                val program: List[String] < (Abort[String] & Emit[String]) =
+                    for
+                        result <- db.query("SELECT * FROM users")
+                        _      <- metrics.recordMetric("query_count", 1.0)
+                    yield result
 
-                    // Test metrics service
-                    Emit.run {
-                        metrics.recordMetric("query_count", 1.0)
-                    }.map { (events, _) =>
-                        assert(events.contains("Metric recorded: query_count = 1.0"))
-                    }
-                }
+                val (events, dbResult) = program.handle(Abort.run(_), Emit.run(_), _.eval)
+
+                assert(dbResult.isSuccess)
+                dbResult match
+                    case Result.Success(value) => assert(value == List("result-SELECT * FROM users"))
+                    case Result.Failure(_)     => fail("Expected success")
+                assert(events.contains("Metric recorded: query_count = 1.0"))
+
             }
         }
     }
