@@ -563,7 +563,13 @@ object Queue:
                     handleHalfOpen()
                     p
                 else
-                    Fiber.Unsafe.init(Result.succeed(false))
+                    state.get() match
+                        case State.HalfOpen(other, _) =>
+                            p.becomeDiscard(other.safe)
+                        case _ => // Closed
+                            p.completeDiscard(Result.succeed(false))
+                    end match
+                    p.map(_ => false) // avoid returning `true` from other promise
                 end if
             end closeAwaitEmpty
 
