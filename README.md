@@ -828,7 +828,7 @@ The `Layer` type provides instance methods for manually composing layers:
 
 1. `to`: Combines two layers sequentially, where the output of the first layer is used as input for the second layer.
 2. `and`: Combines two layers in parallel, producing a layer that provides both outputs.
-3. `provide`: Combines a layer with another layer that depends on its output, similar to `to` but keeps both outputs.
+3. `andTo`: Combines a layer with another layer that depends on its output, similar to `to` but keeps both outputs like `and`.
 
 Here's an example that demonstrates the differences between these methods:
 
