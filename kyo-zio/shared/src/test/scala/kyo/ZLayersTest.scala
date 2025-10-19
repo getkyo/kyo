@@ -79,7 +79,7 @@ class ZLayersTest extends Test:
 
             val klayer2 = Layer(Env.use[TestService](_.getValue))
 
-            val klayer3 = klayer1.provide(klayer2)
+            val klayer3 = klayer1.andTo(klayer2)
 
             Env.runLayer(klayer3)(Env.use[TestService](_.getValue)).map(value => assert(value == 2)).handle(Memo.run, Scope.run)
         }
