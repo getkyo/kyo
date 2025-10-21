@@ -2,7 +2,7 @@ package kyo.experimental
 
 import kyo.*
 
-class HKTMapTest extends Test:
+class ServiceMapTest extends Test:
 
     trait Repository[-S]:
         def save(item: String): Unit < S
@@ -31,7 +31,7 @@ class HKTMapTest extends Test:
     "HKTMap with Kyo effects" - {
         "empty" - {
             "should create empty map" in {
-                val empty = HKTMap.empty
+                val empty = ServiceMap.empty
                 assert(empty.isEmpty)
                 assert(empty.size == 0)
             }
@@ -40,7 +40,7 @@ class HKTMapTest extends Test:
         "basic operations with effect-based services" - {
             "should create map with single service" in run {
                 // Create HKTMap with Repository service
-                val map: HKTMap[Repository, Any] = HKTMap[Repository, Any](InMemoryRepository)
+                val map: ServiceMap[Repository, Any] = ServiceMap[Repository, Any](InMemoryRepository)
 
                 assert(map.size == 1)
                 val repo = map.get[Repository]
@@ -54,8 +54,8 @@ class HKTMapTest extends Test:
             }
 
             "should work with multiple services" in run {
-                val repoMap: HKTMap[Repository, Any] = HKTMap[Repository, Any](InMemoryRepository)
-                val cacheMap: HKTMap[Cache, Any]     = HKTMap[Cache, Any](SimpleCache)
+                val repoMap: ServiceMap[Repository, Any] = ServiceMap[Repository, Any](InMemoryRepository)
+                val cacheMap: ServiceMap[Cache, Any]     = ServiceMap[Cache, Any](SimpleCache)
 
                 val combined = repoMap.union(cacheMap)
                 assert(combined.size == 2)
@@ -75,8 +75,8 @@ class HKTMapTest extends Test:
 
         "union operations with effectful services" - {
             "should combine compatible service maps" in run {
-                val repoMap: HKTMap[Repository, Any] = HKTMap[Repository, Any](InMemoryRepository)
-                val loggerMap: HKTMap[Logger, Any]   = HKTMap[Logger, Any](ConsoleLogger)
+                val repoMap: ServiceMap[Repository, Any] = ServiceMap[Repository, Any](InMemoryRepository)
+                val loggerMap: ServiceMap[Logger, Any]   = ServiceMap[Logger, Any](ConsoleLogger)
 
                 val combined = repoMap.union(loggerMap)
                 assert(combined.size == 2)
@@ -99,8 +99,8 @@ class HKTMapTest extends Test:
                     def save(item: String): Unit < Any = ()
                     def find: String < Any             = "alternative-result"
 
-                val map1: HKTMap[Repository, Any] = HKTMap[Repository, Any](InMemoryRepository)
-                val map2: HKTMap[Repository, Any] = HKTMap[Repository, Any](AlternativeRepository)
+                val map1: ServiceMap[Repository, Any] = ServiceMap[Repository, Any](InMemoryRepository)
+                val map2: ServiceMap[Repository, Any] = ServiceMap[Repository, Any](AlternativeRepository)
 
                 val combined = map1.union(map2)
                 assert(combined.size == 1)
@@ -115,7 +115,7 @@ class HKTMapTest extends Test:
 
         "constructor methods with services" - {
             "should create map with multiple services directly" in run {
-                val map = HKTMap(InMemoryRepository, SimpleCache, ConsoleLogger)
+                val map = ServiceMap(InMemoryRepository, SimpleCache, ConsoleLogger)
 
                 assert(map.size == 3)
 
@@ -141,7 +141,7 @@ class HKTMapTest extends Test:
 
         "show and debugging" - {
             "should provide readable string representation" in {
-                val map   = HKTMap(InMemoryRepository, SimpleCache)
+                val map   = ServiceMap(InMemoryRepository, SimpleCache)
                 val shown = map.show
                 assert(shown.contains("HKTMap"))
                 assert(shown.length > 10) // Should contain meaningful content
@@ -150,7 +150,7 @@ class HKTMapTest extends Test:
 
         "type safety with effects" - {
             "should maintain effect type information" in run {
-                val map: HKTMap[Repository, Any] = HKTMap[Repository, Any](InMemoryRepository)
+                val map: ServiceMap[Repository, Any] = ServiceMap[Repository, Any](InMemoryRepository)
 
                 // The retrieved repository should maintain its effect type
                 val repo: Repository[Any] = map.get[Repository]
@@ -182,8 +182,8 @@ class HKTMapTest extends Test:
                         else Abort.fail("Item not found")
                 end ValidatingRepository
 
-                val map: HKTMap[FailableRepository, Abort[String]] =
-                    HKTMap[FailableRepository, Abort[String]](ValidatingRepository)
+                val map: ServiceMap[FailableRepository, Abort[String]] =
+                    ServiceMap[FailableRepository, Abort[String]](ValidatingRepository)
 
                 val repo = map.get[FailableRepository]
 
@@ -215,8 +215,8 @@ class HKTMapTest extends Test:
                         }
                 end AuditingService
 
-                val map: HKTMap[EventEmittingService, Emit[String]] =
-                    HKTMap[EventEmittingService, Emit[String]](AuditingService)
+                val map: ServiceMap[EventEmittingService, Emit[String]] =
+                    ServiceMap[EventEmittingService, Emit[String]](AuditingService)
 
                 val service = map.get[EventEmittingService]
 
@@ -250,8 +250,8 @@ class HKTMapTest extends Test:
                         }
                 end BusinessService
 
-                val map: HKTMap[ComplexService, Abort[String] & Emit[String]] =
-                    HKTMap[ComplexService, Abort[String] & Emit[String]](BusinessService)
+                val map: ServiceMap[ComplexService, Abort[String] & Emit[String]] =
+                    ServiceMap[ComplexService, Abort[String] & Emit[String]](BusinessService)
 
                 val service = map.get[ComplexService](using
                     Tag[ComplexService[Any]],
@@ -294,10 +294,10 @@ class HKTMapTest extends Test:
                         Emit.value(s"Metric recorded: $name = $value")
 
                 // Create separate maps for different effect types
-                val dbMap: HKTMap[DatabaseService, Abort[String]]    = HKTMap[DatabaseService, Abort[String]](PostgresService)
-                val metricsMap: HKTMap[MetricsService, Emit[String]] = HKTMap[MetricsService, Emit[String]](PrometheusService)
+                val dbMap: ServiceMap[DatabaseService, Abort[String]]    = ServiceMap[DatabaseService, Abort[String]](PostgresService)
+                val metricsMap: ServiceMap[MetricsService, Emit[String]] = ServiceMap[MetricsService, Emit[String]](PrometheusService)
 
-                val all: HKTMap[DatabaseService && MetricsService, Abort[String] & Emit[String]] = dbMap.union(metricsMap)
+                val all: ServiceMap[DatabaseService && MetricsService, Abort[String] & Emit[String]] = dbMap.union(metricsMap)
 
                 // Services can be used independently with their respective effects
                 val db      = all.get[DatabaseService]
@@ -322,4 +322,4 @@ class HKTMapTest extends Test:
         }
     }
 
-end HKTMapTest
+end ServiceMapTest
