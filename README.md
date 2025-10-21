@@ -870,13 +870,13 @@ val dbToUserService: Layer[UserService, Sync] =
 val dbAndEmail: Layer[Database & EmailService, Sync] =
     dbLayer.and(emailServiceLayer)
 
-// Example of `using`: Similar to `to`, but keeps both Database and UserService
+// Example of `andTo`: Similar to `to`, but keeps both Database and UserService
 val userServiceUsingDb: Layer[Database & UserService, Sync] =
-    dbLayer.provide(userServiceLayer)
+    dbLayer.andTo(userServiceLayer)
 
 // Complex composition
 val fullAppLayer: Layer[Database & UserService & EmailService, Sync] =
-    dbLayer.provide(userServiceLayer).and(emailServiceLayer)
+    dbLayer.andTo(userServiceLayer).and(emailServiceLayer)
 
 // Use the full app layer
 val computation: Unit < (Env[Database] & Env[UserService] & Env[EmailService] & Sync) =
