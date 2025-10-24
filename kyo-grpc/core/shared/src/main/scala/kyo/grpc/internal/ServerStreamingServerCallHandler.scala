@@ -15,13 +15,22 @@ private[grpc] class ServerStreamingServerCallHandler[Request, Response](f: GrpcH
     override protected def send(
         call: ServerCall[Request, Response],
         handler: GrpcHandler[Request, Stream[Response, Grpc]],
-        promise: Promise[Request, Abort[Status]]
+        promise: Promise[Request, Abort[Status]],
+        ready: SignalRef[Boolean]
     ): Status < (Grpc & Emit[Metadata]) =
+        def sendMessages(isFirst: AtomicRef[Boolean])(response: Response): Unit < Async =
+            // Send the first message whether the call is ready or not and let it buffer internally as a fast path
+            // under the assumption that the client will be ready for at least one response after the initial request.
+            isFirst.getAndSet(false).flatMap: first =>
+                if first || call.isReady then Sync.defer(call.sendMessage(response))
+                else ready.next.andThen(sendMessages(isFirst)(response))
+
         Abort.merge:
             for
                 request   <- promise.get
                 responses <- handler(request)
-                _         <- responses.foreach(response => Sync.defer(call.sendMessage(response)))
+                isFirst   <- AtomicRef.init(true)
+                _         <- responses.foreach(sendMessages(isFirst))
             yield Status.OK
     end send
 

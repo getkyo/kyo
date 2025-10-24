@@ -1,8 +1,8 @@
 package kyo.grpc.internal
 
-import io.grpc.*
-
+import io.grpc.{Grpc as _, *}
 import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.grpc.*
 import kyo.grpc.Equalities.given
@@ -12,21 +12,21 @@ import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.must.Matchers.*
 import org.scalatest.time.{Seconds, Span}
 
-class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
+class ServerStreamingServerCallHandlerTest extends Test with Stubs with Eventually:
 
     case class TestRequest(message: String)
     case class TestResponse(result: String)
 
     override implicit def patienceConfig: PatienceConfig = super.patienceConfig.copy(timeout = scaled(Span(5, Seconds)))
 
-    "UnaryServerCallHandler" - {
+    "ServerStreamingServerCallHandler" - {
 
         "startup" - {
             "requests one message from client" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => TestResponse("response")
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req => Stream.empty[TestResponse]
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val callHandler = ServerStreamingServerCallHandler(handler)
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
@@ -39,8 +39,8 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
             }
 
             "set options and sends headers" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => TestResponse("response")
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req => Stream.empty[TestResponse]
 
                 val requestHeaders = Metadata()
 
@@ -55,7 +55,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                     requestBuffer = Maybe.Present(4)
                 )
 
-                val init: GrpcHandlerInit[TestRequest, TestResponse] =
+                val init: GrpcHandlerInit[TestRequest, Stream[TestResponse, Grpc]] =
                     for
                         actualRequestHeaders <- Env.get[Metadata]
                         _ <- Emit.value(responseOptions)
@@ -63,7 +63,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                         assert(actualRequestHeaders eq requestHeaders)
                         handler
 
-                val callHandler = UnaryServerCallHandler(init)
+                val callHandler = ServerStreamingServerCallHandler(init)
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
@@ -82,15 +82,53 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
         }
 
         "success" - {
-            "sends message and closes" in run {
+            "sends multiple response messages" in run {
                 import org.scalactic.TraversableEqualityConstraints.*
 
                 val request = TestRequest("test")
-                val expectedResponse = TestResponse("response")
+                val responses = List(
+                    TestResponse("response1"),
+                    TestResponse("response2"),
+                    TestResponse("response3")
+                )
 
-                val handler: GrpcHandler[TestRequest, TestResponse] = _ => expectedResponse
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req => Stream.init(responses)
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val callHandler = ServerStreamingServerCallHandler(handler)
+
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                call.request.returnsWith(())
+                (() => call.isReady()).returnsWith(true)
+                call.sendMessage.returnsWith(())
+                call.close.returnsWith(())
+
+                val requestHeaders = Metadata()
+
+                val listener = callHandler.startCall(call, requestHeaders)
+
+                // Simulate receiving a message
+                listener.onMessage(request)
+                listener.onHalfClose()
+
+                eventually {
+                    assert(call.sendMessage.times === 3)
+                    assert(call.close.times === 1)
+                }
+
+                assert(call.sendMessage.calls === responses)
+                call.close.calls must contain theSameElementsInOrderAs List((Status.OK, Metadata()))
+            }
+
+            "sends empty stream" in run {
+                import org.scalactic.TraversableEqualityConstraints.*
+
+                val request = TestRequest("test")
+
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req => Stream.empty[TestResponse]
+
+                val callHandler = ServerStreamingServerCallHandler(handler)
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
@@ -101,28 +139,62 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
                 val listener = callHandler.startCall(call, requestHeaders)
 
-                // Simulate receiving a message
                 listener.onMessage(request)
+                listener.onHalfClose()
 
                 eventually {
-                    assert(call.sendMessage.times === 1)
+                    assert(call.sendMessage.times === 0)
                     assert(call.close.times === 1)
                 }
 
-                assert(call.sendMessage.calls === List(expectedResponse))
                 call.close.calls must contain theSameElementsInOrderAs List((Status.OK, Metadata()))
+            }
+
+            "processes responses incrementally" in run {
+                val request = TestRequest("test")
+                val sentMessages = new AtomicInteger(0)
+
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req =>
+                        Stream.init(List(
+                            TestResponse("response1"),
+                            TestResponse("response2"),
+                            TestResponse("response3")
+                        )).tap(_ => Sync.defer(sentMessages.incrementAndGet()))
+
+                val callHandler = ServerStreamingServerCallHandler(handler)
+
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                call.request.returnsWith(())
+                (() => call.isReady()).returnsWith(true)
+                call.sendMessage.returnsWith(())
+                call.close.returnsWith(())
+
+                val requestHeaders = Metadata()
+
+                val listener = callHandler.startCall(call, requestHeaders)
+
+                listener.onMessage(request)
+                listener.onHalfClose()
+
+                eventually {
+                    assert(call.sendMessage.times === 3)
+                    assert(sentMessages.get === 3)
+                }
             }
 
             "closes with trailers from handler" in run {
                 val request = TestRequest("test")
-                val expectedResponse = TestResponse("response")
                 val responseTrailers = Metadata()
                 responseTrailers.put(Metadata.Key.of("custom-header", Metadata.ASCII_STRING_MARSHALLER), "custom-value")
 
-                val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => Emit.value(responseTrailers).map(_ => expectedResponse)
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req =>
+                        for
+                            _ <- Emit.value(responseTrailers)
+                        yield Stream.init(List(TestResponse("response")))
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val callHandler = ServerStreamingServerCallHandler(handler)
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
@@ -149,10 +221,10 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val request = TestRequest("test")
                 val status = Status.INVALID_ARGUMENT.withDescription("Bad request")
 
-                val handler: GrpcHandler[TestRequest, TestResponse] =
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
                     req => Abort.fail(status.asException())
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val callHandler = ServerStreamingServerCallHandler(handler)
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
@@ -162,6 +234,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val listener = callHandler.startCall(call, requestHeaders)
 
                 listener.onMessage(request)
+                listener.onHalfClose()
 
                 eventually {
                     assert(call.close.times === 1)
@@ -174,10 +247,10 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val request = TestRequest("test")
                 val cause = Exception("Something went wrong")
 
-                val handler: GrpcHandler[TestRequest, TestResponse] =
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
                     req => Abort.panic(cause)
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val callHandler = ServerStreamingServerCallHandler(handler)
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
@@ -187,6 +260,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val listener = callHandler.startCall(call, requestHeaders)
 
                 listener.onMessage(request)
+                listener.onHalfClose()
 
                 eventually {
                     assert(call.close.times === 1)
@@ -196,11 +270,47 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 call.close.calls must contain theSameElementsInOrderAs List((status, Metadata()))
             }
 
-            "fails when client completes without sending request" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => TestResponse("response")
+            "handles error during stream generation" in run {
+                val request = TestRequest("test")
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req =>
+                        Stream.init(List(
+                            TestResponse("response1"),
+                            TestResponse("response2")
+                        )).map(resp =>
+                            if resp.result == "response2" then
+                                throw Exception("Stream error")
+                            else
+                                resp
+                        )
+
+                val callHandler = ServerStreamingServerCallHandler(handler)
+                val call = stub[ServerCall[TestRequest, TestResponse]]
+                val requestHeaders = Metadata()
+
+                call.request.returnsWith(())
+                call.sendMessage.returnsWith(())
+                call.close.returnsWith(())
+
+                val listener = callHandler.startCall(call, requestHeaders)
+
+                listener.onMessage(request)
+                listener.onHalfClose()
+
+                eventually {
+                    assert(call.close.times === 1)
+                }
+
+                val (status, _) = call.close.calls.head
+                assert(status.getCode === Status.Code.UNKNOWN)
+            }
+
+            "fails when client completes without sending request" in run {
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req => Stream.empty[TestResponse]
+
+                val callHandler = ServerStreamingServerCallHandler(handler)
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
@@ -222,13 +332,14 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
         }
 
         "cancellation" - {
-            "interrupts when sending message" in run {
+            "interrupts while sending messages" in run {
                 val request = TestRequest("test")
+                val responses = List.fill(10)(TestResponse("response"))
 
-                val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => TestResponse("response")
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req => Stream.init(responses)
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val callHandler = ServerStreamingServerCallHandler(handler)
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
@@ -248,11 +359,10 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val listener = callHandler.startCall(call, requestHeaders)
 
                 listener.onMessage(request)
+                listener.onHalfClose()
                 listener.onCancel()
 
                 eventually {
-                    // This fails because of https://github.com/getkyo/kyo/issues/1431.
-                    //assert(interrupted.get === true)
                     assert(call.close.times === 1)
                 }
 
@@ -261,12 +371,17 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
             }
         }
 
+        // TODO: Re-enable these tests after implementing Signal-based flow control
+        // "flow control" - {
+        //     ...
+        // }
+
         "lifecycle" - {
             "onComplete does nothing" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => TestResponse("response")
+                val handler: GrpcHandler[TestRequest, Stream[TestResponse, Grpc]] =
+                    req => Stream.empty[TestResponse]
 
-                val callHandler = UnaryServerCallHandler(handler)
+                val callHandler = ServerStreamingServerCallHandler(handler)
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 val requestHeaders = Metadata()
 
@@ -279,26 +394,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
 
                 assert(call.request.times === 1)
             }
-
-            "onReady does nothing" in run {
-                val handler: GrpcHandler[TestRequest, TestResponse] =
-                    req => TestResponse("response")
-
-                val callHandler = UnaryServerCallHandler(handler)
-                val call = stub[ServerCall[TestRequest, TestResponse]]
-                val requestHeaders = Metadata()
-
-                call.request.returnsWith(())
-                (() => call.isReady()).returnsWith(true)
-
-                val listener = callHandler.startCall(call, requestHeaders)
-
-                // Call onReady - should not throw
-                listener.onReady()
-
-                assert(call.request.times === 1)
-            }
         }
     }
 
-end UnaryServerCallHandlerTest
+end ServerStreamingServerCallHandlerTest

@@ -14,7 +14,8 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
     protected def send(
         call: ServerCall[Request, Response],
         handler: Handler,
-        channel: Channel[Request]
+        channel: Channel[Request],
+        ready: SignalRef[Boolean]
     ): Status < (Grpc & Emit[Metadata])
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
@@ -22,19 +23,19 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
         // WARNING: headers are definitely not thread-safe.
         // This handler has ownership of the call and headers, so we can use them with care.
 
-        def sendAndClose(handler: Handler, channel: Channel[Request]) =
+        def sendAndClose(handler: Handler, channel: Channel[Request], ready: SignalRef[Boolean]) =
             for
                 (trailers, status) <-
-                    send(call, handler, channel).handle(
+                    send(call, handler, channel, ready).handle(
                         Abort.recoverError(ServerCallHandlers.errorStatus),
                         Emit.runFold[Metadata](Metadata())(_.mergeSafe(_))
                     )
                 _ <- Sync.defer(call.close(status, trailers))
             yield ()
 
-        def start(handler: Handler, channel: Channel[Request]) =
+        def start(handler: Handler, channel: Channel[Request], ready: SignalRef[Boolean]) =
             for
-                fiber <- Fiber.initUnscoped(sendAndClose(handler, channel))
+                fiber <- Fiber.initUnscoped(sendAndClose(handler, channel, ready))
                 _ <- fiber.onInterrupt: _ =>
                     val status = Status.CANCELLED.withDescription("Call was cancelled.")
                     try {
@@ -58,9 +59,10 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
                 _ <- options.sendHeaders(call)
                 // Request the remaining messages to fill the request buffer.
                 _         <- Sync.defer(if requestBuffer > 1 then call.request(requestBuffer - 1) else ())
+                ready     <- Signal.initRef(false)
                 channel   <- Channel.initUnscoped[Request](capacity = requestBuffer, access = Access.SingleProducerSingleConsumer)
-                sentFiber <- start(handler, channel)
-            yield StreamingServerCallListener(channel.unsafe, sentFiber.unsafe)
+                sentFiber <- start(handler, channel, ready)
+            yield StreamingServerCallListener(channel.unsafe, sentFiber.unsafe, ready.unsafe, call)
 
         init.handle(
             Sync.Unsafe.run,
@@ -69,8 +71,12 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
         )
     end startCall
 
-    private class StreamingServerCallListener(requests: Channel.Unsafe[Request], fiber: Fiber.Unsafe[Any, Nothing])
-        extends ServerCall.Listener[Request]:
+    private class StreamingServerCallListener(
+        requests: Channel.Unsafe[Request],
+        fiber: Fiber.Unsafe[Any, Nothing],
+        ready: SignalRef.Unsafe[Boolean],
+        call: ServerCall[Request, Response]
+    ) extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
             discard(requests.putFiber(message))
@@ -83,8 +89,8 @@ abstract private[grpc] class BaseStreamingServerCallHandler[Request, Response, H
 
         override def onComplete(): Unit = ()
 
-        // FIXME: Use a Signal here.
-        override def onReady(): Unit = ()
+        override def onReady(): Unit =
+            ready.set(call.isReady)
 
     end StreamingServerCallListener
 

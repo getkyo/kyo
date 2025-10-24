@@ -13,7 +13,8 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
     protected def send(
         call: ServerCall[Request, Response],
         handler: Handler,
-        promise: Promise[Request, Abort[Status]]
+        promise: Promise[Request, Abort[Status]],
+        ready: SignalRef[Boolean]
     ): Status < (Grpc & Emit[Metadata])
 
     override def startCall(call: ServerCall[Request, Response], headers: Metadata): ServerCall.Listener[Request] =
@@ -21,19 +22,19 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
         // WARNING: headers are definitely not thread-safe.
         // This handler has ownership of the call and headers, so we can use them with care.
 
-        def sendAndClose(handler: Handler, promise: Promise[Request, Abort[Status]]) =
+        def sendAndClose(handler: Handler, promise: Promise[Request, Abort[Status]], ready: SignalRef[Boolean]) =
             for
                 (trailers, status) <-
-                    send(call, handler, promise).handle(
+                    send(call, handler, promise, ready).handle(
                         Abort.recoverError(ServerCallHandlers.errorStatus),
                         Emit.runFold[Metadata](Metadata())(_.mergeSafe(_))
                     )
                 _ <- Sync.defer(call.close(status, trailers))
             yield ()
 
-        def start(handler: Handler, promise: Promise[Request, Abort[Status]]) =
+        def start(handler: Handler, promise: Promise[Request, Abort[Status]], ready: SignalRef[Boolean]) =
             for
-                fiber <- Fiber.initUnscoped(sendAndClose(handler, promise))
+                fiber <- Fiber.initUnscoped(sendAndClose(handler, promise, ready))
                 _ <- fiber.onInterrupt: _ =>
                     val status = Status.CANCELLED.withDescription("Call was cancelled.")
                     try {
@@ -51,9 +52,10 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
                     ResponseOptions.run
                 )
                 _         <- options.sendHeaders(call)
+                ready     <- Signal.initRef(false)
                 promise   <- Promise.init[Request, Abort[Status]]
-                sentFiber <- start(handler, promise)
-            yield UnaryServerCallListener(promise.unsafe, sentFiber.unsafe)
+                sentFiber <- start(handler, promise, ready)
+            yield UnaryServerCallListener(promise.unsafe, sentFiber.unsafe, ready.unsafe, call)
 
         init.handle(
             Sync.Unsafe.run,
@@ -62,8 +64,12 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
         )
     end startCall
 
-    private class UnaryServerCallListener(request: Promise.Unsafe[Request, Abort[Status]], fiber: Fiber.Unsafe[Any, Nothing])
-        extends ServerCall.Listener[Request]:
+    private class UnaryServerCallListener(
+        request: Promise.Unsafe[Request, Abort[Status]],
+        fiber: Fiber.Unsafe[Any, Nothing],
+        ready: SignalRef.Unsafe[Boolean],
+        call: ServerCall[Request, Response]
+    ) extends ServerCall.Listener[Request]:
 
         override def onMessage(message: Request): Unit =
             // Unlike io.grpc.stub.ServerCalls.UnaryServerCallHandler.UnaryServerCallListener,
@@ -83,8 +89,8 @@ abstract private[grpc] class BaseUnaryServerCallHandler[Request, Response, Handl
 
         override def onComplete(): Unit = ()
 
-        // FIXME: Use a Signal here.
-        override def onReady(): Unit = ()
+        override def onReady(): Unit =
+            ready.set(call.isReady)
 
     end UnaryServerCallListener
 

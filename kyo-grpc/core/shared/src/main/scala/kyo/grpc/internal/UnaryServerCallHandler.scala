@@ -11,7 +11,8 @@ private[grpc] class UnaryServerCallHandler[Request, Response](f: GrpcHandlerInit
     override protected def send(
         call: ServerCall[Request, Response],
         handler: GrpcHandler[Request, Response],
-        promise: Promise[Request, Abort[Status]]
+        promise: Promise[Request, Abort[Status]],
+        ready: SignalRef[Boolean]
     ): Status < (Grpc & Emit[Metadata]) =
         Abort.merge:
             for

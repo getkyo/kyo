@@ -14,7 +14,8 @@ private[grpc] class ClientStreamingServerCallHandler[Request, Response](f: GrpcH
     override protected def send(
         call: ServerCall[Request, Response],
         handler: GrpcHandler[Stream[Request, Grpc], Response],
-        channel: Channel[Request]
+        channel: Channel[Request],
+        ready: SignalRef[Boolean]
     ): Status < (Grpc & Emit[Metadata]) =
         def onChunk(chunk: Chunk[Request]) =
             Sync.defer(call.request(chunk.size))
