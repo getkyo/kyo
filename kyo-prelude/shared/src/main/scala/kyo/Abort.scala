@@ -488,6 +488,10 @@ object Abort:
     ): B < (S & reduce.SReduced) =
         runWith[E](v)(_.foldError(onSuccess, onError))
 
+    // TODO: Docs
+    def merge[A](using Frame)[S](v: => A < (Abort[A] & S))(using ConcreteTag[A]): A < (S & Abort[Nothing]) =
+        fold[A](onSuccess = (a: A) => a, onFail = (e: A) => e)(v)
+
     /** Catches exceptions of type E and converts them to Abort failures.
       *
       * @param v
