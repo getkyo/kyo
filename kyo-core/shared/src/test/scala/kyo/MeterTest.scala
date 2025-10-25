@@ -93,16 +93,16 @@ class MeterTest extends Test:
                 t  <- Meter.initSemaphore(2)
                 p  <- Promise.init[Int, Any]
                 b1 <- Promise.init[Unit, Any]
-                f1 <- Fiber.initUnscoped(t.run(b1.completeUnit.map(_ => p.getResult)))
+                f1 <- Fiber.initUnscoped(t.run(b1.completeUnit.andThen(p.getResult)))
                 _  <- b1.get
                 b2 <- Promise.init[Unit, Any]
-                f2 <- Fiber.initUnscoped(t.run(b2.completeUnit.map(_ => p.getResult)))
+                f2 <- Fiber.initUnscoped(t.run(b2.completeUnit.andThen(p.getResult)))
                 _  <- b2.get
                 a1 <- t.availablePermits
                 w1 <- t.pendingWaiters
                 b3 <- Promise.init[Unit, Any]
-                f3 <- Fiber.initUnscoped(b3.completeUnit.map(_ => t.run(2)))
-                _  <- b3.get
+                f3 <- Fiber.initUnscoped(b3.completeUnit.andThen(t.run(2)))
+                _  <- b3.get.andThen(untilTrue(t.pendingWaiters.map(_ > 0)))
                 a2 <- t.availablePermits
                 w2 <- t.pendingWaiters
                 d1 <- f1.done
