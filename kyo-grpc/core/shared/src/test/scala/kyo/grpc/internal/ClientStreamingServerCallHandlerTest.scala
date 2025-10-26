@@ -347,6 +347,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.close.returnsWith(())
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {

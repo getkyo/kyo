@@ -233,6 +233,7 @@ class UnaryServerCallHandlerTest extends Test with Stubs with Eventually:
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.close.returnsWith(())
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {
