@@ -209,7 +209,7 @@ object Abort:
                 S2
             ](
                 erasedTag[E],
-                v.map(Result.succeed[E, A](_))
+                v.map(Result.succeed[E, A](_)).asInstanceOf[Result[E, A] < (Abort[E] & (Abort[ER] & S))]
             )(
                 accept = [C] =>
                     input =>

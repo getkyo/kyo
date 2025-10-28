@@ -5,7 +5,7 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.7.2"
+val scala3Version    = "3.8.0-RC1-bin-20251027-520668f-NIGHTLY"
 val scala3LTSVersion = "3.3.6"
 val scala213Version  = "2.13.16"
 
@@ -23,7 +23,7 @@ val compilerOptions = Set(
     ScalacOptions.warnValueDiscard,
     ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
-    ScalacOptions.release("11"),
+    ScalacOptions.release("17"),
     ScalacOptions.advancedKindProjector
 )
 
@@ -43,7 +43,8 @@ inThisBuild(List(
         )
     ),
     resolvers += Resolver.sonatypeCentralSnapshots,
-    resolvers += Resolver.sonatypeCentralRepo("staging")
+    resolvers += Resolver.sonatypeCentralRepo("staging"),
+    resolvers += "Scala Nightly" at "https://repo.scala-lang.org/artifactory/local-maven-nightlies/"
 ))
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile

@@ -31,6 +31,13 @@ object Use:
     // Retrieves the context value of type R within a Use[R] effect context
     def get[R[-_]](using frame: Frame, tag: Tag[R[Any]]): R[Use[R]] < Use[R] = use[R](identity)
 
+    // For trait-based services, use the UseOps pattern for cleaner syntax:
+    // trait Service[-S]: def method: ReturnType < S
+    // object Service extends UseOps[Service]
+    // Service.use.method // Clean API
+    //
+    // For complex cases, use Use.get[R] instead
+
     private[kyo] object internal:
         // Internal utilities for type tag handling
         def erasedTag[R[-_]]: Tag[Use[R]] = Tag[Use[AnyT]].asInstanceOf[Tag[Use[R]]]
