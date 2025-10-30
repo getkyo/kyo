@@ -4,6 +4,7 @@ import io.grpc.Metadata
 import io.grpc.ServerCall
 import io.grpc.Status
 import kyo.*
+import kyo.grpc.Equalities.given
 import org.scalactic.TripleEquals.*
 import org.scalamock.scalatest.AsyncMockFactory
 
@@ -306,7 +307,7 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
                 .once()
 
             call.sendHeaders
-                .expects(*)
+                .expects(argEquals(metadata))
                 .once()
 
             options.sendHeaders(call).map(_ => succeed)
@@ -319,13 +320,13 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
             val call = mock[ServerCall[String, String]]
 
             call.sendHeaders
-                .expects(*)
+                .expects(argEquals(metadata))
                 .once()
 
             options.sendHeaders(call).map(_ => succeed)
         }
 
-        "sends only messageCompression when present" in run {
+        "sends messageCompression when present" in run {
             val options = ResponseOptions(messageCompression = Maybe.Present(false))
 
             val call = mock[ServerCall[String, String]]
@@ -334,10 +335,14 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
                 .expects(false)
                 .once()
 
+            call.sendHeaders
+                .expects(*)
+                .once()
+
             options.sendHeaders(call).map(_ => succeed)
         }
 
-        "sends only compression when present" in run {
+        "sends compression when present" in run {
             val options = ResponseOptions(compression = Maybe.Present("snappy"))
 
             val call = mock[ServerCall[String, String]]
@@ -346,10 +351,14 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
                 .expects("snappy")
                 .once()
 
+            call.sendHeaders
+                .expects(*)
+                .once()
+
             options.sendHeaders(call).map(_ => succeed)
         }
 
-        "sends only onReadyThreshold when present" in run {
+        "sends onReadyThreshold when present" in run {
             val options = ResponseOptions(onReadyThreshold = Maybe.Present(100))
 
             val call = mock[ServerCall[String, String]]
@@ -358,12 +367,20 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
                 .expects(100)
                 .once()
 
+            call.sendHeaders
+                .expects(*)
+                .once()
+
             options.sendHeaders(call).map(_ => succeed)
         }
 
-        "does nothing when all fields absent" in run {
+        "sends headers when all fields absent" in run {
             val options = ResponseOptions()
             val call    = mock[ServerCall[String, String]]
+
+            call.sendHeaders
+                .expects(argEquals(Metadata()))
+                .once()
 
             options.sendHeaders(call).map(_ => succeed)
         }
@@ -496,6 +513,10 @@ class ResponseOptionsTest extends Test with AsyncMockFactory:
         "handles computation with no emissions" in run {
             val computation = "no-options"
             val call        = mock[ServerCall[String, String]]
+
+            call.sendHeaders
+                .expects(*)
+                .once()
 
             ResponseOptions.runSend(call)(computation).map: result =>
                 assert(result === "no-options")

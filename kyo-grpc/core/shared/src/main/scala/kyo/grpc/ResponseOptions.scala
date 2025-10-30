@@ -36,7 +36,8 @@ final case class ResponseOptions(
             messageCompression.foreach(call.setMessageCompression)
             compression.foreach(call.setCompression)
             onReadyThreshold.foreach(call.setOnReadyThreshold)
-            headers.foreach(call.sendHeaders)
+            // Headers must be sent even if empty.
+            call.sendHeaders(headers.getOrElse(Metadata()))
     end sendHeaders
 
 end ResponseOptions

@@ -30,6 +30,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
 
                 val requestHeaders = Metadata()
 
@@ -126,6 +127,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 (() => call.isReady()).returnsWith(true)
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
@@ -166,6 +168,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 (() => call.isReady()).returnsWith(true)
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
@@ -208,6 +211,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 (() => call.isReady()).returnsWith(true)
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
@@ -250,6 +254,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 (() => call.isReady()).returnsWith(true)
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
@@ -275,6 +280,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
@@ -339,6 +345,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
@@ -366,6 +373,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
@@ -395,6 +403,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -420,6 +429,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -450,6 +460,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
@@ -478,12 +489,13 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {
                     try {
-                        Thread.sleep(patienceConfig.timeout.toMillis + 1000)
+                        Thread.sleep(patienceConfig.timeout.toMillis + 5000)
                     } catch {
                         case e: InterruptedException =>
                             interrupted.set(true)
@@ -521,6 +533,7 @@ class BidiStreamingServerCallHandlerTest extends Test with Stubs with Eventually
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
 
                 val listener = callHandler.startCall(call, requestHeaders)
 

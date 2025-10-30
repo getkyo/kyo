@@ -281,6 +281,9 @@ object ClientCall:
             listener: ServerStreamingClientCallListener[Response],
             requestEffect: GrpcRequestsWithHeaders[Request]
         ): GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]] =
+            def onChunk(chunk: Chunk[Response]) =
+                Sync.defer(call.request(chunk.size))
+
             for
                 // We ignore the ready signal here as we want the request ready as soon as possible,
                 // and we will only buffer at most one request.
@@ -288,7 +291,7 @@ object ClientCall:
                 _       <- Sync.defer(call.request(1))
                 _       <- Sync.defer(call.sendMessage(request))
                 _       <- Sync.defer(call.halfClose())
-                stream  <- listener.responseChannel.streamUntilClosed()
+                stream  <- listener.responseChannel.streamUntilClosed().tapChunk(onChunk)
             yield stream
         end sendAndReceive
 
@@ -397,13 +400,16 @@ object ClientCall:
             listener: ServerStreamingClientCallListener[Response],
             requestsEffect: GrpcRequestsWithHeaders[Stream[Request, Grpc]]
         ): GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]] =
+            def onResponseChunk(chunk: Chunk[Response]) =
+                Sync.defer(call.request(chunk.size))
+
             for
                 requests <- requestsEffect
                 _        <- Sync.defer(call.request(1))
                 // TODO: Is it fine for this to be unscoped?
-                _ <- Fiber.initUnscoped(sendAndClose(call, listener, requests))
-//                listener.responseChannel.streamUntilClosed()
-            yield ???
+                _      <- Fiber.initUnscoped(sendAndClose(call, listener, requests))
+                stream <- listener.responseChannel.streamUntilClosed().tapChunk(onResponseChunk)
+            yield stream
         end sendAndReceive
 
         def processCompletion(listener: ServerStreamingClientCallListener[Response])(

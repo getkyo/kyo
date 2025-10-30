@@ -30,6 +30,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
 
                 val requestHeaders = Metadata()
 
@@ -129,6 +130,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
@@ -169,6 +171,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
@@ -193,6 +196,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
 
                 val call = stub[ServerCall[TestRequest, TestResponse]]
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
@@ -262,6 +266,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -287,6 +292,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -320,6 +326,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -347,12 +354,13 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.close.returnsWith(())
 
                 val interrupted = new JAtomicBoolean(false)
                 call.sendMessage.returnsWith {
                     try {
-                        Thread.sleep(patienceConfig.timeout.toMillis + 1000)
+                        Thread.sleep(patienceConfig.timeout.toMillis + 5000)
                     } catch {
                         case e: InterruptedException =>
                             interrupted.set(true)
@@ -385,6 +393,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
 
                 val listener = callHandler.startCall(call, requestHeaders)
 
@@ -403,6 +412,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 (() => call.isReady()).returnsWith(true)
 
                 val listener = callHandler.startCall(call, requestHeaders)
@@ -422,6 +432,7 @@ class ClientStreamingServerCallHandlerTest extends Test with Stubs with Eventual
                 val requestHeaders = Metadata()
 
                 call.request.returnsWith(())
+                call.sendHeaders.returnsWith(())
                 call.sendMessage.returnsWith(())
                 call.close.returnsWith(())
 
