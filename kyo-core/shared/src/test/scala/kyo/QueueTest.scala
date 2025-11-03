@@ -553,25 +553,27 @@ class QueueTest extends Test:
 
         "allowed following ops when not empty" in runNotNative {
             for
-                q  <- Queue.init[Int](2)
-                _  <- q.offer(1)
-                _  <- q.offer(1)
-                f1 <- Fiber.initUnscoped(q.closeAwaitEmpty)
-                v1 <- Abort.run(q.size)
-                v2 <- Abort.run(q.empty)
-                v3 <- Abort.run(q.full)
-                v4 <- Abort.run(q.offer(2))
-                v5 <- Abort.run(q.poll)
-                v6 <- Abort.run(q.peek)
-                v7 <- Abort.run(q.drain)
-                c2 <- Abort.run(q.closeAwaitEmpty)
-                c1 <- f1.get
+                promise <- Promise.init[Unit, Any]
+                q       <- Queue.init[Int](2)
+                _       <- q.offer(1)
+                _       <- q.offer(1)
+                f1      <- Fiber.initUnscoped(promise.completeUnit.andThen(q.closeAwaitEmpty))
+                v1      <- Abort.run(q.size)
+                v2      <- Abort.run(q.empty)
+                v3      <- Abort.run(q.full)
+                v4      <- Abort.run(q.offer(2))
+                v5      <- Abort.run(q.poll)
+                v6      <- Abort.run(q.peek)
+                v7      <- Abort.run(q.drain)
+                _       <- promise.get // ensure first fiber started before initiating second closeAwaitEmpty
+                c2      <- Abort.run(q.closeAwaitEmpty)
+                c1      <- f1.get
             yield assert(
                 c1 &&
                     v1.isSuccess &&
                     v2.isSuccess &&
                     v3.isSuccess &&
-                    v4.isFailure &&
+                    v4.isSuccess &&
                     v5.isSuccess &&
                     v6.isSuccess &&
                     v7.isSuccess &&
