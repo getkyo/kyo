@@ -3655,7 +3655,7 @@ Being more modular than ZIO, Kyo separates effect constructors in the companion 
 
 ### Simple example
 
-```scala 3
+```scala
 import kyo.*
 import scala.concurrent.duration.*
 import java.io.IOException
