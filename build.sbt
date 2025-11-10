@@ -9,8 +9,9 @@ val scala3Version    = "3.7.2"
 val scala3LTSVersion = "3.3.6"
 val scala213Version  = "2.13.16"
 
-val zioVersion       = "2.1.17"
-val catsVersion      = "3.6.1"
+val zioVersion       = "2.1.22"
+val catsVersion      = "3.6.3"
+val pekkoVersion     = "1.2.1"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
@@ -371,7 +372,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.2",
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.1.4",
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -535,8 +536,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.10.0",
-            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.10.0"
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.11.1",
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.11.1"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -674,7 +675,7 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.3",
+            libraryDependencies += "dev.zio"              %% "izumi-reflect"       % "3.0.6",
             libraryDependencies += "org.typelevel"        %% "cats-effect"         % catsVersion,
             libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.7.1",
             libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.7.1",
