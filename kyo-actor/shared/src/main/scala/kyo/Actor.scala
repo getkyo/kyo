@@ -455,7 +455,6 @@ object Actor:
                     Scope.run,                  // Close used resources
                     Fiber.init                  // Start the actor's processing loop in an async context
                 )
-            _ <- Scope.ensure(mailbox.close) // Registers a finalizer in the outer scope to provide the actor hierarchy behavior
         yield new Actor[E, A, B](_subject, _consumer):
             def close(using Frame) = mailbox.close
 end Actor

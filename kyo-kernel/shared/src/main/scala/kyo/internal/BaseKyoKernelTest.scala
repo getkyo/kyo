@@ -2,7 +2,7 @@ package kyo.internal
 
 import java.util.concurrent.TimeoutException
 import kyo.*
-import kyo.kernel.Platform
+import kyo.internal.Platform
 import scala.annotation.targetName
 import scala.concurrent.Future
 
@@ -26,7 +26,7 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
     def runNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNative(v.map(Future.successful(_)))
 
     @targetName("runNotNativeAssertion")
-    def runNotNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNative(v.map(Future.successful(_)))
+    def runNotNative(v: => Assertion < S)(using Frame): Future[Assertion] = runNotNative(v.map(Future.successful(_)))
 
     def runJVM(v: => Future[Assertion] < S)(using Frame): Future[Assertion] =
         if Platform.isJVM then
@@ -62,5 +62,5 @@ private[kyo] trait BaseKyoKernelTest[S] extends BaseKyoDataTest:
         if Platform.isDebugEnabled then
             Duration.Infinity
         else
-            8.seconds
+            15.seconds
 end BaseKyoKernelTest

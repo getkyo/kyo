@@ -10,10 +10,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: coursier/cache-action@v6
+      - uses: coursier/cache-action@v7
       - uses: coursier/setup-action@v1
         with:
           jvm: corretto:24

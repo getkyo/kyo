@@ -2,7 +2,7 @@ package kyo
 
 case class CustomInt(value: Int) extends AnyVal
 
-class SafeClassTagTest extends Test:
+class ConcreteTagTest extends Test:
 
     trait Animal
     trait Mammal  extends Animal
@@ -794,6 +794,22 @@ class SafeClassTagTest extends Test:
             assert(complexTag.accepts("hello"))
             assert(!complexTag.accepts(true))
         }
+
+        "deriving" - {
+            "union" in {
+                def union[A: ConcreteTag, B: ConcreteTag]: ConcreteTag[A | B] =
+                    summon[ConcreteTag[A | B]]
+
+                assert(union[Int, Boolean] == (ConcreteTag[Int] | ConcreteTag[Boolean]))
+            }
+
+            "intersection" in {
+                def intersection[A: ConcreteTag, B: ConcreteTag]: ConcreteTag[A & B] =
+                    summon[ConcreteTag[A & B]]
+
+                assert(intersection[Int, Boolean] == (ConcreteTag[Int] & ConcreteTag[Boolean]))
+            }
+        }
     }
 
-end SafeClassTagTest
+end ConcreteTagTest
