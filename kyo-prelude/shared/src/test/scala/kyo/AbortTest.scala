@@ -669,7 +669,7 @@ class AbortTest extends Test:
                 }
                 "subclass" in {
                     assert(
-                        Abort.run[RuntimeException](Abort.catching[RuntimeException](test(0))).eval ==
+                        Abort.run[RuntimeException](Abort.catching[Ex1](test(0))).eval ==
                             Result.fail(ex1)
                     )
                 }
@@ -1282,7 +1282,7 @@ class AbortTest extends Test:
         }
 
         "generic" in {
-            def test[A](a: A): Nothing < Abort[A] =
+            def test[A](a: A)(using tag: Tag[a.type]): Nothing < Abort[A] =
                 Abort.literal.fail(a)
 
             val result                  = test(1)
