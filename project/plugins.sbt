@@ -7,7 +7,7 @@ addSbtPlugin("org.scala-js"       % "sbt-scalajs"              % "1.19.0")
 
 resolvers += Resolver.sonatypeCentralSnapshots // Requires sbt 1.11.0 or later
 addSbtPlugin("org.scala-native" % "sbt-scala-native" %
-    "0.5.10-20251114-50957c0-SNAPSHOT")
+    "0.5.10-20251114-3d094cf-SNAPSHOT")
 
 addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2")
 
