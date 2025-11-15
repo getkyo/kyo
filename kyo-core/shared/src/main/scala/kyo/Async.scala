@@ -180,6 +180,19 @@ object Async extends AsyncPlatformSpecific:
         end if
     end timeout
 
+    def tapFiber[E, A, S, S2](using isolate: Isolate[S, Abort[E] & Async, S])
+                             (v: => A < (Abort[E] & Async & S))
+                             (f: Fiber[Any, Abort[E] & S] => Unit < S2)
+                             (using frame: Frame): A < (kyo.Abort[E] & kyo.Async & S & S2) =
+        isolate.capture { state =>
+            Fiber.initUnscoped(isolate.isolate(state, v)).map { fiber =>
+                f(fiber).andThen {
+                    isolate.restore(fiber.get)
+                }
+            }
+        }
+    end tapFiber
+
     /** Races multiple computations and returns the result of the first successful computation to complete. When one computation succeeds,
       * all other computations are interrupted.
       *

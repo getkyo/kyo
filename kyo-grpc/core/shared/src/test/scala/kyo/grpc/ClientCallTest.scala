@@ -76,7 +76,7 @@ class ClientCallTest extends Test:
 
             "GrpcRequests type alias exists" in {
                 // Verify the type alias compiles
-                def test(r: GrpcRequests[TestRequest]): Unit = ()
+                def test(r: GrpcRequestsPendingHeaders[TestRequest]): Unit = ()
                 succeed
             }
 

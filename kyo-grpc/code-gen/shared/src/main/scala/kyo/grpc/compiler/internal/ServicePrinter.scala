@@ -198,7 +198,7 @@ private[compiler] case class ServicePrinter(
     }
 
     private def clientMethodParameters(method: MethodDescriptor): Seq[Parameter] = {
-        def requestParameter  = "request" :- Types.grpcRequestsInit(method.inputType.scalaType)
+        def requestParameter  = "request" :- Types.grpcRequestInit(method.inputType.scalaType)
         def requestsParameter = "requests" :- Types.grpcRequestsInit(Types.streamGrpcRequest(method.inputType.scalaType))
         method.streamType match {
             case StreamType.Unary | StreamType.ServerStreaming         => Seq(requestParameter)

@@ -16,11 +16,17 @@ type GrpcRequestCompletion = Unit < (Env[CallClosed] & Async)
 
 private[grpc] type GrpcResponsesAwaitingCompletion[MaybeResponses] = MaybeResponses < (Emit[GrpcRequestCompletion] & Async)
 
-private[grpc] type GrpcRequestsWithHeaders[Requests] = Requests < (Emit[GrpcRequestCompletion] & Async)
+// Unary and server streaming method calls do not flush the request headers so they are only sent when the request is
+// sent. That means that they cannot be used in the creation of the request and can only be provided to the application
+// when the response is received.
+// TODO: Singular vs plural is confusing here.
+type GrpcRequest[Requests] = Requests < (Emit[GrpcRequestCompletion] & Async)
 
-type GrpcRequests[Requests] = Requests < (Env[Metadata] & Emit[GrpcRequestCompletion] & Async)
+type GrpcRequestsPendingHeaders[Requests] = Requests < (Env[Metadata] & Emit[GrpcRequestCompletion] & Async)
 
-type GrpcRequestsInit[Requests] = GrpcRequests[Requests] < (Emit[RequestOptions] & Async)
+type GrpcRequestsInit[Requests] = GrpcRequestsPendingHeaders[Requests] < (Emit[RequestOptions] & Async)
+
+type GrpcRequestInit[Request] = GrpcRequest[Request] < (Emit[RequestOptions] & Async)
 
 /** Provides client-side gRPC call implementations for different RPC patterns.
   *
@@ -28,6 +34,10 @@ type GrpcRequestsInit[Requests] = GrpcRequests[Requests] < (Emit[RequestOptions]
   * effect system.
   */
 object ClientCall:
+
+    // TODO:
+    //  - unary and serverStreaming need to provide the headers with the response.
+    //  - all methods need to provide trailers.
 
     /** Executes a unary gRPC call.
       *
@@ -52,7 +62,7 @@ object ClientCall:
         channel: io.grpc.Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
-        requestInit: GrpcRequestsInit[Request]
+        requestInit: GrpcRequestInit[Request]
     )(using Frame): Response < Grpc =
         def start(call: ClientCall[Request, Response], options: RequestOptions): UnaryClientCallListener[Response] < Sync =
             for
@@ -63,28 +73,24 @@ object ClientCall:
                 listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
+                _ <- Sync.defer(call.request(1))
             yield listener
         end start
-
-        def processHeaders(
-            listener: UnaryClientCallListener[Response],
-            requestEffect: GrpcRequests[Request]
-        ): GrpcRequestsWithHeaders[Request] =
-            listener.headersPromise.get.map(Env.run(_)(requestEffect))
 
         def sendAndReceive(
             call: ClientCall[Request, Response],
             listener: UnaryClientCallListener[Response],
-            requestEffect: GrpcRequestsWithHeaders[Request]
+            requestEffect: GrpcRequest[Request]
         ): GrpcResponsesAwaitingCompletion[Result[GrpcFailure, Response]] =
             for
                 // We ignore the ready signal here as we want the request ready as soon as possible,
                 // and we will only buffer at most one request.
+                // The request was already made when starting.
                 request <- requestEffect
-                _       <- Sync.defer(call.request(1))
                 _       <- Sync.defer(call.sendMessage(request))
                 _       <- Sync.defer(call.halfClose())
                 result  <- listener.responsePromise.getResult
+                // TODO: Where is the emit of the effect that waits for completion?
             yield result
         end sendAndReceive
 
@@ -100,10 +106,7 @@ object ClientCall:
             RequestOptions.run(requestInit).map: (options, requestEffect) =>
                 for
                     listener <- start(call, options)
-                    response <- (for
-                        requestWithHeaders <- processHeaders(listener, requestEffect)
-                        response           <- sendAndReceive(call, listener, requestWithHeaders)
-                    yield response).handle(
+                    response <- sendAndReceive(call, listener, requestEffect).handle(
                         processCompletion(listener),
                         cancelOnError(call),
                         cancelOnInterrupt(call)
@@ -153,8 +156,8 @@ object ClientCall:
 
         def processHeaders(
             listener: UnaryClientCallListener[Response],
-            requestsEffect: GrpcRequests[Stream[Request, Grpc]]
-        ): GrpcRequestsWithHeaders[Stream[Request, Grpc]] =
+            requestsEffect: GrpcRequestsPendingHeaders[Stream[Request, Grpc]]
+        ): GrpcRequest[Stream[Request, Grpc]] =
             listener.headersPromise.get.map(Env.run(_)(requestsEffect))
 
         def sendAndClose(
@@ -190,7 +193,7 @@ object ClientCall:
         def sendAndReceive(
             call: ClientCall[Request, Response],
             listener: UnaryClientCallListener[Response],
-            requestsEffect: GrpcRequestsWithHeaders[Stream[Request, Grpc]]
+            requestsEffect: GrpcRequest[Stream[Request, Grpc]]
         ): GrpcResponsesAwaitingCompletion[Result[GrpcFailure, Response]] =
             for
                 requests   <- requestsEffect
@@ -254,7 +257,7 @@ object ClientCall:
         channel: io.grpc.Channel,
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
-        requestInit: GrpcRequestsInit[Request]
+        requestInit: GrpcRequestInit[Request]
     )(using Frame, Tag[Emit[Chunk[Response]]]): Stream[Response, Grpc] =
         def start(call: ClientCall[Request, Response], options: RequestOptions): ServerStreamingClientCallListener[Response] < Sync =
             for
@@ -267,19 +270,15 @@ object ClientCall:
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
                 _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
+                // TODO: Add tests that ensure that we request the right amount.
+                _ <- Sync.defer(call.request(Math.max(1, options.responseCapacityOrDefault)))
             yield listener
         end start
-
-        def processHeaders(
-            listener: ServerStreamingClientCallListener[Response],
-            requestEffect: GrpcRequests[Request]
-        ): GrpcRequestsWithHeaders[Request] =
-            listener.headersPromise.get.map(Env.run(_)(requestEffect))
 
         def sendAndReceive(
             call: ClientCall[Request, Response],
             listener: ServerStreamingClientCallListener[Response],
-            requestEffect: GrpcRequestsWithHeaders[Request]
+            requestEffect: GrpcRequest[Request]
         ): GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]] =
             def onChunk(chunk: Chunk[Response]) =
                 Sync.defer(call.request(chunk.size))
@@ -288,7 +287,6 @@ object ClientCall:
                 // We ignore the ready signal here as we want the request ready as soon as possible,
                 // and we will only buffer at most one request.
                 request <- requestEffect
-                _       <- Sync.defer(call.request(1))
                 _       <- Sync.defer(call.sendMessage(request))
                 _       <- Sync.defer(call.halfClose())
                 stream  <- listener.responseChannel.streamUntilClosed().tapChunk(onChunk)
@@ -298,18 +296,20 @@ object ClientCall:
         def processCompletion(listener: ServerStreamingClientCallListener[Response])(
             completionEffect: GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]]
         ): Stream[Response, Grpc] < Async =
-            Emit.runForeach(completionEffect)(handler =>
-                listener.completionPromise.get.map(Env.run(_)(handler))
-            )
+            Emit.run[GrpcRequestCompletion](completionEffect).map: (handlers, responses) =>
+                listener.completionPromise.get.map: callClosed =>
+                    val completed = handlers.foldLeft(Kyo.unit: Unit < Async): (acc, handler) =>
+                        acc.andThen(Env.run(callClosed)(handler))
+                    completed.andThen:
+                        if callClosed.status.isOk then responses
+                        else responses.concat(Stream(Abort.fail(callClosed.asException)))
+        end processCompletion
 
         def run(call: ClientCall[Request, Response]): Stream[Response, Grpc] < Async =
             RequestOptions.run(requestInit).map: (options, requestEffect) =>
                 for
                     listener <- start(call, options)
-                    responses <- (for
-                        requestWithHeaders <- processHeaders(listener, requestEffect)
-                        responses          <- sendAndReceive(call, listener, requestWithHeaders)
-                    yield responses).handle(
+                    responses <- sendAndReceive(call, listener, requestEffect).handle(
                         processCompletion(listener),
                         cancelOnError(call),
                         cancelOnInterrupt(call)
@@ -331,7 +331,7 @@ object ClientCall:
       *   the method descriptor defining the RPC method
       * @param options
       *   call options for configuring the request
-      * @param requests
+      * @param requestsInit
       *   a stream of request messages to send
       * @tparam Request
       *   the type of the request messages
@@ -362,8 +362,8 @@ object ClientCall:
 
         def processHeaders(
             listener: ServerStreamingClientCallListener[Response],
-            requestsEffect: GrpcRequests[Stream[Request, Grpc]]
-        ): GrpcRequestsWithHeaders[Stream[Request, Grpc]] =
+            requestsEffect: GrpcRequestsPendingHeaders[Stream[Request, Grpc]]
+        ): GrpcRequest[Stream[Request, Grpc]] =
             listener.headersPromise.get.map(Env.run(_)(requestsEffect))
 
         def sendAndClose(
@@ -398,7 +398,7 @@ object ClientCall:
         def sendAndReceive(
             call: ClientCall[Request, Response],
             listener: ServerStreamingClientCallListener[Response],
-            requestsEffect: GrpcRequestsWithHeaders[Stream[Request, Grpc]]
+            requestsEffect: GrpcRequest[Stream[Request, Grpc]]
         ): GrpcResponsesAwaitingCompletion[Stream[Response, Grpc]] =
             def onResponseChunk(chunk: Chunk[Response]) =
                 Sync.defer(call.request(chunk.size))
@@ -444,18 +444,14 @@ object ClientCall:
         )(v)
 
     private def cancelOnInterrupt[E, Response](call: ClientCall[?, ?])(v: => Response < (Abort[E] & Async))(using Frame): Response < (Abort[E] & Async) =
-        Async.raceFirst(v, cancelOnInterruptFiber(call))
-
-    // TODO: Is there a better way to do this?
-    private def cancelOnInterruptFiber(call: ClientCall[?, ?])(using Frame): Nothing < Async =
-        Fiber.initUnscoped(Async.never)
-            .map(fiber =>
-                fiber.onInterrupt(error =>
-                    val ex = error match
-                        case Result.Panic(e) => e
-                        case _ => null
-                    Sync.defer(call.cancel("Kyo Fiber was interrupted.", ex))
-                ).andThen(fiber)
-            ).map(_.get)
+        Async.tapFiber(v)(fiber =>
+            fiber.onInterrupt(error =>
+                val ex = error match
+                    case Result.Panic(e) => e
+                    case _ => null
+                Sync.defer(call.cancel("Kyo Fiber was interrupted.", ex))
+            )
+        )
+    end cancelOnInterrupt
 
 end ClientCall
