@@ -340,6 +340,14 @@ object Sink:
                             Loop.continue(newState)
     end foldKyo
 
+    def last[V](using Tag[Poll[Chunk[V]]], Frame): Sink[V, Maybe[V], Any] =
+        Sink:
+            Loop(Absent: Maybe[V]): state =>
+                Poll.andMap[Chunk[V]]:
+                    case Absent     => Loop.done(state)
+                    case Present(c) => Loop.continue(c.lastMaybe.orElse(state))
+    end last
+
     /** Combine two sinks, processing source stream in tandem.
       */
     def zip[V, A, B, S](a: Sink[V, A, S], b: Sink[V, B, S])(using Tag[Poll[Chunk[V]]], Frame): Sink[V, (A, B), S] =
