@@ -110,7 +110,11 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
         ev: Fields <:< Name ~ Value,
         tag: Tag[Value],
         name: ValueOf[Name]
-    ): Value = toMap(Field(name.value, tag)).asInstanceOf[Value]
+    ): Value =
+        toMap.collectFirst({
+            // Fix for Scala 3.8, there are issues on tags
+            case (Field(n, t), v) if n == name.value && t <:< tag => v.asInstanceOf[Value]
+        }).get
 
     /** Combines this Record with another Record.
       *
@@ -194,8 +198,8 @@ object Record:
           * @return
           *   A new Record with only the specified fields
           */
-        def compact(using AsFields[Fields]): Record[Fields] =
-            Record(self.toMap.view.filterKeys(AsFields[Fields].contains(_)).toMap)
+        def compact(using asFields: AsFields[Fields]): Record[Fields] =
+            Record(self.toMap.view.filterKeys(asFields.contains(_)).toMap)
     end extension
 
     extension (self: String)
