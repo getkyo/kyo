@@ -90,7 +90,10 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
         ev: Fields <:< Name ~ Value,
         tag: Tag[Value]
     ): Value =
-        toMap(Field(name, tag)).asInstanceOf[Value]
+        toMap.collectFirst({
+            // Fix for Scala 3.8, there are issues on tags
+            case (Field(n, t), v) if n == name && t <:< tag => v.asInstanceOf[Value]
+        }).get
 
     /** Retrieves a value from the Record by field name for any field name (even it's not a valid identifier).
       *
@@ -190,7 +193,26 @@ object Record:
       * @param tag
       *   Type evidence for the field's value type
       */
-    case class Field[Name <: String, Value](name: Name, tag: Tag[Value])
+    case class Field[Name <: String, Value](name: Name, tag: Tag[Value]):
+        // Override equals to use tag subtyping for Scala 3.8 compatibility
+        // Uses fastPathEqual first for performance, then falls back to subtyping check
+        override def equals(obj: Any): Boolean = obj match
+            case that: Field[?, ?] =>
+                name == that.name && {
+                    // Fast path: reference equality or fast string comparison
+                    val fastEqual = (tag.asInstanceOf[AnyRef] eq that.tag.asInstanceOf[AnyRef]) || {
+                        (tag, that.tag) match
+                            case (t1: String, t2: String) => t1.hashCode == t2.hashCode
+                            case _                        => false
+                    }
+                    fastEqual || tag =:= that.tag || tag <:< that.tag || that.tag <:< tag
+                }
+            case _ => false
+
+        // Override hashCode to be consistent with equals
+        // Use name hash only since tag comparison is now subtyping-based
+        override def hashCode(): Int = name.hashCode()
+    end Field
 
     extension [Fields](self: Record[Fields])
         /** Creates a new Record containing only the fields specified in the type parameter Fields.

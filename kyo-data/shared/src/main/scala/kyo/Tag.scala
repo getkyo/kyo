@@ -41,6 +41,11 @@ object Tag:
 
     import internal.*
 
+    // CanEqual instance for Tag - enables == comparisons between Tags
+    // Uses derived since CanEqual is sealed and we can't extend it directly
+    // The actual equality logic is handled by Field.equals which uses Tag's =:= and <:< methods
+    given [A, B]: CanEqual[Tag[A], Tag[B]] = CanEqual.derived
+
     /** Retrieves a Tag for type A using an implicit Tag parameter. This method is useful for passing Tags as parameters.
       *
       * @tparam A
