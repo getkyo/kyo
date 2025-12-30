@@ -354,7 +354,9 @@ lazy val `kyo-core` =
         // .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
+            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13),
+            Compile / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "test" / "scala"
         )
 
 lazy val `kyo-offheap` =
@@ -446,7 +448,11 @@ lazy val `kyo-stats-registry` =
         //     // Scala Native should only target Scala 3; avoid bringing Scala 2.13 artifacts
         //     crossScalaVersions := List(scala3Version)
         // )
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            Compile / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "test" / "scala"
+        )
 
 lazy val `kyo-stats-otel` =
     crossProject(JVMPlatform)
