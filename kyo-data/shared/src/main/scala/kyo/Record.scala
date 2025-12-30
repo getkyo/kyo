@@ -90,10 +90,7 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
         ev: Fields <:< Name ~ Value,
         tag: Tag[Value]
     ): Value =
-        toMap.collectFirst({
-            // Fix for Scala 3.8, there are issues on tags
-            case (Field(n, t), v) if n == name && t <:< tag => v.asInstanceOf[Value]
-        }).get
+        toMap(Field(name, tag)).asInstanceOf[Value]
 
     /** Retrieves a value from the Record by field name for any field name (even it's not a valid identifier).
       *
@@ -113,11 +110,7 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
         ev: Fields <:< Name ~ Value,
         tag: Tag[Value],
         name: ValueOf[Name]
-    ): Value =
-        toMap.collectFirst({
-            // Fix for Scala 3.8, there are issues on tags
-            case (Field(n, t), v) if n == name.value && t <:< tag => v.asInstanceOf[Value]
-        }).get
+    ): Value = toMap(Field(name.value, tag)).asInstanceOf[Value]
 
     /** Combines this Record with another Record.
       *
@@ -194,23 +187,20 @@ object Record:
       *   Type evidence for the field's value type
       */
     case class Field[Name <: String, Value](name: Name, tag: Tag[Value]):
-        // Override equals to use tag subtyping for Scala 3.8 compatibility
-        // Uses fastPathEqual first for performance, then falls back to subtyping check
+        // Override equals - with deterministic Tag string generation in Scala 3.8.0-RC4,
+        // tag == now works correctly, but we still need subtyping checks for type compatibility
         override def equals(obj: Any): Boolean = obj match
             case that: Field[?, ?] =>
                 name == that.name && {
-                    // Fast path: reference equality or fast string comparison
-                    val fastEqual = (tag.asInstanceOf[AnyRef] eq that.tag.asInstanceOf[AnyRef]) || {
-                        (tag, that.tag) match
-                            case (t1: String, t2: String) => t1.hashCode == t2.hashCode
-                            case _                        => false
-                    }
-                    fastEqual || tag =:= that.tag || tag <:< that.tag || that.tag <:< tag
+                    // Direct equality (now works with deterministic tag strings)
+                    tag == that.tag ||
+                    // Subtyping check for type compatibility (e.g., List[Int] vs List[AnyVal])
+                    tag =:= that.tag || tag <:< that.tag || that.tag <:< tag
                 }
             case _ => false
 
         // Override hashCode to be consistent with equals
-        // Use name hash only since tag comparison is now subtyping-based
+        // Use name hash only since tag comparison includes subtyping
         override def hashCode(): Int = name.hashCode()
     end Field
 
@@ -220,8 +210,8 @@ object Record:
           * @return
           *   A new Record with only the specified fields
           */
-        def compact(using asFields: AsFields[Fields]): Record[Fields] =
-            Record(self.toMap.view.filterKeys(asFields.contains(_)).toMap)
+        def compact(using AsFields[Fields]): Record[Fields] =
+            Record(self.toMap.view.filterKeys(AsFields[Fields].contains(_)).toMap)
     end extension
 
     extension (self: String)

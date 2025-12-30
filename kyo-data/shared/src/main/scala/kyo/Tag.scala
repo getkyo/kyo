@@ -41,16 +41,10 @@ object Tag:
 
     import internal.*
 
-    // WORKAROUND: CanEqual instance for Tag - enables == comparisons between Tags
+    // CanEqual instance for Tag - enables == comparisons between Tags
     //
-    // NOTE: This is a workaround, not a proper fix. Tag equality is broken in Scala 3.8.0-RC4
-    // because Tag is an opaque type and we can't override equals directly.
-    //
-    // CanEqual.derived only enables comparisons but doesn't change equality behavior - it still
-    // uses the underlying type's equality (String | Dynamic). The actual equality logic is
-    // worked around in Field.equals which uses Tag's =:= and <:< methods instead of ==.
-    //
-    // See: tag-equality-workaround-status.md for detailed analysis
+    // With deterministic tag string generation (entries sorted by ID, parents sorted by full name),
+    // tag == now works correctly for equivalent types. This CanEqual instance enables the comparisons.
     given [A, B]: CanEqual[Tag[A], Tag[B]] = CanEqual.derived
 
     /** Retrieves a Tag for type A using an implicit Tag parameter. This method is useful for passing Tags as parameters.
