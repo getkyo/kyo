@@ -54,11 +54,11 @@ jobs:
       TH: ${{ github.event.inputs.threads || '1' }}
       PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v7
-      - uses: coursier/setup-action@v1
+      - uses: coursier/setup-action@v2
         with:
           jvm: corretto:21
           apps: sbt

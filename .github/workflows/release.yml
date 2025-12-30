@@ -22,12 +22,12 @@ jobs:
       JAVA_OPTS: -Xms1G -Xmx1G
       JVM_OPTS:  -Xms1G -Xmx1G
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
       - uses: coursier/cache-action@v7
-      - uses: coursier/setup-action@v1
+      - uses: coursier/setup-action@v2
         with:
           jvm: corretto:24
           apps: sbt
