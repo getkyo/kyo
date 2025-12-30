@@ -41,9 +41,16 @@ object Tag:
 
     import internal.*
 
-    // CanEqual instance for Tag - enables == comparisons between Tags
-    // Uses derived since CanEqual is sealed and we can't extend it directly
-    // The actual equality logic is handled by Field.equals which uses Tag's =:= and <:< methods
+    // WORKAROUND: CanEqual instance for Tag - enables == comparisons between Tags
+    //
+    // NOTE: This is a workaround, not a proper fix. Tag equality is broken in Scala 3.8.0-RC4
+    // because Tag is an opaque type and we can't override equals directly.
+    //
+    // CanEqual.derived only enables comparisons but doesn't change equality behavior - it still
+    // uses the underlying type's equality (String | Dynamic). The actual equality logic is
+    // worked around in Field.equals which uses Tag's =:= and <:< methods instead of ==.
+    //
+    // See: tag-equality-workaround-status.md for detailed analysis
     given [A, B]: CanEqual[Tag[A], Tag[B]] = CanEqual.derived
 
     /** Retrieves a Tag for type A using an implicit Tag parameter. This method is useful for passing Tags as parameters.
@@ -583,8 +590,14 @@ object Tag:
                     case OpaqueEntry(_, _, _, _, params) if params.isEmpty => "*"
                     case _                                                 => "."
 
+            // Sort entries by ID to ensure deterministic encoding order
+            // This fixes non-deterministic Tag string generation in Scala 3.8.0-RC4
+            // where HashMap iteration order could vary, causing == to fail even for equivalent types
+            // Use string comparison for robustness (IDs are strings, may not always be numeric)
+            val sortedEntries = staticDB.toSeq.sortBy(_._1)
+
             concreteFlag +
-                staticDB.map { (id, entry) =>
+                sortedEntries.map { (id, entry) =>
                     s"$id:${encodeEntry(entry)}"
                 }.mkString("\n")
         end encode

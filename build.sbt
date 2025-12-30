@@ -650,7 +650,7 @@ lazy val `kyo-examples` =
             Compile / doc / sources                              := Seq.empty,
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.34"
         )
-        .jvmSettings(mimaCheck(false))
+        //.jvmSettings(mimaCheck(false))
 
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)

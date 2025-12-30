@@ -164,11 +164,14 @@ private[kyo] object TagMacro:
     private def immediateParents(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
         import quotes.reflect.*
         val all = tpe.baseClasses.tail.map(tpe.baseType)
-        all.filter { parent =>
+        val filtered = all.filter { parent =>
             !all.exists { otherAncestor =>
                 !otherAncestor.equals(parent) && otherAncestor.baseClasses.contains(parent.typeSymbol)
             }
         }
+        // Sort parents by their full name to ensure deterministic ordering
+        // This fixes non-deterministic tag encoding in Scala 3.8.0-RC4
+        filtered.sortBy(_.typeSymbol.fullName)
     end immediateParents
 
     private def flattenAnd(using q: Quotes)(tpe: q.reflect.TypeRepr): Seq[q.reflect.TypeRepr] =
