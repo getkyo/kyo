@@ -90,7 +90,23 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
         ev: Fields <:< Name ~ Value,
         tag: Tag[Value]
     ): Value =
-        toMap(Field(name, tag)).asInstanceOf[Value]
+        // Fast path: direct Map lookup (works when Tag strings are identical)
+        toMap.get(Field(name, tag)) match
+            case Some(value) => value.asInstanceOf[Value]
+            case None        =>
+                // Slow path: search by name and tag subtyping
+                toMap.collectFirst {
+                    case (field, value) if field.name == name && (field.tag <:< tag) =>
+                        value.asInstanceOf[Value]
+                }.getOrElse {
+                    val nameExists = toMap.keysIterator.exists(_.name == name)
+                    if nameExists then
+                        throw new NoSuchElementException(s"Field '$name' exists but with incompatible type")
+                    else
+                        throw new NoSuchElementException(s"Field '$name' not found")
+                    end if
+                }
+    end selectDynamic
 
     /** Retrieves a value from the Record by field name for any field name (even it's not a valid identifier).
       *
@@ -110,7 +126,9 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
         ev: Fields <:< Name ~ Value,
         tag: Tag[Value],
         name: ValueOf[Name]
-    ): Value = toMap(Field(name.value, tag)).asInstanceOf[Value]
+    ): Value =
+        selectDynamic[Name, Value](name.value.asInstanceOf[Name])
+    end getField
 
     /** Combines this Record with another Record.
       *
@@ -186,23 +204,7 @@ object Record:
       * @param tag
       *   Type evidence for the field's value type
       */
-    case class Field[Name <: String, Value](name: Name, tag: Tag[Value]):
-        // Override equals - with deterministic Tag string generation in Scala 3.8.0-RC4,
-        // tag == now works correctly, but we still need subtyping checks for type compatibility
-        override def equals(obj: Any): Boolean = obj match
-            case that: Field[?, ?] =>
-                name == that.name && {
-                    // Direct equality (now works with deterministic tag strings)
-                    tag == that.tag ||
-                    // Subtyping check for type compatibility (e.g., List[Int] vs List[AnyVal])
-                    tag =:= that.tag || tag <:< that.tag || that.tag <:< tag
-                }
-            case _ => false
-
-        // Override hashCode to be consistent with equals
-        // Use name hash only since tag comparison includes subtyping
-        override def hashCode(): Int = name.hashCode()
-    end Field
+    case class Field[Name <: String, Value](name: Name, tag: Tag[Value])
 
     extension [Fields](self: Record[Fields])
         /** Creates a new Record containing only the fields specified in the type parameter Fields.
@@ -211,7 +213,13 @@ object Record:
           *   A new Record with only the specified fields
           */
         def compact(using AsFields[Fields]): Record[Fields] =
-            Record(self.toMap.view.filterKeys(AsFields[Fields].contains(_)).toMap)
+            val targetFields = AsFields[Fields]
+            // Don't use Set.contains (relies on Field.equals) - compare by name and tag subtyping
+            def fieldMatches(f: Field[?, ?]): Boolean =
+                targetFields.exists { target =>
+                    f.name == target.name && f.tag <:< target.tag
+                }
+            Record(self.toMap.view.filterKeys(fieldMatches).toMap)
     end extension
 
     extension (self: String)

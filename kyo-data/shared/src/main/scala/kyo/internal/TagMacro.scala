@@ -170,7 +170,9 @@ private[kyo] object TagMacro:
             }
         }
         // Sort parents by their full name to ensure deterministic ordering
-        // This fixes non-deterministic tag encoding in Scala 3.8.0-RC4
+        // This fixes non-deterministic tag encoding on Scala 3.8
+        // getKyo/kyo#1441
+        // scala/scala3#24596
         filtered.sortBy(_.typeSymbol.fullName)
     end immediateParents
 
