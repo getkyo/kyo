@@ -85,9 +85,9 @@ class SystemTest extends Test:
     "custom System implementation" in run {
         val customSystem = new System:
             def unsafe: Unsafe = ???
-            def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =
+            def env[E, A](name: String)(using Parser[E, A], Frame, Tag[Abort[E]]): Maybe[A] < (Abort[E] & Sync) =
                 Sync.defer(Maybe("custom_env").asInstanceOf[Maybe[A]])
-            def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =
+            def property[E, A](name: String)(using Parser[E, A], Frame, Tag[Abort[E]]): Maybe[A] < (Abort[E] & Sync) =
                 Sync.defer(Maybe("custom_property").asInstanceOf[Maybe[A]])
             def lineSeparator(using Frame): String < Sync = Sync.defer("custom_separator")
             def userName(using Frame): String < Sync      = Sync.defer("custom_user")
