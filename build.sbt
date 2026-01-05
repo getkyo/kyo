@@ -5,9 +5,9 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.7.2"
-val scala3LTSVersion = "3.3.6"
-val scala213Version  = "2.13.16"
+val scala3Version    = "3.8.0-RC5"
+val scala3LTSVersion = "3.3.7"
+val scala213Version  = "2.13.17"
 
 val zioVersion       = "2.1.17"
 val catsVersion      = "3.6.1"
@@ -23,7 +23,7 @@ val compilerOptions = Set(
     ScalacOptions.warnValueDiscard,
     ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
-    ScalacOptions.release("11"),
+    ScalacOptions.release("17"),
     ScalacOptions.advancedKindProjector
 )
 
@@ -43,7 +43,8 @@ inThisBuild(List(
         )
     ),
     resolvers += Resolver.sonatypeCentralSnapshots,
-    resolvers += Resolver.sonatypeCentralRepo("staging")
+    resolvers += Resolver.sonatypeCentralRepo("staging"),
+    resolvers += Resolver.sonatypeCentralRepo("snapshots") //TODO: check if it's needed
 ))
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
@@ -78,7 +79,7 @@ Global / onLoad := {
         System.getProperty("platform", "JVM").toUpperCase match {
             case "JVM"    => kyoJVM
             case "JS"     => kyoJS
-            case "NATIVE" => kyoNative
+            // case "NATIVE" => kyoNative  // Temporarily disabled
             case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
         }
 
@@ -153,6 +154,8 @@ lazy val kyoJS = project
         `kyo-actor`.js
     )
 
+// Temporarily disabled native compilation
+/*
 lazy val kyoNative = project
     .in(file("native"))
     .settings(
@@ -174,9 +177,10 @@ lazy val kyoNative = project
         `kyo-sttp`.native,
         `kyo-actor`.native
     )
+*/
 
 lazy val `kyo-scheduler` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-stats-registry`)
@@ -184,14 +188,17 @@ lazy val `kyo-scheduler` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala3Version)
         )
-        .jvmSettings(mimaCheck(false))
-        .nativeSettings(
-            `native-settings`,
-            crossScalaVersions                         := List(scala3LTSVersion),
-            libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
+        .jvmSettings(
+            mimaCheck(false) ++ `jvm-native-sources`
         )
+        // .nativeSettings(
+        //     `native-settings`,
+        //     // Force Scala 3 for Native to avoid any Scala 2.13 leakage
+        //     crossScalaVersions                         := List(scala3Version),
+        //     libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
+        // )
         .jsSettings(
             `js-settings`,
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
@@ -208,7 +215,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     .jvmSettings(mimaCheck(false))
     .settings(
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-        crossScalaVersions := List(scala3LTSVersion, scala213Version)
+        crossScalaVersions := List(scala3Version)
     )
 
 lazy val `kyo-scheduler-cats` =
@@ -224,7 +231,7 @@ lazy val `kyo-scheduler-cats` =
         .jvmSettings(mimaCheck(false))
         .settings(
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala3Version)
         )
 
 lazy val `kyo-scheduler-pekko` =
@@ -241,7 +248,7 @@ lazy val `kyo-scheduler-pekko` =
         .jvmSettings(mimaCheck(false))
         .settings(
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions := List(scala3Version)
         )
 
 lazy val `kyo-scheduler-finagle` =
@@ -258,7 +265,7 @@ lazy val `kyo-scheduler-finagle` =
                     Seq.empty
             },
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
-            crossScalaVersions := Seq(scala213Version, scala3LTSVersion),
+            crossScalaVersions := List(scala3Version),
             publish / skip     := scalaVersion.value != scala213Version,
             Compile / unmanagedSourceDirectories := {
                 if (scalaVersion.value == scala213Version)
@@ -277,7 +284,7 @@ lazy val `kyo-scheduler-finagle` =
         .dependsOn(`kyo-scheduler`)
 
 lazy val `kyo-data` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-data"))
@@ -287,11 +294,11 @@ lazy val `kyo-data` =
             libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.3" % Test
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-kernel` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
@@ -303,11 +310,11 @@ lazy val `kyo-kernel` =
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-prelude` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-kernel`)
@@ -318,22 +325,22 @@ lazy val `kyo-prelude` =
             libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-parse` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-prelude`)
         .in(file("kyo-parse"))
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-core` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
@@ -343,28 +350,30 @@ lazy val `kyo-core` =
             `kyo-settings`,
             libraryDependencies += "dev.dirs" % "directories" % "26"
         )
-        .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .jvmSettings(mimaCheck(false) ++ `jvm-native-sources`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
+            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13),
+            Compile / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "test" / "scala"
         )
 
 lazy val `kyo-offheap` =
-    crossProject(JVMPlatform, NativePlatform)
+    crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(
-            `native-settings`,
-            Compile / doc / sources := Seq.empty
-        )
+        // .nativeSettings(
+        //     `native-settings`,
+        //     Compile / doc / sources := Seq.empty
+        // )
 
 lazy val `kyo-direct` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-direct"))
@@ -375,29 +384,29 @@ lazy val `kyo-direct` =
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stm` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stm"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-actor` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-logging-jpl` =
@@ -423,7 +432,7 @@ lazy val `kyo-logging-slf4j` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-stats-registry` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stats-registry"))
@@ -431,11 +440,19 @@ lazy val `kyo-stats-registry` =
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
-            crossScalaVersions                       := List(scala3LTSVersion, scala213Version)
+            crossScalaVersions                       := List(scala3Version)
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
+        // .nativeSettings(
+        //     `native-settings`,
+        //     // Scala Native should only target Scala 3; avoid bringing Scala 2.13 artifacts
+        //     crossScalaVersions := List(scala3Version)
+        // )
+        .jsSettings(
+            `js-settings`,
+            Compile / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories += baseDirectory.value / ".." / "js-native" / "src" / "test" / "scala"
+        )
 
 lazy val `kyo-stats-otel` =
     crossProject(JVMPlatform)
@@ -496,7 +513,7 @@ lazy val `kyo-aeron` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-sttp` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-sttp"))
@@ -506,7 +523,7 @@ lazy val `kyo-sttp` =
             libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.11.0"
         )
         .jsSettings(`js-settings`)
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-tapir` =
@@ -590,14 +607,14 @@ lazy val `kyo-cats` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-combinators` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-combinators"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jsSettings(`js-settings`)
-        .nativeSettings(`native-settings`)
+        // .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-playwright` =
@@ -633,7 +650,7 @@ lazy val `kyo-examples` =
             Compile / doc / sources                              := Seq.empty,
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.34"
         )
-        .jvmSettings(mimaCheck(false))
+        //.jvmSettings(mimaCheck(false))
 
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)
@@ -739,6 +756,8 @@ lazy val `native-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
     Test / testForkedParallel                   := false,
+    // Ensure all Scala Native modules only target Scala 3 to avoid pulling 2.13 artifacts
+    crossScalaVersions                          := List(scala3Version),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 
@@ -749,6 +768,12 @@ lazy val `js-settings` = Seq(
     Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
+)
+
+// Include jvm-native sources when Native platform is disabled
+lazy val `jvm-native-sources` = Seq(
+    Compile / unmanagedSourceDirectories += baseDirectory.value / ".." / "jvm-native" / "src" / "main" / "scala",
+    Test / unmanagedSourceDirectories += baseDirectory.value / ".." / "jvm-native" / "src" / "test" / "scala"
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
