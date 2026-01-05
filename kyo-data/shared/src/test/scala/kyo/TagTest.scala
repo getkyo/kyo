@@ -1042,6 +1042,12 @@ class TagTest extends Test:
             class Box[A]
             test[Box[1], Box[1.0]]
         }
+
+        "Null vs literals" - {
+            test[Null, 1]
+            test[Null, "A"]
+            test[List[Null], List["A"]]
+        }
     }
 
     "subtype and supertype with different type argument (bug #551)" - {
