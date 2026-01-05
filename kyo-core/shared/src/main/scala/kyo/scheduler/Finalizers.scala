@@ -7,16 +7,17 @@ import kyo.discard
 import org.jctools.queues.MpmcArrayQueue
 import scala.annotation.tailrec
 
-private[kyo] opaque type Finalizers = Finalizers.Absent.type | (Maybe[Error[Any]] => Unit) | ArrayDeque[Maybe[Error[Any]] => Unit]
+private type Finalizer              = Maybe[Error[Any]] => Unit
+private[kyo] opaque type Finalizers = Finalizers.Absent.type | Finalizer | ArrayDeque[Finalizer]
 
 private[kyo] object Finalizers:
     case object Absent derives CanEqual
 
     val empty: Finalizers = Absent
 
-    private val bufferCache = new MpmcArrayQueue[ArrayDeque[Maybe[Error[Any]] => Unit]](1024)
+    private val bufferCache = new MpmcArrayQueue[ArrayDeque[Finalizer]](1024)
 
-    private def buffer(): ArrayDeque[Maybe[Error[Any]] => Unit] =
+    private def buffer(): ArrayDeque[Finalizer] =
         Maybe(bufferCache.poll()).getOrElse(new ArrayDeque())
 
     extension (e: Finalizers)
@@ -26,35 +27,34 @@ private[kyo] object Finalizers:
         /** Adds a finalizer function. */
         def add(f: Maybe[Error[Any]] => Unit): Finalizers =
             (e: @unchecked) match
-                case e if e.isEmpty || e.equals(f) => f
-                case f0: (Maybe[Error[Any]] => Unit) @unchecked =>
+                case e if e.isEmpty || e.eq(f) => f
+                case f0: Finalizer @unchecked =>
                     val b = buffer()
                     b.add(f0)
                     b.add(f)
                     b
-                case arr: ArrayDeque[Maybe[Error[Any]] => Unit] @unchecked =>
-                    arr.add(f)
+                case arr: ArrayDeque[Finalizer] @unchecked if !arr.contains(f) =>
+                    arr.addLast(f)
                     arr
+                case arr: ArrayDeque[Finalizer] @unchecked => arr
 
         /** Removes a finalizer function by its object identity. */
         def remove(f: Maybe[Error[Any]] => Unit): Finalizers =
             (e: @unchecked) match
-                case e if e.equals(Absent) => e
-                case e if e.equals(f)      => Absent
-                case f: (Maybe[Error[Any]] => Unit) @unchecked =>
+                case e if e.isEmpty => e
+                case e if e.eq(f)   => Absent
+                case f: Finalizer @unchecked =>
                     f
-                case arr: ArrayDeque[Maybe[Error[Any]] => Unit] @unchecked =>
-                    @tailrec def loop(): Unit =
-                        if arr.remove(f) then loop()
-                    loop()
+                case arr: ArrayDeque[Finalizer] @unchecked =>
+                    arr.removeFirstOccurrence(f) // functions will only be added once
                     arr
 
         def run(ex: Maybe[Error[Any]]): Unit =
             (e: @unchecked) match
-                case e if e.equals(Absent) =>
+                case e if e.isEmpty =>
                 case f: (Maybe[Error[Any]] => Unit) @unchecked =>
                     f(ex)
-                case arr: ArrayDeque[Maybe[Error[Any]] => Unit] @unchecked =>
+                case arr: ArrayDeque[Finalizer] @unchecked =>
                     @tailrec def loop(): Unit =
                         arr.poll() match
                             case null =>
@@ -66,10 +66,10 @@ private[kyo] object Finalizers:
 
         def size(): Int =
             (e: @unchecked) match
-                case e if e.equals(Absent) => 0
-                case f: (Maybe[Error[Any]] => Unit) @unchecked =>
+                case e if e.isEmpty => 0
+                case f: Finalizer @unchecked =>
                     1
-                case arr: ArrayDeque[Maybe[Error[Any]] => Unit] @unchecked =>
+                case arr: ArrayDeque[Finalizer] @unchecked =>
                     arr.size()
     end extension
 end Finalizers
