@@ -385,7 +385,7 @@ object Tag:
                 aEntry match
                     case NothingEntry => true
                     case AnyEntry     => bEntry eq AnyEntry
-                    case NullEntry    => true
+                    case NullEntry    => !bEntry.isInstanceOf[LiteralEntry]
 
                     case IntersectionEntry(aSet) =>
                         bEntry match
