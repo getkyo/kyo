@@ -607,7 +607,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "dining philosophers" in runNotJS {
+        "dining philosophers" in run {
             val philosophers = 5
             (for
                 forks <- Kyo.fill(philosophers)(TRef.init(true))
@@ -637,7 +637,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "bank account transfers" in runNotJS {
+        "bank account transfers" in run {
             (for
                 account1 <- TRef.init(500)
                 account2 <- TRef.init(300)
@@ -687,7 +687,7 @@ class STMTest extends Test:
                 .andThen(succeed)
         }
 
-        "circular account transfers" in runNotJS {
+        "circular account transfers" in run {
             (for
                 account1 <- TRef.init(300)
                 account2 <- TRef.init(200)

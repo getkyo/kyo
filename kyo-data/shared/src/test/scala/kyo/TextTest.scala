@@ -661,9 +661,28 @@ class TextTest extends Test:
         }
 
         "dropUntilNext" in {
-            assert(Text("hello123world").dropUntilNext(_.isLetter).toString == "23world")
+            assert(Text("hello123world").dropUntilNext(_.isLetter).toString == "123world")
             assert(Text("hello").dropUntilNext(_.isLetter).isEmpty)
             assert(Text("").dropUntilNext(_.isLetter).isEmpty)
+        }
+    }
+
+    "toChunk" - {
+        "string" in {
+            assert(Text("").toChunk == Chunk.empty)
+            assert(Text("123").toChunk == Chunk('1', '2', '3'))
+        }
+
+        "cut" in {
+            assert(Text("123abc").drop(3).toChunk == Chunk('a', 'b', 'c'))
+        }
+
+        "concat" in {
+            assert((Text("123") + Text("abc")).toChunk == Chunk('1', '2', '3', 'a', 'b', 'c'))
+        }
+
+        "reverse" in {
+            assert(Text("321").reverse.toChunk == Chunk('1', '2', '3'))
         }
     }
 

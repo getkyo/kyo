@@ -36,6 +36,7 @@ Kyo is structured as a monorepo, published to Maven Central:
 | kyo-data        | ✅   | ✅   | ✅      | Efficient `Maybe`, `Result`, `Duration`, and other data types |
 | kyo-kernel      | ✅   | ✅   | ✅      | Core algebraic effects engine and type-level effect tracking  |
 | kyo-prelude     | ✅   | ✅   | ✅      | Pure effects: `Abort`, `Env`, `Var`, `Emit`, `Choice`, etc.   |
+| kyo-parse       | ✅   | ✅   | ✅      | Effects for parsing                                           |
 | kyo-core        | ✅   | ✅   | ✅      | Side-effectful computations: `Sync`, `Async`, `Scope`, etc.   |
 | kyo-direct      | ✅   | ✅   | ✅      | Direct-style syntax using `.await` and control flow           |
 | kyo-combinators | ✅   | ✅   | ✅      | ZIO-like effect combinators and utility methods               |
@@ -138,6 +139,10 @@ These flags help catch three common issues in Kyo applications:
 ### The "Pending" type: `<`
 
 In Kyo, computations are expressed via the infix type `<`, known as "Pending". It takes two type parameters:
+
+```scala 
+opaque type <[+A, -S]
+```
 
 1. `A` - The type of the expected output.
 2. `S` - The pending effects that need to be handled. Effects are represented by an unordered type-level set via a type intersection.
@@ -2229,6 +2234,87 @@ val command = Process.Command("my-command")
 
 The `Process` type returned by `spawn` provides methods for interacting with the spawned process, such as `waitFor`, `exitValue`, `destroy`, and `isAlive`.
 
+### Parse: Syntactic and lexical analysis
+
+`Parse` provides a way to transform a sequence of tokens (typically chars if the input is textual) into data structures such as an AST by doing lexical/syntactic analysis. `Parse` provides many combinators to build complex parsers upon basic ones.
+
+```scala
+import kyo.*
+
+def term: Int < Parse[Char] =
+    Parse.firstOf(
+        Parse.int,
+        Parse.between(
+            Parse.literal('('),
+            expr,
+            Parse.literal(')')
+        )
+    )
+
+def expr: Int < Parse[Char] =
+    Parse.firstOf(
+        for
+            left  <- term
+            _     <- Parse.require(Parse.literal('+'))
+            right <- expr
+        yield left + right,
+        term
+    )
+
+val parser: Int < Parse[Char] = Parse.entireInput(expr)
+
+Parse.runResult("1")(parser)       // 1
+Parse.runResult("1+2")(parser)     // 3
+Parse.runResult("1+(4+5)")(parser) // 10
+Parse.runResult("1*2")(parser)     // Error: Expected: +, Got: * at position 1
+```
+
+Unlike most parsing combinators libraries, Kyo's `Parse` provides ways to accumulate errors and recover from them.
+
+```scala
+import kyo.*
+
+val array: Chunk[Int] < Parse[Char] = Parse.entireInput(
+    Parse.between(
+        Parse.literal('['),
+        Parse.separatedBy(
+            Parse.recoverWith(
+                Parse.int,
+                RecoverStrategy.skipThenRetryUntil(Parse.any, Parse.literal(','))
+            ),
+            Parse.literal(',')
+        ),
+        Parse.literal(']')
+    )
+)
+
+Parse.runResult("[]")(array)      // Chunk()
+Parse.runResult("[1,2,3]")(array) // Chunk(1, 2, 3)
+
+/*
+Errors:
+- Invalid int at position 1
+- Invalid int at position 5
+
+Recovered result: Chunk(2, 4)
+*/
+Parse.runResult("[a,2,c,4]")(array)
+```
+
+`Parse.runResult` returns a `ParseResult` which contains both errors and a `Maybe` of the result. Note that it is possible to have both errors and an output in the case of a recovered output like in the last example.
+
+`Parse` also provides `runOrAbort` to abort if the parsing was, entirely or partially, unsuccessful.
+
+```scala mdoc:nest
+Abort.run(Parse.runOrAbort("[1,2,3]")(array)) //Chunk(1, 2, 3)
+Abort.run(Parse.runOrAbort("[1,a,3]")(array)) //Failure
+
+array.handle(
+    Parse.runOrAbort("[1,2,3]"),
+    Abort.run
+) //Chunk(1, 2, 3)
+```
+
 ## Concurrent Effects
 
 The kyo-core module provides utilities for dealing with concurrency in Scala applications. It's a powerful set of effects designed for easier asynchronous programming, built on top of other core functionalities provided by the `kyo` package.
@@ -3569,7 +3655,7 @@ Being more modular than ZIO, Kyo separates effect constructors in the companion 
 
 ### Simple example
 
-```scala 3
+```scala mdoc:skip
 import kyo.*
 import scala.concurrent.duration.*
 import java.io.IOException

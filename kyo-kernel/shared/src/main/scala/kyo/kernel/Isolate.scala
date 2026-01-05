@@ -77,7 +77,7 @@ import scala.quoted.*
   * @tparam Restore
   *   Effects that become available after isolation completes
   */
-abstract class Isolate[Remove, -Keep, Restore]:
+abstract class Isolate[Remove, -Keep, -Restore]:
     self =>
 
     /** The type of state being managed */
@@ -123,6 +123,24 @@ abstract class Isolate[Remove, -Keep, Restore]:
       *   Final result with Restore and additional effects
       */
     def restore[A, S](v: Transform[A] < S)(using Frame): A < (Restore & S)
+
+    /** Isolates 'Remove' effects while exposing them as nested 'Restore' effects.
+      *
+      * This method "tunnels" the Remove effects through the isolation, transforming them into 'Restore' effects that appear nested in the
+      * result type. Unlike 'run' which directly applies the 'Restore' effects, 'nest' preserves them as a nested effect layer.
+      *
+      * This is useful when you want to isolate effects for a specific operation but need to control when and how the resulting 'Restore'
+      * effects are applied in your program.
+      *
+      * @param v
+      *   The computation containing effects to tunnel through isolation
+      * @return
+      *   A computation with 'Restore' effects nested in the result type
+      */
+    def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
+        capture { state =>
+            isolate(state, v).map(r => Kyo.lift(restore(r)))
+        }
 
     /** Runs a computation with full state lifecycle management.
       *
@@ -199,7 +217,10 @@ object Isolate:
       *   - Only derive if isolates exist for all non-Keep effects in Remove
       *   - Compose isolates using andThen in the order they appear
       */
-    inline given derive[Remove, Keep, Restore]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
+    inline def derive[Remove, Keep, Restore]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
+
+    // `Restore <: Remove` is used to help with implicit resolution. Without it, the compiler infers `Restore` as `Any` in some cases.
+    inline given [Remove, Keep, Restore <: Remove]: Isolate[Remove, Keep, Restore] = ${ deriveImpl[Remove, Keep, Restore] }
 
     private[kyo] object internal:
 
@@ -288,6 +309,10 @@ object Isolate:
                         |   isolate.use {
                         |     Async.parallel(parallelism)(tasks)
                         |   }
+                        |
+                        |Failed to materialize `Isolate[${TypeRepr.of[Remove].show}, ${TypeRepr.of[Keep].show}, ${TypeRepr.of[
+                           Restore
+                       ].show}]`.
                         |""".stripMargin
                 )
             end if

@@ -11,26 +11,29 @@ concurrency:
 jobs:
   build:
     runs-on: build
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         target:
           - { name: "JVM", command: "sbt '+kyoJVM/testQuick'" }
           - { name: "JS", command: "sbt '+kyoJS/testQuick'" }
-          - { name: "Native", command: "sbt '+kyoNative/Test/compile'" }
+          - { name: "Native", command: "sbt '+kyoNative/testQuick'" }
     env:
       JAVA_OPTS: -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
       JVM_OPTS:  -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: coursier/cache-action@v6 
+    - uses: actions/checkout@v6
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+    - uses: coursier/cache-action@v7 
     - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y libcurl4-openssl-dev libidn2-0-dev
-    - uses: coursier/setup-action@v1
+    - uses: coursier/setup-action@v2
       with:
         jvm: corretto:24
         apps: sbt
