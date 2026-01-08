@@ -5,9 +5,9 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.7.2"
+val scala3Version    = "3.7.3"
 val scala3LTSVersion = "3.3.6"
-val scala213Version  = "2.13.16"
+val scala213Version  = "2.13.17"
 
 val zioVersion       = "2.1.17"
 val catsVersion      = "3.6.1"
