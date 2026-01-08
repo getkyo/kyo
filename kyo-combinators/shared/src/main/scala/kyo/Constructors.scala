@@ -37,7 +37,10 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that can be completed by the given register function
       */
-    def async[A, E](register: (A < (Abort[E] & Async) => Unit) => Any < (Abort[E] & Async))(using Frame): A < (Abort[E] & Async) =
+    def async[A, E](register: (A < (Abort[E] & Async) => Unit) => Any < (Abort[E] & Async))(using
+        Frame,
+        Tag[Abort[E]]
+    ): A < (Abort[E] & Async) =
         for
             promise <- Promise.init[A, Abort[E]]
             registerFn = (eff: A < (Abort[E] & Async)) =>
@@ -88,7 +91,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that fails with the given error
       */
-    def fail[E](error: => E)(using Frame): Nothing < Abort[E] =
+    def fail[E](error: => E)(using Frame, Tag[Abort[E]]): Nothing < Abort[E] =
         Abort.fail(error)
 
     /** Applies a function to each element in parallel and returns a new sequence with the results.
@@ -143,7 +146,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles Left[E] to Abort[E].
       */
-    def fromEither[E, A](either: Either[E, A])(using Frame): A < Abort[E] =
+    def fromEither[E, A](either: Either[E, A])(using Frame, Tag[Abort[E]]): A < Abort[E] =
         Abort.get(either)
 
     /** Creates an effect from an Option[A] and handles None to Abort[Absent].
@@ -173,7 +176,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles Result.Failure[E] to Abort[E].
       */
-    def fromResult[E, A](result: Result[E, A])(using Frame): A < Abort[E] =
+    def fromResult[E, A](result: Result[E, A])(using Frame, Tag[Abort[E]]): A < Abort[E] =
         Abort.get(result)
 
     /** Creates an effect from a Future[A] and handles the Future to Async.

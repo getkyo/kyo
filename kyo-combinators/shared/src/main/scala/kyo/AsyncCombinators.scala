@@ -61,6 +61,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     def &>[A1, E1, S2, S3](next: A1 < (Abort[E1] & Async & S2))(
         using
         fr: Frame,
+        tag1: Tag[Abort[E]],
+        tag2: Tag[Abort[E1]],
         i1: Isolate[S, Sync, S3],
         i2: Isolate[S2, Sync, S3]
     ): A1 < (Abort[E | E1] & Async & S & S2 & S3) =
@@ -82,6 +84,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     def <&[A1, E1, S2, S3](next: A1 < (Abort[E1] & Async & S2))(
         using
         f: Frame,
+        tag1: Tag[Abort[E]],
+        tag2: Tag[Abort[E1]],
         i1: Isolate[S, Sync, S3],
         i2: Isolate[S2, Sync, S3]
     ): A < (Abort[E | E1] & Async & S & S2 & S3) =
@@ -103,6 +107,8 @@ extension [A, E, S](effect: A < (Abort[E] & Async & S))
     def <&>[A1, E1, S2, S3](next: A1 < (Abort[E1] & Async & S2))(
         using
         fr: Frame,
+        tag1: Tag[Abort[E]],
+        tag2: Tag[Abort[E1]],
         i1: Isolate[S, Sync, S3],
         i2: Isolate[S2, Sync, S3],
         zippable: Zippable[A, A1]
@@ -123,7 +129,7 @@ extension [A, E, S, S2](fiber: Fiber[A, Abort[E] & S2] < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def join(using Frame): A < (S & S2 & Abort[E] & Async) =
+    def join(using Frame, Tag[Abort[E]]): A < (S & S2 & Abort[E] & Async) =
         fiber.map(_.get)
 
     /** Awaits the completion of the fiber and returns its result as a `Unit`.

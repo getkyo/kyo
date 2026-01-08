@@ -25,7 +25,8 @@ object ZStreams:
     def get[E, A](stream: => ZStream[Any, E, A])(using
         Frame,
         Trace,
-        Tag[Emit[Chunk[A]]]
+        Tag[Emit[Chunk[A]]],
+        Tag[Abort[E]]
     ): Stream[A, Abort[E] & Async] =
         Stream:
             Sync.defer {
