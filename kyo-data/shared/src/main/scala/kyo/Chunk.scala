@@ -1,6 +1,7 @@
 package kyo
 
 import Chunk.Indexed
+import java.util.Arrays
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableFactoryDefaults
@@ -474,7 +475,7 @@ sealed abstract class Chunk[+A]
                     case c: Compact[A] @unchecked =>
                         val l = c.array.length
                         if l > 0 then
-                            System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
+                            Array.copy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
                     case c: FromSeq[A] @unchecked =>
                         val seq    = c.value
                         val length = Math.min(end, c.value.length - dropLeft - dropRight)
