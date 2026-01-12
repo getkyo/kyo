@@ -49,7 +49,9 @@ object KyoApp:
     def runAndBlock[E, A, S](
         using isolate: Isolate[S, Sync, Any]
     )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
+        using
+        frame: Frame,
+        t: Tag[Abort[E | Timeout]]
     ): A < (Abort[E | Timeout] & Sync & S) =
         Fiber.initUnscoped(v).map { fiber =>
             fiber.block(timeout).map(Abort.get(_))

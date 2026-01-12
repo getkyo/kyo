@@ -103,6 +103,27 @@ class KyoAppTest extends Test:
             case _                                           => fail("Unexpected Success...")
     }
 
+    "env" in runNotJS {
+        type F1[S] = (Int, String) => String < S
+        type F2[S] = String => Int < S
+
+        def f1Impl(num: Int, str: String): String < Async = num.toString + str
+        def f2Impl(str: String): Int < Abort[String] = str.toIntOption match
+            case Some(num) => num
+            case None      => Abort.fail(str)
+
+        def fn[S](num: Int, str: String) =
+            for
+                str <- Env.use[F1[S]](_(num, str))
+                res <- Env.use[F2[S]](_(str))
+            yield res
+
+        object Main extends KyoApp:
+            run:
+                Env.run(f1Impl)(Env.run(f2Impl)(Abort.run[String](fn(4, "something"))))
+        Main.main(Array.empty)
+        succeed
+    }
     "effect mismatch" in {
         typeCheckFailure("""
             new KyoApp:

@@ -16,6 +16,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def result(
         using
         ct: ConcreteTag[E],
+        t: Tag[Abort[E]],
         fr: Frame
     ): Result[E, A] < S =
         Abort.run[E](effect)
@@ -28,7 +29,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def resultPartial(
         using
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): Result.Partial[E, A] < (Abort[Nothing] & S) =
         Abort.runPartial(effect)
 
@@ -40,7 +42,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def resultPartialOrThrow(
         using
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): Result.Partial[E, A] < S =
         Abort.runPartialOrThrow(effect)
 
@@ -55,7 +58,9 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         ct: ConcreteTag[E],
         ct1: ConcreteTag[E1],
-        fr: Frame
+        fr: Frame,
+        tag1: Tag[Abort[E1]],
+        tag2: Tag[Abort[E]]
     ): A < (Abort[E1] & S & S1) =
         effect.recover(e => fn(e).map(Kyo.fail))
 
@@ -94,7 +99,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def abortToChoiceDrop(
         using
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): A < (S & Choice) =
         effect.result.map(result => result.foldError(value => Choice.eval(value), _ => Choice.drop))
 
@@ -106,7 +112,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def abortToAbsent(
         using
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): A < (S & Abort[Absent]) =
         effect.result.map {
             case Result.Failure(_) => Abort.fail(Absent)
@@ -124,13 +131,14 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         ng: NotGiven[E <:< Throwable],
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): A < (S & Abort[Throwable]) =
         effect.result.map {
             case Result.Success(a)              => a
-            case Result.Failure(thr: Throwable) => Abort.fail(thr)
-            case Result.Failure(err)            => Abort.fail(PanicException(err))
-            case p: Result.Panic                => Abort.get(p)
+            case Result.Failure(thr: Throwable) => Abort.fail[Throwable](thr)
+            case Result.Failure(err)            => Abort.fail[Throwable](PanicException(err))
+            case p: Result.Panic                => Abort.get[Throwable](p)
         }
 
     /** Handles the Abort effect and applies a recovery function to the error.
@@ -141,6 +149,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def recover[A1 >: A, S1](fn: E => A1 < S1)(
         using
         ct: ConcreteTag[E],
+        tag: Tag[Abort[E]],
         fr: Frame
     ): A1 < (S & S1 & Abort[Nothing]) =
         effect.result.map {
@@ -169,7 +178,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     )(
         using
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): B < (Abort[Nothing] & S & S1) =
         Abort.fold[E](onSuccess, onFail)(effect)
 
@@ -196,7 +206,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     )(
         using
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): B < (S & S1) =
         Abort.fold[E](onSuccess, onFail, onPanic)(effect)
 
@@ -220,7 +231,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     )(
         using
         ct: ConcreteTag[E],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E]]
     ): B < (S & S1) =
         Abort.foldOrThrow(onSuccess, onFail)(effect)
 
@@ -232,7 +244,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def recoverSome[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
         using
         ct: ConcreteTag[E],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E]]
     ): A1 < (S & S1 & Abort[E]) =
         effect.result.map {
             case Result.Failure(e) =>
@@ -251,10 +264,12 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         cta: ConcreteTag[A],
         cte: ConcreteTag[E],
-        frame: Frame
+        frame: Frame,
+        tag1: Tag[Abort[A]],
+        tag2: Tag[Abort[E]]
     ): E < (S & Abort[A]) =
         val handled: Result[E, A] < S = effect.result
-        handled.map((v: Result[E, A]) => Abort.get(v.swap))
+        handled.map((v: Result[E, A]) => Abort.get[A](v.swap))
     end swapAbort
 
     /** Converts all Aborts to Panic, wrapping non-Throwable Failures in PanicException
@@ -265,7 +280,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def orPanic(
         using
         ct: ConcreteTag[E],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E]]
     ): A < (Abort[Nothing] & S) =
         Abort.run[E](effect).map:
             case Result.Success(v)              => v
@@ -285,7 +301,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def orThrow(
         using
         ct: ConcreteTag[E],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E]]
     ): A < S =
         Abort.run[E](effect).map:
             case Result.Success(v)              => v
@@ -301,7 +318,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and Abort[E] effects
       */
-    def retry(schedule: Schedule)(using ConcreteTag[E], Frame): A < (S & Async & Abort[E]) =
+    def retry(schedule: Schedule)(using ConcreteTag[E], Frame, Tag[Abort[E]]): A < (S & Async & Abort[E]) =
         Retry[E](schedule)(effect)
 
     /** Performs this computation repeatedly with a limit in case of failures.
@@ -311,7 +328,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and Abort[E] effects
       */
-    def retry(n: Int)(using ConcreteTag[E], Frame): A < (S & Abort[E]) =
+    def retry(n: Int)(using ConcreteTag[E], Frame, Tag[Abort[E]]): A < (S & Abort[E]) =
         Loop(n): i =>
             Abort.fold[E](
                 (result: A) => Loop.done[Int, A](result),
@@ -330,7 +347,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Async and no Abort[E]
       */
-    def retryForever(using ConcreteTag[E], Frame): A < S =
+    def retryForever(using ConcreteTag[E], Frame, Tag[Abort[E]]): A < S =
         Loop.foreach:
             Abort.fold[E](
                 (result: A) => Loop.done[Unit, A](result),
@@ -374,7 +391,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: ConcreteTag[E1],
         reduce: Reducible[Abort[ER]],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]]
     ): Result[E1, A] < (S & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
@@ -387,7 +405,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ev: E => E1 | ER,
         ct: ConcreteTag[E1],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]]
     ): Result.Partial[E1, A] < (S & Abort[ER]) =
         Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
@@ -404,9 +423,19 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ct: ConcreteTag[E1],
         ct1: ConcreteTag[E2],
         reduce: Reducible[Abort[ER]],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E2]],
+        tag1: Tag[Abort[E1]],
+        tagE: Tag[Abort[E]],
+        tagER: Tag[Abort[ER]]
     ): A < (Abort[E2] & reduce.SReduced & S & S1) =
-        recover(e => fn(e).map(Kyo.fail))
+        Abort.run[Any](effect.asInstanceOf[A < (Abort[Any] & S)]).map {
+            case Result.Success(v)                  => v
+            case Result.Failure(e) if ct.accepts(e) => fn(e.asInstanceOf[E1]).map(e2 => Abort.fail[E2](e2))
+            case Result.Failure(e)                  => Abort.fail[ER](e.asInstanceOf[ER])
+            case panic: Result.Panic                => Abort.error[Nothing](panic)
+        }.asInstanceOf[A < (Abort[E2] & reduce.SReduced & S & S1)]
+    end mapAbort
 
     /** Handles the partial Abort[E1] effect and applies a recovery function to the error.
       *
@@ -418,14 +447,17 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
         ct: ConcreteTag[E1],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]],
+        tagE: Tag[Abort[E]],
+        tagER: Tag[Abort[ER]]
     ): [A1 >: A, S1] => (E1 => A1 < S1) => A1 < (S & S1 & reduce.SReduced) =
         [A1 >: A, S1] =>
             (fn: E1 => A1 < S1) =>
                 reduce(Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
-                    case Result.Failure(e1)   => fn(e1)
-                    case Result.Success(v)    => v
-                    case ab @ Result.Panic(_) => Abort.get(ab.asInstanceOf[Result[Nothing, Nothing]])
+                    case Result.Failure(e1) => fn(e1)
+                    case Result.Success(v)  => v
+                    case ab: Result.Panic   => Abort.get[Nothing](ab)
                 })
 
     /** Recovers from an Abort failure by applying the provided function.
@@ -447,11 +479,21 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         onFail: E1 => B < S1
     )(
         using
-        ct: ConcreteTag[E1],
+        ct1: ConcreteTag[E1],
+        ct2: ConcreteTag[E],
         ev: E => E1 | ER,
+        t1: Tag[Abort[E]],
+        t2: Tag[Abort[ER]],
+        tagE1: Tag[Abort[E1]],
         fr: Frame
     ): B < (S & S1 & Abort[ER]) =
-        Abort.fold[E1](onSuccess, onFail)(effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
+        Abort.run[Any](effect.asInstanceOf[A < (Abort[Any] & S)]).map {
+            case Result.Success(v)                   => onSuccess(v)
+            case Result.Failure(e) if ct1.accepts(e) => onFail(e.asInstanceOf[E1])
+            case Result.Failure(e)                   => Abort.fail[ER](e.asInstanceOf[ER])
+            case panic: Result.Panic                 => Abort.error[Nothing](panic)
+        }.asInstanceOf[B < (S & S1 & Abort[ER])]
+    end fold
 
     /** Recovers from an Abort failure by applying the provided function.
       *
@@ -478,7 +520,9 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ct: ConcreteTag[E1],
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
-        fr: Frame
+        fr: Frame,
+        tag1: Tag[Abort[E1]],
+        tag2: Tag[Abort[ER]]
     ): B < (S & S1 & reduce.SReduced) =
         Abort.fold[E1](onSuccess, onFail, onPanic)(effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
@@ -491,7 +535,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ev: E => E1 | ER,
         ct: ConcreteTag[E1],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]]
     ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Abort[E]) =
         [A1 >: A, S1] =>
             (fn: PartialFunction[E1, A1 < S1]) =>
@@ -511,7 +556,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: ConcreteTag[E1],
         reduce: Reducible[Abort[ER]],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]]
     ): A < (S & reduce.SReduced & Choice) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(result =>
             result.foldError(value => Choice.eval(value), _ => Choice.drop)
@@ -527,12 +573,13 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: ConcreteTag[E1],
         reduce: Reducible[Abort[ER]],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]]
     ): A < (S & reduce.SReduced & Abort[Absent]) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
-            case Result.Failure(_)     => Abort.get(Result.Failure(Absent))
-            case p @ Result.Panic(_)   => Abort.get(p.asInstanceOf[Result[Nothing, Nothing]])
-            case s @ Result.Success(_) => Abort.get(s.asInstanceOf[Result[Nothing, A]])
+            case _: Result.Failure[?]  => Abort.fail(Absent)
+            case p: Result.Panic       => Abort.get[Absent](p)
+            case Result.Success(value) => value
         }
 
     /** Translates the partial Abort[E1] effect to an Abort[Throwable] effect in case of failure, by converting non-throwable errors to
@@ -547,13 +594,14 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         ct: ConcreteTag[E1],
         reduce: Reducible[Abort[ER]],
-        fr: Frame
+        fr: Frame,
+        tag: Tag[Abort[E1]]
     ): A < (S & Abort[Throwable] & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
             case Result.Success(a)              => a
-            case Result.Failure(thr: Throwable) => Abort.fail(thr)
-            case Result.Failure(err)            => Abort.fail(PanicException(err))
-            case p: Result.Panic                => Abort.get(p)
+            case Result.Failure(thr: Throwable) => Abort.fail[Throwable](thr)
+            case Result.Failure(err)            => Abort.fail[Throwable](PanicException(err))
+            case p: Result.Panic                => Abort.get[Throwable](p)
         }
 
     /** Translates the partial Abort[E1] effect by swapping the error and success types.
@@ -566,10 +614,12 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
         ct: ConcreteTag[E1],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]],
+        tag2: Tag[Abort[A]]
     ): E1 < (S & reduce.SReduced & Abort[A]) =
         val handled = Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
-        handled.map((v: Result[E1, A]) => Abort.get(v.swap))
+        handled.map((v: Result[E1, A]) => Abort.get[A](v.swap))
     end swap
 
     /** Catches partial Abort and panics instead
@@ -581,7 +631,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         ev: E => E1 | ER,
         ct: ConcreteTag[E1],
-        frame: Frame
+        frame: Frame,
+        tag: Tag[Abort[E1]]
     ): A < (S & Abort[ER]) =
         Abort.runPartial[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
             case Result.Success(v)              => v
@@ -600,6 +651,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         E => E1 | ER,
         ConcreteTag[E1],
+        Tag[Abort[E1]],
+        Tag[Abort[ER]],
         Frame
     ): A < (S & Async & Abort[E1 | ER]) =
         Retry[E1](schedule)(effect.asInstanceOf[A < (S & Abort[E1 | ER])])
@@ -616,6 +669,8 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         using
         E => E1 | ER,
         ConcreteTag[E1],
+        Tag[Abort[E1]],
+        Tag[Abort[ER]],
         Frame
     ): A < (S & Abort[E1 | ER]) =
         val retypedEffect = effect.asInstanceOf[A < (S & Abort[E1 | ER])]
@@ -641,7 +696,9 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         E => E1 | ER,
         ConcreteTag[E1],
         ConcreteTag[E1 | ER],
-        Frame
+        Frame,
+        Tag[Abort[E1]],
+        Tag[Abort[ER]]
     ): A < (S & Abort[ER]) =
         val retypedEffect = effect.asInstanceOf[A < (S & Abort[E1 | ER])]
         Loop.foreach:

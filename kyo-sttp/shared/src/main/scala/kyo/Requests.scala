@@ -78,7 +78,10 @@ object Requests:
       * @return
       *   The response body wrapped in an effect
       */
-    def apply[E, A](f: BasicRequest => Request[Either[E, A], Any])(using Frame): A < (Async & Abort[FailedRequest | E]) =
+    def apply[E, A](f: BasicRequest => Request[Either[E, A], Any])(using
+        Frame,
+        Tag[Abort[FailedRequest | E]]
+    ): A < (Async & Abort[FailedRequest | E]) =
         request(f(basicRequest))
 
     /** Sends an HTTP request
@@ -92,7 +95,7 @@ object Requests:
       * @return
       *   The response body wrapped in an effect
       */
-    def request[E, A](req: Request[Either[E, A], Any])(using Frame): A < (Async & Abort[FailedRequest | E]) =
+    def request[E, A](req: Request[Either[E, A], Any])(using Frame, Tag[Abort[FailedRequest | E]]): A < (Async & Abort[FailedRequest | E]) =
         local.use(_.send(req)).map { r =>
             Abort.get(r.body)
         }
