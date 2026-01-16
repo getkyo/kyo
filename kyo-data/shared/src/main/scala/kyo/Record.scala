@@ -130,6 +130,30 @@ final class Record[+Fields] private (val toMap: Map[Field[?, ?], Any]) extends A
         selectDynamic[Name, Value](name.value.asInstanceOf[Name])
     end getField
 
+    /** Retrieves a value from the Record by a Field instance with subtyping support.
+      *
+      * This method finds a field matching by name and tag subtyping, handling cases where the stored tag may differ from the requested tag
+      * due to compilation context.
+      *
+      * @param field
+      *   The Field to look up
+      * @return
+      *   The value associated with the field
+      * @throws NoSuchElementException
+      *   if the field is not found or has incompatible type
+      */
+    def getByField[Name <: String, Value](field: Field[Name, Value]): Value =
+        toMap.get(field) match
+            case Some(value) => value.asInstanceOf[Value]
+            case None =>
+                toMap.collectFirst {
+                    case (f, value) if f.name == field.name && (f.tag <:< field.tag) =>
+                        value.asInstanceOf[Value]
+                }.getOrElse {
+                    throw new NoSuchElementException(s"Field '${field.name}' not found or incompatible type")
+                }
+    end getByField
+
     /** Combines this Record with another Record.
       *
       * @param other
