@@ -53,9 +53,9 @@ private[kyo] object TagMacro:
                     case true => tpe
                     case false =>
                         seen.get(tpe.typeSymbol) match
-                            case None                          => tpe.typeSymbol
-                            case Some((t, _)) if t.equals(tpe) => tpe.typeSymbol
-                            case _                             => tpe
+                            case None                      => tpe.typeSymbol
+                            case Some((t, _)) if t =:= tpe => tpe.typeSymbol
+                            case _                         => tpe
             if seen.contains(key) then
                 seen(key)._2
             else
