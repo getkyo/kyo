@@ -203,6 +203,16 @@ object TTable:
 
         def indexFields: Set[Field[?, ?]] = indexes.keySet
 
+        // Finds an index by field name and subtyping, handling Tag string differences
+        private def findIndex(field: Field[?, ?]): TMap[Any, Set[Int]] =
+            indexes.get(field).getOrElse {
+                indexes.collectFirst {
+                    case (f, idx) if f.name == field.name && (f.tag <:< field.tag) => idx
+                }.getOrElse {
+                    throw new NoSuchElementException(s"Index for field '${field.name}' not found")
+                }
+            }
+
         private inline val indexMismatch = """
             Cannot query on fields that are not indexed.
             The filter contains fields that are not part of the table's index configuration.
@@ -226,7 +236,7 @@ object TTable:
             frame: Frame
         ): Chunk[Id] < STM =
             Kyo.foreach(filter.toMap.toSeq) { (field, value) =>
-                indexes(field).getOrElse(value, Set.empty)
+                findIndex(field).getOrElse(value, Set.empty)
             }.map { r =>
                 if r.isEmpty then Chunk.empty
                 else Chunk.from(r.reduce(_ intersect _).toSeq.sorted.map(unsafeId(_)))
@@ -255,9 +265,8 @@ object TTable:
         end query
 
         private def updateIndexes(id: Id, record: Record[Fields])(using Frame): Unit < STM =
-            val map = record.toMap
             Kyo.foreachDiscard(indexes.toSeq) { case (field, idx) =>
-                idx.updateWith(map(field)) {
+                idx.updateWith(record.getByField(field)) {
                     case Absent     => Maybe(Set(id))
                     case Present(c) => Maybe(c + id)
                 }
@@ -265,9 +274,8 @@ object TTable:
         end updateIndexes
 
         private def removeFromIndexes(id: Id, record: Record[Fields])(using Frame): Unit < STM =
-            val map = record.toMap
             Kyo.foreachDiscard(indexes.toSeq) { case (field, idx) =>
-                idx.updateWith(map(field)) {
+                idx.updateWith(record.getByField(field)) {
                     case Absent     => Absent
                     case Present(c) => Maybe(c - id)
                 }

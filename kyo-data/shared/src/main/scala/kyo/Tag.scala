@@ -41,6 +41,12 @@ object Tag:
 
     import internal.*
 
+    // CanEqual instance for Tag - enables == comparisons between Tags
+    //
+    // With deterministic tag string generation (entries sorted by ID, parents sorted by full name),
+    // tag == now works correctly for equivalent types. This CanEqual instance enables the comparisons.
+    given [A, B]: CanEqual[Tag[A], Tag[B]] = CanEqual.derived
+
     /** Retrieves a Tag for type A using an implicit Tag parameter. This method is useful for passing Tags as parameters.
       *
       * @tparam A
@@ -578,8 +584,14 @@ object Tag:
                     case OpaqueEntry(_, _, _, _, params) if params.isEmpty => "*"
                     case _                                                 => "."
 
+            // Sort entries by ID to ensure deterministic encoding order
+            // This fixes non-deterministic Tag string generation in Scala 3.8.0-RC4
+            // where HashMap iteration order could vary, causing == to fail even for equivalent types
+            // Use string comparison for robustness (IDs are strings, may not always be numeric)
+            val sortedEntries = staticDB.toSeq.sortBy(_._1)
+
             concreteFlag +
-                staticDB.map { (id, entry) =>
+                sortedEntries.map { (id, entry) =>
                     s"$id:${encodeEntry(entry)}"
                 }.mkString("\n")
         end encode

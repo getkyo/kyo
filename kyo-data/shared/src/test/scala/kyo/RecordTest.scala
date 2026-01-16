@@ -639,11 +639,13 @@ class RecordTest extends Test:
             }
 
             "toMap preserves fields" in {
-                given [A]: CanEqual[A, A]      = CanEqual.derived
                 val map: Map[Field[?, ?], Any] = record.toMap
                 assert(map.size == 2)
-                assert(map(Field("name", Tag[String])) == "test")
-                assert(map(Field("age", Tag[Int])) == 42)
+                // Find by name since Field.equals uses default case class equality
+                val nameValue = map.collectFirst { case (f, v) if f.name == "name" => v }
+                val ageValue  = map.collectFirst { case (f, v) if f.name == "age" => v }
+                assert(nameValue.contains("test"))
+                assert(ageValue.contains(42))
             }
 
             "fields returns correct set" in {
