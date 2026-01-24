@@ -253,7 +253,7 @@ lazy val `kyo-scheduler-finagle` =
             `kyo-settings`,
             libraryDependencies ++= {
                 if (scalaVersion.value == scala213Version)
-                    Seq("com.twitter" %% "finagle-core" % "24.5.0")
+                    Seq("com.twitter" %% "finagle-core" % "24.2.0")
                 else
                     Seq.empty
             },
