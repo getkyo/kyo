@@ -5,7 +5,7 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.7.2"
+val scala3Version    = "3.8.1"
 val scala3LTSVersion = "3.3.7"
 val scala213Version  = "2.13.18"
 
@@ -23,7 +23,7 @@ val compilerOptions = Set(
     ScalacOptions.warnValueDiscard,
     ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
-    ScalacOptions.release("11"),
+    ScalacOptions.release("17"),
     ScalacOptions.advancedKindProjector
 )
 
