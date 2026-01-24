@@ -8,6 +8,7 @@ import kyo.*
 import kyo.Scope
 import kyo.bench.arena.ArenaBench
 import kyo.grpc.Grpc
+import kyo.grpc.SafeMetadata
 import org.openjdk.jmh.annotations.*
 import scala.compiletime.uninitialized
 import scalapb.zio_grpc.Server
@@ -32,7 +33,7 @@ class GrpcE2EUnaryBench extends ArenaBench.ForkOnly(response):
 
     override def kyoBenchFiber(): Response < (Async & Abort[Throwable]) =
         Scope.run:
-            Env.run(Metadata()):
+            Env.run(SafeMetadata.empty):
                 for
                     _      <- createKyoServer(port, static = false)
                     client <- createKyoClient(port)

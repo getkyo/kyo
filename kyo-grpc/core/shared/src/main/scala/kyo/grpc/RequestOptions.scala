@@ -1,28 +1,25 @@
 package kyo.grpc
 
-import io.grpc.Metadata
-import io.grpc.ServerCall
 import kyo.*
 import kyo.grpc.RequestOptions.DefaultResponseCapacity
-import kyo.grpc.internal.mergeIfDefined
 
-// TODO: What to call this?
-// TODO: Is this safe? Metadata is not thread-safe. We use it in Vars but I think that is OK?
-// TODO: Provide nicer Metadata.
 final case class RequestOptions(
-    headers: Maybe[Metadata] = Maybe.empty,
+    headers: SafeMetadata = SafeMetadata.empty,
     messageCompression: Maybe[Boolean] = Maybe.empty,
     responseCapacity: Maybe[Int] = Maybe.empty
 ):
 
-    // TODO: Delete?
     def combine(that: RequestOptions)(using Frame): RequestOptions < Sync =
-        this.headers.mergeIfDefined(that.headers).map: mergedHeaders =>
-            RequestOptions(
-                headers = mergedHeaders,
-                messageCompression = that.messageCompression.orElse(this.messageCompression),
-                responseCapacity = that.responseCapacity.orElse(this.responseCapacity)
-            )
+        // TODO: Implement proper merging for SafeMetadata (append list)
+        val mergedHeaders = SafeMetadata(this.headers.entries ++ that.headers.entries.map {
+             case (k, v) => k -> (this.headers.entries.getOrElse(k, Nil) ++ v)
+        })
+        
+        RequestOptions(
+            headers = mergedHeaders,
+            messageCompression = that.messageCompression.orElse(this.messageCompression),
+            responseCapacity = that.responseCapacity.orElse(this.responseCapacity)
+        )
     end combine
 
     def responseCapacityOrDefault: Int = responseCapacity.getOrElse(DefaultResponseCapacity)

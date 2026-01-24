@@ -22,7 +22,7 @@ private[grpc] type GrpcResponsesAwaitingCompletion[MaybeResponses] = MaybeRespon
 // TODO: Singular vs plural is confusing here.
 type GrpcRequest[Requests] = Requests < (Emit[GrpcRequestCompletion] & Async)
 
-type GrpcRequestsPendingHeaders[Requests] = Requests < (Env[Metadata] & Emit[GrpcRequestCompletion] & Async)
+type GrpcRequestsPendingHeaders[Requests] = Requests < (Env[SafeMetadata] & Emit[GrpcRequestCompletion] & Async)
 
 type GrpcRequestsInit[Requests] = GrpcRequestsPendingHeaders[Requests] < (Emit[RequestOptions] & Async)
 
@@ -71,7 +71,7 @@ object ClientCall:
                 completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
-                _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
+                _ <- Sync.defer(call.start(listener, options.headers.toJava))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
                 _ <- Sync.defer(call.request(1))
             yield listener
@@ -149,7 +149,7 @@ object ClientCall:
                 completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = UnaryClientCallListener(headersPromise, responsePromise, completionPromise, readySignal)
-                _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
+                _ <- Sync.defer(call.start(listener, options.headers.toJava))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
             yield listener
         end start
@@ -268,7 +268,7 @@ object ClientCall:
                 completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
-                _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
+                _ <- Sync.defer(call.start(listener, options.headers.toJava))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
                 // TODO: Add tests that ensure that we request the right amount.
                 _ <- Sync.defer(call.request(Math.max(1, options.responseCapacityOrDefault)))
@@ -355,7 +355,7 @@ object ClientCall:
                 completionPromise <- Promise.init[CallClosed, Any]
                 readySignal       <- Signal.initRef[Boolean](false)
                 listener = ServerStreamingClientCallListener(headersPromise, responseStream, completionPromise, readySignal)
-                _ <- Sync.defer(call.start(listener, options.headers.getOrElse(Metadata())))
+                _ <- Sync.defer(call.start(listener, options.headers.toJava))
                 _ <- Sync.defer(options.messageCompression.foreach(call.setMessageCompression))
             yield listener
         end start

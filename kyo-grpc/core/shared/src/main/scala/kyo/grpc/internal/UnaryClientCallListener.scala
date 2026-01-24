@@ -5,9 +5,10 @@ import io.grpc.ClientCall.Listener
 import kyo.*
 import kyo.Channel
 import kyo.grpc.CallClosed
+import kyo.grpc.SafeMetadata
 
 private[grpc] class UnaryClientCallListener[Response](
-                                                         val headersPromise: Promise[Metadata, Any],
+                                                         val headersPromise: Promise[SafeMetadata, Any],
                                                          val responsePromise: Promise[Response, Abort[StatusException]],
                                                          val completionPromise: Promise[CallClosed, Any],
                                                          val readySignal: SignalRef[Boolean]
@@ -16,7 +17,7 @@ private[grpc] class UnaryClientCallListener[Response](
     import AllowUnsafe.embrace.danger
 
     override def onHeaders(headers: Metadata): Unit =
-        headersPromise.unsafe.completeDiscard(Result.succeed(headers))
+        headersPromise.unsafe.completeDiscard(Result.succeed(SafeMetadata.fromJava(headers)))
 
     override def onMessage(message: Response): Unit =
         if !responsePromise.unsafe.complete(Result.succeed(message)) then

@@ -10,9 +10,9 @@ import kyo.grpc.internal.ClientStreamingServerCallHandler
 import kyo.grpc.internal.ServerStreamingServerCallHandler
 import kyo.grpc.internal.UnaryServerCallHandler
 
-type GrpcResponseMeta = Env[Metadata] & Emit[ResponseOptions]
+type GrpcResponseMeta = Env[SafeMetadata] & Emit[ResponseOptions]
 
-type GrpcHandler[Requests, Responses] = Requests => Responses < (Grpc & Emit[Metadata])
+type GrpcHandler[Requests, Responses] = Requests => Responses < (Grpc & Emit[SafeMetadata])
 
 type GrpcHandlerInit[Requests, Responses] = GrpcHandler[Requests, Responses] < GrpcResponseMeta
 
