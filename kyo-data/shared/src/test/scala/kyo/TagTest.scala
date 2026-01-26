@@ -1042,6 +1042,12 @@ class TagTest extends Test:
             class Box[A]
             test[Box[1], Box[1.0]]
         }
+
+        "Null vs literals" - {
+            test[Null, 1]
+            test[Null, "A"]
+            test[List[Null], List["A"]]
+        }
     }
 
     "subtype and supertype with different type argument (bug #551)" - {
@@ -1058,7 +1064,8 @@ class TagTest extends Test:
     }
 
     opaque type V <: Vector[Any] = Vector[Any]
-    "opaque type bounds with variance (bug #1368)" in pendingUntilFixed {
+
+    "opaque type bounds with variance (bug #1368)" in {
         abstract class Variant[+A]:
             def method[AA >: A](using Tag[AA]): Unit
 

@@ -305,7 +305,7 @@ object Tag:
 
         final case class Dynamic(tag: String, map: Map[Entry.Id, Any]):
             lazy val tpe          = Type(decode(tag).staticDB, map.asInstanceOf[Map[Type.Entry.Id, Tag[Any]]])
-            override val hashCode = MurmurHash3.productHash(this)
+            override val hashCode = MurmurHash3.caseClassHash(this)
 
         enum Mode(val factor: Int) derives CanEqual:
             case Equality extends Mode(31)
@@ -385,7 +385,7 @@ object Tag:
                 aEntry match
                     case NothingEntry => true
                     case AnyEntry     => bEntry eq AnyEntry
-                    case NullEntry    => true
+                    case NullEntry    => !bEntry.isInstanceOf[LiteralEntry]
 
                     case IntersectionEntry(aSet) =>
                         bEntry match

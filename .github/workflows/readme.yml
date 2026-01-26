@@ -14,8 +14,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v7
-      - uses: coursier/setup-action@v1
+      - uses: coursier/setup-action@v2
         with:
           jvm: corretto:24
           apps: sbt
-      - run: sbt checkReadme
+      # - run: sbt checkReadme

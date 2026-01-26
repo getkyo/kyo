@@ -22,7 +22,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libcurl4-openssl-dev libidn2-0-dev
-    - uses: coursier/setup-action@v1
+    - uses: coursier/setup-action@v2
       with:
         jvm: corretto:24
         apps: sbt
