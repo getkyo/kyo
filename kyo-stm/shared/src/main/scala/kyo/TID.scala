@@ -7,7 +7,7 @@ private[kyo] object TID:
 
     private val tidLocal = Local.initNoninheritable[java.lang.Long](-1L)
 
-    def next(using AllowUnsafe): Long = nextTid.incrementAndGet()
+    def next()(using AllowUnsafe): Long = nextTid.incrementAndGet()
 
     inline def useNew[A, S](inline f: Long => A < S)(using inline frame: Frame): A < (S & Sync) =
         Sync.Unsafe {
