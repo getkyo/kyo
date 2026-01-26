@@ -485,12 +485,12 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans     = new Array[Span[B]](size)
+                val spans     = new Array[Array[B]](size)
                 var totalSize = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = f(self(idx))
-                        spans(idx) = span
+                        spans(idx) = span.toArrayUnsafe
                         totalSize += span.length
                         collectLoop(idx + 1)
                 collectLoop(0)
@@ -1206,12 +1206,12 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans     = new Array[Span[B]](size)
+                val spans     = new Array[Array[B]](size)
                 var totalSize = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = asSpan(self(idx))
-                        spans(idx) = span
+                        spans(idx) = span.toArrayUnsafe
                         totalSize += span.size
                         collectLoop(idx + 1)
                 collectLoop(0)

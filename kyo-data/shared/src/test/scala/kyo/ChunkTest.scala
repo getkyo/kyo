@@ -707,6 +707,11 @@ class ChunkTest extends Test:
             val array2 = chunk.toArray
             assert(array1 ne array2)
         }
+
+        "handles primitive types properly" in {
+            val chunk = Chunk.from(Array(1, 2))
+            assert(chunk.toArray.toList == List(1, 2))
+        }
     }
 
     "copyTo" - {
