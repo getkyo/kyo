@@ -117,7 +117,9 @@ object Async extends AsyncPlatformSpecific:
     def mask[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(v: => A < (Abort[E] & Async & S))(
-        using frame: Frame
+        using
+        Frame,
+        Tag[Abort[E]]
     ): A < (Abort[E] & Async & S) =
         isolate.capture { state =>
             Fiber.initUnscoped(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
@@ -162,7 +164,10 @@ object Async extends AsyncPlatformSpecific:
       */
     def timeout[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
-    )(after: Duration)(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E | Timeout] & Async & S) =
+    )(after: Duration)(v: => A < (Abort[E] & Async & S))(using
+        frame: Frame,
+        t: Tag[Abort[E]]
+    ): A < (Abort[E | Timeout] & Async & S) =
         if !after.isFinite then v
         else
             isolate.capture { state =>
@@ -197,7 +202,9 @@ object Async extends AsyncPlatformSpecific:
     def race[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
-        using frame: Frame
+        using
+        frame: Frame,
+        t: Tag[Abort[E]]
     ): A < (Abort[E] & Async & S) =
         require(iterable.nonEmpty, "Can't race an empty collection.")
         isolate.capture { state =>
@@ -223,7 +230,9 @@ object Async extends AsyncPlatformSpecific:
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
     )(
-        using frame: Frame
+        using
+        Frame,
+        Tag[Abort[E]]
     ): A < (Abort[E] & Async & S) =
         race[E, A, S](first +: rest)
 
@@ -245,7 +254,9 @@ object Async extends AsyncPlatformSpecific:
     def raceFirst[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
-        using frame: Frame
+        using
+        Frame,
+        Tag[Abort[E]]
     ): A < (Abort[E] & Async & S) =
         require(iterable.nonEmpty, "Can't race an empty collection.")
         isolate.capture { state =>
@@ -272,7 +283,9 @@ object Async extends AsyncPlatformSpecific:
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
     )(
-        using frame: Frame
+        using
+        frame: Frame,
+        t: Tag[Abort[E]]
     ): A < (Abort[E] & Async & S) =
         raceFirst[E, A, S](first +: rest)
 
@@ -292,7 +305,7 @@ object Async extends AsyncPlatformSpecific:
     )(
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
-    )(using frame: Frame): Chunk[A] < (Abort[E] & Async & S) =
+    )(using Frame, Tag[Abort[E]]): Chunk[A] < (Abort[E] & Async & S) =
         gather(first +: rest)
 
     /** Concurrently executes two or more and collects up to `max` successful results.
@@ -314,7 +327,9 @@ object Async extends AsyncPlatformSpecific:
         first: A < (Abort[E] & Async & S),
         rest: A < (Abort[E] & Async & S)*
     )(
-        using frame: Frame
+        using
+        Frame,
+        Tag[Abort[E]]
     ): Chunk[A] < (Abort[E] & Async & S) =
         gather(max)(first +: rest)
 
@@ -335,7 +350,9 @@ object Async extends AsyncPlatformSpecific:
     def gather[E, A, S](
         using Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)])(
-        using frame: Frame
+        using
+        Frame,
+        Tag[Abort[E]]
     ): Chunk[A] < (Abort[E] & Async & S) =
         gather(iterable.size)(iterable)
 
@@ -356,7 +373,9 @@ object Async extends AsyncPlatformSpecific:
     def gather[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
-        using frame: Frame
+        using
+        Frame,
+        Tag[Abort[E]]
     ): Chunk[A] < (Abort[E] & Async & S) =
         isolate.capture { state =>
             Fiber.internal.gather(max)(iterable.map(isolate.isolate(state, _)))
@@ -377,7 +396,8 @@ object Async extends AsyncPlatformSpecific:
     def foreachIndexed[E, A, B, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(f: (Int, A) => B < (Abort[E] & Async & S))(using
-        Frame
+        Frame,
+        Tag[Abort[E]]
     ): Chunk[B] < (Abort[E] & Async & S) =
         if concurrency <= 1 then
             Kyo.foreachIndexed(Chunk.from(iterable))(f)
@@ -413,7 +433,7 @@ object Async extends AsyncPlatformSpecific:
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
-    )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
+    )(using Frame, Tag[Abort[E]]): Chunk[B] < (Abort[E] & Async & S) =
         foreachIndexed(iterable, concurrency)((_, v) => f(v))
 
     /** Executes a sequence of computations in parallel, discarding the results.
@@ -429,7 +449,7 @@ object Async extends AsyncPlatformSpecific:
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => B < (Abort[E] & Async & S)
-    )(using Frame): Unit < (Abort[E] & Async & S) =
+    )(using Frame, Tag[Abort[E]]): Unit < (Abort[E] & Async & S) =
         foreach(iterable, concurrency)(f).unit
 
     /** Filters elements from a sequence using bounded concurrency.
@@ -447,7 +467,7 @@ object Async extends AsyncPlatformSpecific:
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Boolean < (Abort[E] & Async & S)
-    )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
+    )(using Frame, Tag[Abort[E]]): Chunk[A] < (Abort[E] & Async & S) =
         collect(iterable, concurrency)(v => f(v).map(Maybe.when(_)(v)))
 
     /** Transforms and filters elements from a sequence using bounded concurrency.
@@ -465,7 +485,7 @@ object Async extends AsyncPlatformSpecific:
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A], concurrency: Int = defaultConcurrency)(
         f: A => Maybe[B] < (Abort[E] & Async & S)
-    )(using Frame): Chunk[B] < (Abort[E] & Async & S) =
+    )(using Frame, Tag[Abort[E]]): Chunk[B] < (Abort[E] & Async & S) =
         foreach(iterable, concurrency)(f).map(_.flatten)
 
     /** Executes a sequence of computations using bounded concurrency.
@@ -480,7 +500,8 @@ object Async extends AsyncPlatformSpecific:
     def collectAll[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using
-        Frame
+        Frame,
+        Tag[Abort[E]]
     ): Chunk[A] < (Abort[E] & Async & S) =
         foreach(iterable, concurrency)(identity)
 
@@ -493,7 +514,10 @@ object Async extends AsyncPlatformSpecific:
       */
     def collectAllDiscard[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
-    )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using Frame): Unit < (Abort[E] & Async & S) =
+    )(iterable: Iterable[A < (Abort[E] & Async & S)], concurrency: Int = defaultConcurrency)(using
+        Frame,
+        Tag[Abort[E]]
+    ): Unit < (Abort[E] & Async & S) =
         foreachDiscard(iterable, concurrency)(identity)
 
     /** Repeats a computation n times in parallel.
@@ -511,7 +535,7 @@ object Async extends AsyncPlatformSpecific:
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(n: Int, concurrency: Int = defaultConcurrency)(
         f: => A < (Abort[E] & Async & S)
-    )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
+    )(using Frame, Tag[Abort[E]]): Chunk[A] < (Abort[E] & Async & S) =
         fillIndexed(n, concurrency)(_ => f)
 
     /** Repeats a computation n times in parallel with index access.
@@ -532,7 +556,7 @@ object Async extends AsyncPlatformSpecific:
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(n: Int, concurrency: Int = defaultConcurrency)(
         f: Int => A < (Abort[E] & Async & S)
-    )(using Frame): Chunk[A] < (Abort[E] & Async & S) =
+    )(using Frame, Tag[Abort[E]]): Chunk[A] < (Abort[E] & Async & S) =
         foreach(0 until n, concurrency)(f)
 
     /** Executes two computations in parallel and returns their results as a tuple.
@@ -786,7 +810,10 @@ object Async extends AsyncPlatformSpecific:
     private[kyo] inline def get[E, A](v: IOPromise[? <: E, ? <: A])(using Frame): A < (Abort[E] & Async) =
         use(v)(identity)
 
-    private[kyo] inline def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(using Frame): B < (Abort[E] & Async & S) =
+    private[kyo] inline def use[E, A, B, S](v: IOPromise[? <: E, ? <: A])(f: A => B < S)(using
+        Frame,
+        Tag[Abort[E]]
+    ): B < (Abort[E] & Async & S) =
         useResult(v)(_.fold(f, Abort.fail, Abort.panic))
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]

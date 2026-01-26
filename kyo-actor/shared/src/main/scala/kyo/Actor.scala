@@ -44,7 +44,7 @@ import scala.annotation.*
   * @tparam B
   *   The type of result this actor produces upon completion
   */
-sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abort[Closed | E]]):
+sealed abstract class Actor[E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abort[Closed | E]]):
 
     /** Returns the message subject interface for sending messages to this actor.
       *
@@ -75,7 +75,7 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abo
       * @return
       *   The actor's final result of type B
       */
-    def await(using Frame): B < (Async & Abort[Closed | E]) = fiber.get
+    def await(using Frame, Tag[Abort[Closed | E]]): B < (Async & Abort[Closed | E]) = fiber.get
 
     /** Closes the actor's mailbox, preventing it from receiving any new messages.
       *
