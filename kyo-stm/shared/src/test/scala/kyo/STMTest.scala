@@ -139,7 +139,9 @@ class STMTest extends Test:
                         }
                     }
                 a <- attempts.get
-            yield assert(v.isFailure && a == 1)
+            yield 
+                assert(v.isFailure)
+                assert(a == 1)
         }
     }
 
