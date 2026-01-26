@@ -1251,7 +1251,7 @@ class AsyncTest extends Test:
                 assert(count == 1)
         }
 
-        "handles interruption during initialization" in run {
+        "handles interruption during initialization" in runJVM {
             for
                 counter  <- AtomicInt.init(0)
                 started  <- Latch.init(1)

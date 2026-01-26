@@ -85,7 +85,7 @@ class SLF4JLogTest extends Test:
                 assert(logs(0).matches("DEBUG kyo.logging \\[.*\\] test message"))
                 assert(logs(1).matches("INFO kyo.logging \\[.*\\] info message"))
                 assert(logs(2).matches("WARN kyo.logging \\[.*\\] warning"))
-                assert(logs(3).matches("kyo.SLF4JLogTest\\$ex\\$: null"))
+                assert(logs(3) == "kyo.SLF4JLogTest$ex$")
             end for
         }
     }
