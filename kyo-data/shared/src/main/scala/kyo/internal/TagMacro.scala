@@ -53,9 +53,9 @@ private[kyo] object TagMacro:
                     case true => tpe
                     case false =>
                         seen.get(tpe.typeSymbol) match
-                            case None                          => tpe.typeSymbol
-                            case Some((t, _)) if t.equals(tpe) => tpe.typeSymbol
-                            case _                             => tpe
+                            case None                      => tpe.typeSymbol
+                            case Some((t, _)) if t =:= tpe => tpe.typeSymbol
+                            case _                         => tpe
             if seen.contains(key) then
                 seen(key)._2
             else
@@ -126,12 +126,10 @@ private[kyo] object TagMacro:
                                     val symbol = tpe.typeSymbol
                                     val params = tpe.typeArgs.map(visit)
                                     val variances =
-                                        symbol.declarations.flatMap { v =>
-                                            if !v.isTypeParam then None
-                                            else if v.paramVariance.is(Flags.Contravariant) then Present(Variance.Contravariant)
-                                            else if v.paramVariance.is(Flags.Covariant) then Present(Variance.Covariant)
-                                            else Present(Variance.Invariant)
-                                            end if
+                                        tpe.typeArgs.map(_.typeSymbol).map { v =>
+                                            if v.paramVariance.is(Flags.Contravariant) then Variance.Contravariant
+                                            else if v.paramVariance.is(Flags.Covariant) then Variance.Covariant
+                                            else Variance.Invariant
                                         }
                                     require(
                                         params.size == variances.size,

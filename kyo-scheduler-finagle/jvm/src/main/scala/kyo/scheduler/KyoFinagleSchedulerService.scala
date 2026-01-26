@@ -77,7 +77,7 @@ class KyoFinagleSchedulerService extends FinagleSchedulerService {
                                     if (current ne saved) Local.restore(saved)
                                     try {
                                         val fut = Future(f).flatten
-                                        super.setInterruptHandler(fut.raise)
+                                        super.setInterruptHandler(fut.raise(_))
                                         super.become(fut)
                                     } finally
                                         Local.restore(current)

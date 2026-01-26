@@ -1,6 +1,6 @@
 package java.lang.foreign
 
-import scala.scalanative.libc.stdlib.malloc
+import scala.scalanative.libc.stdlib.calloc
 import scala.scalanative.libc.string.memcpy
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
@@ -135,8 +135,8 @@ object MemorySegment:
 
     /** Allocates a new MemorySegment of the given byte size. */
     private[foreign] def allocate(byteSize: Long, arena: Arena): MemorySegment =
-        val ptr = malloc(byteSize).asInstanceOf[Ptr[Byte]]
-        if ptr == null then throw new RuntimeException("malloc returned null")
+        val ptr = calloc(byteSize.toCSize, 1.toCSize).asInstanceOf[Ptr[Byte]]
+        if ptr == null then throw new RuntimeException("calloc returned null")
         new MemorySegment(ptr, byteSize, arena)
     end allocate
 

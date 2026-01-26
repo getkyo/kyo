@@ -255,7 +255,7 @@ class ActorTest extends Test:
     }
 
     "backpressure and capacity" - {
-        "handles mailbox at capacity" in run {
+        "handles mailbox at capacity" in runJVM {
             for
                 counter <- AtomicInt.init(0)
                 actor   <- Actor.run(100)(Actor.receiveMax[Int](150)(counter.addAndGet(_)))
@@ -265,7 +265,7 @@ class ActorTest extends Test:
             yield assert(sum == (1 to 150).sum)
         }
 
-        "under concurrency" in run {
+        "under concurrency" in runJVM {
             for
                 results  <- Queue.Unbounded.init[Int]()
                 actor    <- Actor.run(50)(Actor.receiveMax[Int](1000)(results.add(_)))
@@ -337,7 +337,7 @@ class ActorTest extends Test:
     }
 
     "concurrency" - {
-        "handles multiple senders" in run {
+        "handles multiple senders" in runJVM {
             for
                 sum    <- AtomicInt.init(0)
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(sum.addAndGet(_).unit))
@@ -347,7 +347,7 @@ class ActorTest extends Test:
             yield assert(result == 5050)
         }
 
-        "maintains message order" in run {
+        "maintains message order" in runJVM {
             for
                 queue  <- Queue.Unbounded.init[Int]()
                 actor  <- Actor.run(Actor.receiveMax[Int](100)(queue.add(_)))

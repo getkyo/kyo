@@ -67,7 +67,7 @@ class StreamCoreExtensionsTest extends Test:
         }
 
         "mergeHaltingLeft/Right" - {
-            "should halt if non-halting side completes" in run {
+            "should halt if non-halting side completes" in runJVM {
                 Choice.run {
                     for
                         size <- Choice.eval(0, 1, 32, 1024)
@@ -80,7 +80,7 @@ class StreamCoreExtensionsTest extends Test:
                 }.andThen(succeed)
             }
 
-            "should not halt if non-halting side completes" in run {
+            "should not halt if non-halting side completes" in runJVM {
                 val s1Set = Set.from(0 to 20)
                 val s2Set = Set(21, 22)
                 val s1 = Stream:

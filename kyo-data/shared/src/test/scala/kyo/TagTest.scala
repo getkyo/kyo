@@ -1064,7 +1064,8 @@ class TagTest extends Test:
     }
 
     opaque type V <: Vector[Any] = Vector[Any]
-    "opaque type bounds with variance (bug #1368)" in pendingUntilFixed {
+
+    "opaque type bounds with variance (bug #1368)" in {
         abstract class Variant[+A]:
             def method[AA >: A](using Tag[AA]): Unit
 
