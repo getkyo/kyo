@@ -1,5 +1,6 @@
 package kyo
 
+import java.util.ArrayList
 import kyo.Result.Failure
 import scala.annotation.tailrec
 import scala.util.boundary
@@ -93,15 +94,15 @@ object STM:
     private def run[E: ConcreteTag, A](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
         using Frame
     ): A < (Async & Abort[E | FailedTransaction]) =
-        TID.useIO {
-            case -1L =>
-                TID.useNew { tid =>
+        Tick.withCurrent(
+            ifAbsent =
+                Tick.withNext { tick =>
                     v.handle(
                         Abort.recoverError[E] { error =>
                             // Retry arbitrary E failures in case the transaction is inconsistent
                             Var.use[TRefLog] { log =>
                                 Sync.Unsafe {
-                                    if !commit(tid, log, probe = true) then
+                                    if !commit(tick, log, probe = true) then
                                         // The ref log shows inconsistency, retry the transaction
                                         Abort.fail(FailedTransaction(Present(error)))
                                     else
@@ -113,7 +114,7 @@ object STM:
                         Var.runTuple(TRefLog.empty)
                     ).map { (log, result) =>
                         Sync.Unsafe {
-                            if !commit(tid, log) then
+                            if !commit(tick, log) then
                                 Abort.fail(FailedTransaction())
                             else
                                 result
@@ -121,8 +122,8 @@ object STM:
                     }
                 }.handle(
                     Retry[FailedTransaction](retrySchedule)
-                )
-            case parent =>
+                ),
+            ifPresent =
                 // Nested transaction inherits parent's transaction context but isolates RefLog.
                 // On success: changes propagate to parent. On failure: changes are rolled back
                 // without affecting parent's state.
@@ -133,11 +134,14 @@ object STM:
                 // then there's a frame upper in the stack that will handle the
                 // STM effect in the parent transaction's `run`.
                 result.asInstanceOf[A < (Async & Abort[E | FailedTransaction])]
-        }
+        )
 
     end run
 
-    private def commit[A, S](tid: Long, log: TRefLog, probe: Boolean = false)(using AllowUnsafe): Boolean =
+    // Thread-local cache for the commit buffer to avoid repeated allocations
+    private val bufferCache = new ThreadLocal[ArrayList[Any]]
+
+    private def commit[A, S](tick: Tick, log: TRefLog, probe: Boolean = false)(using AllowUnsafe): Boolean =
         val logMap = log.toMap
         logMap.size match
             case 0 =>
@@ -146,43 +150,51 @@ object STM:
             case 1 =>
                 // Fast-path for a single ref
                 val (ref, entry) = logMap.head
-                // No need to pre-validate since `lock` validates and
-                // there's a single ref
-                val ok = ref.lock(entry)
-                if ok then
-                    if !probe then ref.commit(TID.next(), entry)
-                    ref.unlock(entry)
-                ok
+                entry match
+                    case _: TRefLog.Read[?] =>
+                        // Read-only: just validate, no locking needed
+                        ref.validate(entry)
+                    case _ =>
+                        // Has write: need to lock and commit
+                        val ok = ref.lock(tick, entry)
+                        if ok then
+                            if !probe then ref.commit(Tick.next(), entry)
+                            ref.unlock(entry)
+                        ok
+                end match
             case size =>
-                // Commit multiple refs
-                // Flattened representation of the log
-                val array = new Array[Any](size * 2)
-
-                boundary {
-
-                    var i = 0
-                    // Pre-validate and dump the log to the flat array
+                // Commit multiple refs using cached buffer
+                var buffer = bufferCache.get()
+                if buffer == null then
+                    buffer = new ArrayList[Any]
+                    bufferCache.set(buffer)
+                val result = boundary {
+                    var hasWrites = false
+                    // Pre-validate and dump the log to the buffer
                     logMap.foreachEntry { (ref, entry) =>
                         // This code uses `boundary`/`break` because
                         // foreachEntry is the only way to traverse the
                         // map without allocating tuples, so throwing via `break`
                         // is the workaround to short circuit
                         if !ref.validate(entry) then boundary.break(false)
-                        array(i) = ref
-                        array(i + 1) = entry
-                        i += 2
+                        hasWrites |= entry.isInstanceOf[TRefLog.Write[?]]
+                        discard(buffer.add(ref))
+                        discard(buffer.add(entry))
                     }
 
+                    // Read-only transaction: already validated, no locking needed
+                    if !hasWrites then boundary.break(true)
+
                     // Sort references by identity to prevent deadlocks
-                    quickSort(array, size)
+                    quickSort(buffer, size)
 
                     // Convenience accessors to the flat log
-                    inline def ref(idx: Int)   = array(idx * 2).asInstanceOf[TRef[Any]]
-                    inline def entry(idx: Int) = array(idx * 2 + 1).asInstanceOf[TRefLog.Entry[Any]]
+                    inline def ref(idx: Int)   = buffer.get(idx * 2).asInstanceOf[TRef[Any]]
+                    inline def entry(idx: Int) = buffer.get(idx * 2 + 1).asInstanceOf[TRefLog.Entry[Any]]
 
                     @tailrec def lock(idx: Int): Int =
                         if idx == size then size
-                        else if !ref(idx).lock(entry(idx)) then idx
+                        else if !ref(idx).lock(tick, entry(idx)) then idx
                         else lock(idx + 1)
 
                     @tailrec def unlock(idx: Int, upTo: Int): Unit =
@@ -190,10 +202,10 @@ object STM:
                             ref(idx).unlock(entry(idx))
                             unlock(idx + 1, upTo)
 
-                    @tailrec def commit(tid: Long, idx: Int): Unit =
+                    @tailrec def commit(tick: Tick, idx: Int): Unit =
                         if idx < size then
-                            ref(idx).commit(tid, entry(idx))
-                            commit(tid, idx + 1)
+                            ref(idx).commit(tick, entry(idx))
+                            commit(tick, idx + 1)
 
                     val acquired = lock(0)
                     if acquired != size then
@@ -203,27 +215,30 @@ object STM:
                     end if
 
                     // Successfully locked all references - commit changes
-                    if !probe then commit(TID.next(), 0)
+                    if !probe then commit(Tick.next(), 0)
 
                     // Release all locks
                     unlock(0, size)
                     true
                 }
+                // No try/finally needed - boundary.break returns from the block, not the method
+                buffer.clear()
+                result
         end match
     end commit
 
-    private def quickSort(array: Array[Any], size: Int): Unit =
+    private def quickSort(buffer: ArrayList[Any], size: Int): Unit =
         def swap(i: Int, j: Int): Unit =
-            val temp = array(i)
-            array(i) = array(j)
-            array(j) = temp
-            val temp2 = array(i + 1)
-            array(i + 1) = array(j + 1)
-            array(j + 1) = temp2
+            val ref   = buffer.get(i)
+            val entry = buffer.get(i + 1)
+            buffer.set(i, buffer.get(j))
+            buffer.set(i + 1, buffer.get(j + 1))
+            buffer.set(j, ref)
+            discard(buffer.set(j + 1, entry))
         end swap
 
         def getHash(idx: Int): Int =
-            array(idx * 2).hashCode()
+            buffer.get(idx * 2).hashCode()
 
         @tailrec def partitionLoop(low: Int, hi: Int, pivot: Int, i: Int, j: Int): Int =
             if j >= hi then

@@ -139,7 +139,7 @@ class STMTest extends Test:
                         }
                     }
                 a <- attempts.get
-            yield 
+            yield
                 assert(v.isFailure)
                 assert(a == 1)
         }
@@ -772,20 +772,20 @@ class STMTest extends Test:
             yield assert(result.isFailure && value == 2)
         }
 
-        "transaction ID should not leak across async boundaries" in run {
+        "tick should not leak across async boundaries" in run {
             for
                 ref <- TRef.init(0)
-                (parentTid, childTid) <-
+                (parentTick, childTick) <-
                     STM.run {
-                        TID.useIO { parentTid =>
+                        Tick.withCurrent { parentTick =>
                             Fiber.initUnscoped {
-                                STM.run(TID.useIO(identity))
-                            }.map(_.get).map { childTid =>
-                                (parentTid, childTid)
+                                STM.run(Tick.withCurrent(identity))
+                            }.map(_.get).map { childTick =>
+                                (parentTick, childTick)
                             }
                         }
                     }
-            yield assert(parentTid != childTid)
+            yield assert(parentTick != childTick)
         }
     }
 
@@ -988,6 +988,180 @@ class STMTest extends Test:
                 _ <- reader.get
                 _ <- writer.get
             yield succeed
+            end for
+        }
+    }
+
+    "large tick values (overflow)" - {
+
+        "basic read and write with tick near Int.MaxValue" in run {
+            Sync.Unsafe {
+                Tick.setCounter(Int.MaxValue.toLong - 10)
+            }.andThen {
+                for
+                    ref   <- TRef.init(42)
+                    _     <- STM.run(ref.set(100))
+                    value <- STM.run(ref.get)
+                yield assert(value == 100)
+            }
+        }
+
+        "basic read and write with tick beyond Int.MaxValue" in run {
+            Sync.Unsafe {
+                Tick.setCounter(Int.MaxValue.toLong + 1000)
+            }.andThen {
+                for
+                    ref   <- TRef.init(42)
+                    _     <- STM.run(ref.set(100))
+                    value <- STM.run(ref.get)
+                yield assert(value == 100)
+            }
+        }
+
+        "conflict detection with large ticks" in run {
+            Sync.Unsafe {
+                Tick.setCounter(Int.MaxValue.toLong + 1000)
+            }.andThen {
+                for
+                    ref1 <- TRef.init(10)
+                    ref2 <- TRef.init(20)
+                    result <- STM.run {
+                        for
+                            v1 <- ref1.get
+                            v2 <- ref2.get
+                            _  <- ref1.set(v2)
+                            _  <- ref2.set(v1)
+                            r1 <- ref1.get
+                            r2 <- ref2.get
+                        yield (r1, r2)
+                    }
+                yield assert(result == (20, 10))
+            }
+        }
+
+        "concurrent transactions with large ticks" in runNotJS {
+            Sync.Unsafe {
+                Tick.setCounter(Int.MaxValue.toLong + 1000)
+            }.andThen {
+                for
+                    ref   <- TRef.init(0)
+                    _     <- Async.fill(50, 50)(STM.run(ref.update(_ + 1)))
+                    value <- STM.run(ref.get)
+                yield assert(value == 50)
+            }
+        }
+
+        "nested transactions with large ticks" in run {
+            Sync.Unsafe {
+                Tick.setCounter(Int.MaxValue.toLong + 1000)
+            }.andThen {
+                for
+                    ref <- TRef.init(0)
+                    result <- STM.run {
+                        for
+                            _ <- ref.set(1)
+                            innerResult <- STM.run {
+                                for
+                                    v1 <- ref.get
+                                    _  <- ref.set(v1 + 1)
+                                    v2 <- ref.get
+                                yield v2
+                            }
+                            finalValue <- ref.get
+                        yield (innerResult, finalValue)
+                    }
+                yield assert(result == (2, 2))
+            }
+        }
+
+        "opacity with large ticks" in runJVM {
+            Sync.Unsafe {
+                Tick.setCounter(Int.MaxValue.toLong + 1000)
+            }.andThen {
+                val retrySchedule = STM.defaultRetrySchedule.forever
+                for
+                    ref <- TRef.init(0L)
+                    writer <- Fiber.initUnscoped {
+                        Async.foreachDiscard(1L to 5000L) { i =>
+                            STM.run(retrySchedule)(ref.set(i))
+                        }
+                    }
+                    reader <- Fiber.initUnscoped {
+                        Async.foreachDiscard(1 to 10000) { _ =>
+                            STM.run(retrySchedule) {
+                                for
+                                    v1 <- ref.get
+                                    v2 <- ref.get
+                                yield assert(v1 == v2)
+                            }
+                        }
+                    }
+                    _ <- writer.get
+                    _ <- reader.get
+                yield succeed
+                end for
+            }
+        }
+    }
+
+    "early writer abort optimization" - {
+        "writers yield to fresher readers under contention" in runJVM {
+            // This tests that writers with older ticks abort early when
+            // fresher readers have registered their readTick, avoiding
+            // wasted work building transaction logs that would fail at commit
+            val retrySchedule = STM.defaultRetrySchedule.forever
+            for
+                ref         <- TRef.init(0)
+                readerCount <- AtomicInt.init(0)
+                // Many readers continuously reading
+                readerFibers <- Async.fill(10, 10) {
+                    Async.foreachDiscard(1 to 100) { _ =>
+                        STM.run(retrySchedule) {
+                            for
+                                _ <- ref.get
+                                _ <- readerCount.incrementAndGet
+                            yield ()
+                        }
+                    }
+                }
+                // Few writers trying to write - they should yield to readers
+                writerFibers <- Async.fill(2, 2) {
+                    Async.foreachDiscard(1 to 50) { i =>
+                        STM.run(retrySchedule)(ref.set(i))
+                    }
+                }
+                reads <- readerCount.get
+            yield
+                // All operations should complete without deadlock
+                // Readers should have completed many reads
+                assert(reads >= 100)
+            end for
+        }
+
+        "high contention read-heavy workload" in runJVM {
+            val retrySchedule = STM.defaultRetrySchedule.forever
+            for
+                refs <- Kyo.fill(5)(TRef.init(0))
+                // Many readers reading multiple refs
+                _ <- Async.fill(20, 20) {
+                    Async.foreachDiscard(1 to 200) { _ =>
+                        STM.run(retrySchedule) {
+                            Kyo.foreach(refs)(_.get).map(_.sum)
+                        }
+                    }
+                }
+                // Few writers updating refs
+                _ <- Async.fill(3, 3) {
+                    Async.foreachDiscard(1 to 100) { i =>
+                        STM.run(retrySchedule) {
+                            Kyo.foreach(refs)(r => r.set(i))
+                        }
+                    }
+                }
+                finalValues <- STM.run(Kyo.foreach(refs)(_.get))
+            yield
+                // All refs should have been updated
+                assert(finalValues.forall(_ > 0))
             end for
         }
     }

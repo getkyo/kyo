@@ -5,7 +5,7 @@ import scala.collection.immutable.Map
 /** A log of transactional operations performed on TRefs within an STM transaction.
   *
   * TRefLog maintains a mapping from transactional references to their pending read/write operations within a transaction. It tracks both
-  * read entries (which record the version of data read) and write entries (which contain the new values to be committed).
+  * read entries (which record the tick when the data was read) and write entries (which contain the new values to be committed).
   *
   * This type is used internally by the STM implementation and should not be accessed directly by application code.
   *
@@ -36,9 +36,9 @@ private[kyo] object TRefLog:
     val isolate = Var.isolate.update[TRefLog]
 
     sealed abstract class Entry[A] extends Serializable:
-        def tid: Long
+        def tick: Tick
         def value: A
 
-    case class Read[A](tid: Long, value: A)  extends Entry[A]
-    case class Write[A](tid: Long, value: A) extends Entry[A]
+    case class Read[A](tick: Tick, value: A)  extends Entry[A]
+    case class Write[A](tick: Tick, value: A) extends Entry[A]
 end TRefLog
