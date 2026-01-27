@@ -139,7 +139,9 @@ class STMTest extends Test:
                         }
                     }
                 a <- attempts.get
-            yield assert(v.isFailure && a == 1)
+            yield 
+                assert(v.isFailure)
+                assert(a == 1)
         }
     }
 
@@ -835,6 +837,159 @@ class STMTest extends Test:
                 _ <- Async.foreachDiscard(1 to 10, concurrency = 8) { _ => once }
             yield succeed
         }.map(_.getOrElse(succeed))
+    }
+
+    "opacity" - {
+
+        "bug #1411" in runJVM {
+            for
+                r1 <- STM.run(TRef.init("a"))
+                r2 <- STM.run(TRef.init("a"))
+                txn1 =
+                    for
+                        v1 <- r1.get
+                        v2 <- r2.get
+                        _  <- r1.set(v1 + "1")
+                        _  <- r2.set(v2 + "1")
+                    yield ()
+                txn2 =
+                    for
+                        v1 <- r1.get
+                        v2 <- r2.get
+                        _  <- STM.retryIf(v1 != v2)
+                    yield ()
+                _ <- Async.foreachDiscard(1 to 10000) { _ =>
+                    Async.collectAll(List(STM.run(txn1), STM.run(txn2)), 2)
+                }
+            yield succeed
+        }
+
+        "division by zero" in runJVM {
+            val retrySchedule = STM.defaultRetrySchedule.forever
+            for
+                numerator   <- TRef.init(0)
+                denominator <- TRef.init(1)
+                writer <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1 to 10000) { i =>
+                        STM.run(retrySchedule) {
+                            for
+                                _ <- numerator.set(i)
+                                _ <- denominator.set(i + 1)
+                            yield ()
+                        }
+                    }
+                }
+                reader <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1 to 50000) { _ =>
+                        STM.run(retrySchedule) {
+                            for
+                                n <- numerator.get
+                                d <- denominator.get
+                            yield n / (d - n)
+                        }
+                    }
+                }
+                _ <- writer.get
+                _ <- reader.get
+            yield succeed
+            end for
+        }
+
+        "double read consistency" in runJVM {
+            val retrySchedule = STM.defaultRetrySchedule.forever
+            for
+                ref <- TRef.init(0L)
+                writer <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1L to 50000L) { i =>
+                        STM.run(retrySchedule)(ref.set(i))
+                    }
+                }
+                reader <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1 to 100000) { _ =>
+                        STM.run(retrySchedule) {
+                            for
+                                v1 <- ref.get
+                                v2 <- ref.get
+                            yield assert(v1 == v2)
+                        }
+                    }
+                }
+                _ <- writer.get
+                _ <- reader.get
+            yield succeed
+            end for
+        }
+
+        "even odd" in runJVM {
+            val retrySchedule = STM.defaultRetrySchedule.forever
+            for
+                even <- TRef.init(0)
+                odd  <- TRef.init(1)
+                writer <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1 to 10000) { _ =>
+                        STM.run(retrySchedule) {
+                            for
+                                e <- even.get
+                                o <- odd.get
+                                _ <- even.set(e + 2)
+                                _ <- odd.set(o + 2)
+                            yield ()
+                        }
+                    }
+                }
+                reader <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1 to 50000) { _ =>
+                        STM.run(retrySchedule) {
+                            for
+                                e <- even.get
+                                o <- odd.get
+                            yield
+                                assert(e % 2 == 0)
+                                assert(o % 2 == 1)
+                                assert(o == e + 1)
+                        }
+                    }
+                }
+                _ <- writer.get
+                _ <- reader.get
+            yield succeed
+            end for
+        }
+
+        "sum invariant" in runJVM {
+            val retrySchedule = STM.defaultRetrySchedule.forever
+            for
+                a <- TRef.init(500)
+                b <- TRef.init(300)
+                c <- TRef.init(200)
+                reader <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1 to 10000) { _ =>
+                        STM.run(retrySchedule) {
+                            for
+                                va <- a.get
+                                vb <- b.get
+                                vc <- c.get
+                            yield assert(va + vb + vc == 1000)
+                        }
+                    }
+                }
+                writer <- Fiber.initUnscoped {
+                    Async.foreachDiscard(1 to 1000) { _ =>
+                        STM.run(retrySchedule) {
+                            for
+                                va <- a.get
+                                vb <- b.get
+                                _  <- a.set(va - 10)
+                                _  <- b.set(vb + 10)
+                            yield ()
+                        }
+                    }
+                }
+                _ <- reader.get
+                _ <- writer.get
+            yield succeed
+            end for
+        }
     }
 
 end STMTest

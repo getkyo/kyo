@@ -190,12 +190,12 @@ object TRef:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def init[A](value: A)(using AllowUnsafe): TRef[A] =
-            init(TID.next, value)
+            init(TID.next(), value)
 
         private[kyo] def init[A](tid: Long, value: A)(using AllowUnsafe): TRef[A] =
             val finalTid =
                 if tid != -1 then tid
-                else TID.next
+                else TID.next()
             new TRefImpl(Write(finalTid, value))
         end init
     end Unsafe

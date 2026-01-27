@@ -150,7 +150,7 @@ object STM:
                 // there's a single ref
                 val ok = ref.lock(entry)
                 if ok then
-                    if !probe then ref.commit(tid, entry)
+                    if !probe then ref.commit(TID.next(), entry)
                     ref.unlock(entry)
                 ok
             case size =>
@@ -190,10 +190,10 @@ object STM:
                             ref(idx).unlock(entry(idx))
                             unlock(idx + 1, upTo)
 
-                    @tailrec def commit(idx: Int): Unit =
+                    @tailrec def commit(tid: Long, idx: Int): Unit =
                         if idx < size then
                             ref(idx).commit(tid, entry(idx))
-                            commit(idx + 1)
+                            commit(tid, idx + 1)
 
                     val acquired = lock(0)
                     if acquired != size then
@@ -203,7 +203,7 @@ object STM:
                     end if
 
                     // Successfully locked all references - commit changes
-                    if !probe then commit(0)
+                    if !probe then commit(TID.next(), 0)
 
                     // Release all locks
                     unlock(0, size)
