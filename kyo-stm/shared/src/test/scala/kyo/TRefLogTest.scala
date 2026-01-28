@@ -14,8 +14,8 @@ class TTRefLogTest extends Test:
 
         "put" in run {
             Sync.Unsafe {
-                val tick  = Tick.next()
-                val ref   = new TRefImpl[Int](Write(tick, 0))
+                val tick  = STM.Tick.next()
+                val ref   = new TRef[Int](Write(tick, 0))
                 val entry = Write(tick, 42)
                 val log   = TRefLog.empty.put(ref, entry)
                 assert(log.toMap.size == 1)
@@ -26,20 +26,20 @@ class TTRefLogTest extends Test:
 
         "get" in run {
             Sync.Unsafe {
-                val tick  = Tick.next()
-                val ref   = new TRefImpl[Int](Write(tick, 0))
+                val tick  = STM.Tick.next()
+                val ref   = new TRef[Int](Write(tick, 0))
                 val entry = Write(tick, 42)
                 val log   = TRefLog.empty.put(ref, entry)
                 assert(log.get(ref) == Maybe(entry))
-                assert(log.get(new TRefImpl[Int](Write(tick, 0))).isEmpty)
+                assert(log.get(new TRef[Int](Write(tick, 0))).isEmpty)
             }
         }
 
         "toSeq" in run {
             Sync.Unsafe {
-                val tick   = Tick.next()
-                val ref1   = new TRefImpl[Int](Write(tick, 0))
-                val ref2   = new TRefImpl[Int](Write(tick, 0))
+                val tick   = STM.Tick.next()
+                val ref1   = new TRef[Int](Write(tick, 0))
+                val ref2   = new TRef[Int](Write(tick, 0))
                 val entry1 = Write(tick, 42)
                 val entry2 = Read(tick, 24)
 

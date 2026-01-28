@@ -1,36 +1,33 @@
 package kyo
 
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kyo.TRefLog.*
 import scala.annotation.tailrec
 
 /** A transactional reference that can be modified within STM transactions. Provides atomic read and write operations with strong
   * consistency guarantees.
+  *
+  * @param initEntry
+  *   The initial value and tick for this reference
   */
-sealed trait TRef[A]:
+final class TRef[A] private[kyo] (initEntry: Write[A])
+    extends TRef.State.Owner
+    with Serializable:
 
-    /** Applies a function to the current value of the reference within a transaction.
-      *
-      * @param f
-      *   A function that transforms the current value of type A into a result of type B, with effects S
-      * @return
-      *   The result of type B with combined STM and S effects
-      */
-    def use[B, S](f: A => B < S)(using Frame): B < (STM & S)
+    import TRef.State
+    import TRef.State.*
 
-    /** Sets a new value for the reference within a transaction.
-      *
-      * @param v
-      *   The new value to set
-      */
-    def set(v: A)(using Frame): Unit < STM
+    private[kyo] val id: Int = TRef.idCounter.incrementAndGet()
+
+    @volatile private var entry = initEntry
 
     /** Gets the current value of the reference within a transaction.
       *
       * @return
       *   The current value
       */
-    final def get(using Frame): A < STM = use(identity)
+    def get(using Frame): A < STM = use(identity)
 
     /** Updates the reference's value by applying a function to the current value within a transaction.
       *
@@ -39,51 +36,24 @@ sealed trait TRef[A]:
       * @return
       *   Unit, as this is a modification operation
       */
-    final def update[S](f: A => A < S)(using Frame): Unit < (STM & S) = use(f(_).map(set))
+    def update[S](f: A => A < S)(using Frame): Unit < (STM & S) = use(f(_).map(set))
 
-    private[kyo] def entry(using AllowUnsafe): Write[A]
-    private[kyo] def validate(entry: Entry[A])(using AllowUnsafe): Boolean
-    private[kyo] def lock(tick: Tick, entry: Entry[A])(using AllowUnsafe): Boolean
-    private[kyo] def commit(tick: Tick, entry: Entry[A])(using AllowUnsafe): Unit
-    private[kyo] def unlock(entry: Entry[A])(using AllowUnsafe): Unit
-
-end TRef
-
-/** Implementation of a transactional reference.
-  *
-  * @param initEntry
-  *   The initial value and tick for this reference
-  */
-final private class TRefImpl[A] private[kyo] (initEntry: Write[A])
-    extends TRef.State.Owner
-    with TRef[A]
-    with Serializable:
-
-    import TRef.State
-    import TRef.State.*
-
-    @volatile private var _entry = initEntry
-
-    private[kyo] def entry(using AllowUnsafe): Write[A] = _entry
-
-    // Atomically update readTick to max(current, tick)
-    @tailrec private def updateReadTick(tick: Tick): Unit =
-        val s = getState()
-        if tick.value > s.readTick then
-            if !casState(s, s.withReadTick(tick.value)) then
-                updateReadTick(tick)
-        end if
-    end updateReadTick
-
+    /** Applies a function to the current value of the reference within a transaction.
+      *
+      * @param f
+      *   A function that transforms the current value of type A into a result of type B, with effects S
+      * @return
+      *   The result of type B with combined STM and S effects
+      */
     def use[B, S](f: A => B < S)(using Frame): B < (STM & S) =
         Var.use[TRefLog] { log =>
             log.get(this) match
                 case Present(entry) =>
                     f(entry.value)
                 case Absent =>
-                    Tick.withCurrent { tick =>
-                        val e = _entry
-                        if e.tick.value > tick.value then
+                    STM.withCurrentTransaction { tick =>
+                        val e = this.entry
+                        if e.tick > tick then
                             // Early retry if the TRef is concurrently modified
                             STM.retry
                         else
@@ -102,9 +72,9 @@ final private class TRefImpl[A] private[kyo] (initEntry: Write[A])
                 case Present(prev) =>
                     Var.setDiscard(log.put(this, Write(prev.tick, v)))
                 case Absent =>
-                    Tick.withCurrent { tick =>
-                        val e = _entry
-                        if e.tick.value > tick.value || getState().readTick > tick.value then
+                    STM.withCurrentTransaction { tick =>
+                        val e = entry
+                        if e.tick > tick || getState().readTick > tick then
                             // Early retry if the TRef is concurrently modified or
                             // fresher readers exist (writer would fail at commit anyway)
                             STM.retry
@@ -115,25 +85,39 @@ final private class TRefImpl[A] private[kyo] (initEntry: Write[A])
                     }
         }
 
+    // Atomically update readTick to max(current, tick)
+    @tailrec private def updateReadTick(tick: STM.Tick): Unit =
+        val s = getState()
+        if tick > s.readTick then
+            if !casState(s, s.withReadTick(tick)) then
+                updateReadTick(tick)
+        end if
+    end updateReadTick
+
     private[kyo] def validate(entry: Entry[A])(using AllowUnsafe): Boolean =
-        val current = _entry
+        val current = this.entry
         current.tick == entry.tick || (
             entry match
                 // Value-based fallback only for reads: if the same reference was written
                 // back, the read is still valid (reduces spurious aborts). Not safe for
                 // writes since two transactions computing the same value must not both commit.
-                case read: Read[?] => current.value.asInstanceOf[AnyRef].eq(read.value.asInstanceOf[AnyRef])
+                case read: Read[?] => current.asInstanceOf[AnyRef].eq(read.asInstanceOf[AnyRef])
                 case _             => false
         )
     end validate
 
-    private[kyo] def lock(tick: Tick, entry: Entry[A])(using AllowUnsafe): Boolean =
+    private[kyo] def lock(tick: STM.Tick, entry: Entry[A])(using AllowUnsafe): Boolean =
         @tailrec def loop(): Boolean =
             validate(entry) && {
                 val s = getState()
                 entry match
-                    case _: Read[?]  => s.acquireReader.exists(next => casState(s, next) || loop())
-                    case _: Write[?] => s.acquireWriter(tick.value).exists(next => casState(s, next) || loop())
+                    case _: Read[?] =>
+                        // CAS retry: Absent if at max readers. Present tries CAS; retries on concurrent state change.
+                        s.acquireReader.exists(next => casState(s, next) || loop())
+                    case _: Write[?] =>
+                        // CAS retry: Absent if locked or readTick > tick. Present tries CAS; retries on concurrent state change.
+                        s.acquireWriter(tick).exists(next => casState(s, next) || loop())
+                end match
             }
         val locked = loop()
         if locked && !validate(entry) then
@@ -147,11 +131,11 @@ final private class TRefImpl[A] private[kyo] (initEntry: Write[A])
         end if
     end lock
 
-    private[kyo] def commit(tick: Tick, entry: Entry[A])(using AllowUnsafe): Unit =
+    private[kyo] def commit(tick: STM.Tick, entry: Entry[A])(using AllowUnsafe): Unit =
         entry match
             case Write(_, value) =>
                 // Only need to commit Write entries
-                _entry = Write(tick, value)
+                this.entry = Write(tick, value)
                 // Reset readTick since value changed - old readers no longer relevant
                 // Keep write lock in place (will be released by unlock)
                 setState(getState().withoutReadTick)
@@ -161,22 +145,26 @@ final private class TRefImpl[A] private[kyo] (initEntry: Write[A])
         entry match
             case _: Read[?] =>
                 @tailrec def loop(): Unit =
+                    // CAS loop to atomically decrement reader count
                     val s = getState()
                     if !casState(s, s.releaseReader) then loop()
                 end loop
                 loop()
             case _: Write[?] =>
+                // Writer holds exclusive access, safe to reset directly
                 setState(State.free)
         end match
     end unlock
 
     override def toString() =
         val s = getState()
-        s"TRef(state=$_entry, readTick=${s.readTick}, lock=${s.asString})"
+        s"TRef(state=$entry, readTick=${s.readTick}, lock=${s.render})"
     end toString
-end TRefImpl
+end TRef
 
 object TRef:
+
+    private val idCounter = new AtomicInteger(0)
 
     /** Creates a new TRef with the given initial value.
       *
@@ -201,17 +189,17 @@ object TRef:
       *   The result of applying the function to the new TRef, within combined Sync and S effects
       */
     inline def initWith[A, B, S](inline value: A)(inline f: TRef[A] => B < S)(using inline frame: Frame): B < (Sync & S) =
-        Tick.withCurrentOrNext { tick =>
+        STM.withCurrentTransactionOrNew { tick =>
             f(TRef.Unsafe.init(tick, value))
         }
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def init[A](value: A)(using AllowUnsafe): TRef[A] =
-            new TRefImpl(Write(Tick.next(), value))
+            new TRef(Write(STM.Tick.next(), value))
 
-        private[kyo] def init[A](tick: Tick, value: A)(using AllowUnsafe): TRef[A] =
-            new TRefImpl(Write(tick, value))
+        private[kyo] def init[A](tick: STM.Tick, value: A)(using AllowUnsafe): TRef[A] =
+            new TRef(Write(tick, value))
     end Unsafe
 
     /** Packed atomic state for TRef containing both lock state and readTick.
@@ -253,7 +241,7 @@ object TRef:
                 Maybe.when((self & LockMask) == 0 && self.readTick <= tick)((self & ~LockMask) | WriteLock)
 
             // Display
-            inline def asString: String =
+            inline def render: String =
                 (self & LockMask) match
                     case 0                   => "free"
                     case n if n == WriteLock => "writer"
