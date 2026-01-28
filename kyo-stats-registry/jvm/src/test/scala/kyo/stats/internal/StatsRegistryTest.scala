@@ -158,10 +158,11 @@ class StatsRegistryTest extends AnyFreeSpec {
             
             val testExporter = new StatsExporter {
                 override def counter(path: List[String], description: String, delta: Long): Unit =
-                    if path.headOption.contains(testId) then
+                    if (path.headOption.contains(testId)) {
                         refreshCalled = true
                         latch.countDown()
-                
+                    }
+
                 override def histogram(path: List[String], description: String, summary: Summary): Unit = ()
                 override def gauge(path: List[String], description: String, currentValue: Double): Unit = ()
             }
