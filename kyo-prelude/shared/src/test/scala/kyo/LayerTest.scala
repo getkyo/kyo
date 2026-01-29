@@ -57,9 +57,9 @@ class LayerTest extends Test:
             val sharkLayer                    = Layer.from(Shark.apply)
             val dummy: Layer[Dummy, Any]      = Layer(new Dummy {})
 
-            val guppyAndShart: Layer[Guppy & Shark, Env[Dummy]] = guppyLayer andTo sharkLayer
+            val guppyAndShark: Layer[Guppy & Shark, Env[Dummy]] = guppyLayer andTo sharkLayer
 
-            val combinedLayer = dummy andTo guppyAndShart
+            val combinedLayer = dummy andTo guppyAndShark
 
             val env = Memo.run(combinedLayer.run).eval
             assert(env.get[Guppy].name == "Tiny Guppy")
