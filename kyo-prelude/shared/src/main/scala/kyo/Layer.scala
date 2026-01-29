@@ -76,10 +76,9 @@ abstract class Layer[+Out, -S] extends Serializable:
       * @return
       *   A new layer producing both outputs
       */
-    final infix def andTo[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = AndTo(self, that)
+    final infix def andTo[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
 
-    @deprecated("Use `andTo` instead, which is more consistent considering the argument order.")
-    final infix def using[Out2, S2](that: Layer[Out2, S2]): Layer[Out & Out2, S & S2] = self andTo that
+    final infix def using[Out2, S2](that: Layer[Out2, Env[Out] & S2]): Layer[Out & Out2, S & S2] = self andTo that
 
 end Layer
 
@@ -290,7 +289,6 @@ object Layer:
 
         case class And[Out1, Out2, S1, S2](_1: Layer[Out1, S1], _2: Layer[Out2, S2])                     extends Layer[Out1 & Out2, S1 & S2]
         case class To[Out1, Out2, S1, S2](_1: Layer[Out1, S1], _2: Layer[Out2, S2 & Env[Out1]])          extends Layer[Out2, S1 & S2]
-        case class AndTo[Out1, Out2, S1, S2](_1: Layer[Out1, S1], _2: Layer[Out2, S2 & Env[Out1]])       extends Layer[Out1 & Out2, S1 & S2]
         case class FromKyo_0[Out, S](kyo: () => TypeMap[Out] < S)(using val tag: Tag[Out])               extends Layer[Out, S]
         case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Env[In] & S))(using val tag: Tag[Out]) extends Layer[Out, S & Env[In]]
 
@@ -302,13 +300,7 @@ object Layer:
                 case And(lhs, rhs) =>
                     for
                         leftResult  <- doRun(lhs)
-                        rightResult <- (doRun(rhs))
-                    yield leftResult.union(rightResult)
-
-                case AndTo(lhs, rhs) =>
-                    for
-                        leftResult  <- doRun(lhs)
-                        rightResult <- Env.runAll(leftResult)(doRun(rhs))
+                        rightResult <- doRun(rhs)
                     yield leftResult.union(rightResult)
 
                 case To(lhs, rhs) =>
