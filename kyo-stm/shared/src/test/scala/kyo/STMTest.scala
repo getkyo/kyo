@@ -777,9 +777,9 @@ class STMTest extends Test:
                 ref <- TRef.init(0)
                 (parentTick, childTick) <-
                     STM.run {
-                        Tick.withCurrent { parentTick =>
+                        STM.withCurrentTransaction { parentTick =>
                             Fiber.initUnscoped {
-                                STM.run(Tick.withCurrent(identity))
+                                STM.run(STM.withCurrentTransaction(identity))
                             }.map(_.get).map { childTick =>
                                 (parentTick, childTick)
                             }
@@ -996,7 +996,7 @@ class STMTest extends Test:
 
         "basic read and write with tick near Int.MaxValue" in run {
             Sync.Unsafe {
-                Tick.setCounter(Int.MaxValue.toLong - 10)
+                STM.Tick.testOnlySet(Int.MaxValue.toLong - 10)
             }.andThen {
                 for
                     ref   <- TRef.init(42)
@@ -1008,7 +1008,7 @@ class STMTest extends Test:
 
         "basic read and write with tick beyond Int.MaxValue" in run {
             Sync.Unsafe {
-                Tick.setCounter(Int.MaxValue.toLong + 1000)
+                STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
                     ref   <- TRef.init(42)
@@ -1020,7 +1020,7 @@ class STMTest extends Test:
 
         "conflict detection with large ticks" in run {
             Sync.Unsafe {
-                Tick.setCounter(Int.MaxValue.toLong + 1000)
+                STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
                     ref1 <- TRef.init(10)
@@ -1041,7 +1041,7 @@ class STMTest extends Test:
 
         "concurrent transactions with large ticks" in runNotJS {
             Sync.Unsafe {
-                Tick.setCounter(Int.MaxValue.toLong + 1000)
+                STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
                     ref   <- TRef.init(0)
@@ -1053,7 +1053,7 @@ class STMTest extends Test:
 
         "nested transactions with large ticks" in run {
             Sync.Unsafe {
-                Tick.setCounter(Int.MaxValue.toLong + 1000)
+                STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
                     ref <- TRef.init(0)
@@ -1076,7 +1076,7 @@ class STMTest extends Test:
 
         "opacity with large ticks" in runJVM {
             Sync.Unsafe {
-                Tick.setCounter(Int.MaxValue.toLong + 1000)
+                STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 val retrySchedule = STM.defaultRetrySchedule.forever
                 for

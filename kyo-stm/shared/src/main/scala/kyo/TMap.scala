@@ -62,7 +62,7 @@ object TMap:
     inline def initWith[K, V](inline entries: (K, V)*)[A, S](inline f: TMap[K, V] => A < S)(
         using inline frame: Frame
     ): TMap[K, V] < (Sync & S) =
-        Tick.withCurrentOrNext { tick =>
+        STM.withCurrentTransactionOrNew { tick =>
             val trefs =
                 entries.foldLeft(Map.empty[K, TRef[V]]) {
                     case (acc, (k, v)) =>

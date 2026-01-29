@@ -87,7 +87,7 @@ class TRefTest extends Test:
                 assert(State.free.readTick == 0L)
             }
             "asString is free" in {
-                assert(State.free.asString == "free")
+                assert(State.free.render == "free")
             }
         }
 
@@ -100,7 +100,7 @@ class TRefTest extends Test:
                 val s = State.free.acquireReader.get.withReadTick(100L)
                 assert(s.readTick == 100L)
                 assert(s.acquireWriter(100L).isEmpty)
-                assert(s.asString == "1 readers")
+                assert(s.render == "1 readers")
             }
             "withoutReadTick clears tick" in {
                 val s = State.free.withReadTick(42L).withoutReadTick
@@ -118,20 +118,20 @@ class TRefTest extends Test:
                 val s = State.free.acquireReader.get
                 assert(s.acquireWriter(0L).isEmpty)
                 assert(s.acquireReader.isDefined)
-                assert(s.asString == "1 readers")
+                assert(s.render == "1 readers")
             }
             "multiple readers stack" in {
                 val s = State.free.acquireReader.get.acquireReader.get.acquireReader.get
-                assert(s.asString == "3 readers")
+                assert(s.render == "3 readers")
             }
             "releaseReader decrements count" in {
                 val s = State.free.acquireReader.get.acquireReader.get.releaseReader
-                assert(s.asString == "1 readers")
+                assert(s.render == "1 readers")
             }
             "releaseReader back to free" in {
                 val s = State.free.acquireReader.get.releaseReader
                 assert(s.acquireWriter(0L).isDefined)
-                assert(s.asString == "free")
+                assert(s.render == "free")
             }
         }
 
@@ -140,12 +140,12 @@ class TRefTest extends Test:
                 val s = State.free.acquireWriter(0L).get
                 assert(s.acquireWriter(0L).isEmpty)
                 assert(s.acquireReader.isEmpty)
-                assert(s.asString == "writer")
+                assert(s.render == "writer")
             }
             "acquireWriter preserves readTick" in {
                 val s = State.free.withReadTick(42L).acquireWriter(100L).get
                 assert(s.readTick == 42L)
-                assert(s.asString == "writer")
+                assert(s.render == "writer")
             }
             "acquireWriter blocked by newer readTick" in {
                 val s = State.free.withReadTick(100L)
@@ -161,7 +161,7 @@ class TRefTest extends Test:
                 val s    = State.free.withReadTick(tick)
                 assert(s.readTick == tick)
                 assert(s.acquireWriter(tick).isDefined)
-                assert(s.asString == "free")
+                assert(s.render == "free")
             }
             "readTick near 56-bit max" in {
                 val tick = (1L << 55) - 1
@@ -173,26 +173,26 @@ class TRefTest extends Test:
                 val tick = Int.MaxValue.toLong * 2
                 val s    = State.free.acquireReader.get.acquireReader.get.withReadTick(tick)
                 assert(s.readTick == tick)
-                assert(s.asString == "2 readers")
+                assert(s.render == "2 readers")
                 assert(s.acquireWriter(tick).isEmpty)
             }
             "large tick preserves writer lock" in {
                 val tick = Int.MaxValue.toLong * 2
                 val s    = State.free.withReadTick(tick).acquireWriter(tick).get
                 assert(s.readTick == tick)
-                assert(s.asString == "writer")
+                assert(s.render == "writer")
             }
             "withoutReadTick clears large tick" in {
                 val tick = Int.MaxValue.toLong * 3
                 val s    = State.free.acquireReader.get.withReadTick(tick).withoutReadTick
                 assert(s.readTick == 0L)
-                assert(s.asString == "1 readers")
+                assert(s.render == "1 readers")
             }
             "reader operations don't affect large tick" in {
                 val tick = Int.MaxValue.toLong + 12345L
                 val s    = State.free.withReadTick(tick).acquireReader.get.acquireReader.get.releaseReader
                 assert(s.readTick == tick)
-                assert(s.asString == "1 readers")
+                assert(s.render == "1 readers")
             }
         }
 

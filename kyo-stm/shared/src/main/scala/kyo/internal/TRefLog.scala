@@ -36,9 +36,9 @@ private[kyo] object TRefLog:
     val isolate = Var.isolate.update[TRefLog]
 
     sealed abstract class Entry[A] extends Serializable:
-        def tick: Tick
+        def tick: STM.Tick
         def value: A
 
-    case class Read[A](tick: Tick, value: A)  extends Entry[A]
-    case class Write[A](tick: Tick, value: A) extends Entry[A]
+    case class Read[A](tick: STM.Tick, value: A)  extends Entry[A]
+    case class Write[A](tick: STM.Tick, value: A) extends Entry[A]
 end TRefLog
