@@ -57,13 +57,13 @@ object STM:
     private val currentTransaction = Local.initNoninheritable[Maybe[Tick]](Absent)
 
     /** Use current transaction's tick (fails if not in transaction) */
-    private[kyo] inline def withCurrentTransaction[A, S](inline f: Tick => A < S)(using inline frame: Frame): A < (S & Sync) =
+    private[kyo] inline def withCurrentTransaction[A, S](inline f: Tick => A < S)(using inline frame: Frame): A < (S & STM & Sync) =
         Sync.withLocal(currentTransaction) {
             case Absent        => bug("STM operation attempted outside of STM.run")
             case Present(tick) => f(tick)
         }
 
-    /** Use current transaction's tick, or generate a new one if not in a transaction */
+    /** Use current transaction, or commit in a new one if not in a transaction */
     private[kyo] inline def withCurrentTransactionOrNew[A, S](inline f: AllowUnsafe ?=> Tick => A < S)(using
         inline frame: Frame
     ): A < (S & Sync) =
