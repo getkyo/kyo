@@ -12,7 +12,7 @@ trait StatsRefresh {
 
     val threadFactory = new ThreadFactory {
         def newThread(r: Runnable) = {
-            val thread = new Thread
+            val thread = new Thread(r)
             thread.setName("kyo-stats-refresh")
             thread.setDaemon(true)
             thread
