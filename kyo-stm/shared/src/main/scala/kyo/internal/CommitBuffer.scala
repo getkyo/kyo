@@ -17,9 +17,8 @@ private[kyo] object CommitBuffer:
 
     private val cache = new ThreadLocal[CommitBuffer]
 
-    /** Provides a thread-local cached buffer to the given function, clearing it after use.
-      * The buffer will not be cleared on exception. This is safe because `f` should never throw
-      * unless it's a fatal exception, which shouldn't be handled.
+    /** Provides a thread-local cached buffer to the given function, clearing it after use. The buffer will not be cleared on exception.
+      * This is safe because `f` should never throw unless it's a fatal exception, which shouldn't be handled.
       */
     inline def withBuffer[A](inline f: CommitBuffer => A)(using AllowUnsafe): A =
         var buffer = cache.get()
