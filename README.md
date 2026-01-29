@@ -828,7 +828,7 @@ The `Layer` type provides instance methods for manually composing layers:
 
 1. `to`: Combines two layers sequentially, where the output of the first layer is used as input for the second layer.
 2. `and`: Combines two layers in parallel, producing a layer that provides both outputs.
-3. `andTo`: Combines a layer with another layer that depends on its output, similar to `to` but keeps both outputs like `and`.
+3. `using`: Combines a layer with another layer that depends on its output, similar to `to` but keeps both outputs.
 
 Here's an example that demonstrates the differences between these methods:
 
@@ -870,13 +870,13 @@ val dbToUserService: Layer[UserService, Sync] =
 val dbAndEmail: Layer[Database & EmailService, Sync] =
     dbLayer.and(emailServiceLayer)
 
-// Example of `andTo`: Similar to `to`, but keeps both Database and UserService
-val userServiceUsingDb: Layer[Database & UserService, Sync] =
-    dbLayer.andTo(userServiceLayer)
+// Example of `using`: Similar to `to`, but keeps both Database and UserService
+val dbUsingUserService: Layer[Database & UserService, Sync] =
+    dbLayer.using(userServiceLayer)
 
 // Complex composition
 val fullAppLayer: Layer[Database & UserService & EmailService, Sync] =
-    dbLayer.andTo(userServiceLayer).and(emailServiceLayer)
+    dbLayer.using(userServiceLayer).and(emailServiceLayer)
 
 // Use the full app layer
 val computation: Unit < (Env[Database] & Env[UserService] & Env[EmailService] & Sync) =
