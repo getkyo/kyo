@@ -12,9 +12,9 @@ import zio.stream.ZStream
 
 class ZStreamsTest extends Test:
 
-    def runZIO[T](v: Task[T]): T =
+    def runZIO(v: Task[Assertion]): Future[Assertion] =
         zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.run(v).getOrThrow()
+            zio.Runtime.default.unsafe.runToFuture(v)
         )
 
     def runKyo(v: => Assertion < (Abort[Throwable] & Async)): Future[Assertion] =
