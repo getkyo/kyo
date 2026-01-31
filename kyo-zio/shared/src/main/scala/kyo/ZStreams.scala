@@ -49,7 +49,7 @@ object ZStreams:
       * @param stream
       *   The Kyo stream
       * @return
-      *   A zio.ZStream that, when consume, will consuem the input stream
+      *   A zio.ZStream that, when consume, will consume the input stream
       */
     def run[E, A](stream: => Stream[A, Abort[E] & Async])(using
         Frame,
