@@ -526,23 +526,23 @@ class HttpRouteTest extends Test:
     }
 
     "Documentation" - {
-        "tag" in {
-            val r = HttpRoute.get("users").tag("Users")
+        "withTag" in {
+            val r = HttpRoute.get("users").withTag("Users")
             succeed
         }
 
-        "summary" in {
-            val r = HttpRoute.get("users").summary("List all users")
+        "withSummary" in {
+            val r = HttpRoute.get("users").withSummary("List all users")
             succeed
         }
 
-        "description" in {
-            val r = HttpRoute.get("users").description("Returns a paginated list")
+        "withDescription" in {
+            val r = HttpRoute.get("users").withDescription("Returns a paginated list")
             succeed
         }
 
-        "operationId" in {
-            val r = HttpRoute.get("users").operationId("listUsers")
+        "withOperationId" in {
+            val r = HttpRoute.get("users").withOperationId("listUsers")
             succeed
         }
 
@@ -569,10 +569,10 @@ class HttpRouteTest extends Test:
         "chaining all documentation" in {
             val r = HttpRoute.get("users")
                 .output[Seq[User]]
-                .tag("Users")
-                .summary("List users")
-                .description("Returns paginated list of users")
-                .operationId("listUsers")
+                .withTag("Users")
+                .withSummary("List users")
+                .withDescription("Returns paginated list of users")
+                .withOperationId("listUsers")
                 .security("bearerAuth")
             succeed
         }
@@ -728,19 +728,19 @@ class HttpRouteTest extends Test:
                     .query[Int]("limit", 20)
                     .query[Int]("offset", 0)
                     .output[Seq[User]]
-                    .tag("Users")
+                    .withTag("Users")
 
                 val get = HttpRoute.get("users" / Path.int("id"))
                     .output[User]
                     .error[NotFoundError](Status.NotFound)
-                    .tag("Users")
+                    .withTag("Users")
 
                 val create = HttpRoute.post("users")
                     .authBearer
                     .input[CreateUser]
                     .output[User](Status.Created)
                     .error[ValidationError](Status.BadRequest)
-                    .tag("Users")
+                    .withTag("Users")
 
                 val update = HttpRoute.put("users" / Path.int("id"))
                     .authBearer
@@ -748,13 +748,13 @@ class HttpRouteTest extends Test:
                     .output[User]
                     .error[NotFoundError](Status.NotFound)
                     .error[ValidationError](Status.BadRequest)
-                    .tag("Users")
+                    .withTag("Users")
 
                 val delete = HttpRoute.delete("users" / Path.int("id"))
                     .authBearer
                     .output[Unit]
                     .error[NotFoundError](Status.NotFound)
-                    .tag("Users")
+                    .withTag("Users")
             end UserRoutes
             succeed
         }

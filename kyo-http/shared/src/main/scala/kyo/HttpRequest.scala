@@ -7,6 +7,7 @@ import io.netty.handler.codec.http.HttpHeaderNames
 import io.netty.handler.codec.http.HttpMethod as NettyMethod
 import io.netty.handler.codec.http.HttpVersion
 import io.netty.handler.codec.http.QueryStringDecoder
+import io.netty.handler.codec.http.cookie.ServerCookieDecoder
 import io.netty.handler.codec.http.multipart.*
 import java.net.URI
 import java.nio.charset.StandardCharsets
@@ -74,6 +75,18 @@ object HttpRequest:
 
         def url: String = request.uri()
 
+        def fullUrl: String =
+            // Reconstruct full URL from scheme, Host header and path
+            val hostHeader = request.headers().get("Host")
+            val uri        = request.uri()
+            if hostHeader == null || hostHeader.isEmpty then uri
+            else
+                val schemeHeader = request.headers().get("X-Kyo-Scheme")
+                val scheme       = if schemeHeader != null then schemeHeader else "http"
+                s"$scheme://$hostHeader$uri"
+            end if
+        end fullUrl
+
         def path: String =
             val uri = request.uri()
             val idx = uri.indexOf('?')
@@ -82,15 +95,34 @@ object HttpRequest:
 
         def host: String =
             header("Host").map { h =>
-                val idx = h.indexOf(':')
-                if idx >= 0 then h.substring(0, idx) else h
+                // Handle IPv6 addresses like [::1]:8080
+                if h.startsWith("[") then
+                    val endBracket = h.indexOf(']')
+                    if endBracket >= 0 then h.substring(1, endBracket) else h
+                else
+                    val idx = h.indexOf(':')
+                    if idx >= 0 then h.substring(0, idx) else h
+                end if
             }.getOrElse("")
 
         def port: Int =
             header("Host").map { h =>
-                val idx = h.indexOf(':')
-                if idx >= 0 then h.substring(idx + 1).toInt else 80
-            }.getOrElse(80)
+                // Handle IPv6 addresses like [::1]:8080
+                val portIdx =
+                    if h.startsWith("[") then
+                        val endBracket = h.indexOf(']')
+                        if endBracket >= 0 && endBracket + 1 < h.length && h.charAt(endBracket + 1) == ':' then
+                            endBracket + 1
+                        else -1
+                    else
+                        h.indexOf(':')
+                if portIdx >= 0 then h.substring(portIdx + 1).toInt
+                else
+                    // Use scheme to determine default port
+                    val scheme = request.headers().get("X-Kyo-Scheme")
+                    if scheme == "https" then HttpClient.HttpsPort else HttpClient.HttpPort
+                end if
+            }.getOrElse(HttpClient.HttpPort)
 
         def contentType: Maybe[String] = header("Content-Type")
 
@@ -115,58 +147,32 @@ object HttpRequest:
         def cookie(name: String): Maybe[Cookie] =
             cookies.find(_.name == name)
 
+        def cookie(name: String, strict: Boolean): Maybe[Cookie] =
+            cookies(strict).find(_.name == name)
+
+        /** Parse cookies using server's default mode (LAX unless server configured for STRICT) */
         def cookies: Span[Cookie] =
+            // Check if server configured strict mode via internal header
+            val strict = request.headers().get(HttpServer.StrictCookieHeader) == "true"
+            cookies(strict)
+        end cookies
+
+        /** Parse cookies with explicit mode selection */
+        def cookies(strict: Boolean): Span[Cookie] =
             header("Cookie") match
                 case Absent => Span.empty[Cookie]
                 case Present(cookieHeader) =>
-                    val len = cookieHeader.length
-
-                    @tailrec def trimStart(partStart: Int, partEnd: Int): Int =
-                        if partStart < partEnd && cookieHeader.charAt(partStart) == ' ' then trimStart(partStart + 1, partEnd)
-                        else partStart
-
-                    @tailrec def trimEnd(partStart: Int, partEnd: Int): Int =
-                        if partEnd > partStart && cookieHeader.charAt(partEnd - 1) == ' ' then trimEnd(partStart, partEnd - 1)
-                        else partEnd
-
-                    // First pass: count valid cookies
-                    @tailrec def countLoop(start: Int, count: Int): Int =
-                        if start >= len then count
-                        else
-                            val end = cookieHeader.indexOf(';', start) match
-                                case -1 => len;
-                                case e  => e
-                            val partStart = trimStart(start, end)
-                            val partEnd   = trimEnd(partStart, end)
-                            val eqIdx     = cookieHeader.indexOf('=', partStart)
-                            val newCount  = if eqIdx > partStart && eqIdx < partEnd then count + 1 else count
-                            countLoop(end + 1, newCount)
-
-                    val count = countLoop(0, 0)
-                    if count == 0 then Span.empty[Cookie]
-                    else
-                        val arr = new Array[Cookie](count)
-                        // Second pass: collect cookies
-                        @tailrec def collectLoop(start: Int, i: Int): Unit =
-                            if start < len then
-                                val end = cookieHeader.indexOf(';', start) match
-                                    case -1 => len;
-                                    case e  => e
-                                val partStart = trimStart(start, end)
-                                val partEnd   = trimEnd(partStart, end)
-                                val eqIdx     = cookieHeader.indexOf('=', partStart)
-                                if eqIdx > partStart && eqIdx < partEnd then
-                                    arr(i) = Cookie(
-                                        cookieHeader.substring(partStart, eqIdx),
-                                        cookieHeader.substring(eqIdx + 1, partEnd)
-                                    )
-                                    collectLoop(end + 1, i + 1)
-                                else
-                                    collectLoop(end + 1, i)
-                                end if
-                        collectLoop(0, 0)
-                        Span.fromUnsafe(arr)
-                    end if
+                    val decoder = if strict then ServerCookieDecoder.STRICT else ServerCookieDecoder.LAX
+                    val decoded = decoder.decode(cookieHeader)
+                    val arr     = new Array[Cookie](decoded.size())
+                    val iter    = decoded.iterator()
+                    @tailrec def loop(i: Int): Unit =
+                        if iter.hasNext then
+                            val c = iter.next()
+                            arr(i) = Cookie(c.name(), c.value())
+                            loop(i + 1)
+                    loop(0)
+                    Span.fromUnsafe(arr)
 
         def query(name: String): Maybe[String] =
             val uri      = request.uri()
@@ -207,11 +213,11 @@ object HttpRequest:
             else content.toString(StandardCharsets.UTF_8)
         end bodyText
 
-        def bodyBytes: Array[Byte] =
+        def bodyBytes: Span[Byte] =
             val content = request.content()
             val bytes   = new Array[Byte](content.readableBytes())
             content.getBytes(content.readerIndex(), bytes)
-            bytes
+            Span.fromUnsafe(bytes)
         end bodyBytes
 
         def bodyAs[A: Schema]: A =
@@ -322,9 +328,11 @@ object HttpRequest:
         filename: Maybe[String],
         contentType: Maybe[String],
         content: Array[Byte]
-    )
+    ):
+        require(name.nonEmpty, "Part name cannot be empty")
+    end Part
 
-    private def initBytes(
+    private[kyo] def initBytes(
         method: Method,
         url: String,
         body: Array[Byte],
@@ -342,19 +350,32 @@ object HttpRequest:
             else path + "?" + rawQuery
         val content = if body.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(body)
         val request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method.toNetty, pathAndQuery, content)
-        val port    = uri.getPort
-        val host =
-            if port > 0 && port != 80 && port != 443 then
-                uri.getHost + ":" + port
-            else
-                uri.getHost
-        discard(request.headers().set(HttpHeaderNames.HOST, host))
+        val uriHost = uri.getHost
+        val scheme  = uri.getScheme
+        // Internal header to preserve scheme through Netty's opaque type (used by fullUrl, port methods)
+        if scheme != null then
+            discard(request.headers().set("X-Kyo-Scheme", scheme))
+        if uriHost != null then
+            val port = uri.getPort
+            // Note: Java URI.getHost() already returns IPv6 addresses with brackets
+            val host =
+                if port > 0 && port != HttpClient.HttpPort && port != HttpClient.HttpsPort then
+                    s"$uriHost:$port"
+                else
+                    uriHost
+            discard(request.headers().set(HttpHeaderNames.HOST, host))
+        end if
         if body.nonEmpty then
             discard(request.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType))
             discard(request.headers().set(HttpHeaderNames.CONTENT_LENGTH, body.length))
-        headers.foreach { case (name, value) =>
-            discard(request.headers().set(name, value))
-        }
+        val headerCount = headers.length
+        @tailrec def setHeaders(i: Int): Unit =
+            if i < headerCount then
+                val header = headers(i)
+                // Use set to allow user headers to override built-in headers
+                discard(request.headers().set(header._1, header._2))
+                setHeaders(i + 1)
+        setHeaders(0)
         request
     end initBytes
 

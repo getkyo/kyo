@@ -21,7 +21,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       */
     def startTestServer(handlers: HttpHandler[Any]*)(using Frame): Int < (Async & Scope) =
         HttpServer.init(HttpServer.Config(port = 0))(handlers*).map { server =>
-            Scope.ensure(server.stop).andThen(server.port)
+            Scope.ensure(server.stopNow).andThen(server.port)
         }
 
     /** Runs a test with a server, ensuring cleanup.
@@ -36,27 +36,27 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     // Request helpers
 
     /** Makes a GET request to localhost on the given port, returns HttpResponse. */
-    def testGet(port: Int, path: String)(using Frame): HttpResponse < Async =
+    def testGet(port: Int, path: String)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.get(s"http://localhost:$port$path"))
 
     /** Makes a GET request and parses the response body as type A. */
-    def testGetAs[A: Schema](port: Int, path: String)(using Frame): A < Async =
+    def testGetAs[A: Schema](port: Int, path: String)(using Frame): A < (Async & Abort[HttpError]) =
         HttpClient.get[A](s"http://localhost:$port$path")
 
     /** Makes a POST request to localhost on the given port, returns HttpResponse. */
-    def testPost[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse < Async =
+    def testPost[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.post(s"http://localhost:$port$path", body))
 
     /** Makes a POST request and parses the response body as type B. */
-    def testPostAs[A: Schema, B: Schema](port: Int, path: String, body: A)(using Frame): B < Async =
+    def testPostAs[A: Schema, B: Schema](port: Int, path: String, body: A)(using Frame): B < (Async & Abort[HttpError]) =
         HttpClient.post[B, A](s"http://localhost:$port$path", body)
 
     /** Makes a PUT request to localhost on the given port, returns HttpResponse. */
-    def testPut[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse < Async =
+    def testPut[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.put(s"http://localhost:$port$path", body))
 
     /** Makes a DELETE request to localhost on the given port, returns HttpResponse. */
-    def testDelete(port: Int, path: String)(using Frame): HttpResponse < Async =
+    def testDelete(port: Int, path: String)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.delete(s"http://localhost:$port$path"))
 
     // Echo handler for testing client behavior

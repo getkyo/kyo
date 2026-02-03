@@ -11,6 +11,7 @@ import io.netty.handler.codec.http.cookie.ServerCookieEncoder
 import java.nio.charset.StandardCharsets
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import kyo.internal.Utf8StreamDecoder
 import scala.annotation.tailrec
 
 final class HttpResponse private (
@@ -28,10 +29,10 @@ final class HttpResponse private (
             case Left(bytes) => new String(bytes, StandardCharsets.UTF_8)
             case Right(_)    => ""
 
-    def bodyBytes: Array[Byte] =
+    def bodyBytes: Span[Byte] =
         _body match
-            case Left(bytes) => bytes
-            case Right(_)    => Array.empty
+            case Left(bytes) => Span.fromUnsafe(bytes)
+            case Right(_)    => Span.empty[Byte]
 
     def bodyAs[A: Schema]: A =
         Schema[A].decode(bodyText)
@@ -42,14 +43,18 @@ final class HttpResponse private (
                 val text = new String(bytes, StandardCharsets.UTF_8)
                 Stream.init(Seq(Schema[A].decode(text)))
             case Right(byteStream) =>
+                // Use stateful UTF-8 decoder to handle multi-byte characters split across chunks
+                val decoder = Utf8StreamDecoder()
                 byteStream.map { chunk =>
-                    Schema[A].decode(new String(chunk.toArray, StandardCharsets.UTF_8))
+                    val text = decoder.decode(chunk)
+                    Schema[A].decode(text)
                 }
 
     // --- Header accessors ---
 
     def header(name: String): Maybe[String] =
         val lowerName = name.toLowerCase
+        // Seq is correct: HTTP headers can have duplicates and order matters
         @tailrec def loop(remaining: Seq[(String, String)]): Maybe[String] =
             remaining match
                 case Seq()                                         => Absent

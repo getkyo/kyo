@@ -2,61 +2,82 @@ package kyo
 
 import scala.deriving.Mirror
 
-trait Schema[A]:
-    def encode(value: A): String
-    def decode(json: String): A
-    def jsonSchema: String
+/** Schema for JSON encoding/decoding. Wraps zio-schema internally but does not expose ZIO types. */
+abstract class Schema[A]:
+    private[kyo] def zpiSchema: zio.schema.Schema[A]
+
+    def encode(value: A): String =
+        zio.schema.codec.JsonCodec.jsonEncoder(zpiSchema).encodeJson(value, None).toString
+
+    def decode(json: String): A =
+        zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
+            case Right(a)    => a
+            case Left(error) => throw new IllegalArgumentException(s"JSON decode error: $error")
 end Schema
 
 object Schema:
+
     def apply[A](using schema: Schema[A]): Schema[A] = schema
 
-    inline def derived[A](using m: Mirror.Of[A]): Schema[A] =
+    private def wrap[A](zs: zio.schema.Schema[A]): Schema[A] =
         new Schema[A]:
-            def encode(value: A): String = ???
-            def decode(json: String): A  = ???
-            def jsonSchema: String       = ???
+            val zpiSchema: zio.schema.Schema[A] = zs
 
-    given Schema[Int] with
-        def encode(value: Int): String = ???
-        def decode(json: String): Int  = ???
-        def jsonSchema: String         = ???
-    end given
+    // Derivation - delegates to zio-schema
+    inline given derived[A](using m: Mirror.Of[A]): Schema[A] =
+        wrap(zio.schema.DeriveSchema.gen[A])
 
-    given Schema[Long] with
-        def encode(value: Long): String = ???
-        def decode(json: String): Long  = ???
-        def jsonSchema: String          = ???
-    end given
+    // Primitive instances
+    given Schema[Int]     = wrap(zio.schema.Schema[Int])
+    given Schema[Long]    = wrap(zio.schema.Schema[Long])
+    given Schema[Boolean] = wrap(zio.schema.Schema[Boolean])
+    given Schema[Double]  = wrap(zio.schema.Schema[Double])
+    given Schema[Float]   = wrap(zio.schema.Schema[Float])
+    given Schema[Short]   = wrap(zio.schema.Schema[Short])
+    given Schema[Byte]    = wrap(zio.schema.Schema[Byte])
+    given Schema[Char]    = wrap(zio.schema.Schema[Char])
 
-    given Schema[String] with
-        def encode(value: String): String = ???
-        def decode(json: String): String  = ???
-        def jsonSchema: String            = ???
-    end given
+    // String: if JSON decode fails, return raw text (supports both JSON strings and plain text)
+    given Schema[String] = new Schema[String]:
+        val zpiSchema: zio.schema.Schema[String] = zio.schema.Schema[String]
+        override def decode(json: String): String =
+            zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
+                case Right(a) => a
+                case Left(_)  => json // Return raw text as fallback
 
-    given Schema[Boolean] with
-        def encode(value: Boolean): String = ???
-        def decode(json: String): Boolean  = ???
-        def jsonSchema: String             = ???
-    end given
+    // Unit: accept empty body or JSON null
+    given Schema[Unit] = new Schema[Unit]:
+        val zpiSchema: zio.schema.Schema[Unit] = zio.schema.Schema[Unit]
+        override def decode(json: String): Unit =
+            if json.isEmpty || json.trim.isEmpty then ()
+            else
+                zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
+                    case Right(a)    => a
+                    case Left(error) => throw new IllegalArgumentException(s"JSON decode error: $error")
 
-    given Schema[Unit] with
-        def encode(value: Unit): String = ???
-        def decode(json: String): Unit  = ???
-        def jsonSchema: String          = ???
-    end given
+    // Collection instances
+    given [A](using s: Schema[A]): Schema[Seq[A]] =
+        wrap(zio.schema.Schema.list(using s.zpiSchema).transform(_.toSeq, _.toList))
+    given [A](using s: Schema[A]): Schema[List[A]] =
+        wrap(zio.schema.Schema.list(using s.zpiSchema))
+    given [A](using s: Schema[A]): Schema[Vector[A]] =
+        wrap(zio.schema.Schema.vector(using s.zpiSchema))
+    given [A](using s: Schema[A]): Schema[Set[A]] =
+        wrap(zio.schema.Schema.set(using s.zpiSchema))
+    given [A, B](using sa: Schema[A], sb: Schema[B]): Schema[Map[A, B]] =
+        wrap(zio.schema.Schema.map(using sa.zpiSchema, sb.zpiSchema))
 
-    given [A: Schema]: Schema[Seq[A]] with
-        def encode(value: Seq[A]): String = ???
-        def decode(json: String): Seq[A]  = ???
-        def jsonSchema: String            = ???
-    end given
+    // Option/Either
+    given [A](using s: Schema[A]): Schema[Option[A]] =
+        wrap(zio.schema.Schema.option(using s.zpiSchema))
+    given [A, B](using sa: Schema[A], sb: Schema[B]): Schema[Either[A, B]] =
+        wrap(zio.schema.Schema.either(using sa.zpiSchema, sb.zpiSchema))
 
-    given [A: Schema]: Schema[Maybe[A]] with
-        def encode(value: Maybe[A]): String = ???
-        def decode(json: String): Maybe[A]  = ???
-        def jsonSchema: String              = ???
-    end given
+    // Maybe - convert to/from Option
+    given [A](using s: Schema[A]): Schema[Maybe[A]] =
+        wrap(zio.schema.Schema.option(using s.zpiSchema).transform(
+            opt => opt.fold(Absent)(Present(_)),
+            maybe => maybe.toOption
+        ))
 
 end Schema

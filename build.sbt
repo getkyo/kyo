@@ -539,7 +539,14 @@ lazy val `kyo-http` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.netty" % "netty-codec-http" % "4.2.1.Final"
+            libraryDependencies += "io.netty"  % "netty-codec-http"  % "4.2.1.Final",
+            libraryDependencies += "io.netty"  % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-x86_64",
+            libraryDependencies += "io.netty"  % "netty-transport-native-epoll"  % "4.2.1.Final" % Runtime classifier "linux-aarch_64",
+            libraryDependencies += "io.netty"  % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-x86_64",
+            libraryDependencies += "io.netty"  % "netty-transport-native-kqueue" % "4.2.1.Final" % Runtime classifier "osx-aarch_64",
+            libraryDependencies += "dev.zio"  %% "zio-schema"        % "1.6.4",
+            libraryDependencies += "dev.zio"  %% "zio-schema-json"   % "1.6.4",
+            libraryDependencies += "dev.zio"  %% "zio-schema-derivation" % "1.6.4"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -664,6 +671,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-sttp`)
+        .dependsOn(`kyo-http`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)

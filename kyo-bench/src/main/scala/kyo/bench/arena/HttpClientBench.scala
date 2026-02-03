@@ -1,6 +1,7 @@
 package kyo.bench.arena
 
 import org.http4s.ember.client.EmberClientBuilder
+import org.openjdk.jmh.annotations.*
 
 class HttpClientBench extends ArenaBench.ForkOnly("pong"):
 
@@ -36,6 +37,21 @@ class HttpClientBench extends ArenaBench.ForkOnly("pong"):
 
         Requests(_.get(kyoUrl))
     end kyoBenchFiber
+
+    @Benchmark
+    def forkKyoHttp(warmup: WarmupJITProfile.KyoForkWarmup): String =
+        import kyo.*
+        import AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(
+            Fiber.initUnscoped(
+                Abort.run[HttpError](HttpClient.send(HttpRequest.get(url)).map(_.bodyText)).map {
+                    case Result.Success(s) => s
+                    case Result.Failure(e) => throw new RuntimeException(e.toString)
+                    case Result.Panic(e)   => throw e
+                }
+            ).flatMap(_.block(Duration.Infinity))
+        ).getOrThrow
+    end forkKyoHttp
 
     val zioUrl =
         import zio.http.*
