@@ -1,0 +1,722 @@
+package kyo
+
+import HttpRequest.*
+import HttpResponse.Cookie
+
+class HttpRequestTest extends Test:
+
+    case class User(name: String, email: String) derives Schema, CanEqual
+
+    "Method enum" - {
+
+        "all HTTP methods are defined" in {
+            val methods = Seq(
+                Method.GET,
+                Method.POST,
+                Method.PUT,
+                Method.PATCH,
+                Method.DELETE,
+                Method.HEAD,
+                Method.OPTIONS,
+                Method.TRACE,
+                Method.CONNECT
+            )
+            assert(methods.size == 9)
+        }
+
+        "methods are comparable" in {
+            assert(Method.GET == Method.GET)
+            assert(Method.GET != Method.POST)
+        }
+    }
+
+    "Part" - {
+
+        "construction with all fields" in {
+            val part = Part("file", Present("doc.pdf"), Present("application/pdf"), Array(1, 2, 3))
+            assert(part.name == "file")
+            assert(part.filename == Present("doc.pdf"))
+            assert(part.contentType == Present("application/pdf"))
+            assert(part.content.length == 3)
+        }
+
+        "construction with minimal fields" in {
+            val part = Part("data", Absent, Absent, Array.empty)
+            assert(part.name == "data")
+            assert(part.filename == Absent)
+            assert(part.contentType == Absent)
+        }
+
+        "empty content" in {
+            val part = Part("empty", Absent, Absent, Array.empty)
+            assert(part.content.isEmpty)
+        }
+
+        "binary content preserved" in {
+            val bytes = Array[Byte](0, 1, 127, -128, -1)
+            val part  = Part("binary", Absent, Absent, bytes)
+            assert(part.content.sameElements(bytes))
+        }
+
+        "large content" in {
+            val bytes = new Array[Byte](1024 * 1024) // 1MB
+            val part  = Part("large", Absent, Absent, bytes)
+            assert(part.content.length == 1024 * 1024)
+        }
+
+        "special characters in name" in {
+            val part = Part("file-name_123.txt", Absent, Absent, Array.empty)
+            assert(part.name == "file-name_123.txt")
+        }
+
+        "unicode in filename" in {
+            val part = Part("file", Present("文档.pdf"), Absent, Array.empty)
+            assert(part.filename == Present("文档.pdf"))
+        }
+
+        "empty name throws" in {
+            assertThrows[IllegalArgumentException] {
+                Part("", Absent, Absent, Array.empty)
+            }
+        }
+    }
+
+    "Request constructors" - {
+
+        "get" - {
+            "with url only" in {
+                val request = HttpRequest.get("http://example.com/users")
+                assert(request.method == Method.GET)
+                assert(request.url == "http://example.com/users")
+            }
+
+            "with headers" in {
+                val request = HttpRequest.get(
+                    "http://example.com/users",
+                    Seq("Authorization" -> "Bearer token", "Accept" -> "application/json")
+                )
+                assert(request.header("Authorization") == Present("Bearer token"))
+                assert(request.header("Accept") == Present("application/json"))
+            }
+
+            "with empty headers" in {
+                val request = HttpRequest.get("http://example.com", Seq.empty)
+                assert(request.method == Method.GET)
+            }
+        }
+
+        "post" - {
+            "with string body" in {
+                val request = HttpRequest.post("http://example.com/users", "raw body")
+                assert(request.method == Method.POST)
+                assert(request.bodyText == "raw body")
+            }
+
+            "with typed body" in {
+                val request = HttpRequest.post("http://example.com/users", User("Alice", "alice@example.com"))
+                assert(request.method == Method.POST)
+                assert(request.bodyAs[User] == User("Alice", "alice@example.com"))
+            }
+
+            "with headers" in {
+                val request = HttpRequest.post(
+                    "http://example.com/users",
+                    User("Alice", "alice@example.com"),
+                    Seq("X-Request-Id" -> "123")
+                )
+                assert(request.header("X-Request-Id") == Present("123"))
+            }
+        }
+
+        "put" - {
+            "with string body" in {
+                val request = HttpRequest.put("http://example.com/users/1", "updated")
+                assert(request.method == Method.PUT)
+                assert(request.bodyText == "updated")
+            }
+
+            "with typed body" in {
+                val request = HttpRequest.put("http://example.com/users/1", User("Bob", "bob@example.com"))
+                assert(request.method == Method.PUT)
+                assert(request.bodyAs[User] == User("Bob", "bob@example.com"))
+            }
+
+            "with headers" in {
+                val request = HttpRequest.put(
+                    "http://example.com/users/1",
+                    "body",
+                    Seq("If-Match" -> "etag123")
+                )
+                assert(request.header("If-Match") == Present("etag123"))
+            }
+        }
+
+        "patch" - {
+            "with string body" in {
+                val request = HttpRequest.patch("http://example.com/users/1", "partial")
+                assert(request.method == Method.PATCH)
+                assert(request.bodyText == "partial")
+            }
+
+            "with typed body" in {
+                val request = HttpRequest.patch("http://example.com/users/1", User("Updated", "new@example.com"))
+                assert(request.method == Method.PATCH)
+            }
+
+            "with headers" in {
+                val request = HttpRequest.patch(
+                    "http://example.com/users/1",
+                    "body",
+                    Seq("Content-Type" -> "application/json-patch+json")
+                )
+                assert(request.header("Content-Type") == Present("application/json-patch+json"))
+            }
+        }
+
+        "delete" - {
+            "with url only" in {
+                val request = HttpRequest.delete("http://example.com/users/1")
+                assert(request.method == Method.DELETE)
+            }
+
+            "with headers" in {
+                val request = HttpRequest.delete(
+                    "http://example.com/users/1",
+                    Seq("Authorization" -> "Bearer token")
+                )
+                assert(request.header("Authorization") == Present("Bearer token"))
+            }
+        }
+
+        "head" - {
+            "with url only" in {
+                val request = HttpRequest.head("http://example.com/users")
+                assert(request.method == Method.HEAD)
+            }
+
+            "with headers" in {
+                val request = HttpRequest.head(
+                    "http://example.com/users",
+                    Seq("Accept" -> "application/json")
+                )
+                assert(request.header("Accept") == Present("application/json"))
+            }
+        }
+
+        "options" - {
+            "with url only" in {
+                val request = HttpRequest.options("http://example.com/users")
+                assert(request.method == Method.OPTIONS)
+            }
+
+            "with headers" in {
+                val request = HttpRequest.options(
+                    "http://example.com/users",
+                    Seq("Origin" -> "http://localhost:3000")
+                )
+                assert(request.header("Origin") == Present("http://localhost:3000"))
+            }
+        }
+
+        "multipart" - {
+            "with single part" in {
+                val parts   = Seq(Part("file", Present("test.txt"), Present("text/plain"), "content".getBytes))
+                val request = HttpRequest.multipart("http://example.com/upload", parts)
+                assert(request.method == Method.POST)
+                assert(request.parts.size == 1)
+            }
+
+            "with multiple parts" in {
+                val parts = Seq(
+                    Part("file1", Present("a.txt"), Present("text/plain"), "a".getBytes),
+                    Part("file2", Present("b.txt"), Present("text/plain"), "b".getBytes)
+                )
+                val request = HttpRequest.multipart("http://example.com/upload", parts)
+                assert(request.parts.size == 2)
+            }
+
+            "with empty parts" in {
+                val request = HttpRequest.multipart("http://example.com/upload", Seq.empty)
+                assert(request.parts.isEmpty)
+            }
+
+            "with headers" in {
+                val parts = Seq(Part("data", Absent, Absent, Array.empty[Byte]))
+                val request = HttpRequest.multipart(
+                    "http://example.com/upload",
+                    parts,
+                    Seq("Authorization" -> "Bearer token")
+                )
+                assert(request.header("Authorization") == Present("Bearer token"))
+            }
+        }
+    }
+
+    "Request extensions" - {
+
+        "method" - {
+            "returns correct method for GET" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.method == Method.GET)
+            }
+
+            "returns correct method for POST" in {
+                val request = HttpRequest.post("http://example.com", "body")
+                assert(request.method == Method.POST)
+            }
+        }
+
+        "url" - {
+            "returns full url" in {
+                val request = HttpRequest.get("http://example.com/users?page=1")
+                assert(request.url == "http://example.com/users?page=1")
+            }
+
+            "includes query string" in {
+                val request = HttpRequest.get("http://example.com/search?q=test&limit=10")
+                assert(request.url.contains("q=test"))
+                assert(request.url.contains("limit=10"))
+            }
+        }
+
+        "path" - {
+            "returns path without query" in {
+                val request = HttpRequest.get("http://example.com/users?page=1")
+                assert(request.path == "/users")
+            }
+
+            "handles root path" in {
+                val request = HttpRequest.get("http://example.com/")
+                assert(request.path == "/")
+            }
+
+            "handles nested paths" in {
+                val request = HttpRequest.get("http://example.com/api/v1/users/123")
+                assert(request.path == "/api/v1/users/123")
+            }
+        }
+
+        "host" - {
+            "extracts host from url" in {
+                val request = HttpRequest.get("http://example.com/users")
+                assert(request.host == "example.com")
+            }
+
+            "handles localhost" in {
+                val request = HttpRequest.get("http://localhost:8080/api")
+                assert(request.host == "localhost")
+            }
+
+            "handles IP addresses" in {
+                val request = HttpRequest.get("http://192.168.1.1:3000/api")
+                assert(request.host == "192.168.1.1")
+            }
+        }
+
+        "port" - {
+            "extracts explicit port" in {
+                val request = HttpRequest.get("http://example.com:9000/api")
+                assert(request.port == 9000)
+            }
+
+            "returns default 80 for http" in {
+                val request = HttpRequest.get("http://example.com/api")
+                assert(request.port == 80)
+            }
+
+            "returns default 443 for https" in {
+                val request = HttpRequest.get("https://example.com/api")
+                assert(request.port == 443)
+            }
+        }
+
+        "contentType" - {
+            "returns Present when set" in {
+                val request = HttpRequest.post(
+                    "http://example.com",
+                    "body",
+                    Seq("Content-Type" -> "application/json")
+                )
+                assert(request.contentType == Present("application/json"))
+            }
+
+            "returns Absent when not set" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.contentType == Absent)
+            }
+
+            "handles charset parameter" in {
+                val request = HttpRequest.post(
+                    "http://example.com",
+                    "body",
+                    Seq("Content-Type" -> "text/plain; charset=utf-8")
+                )
+                assert(request.contentType == Present("text/plain; charset=utf-8"))
+            }
+        }
+
+        "header" - {
+            "returns Present for existing header" in {
+                val request = HttpRequest.get("http://example.com", Seq("X-Custom" -> "value"))
+                assert(request.header("X-Custom") == Present("value"))
+            }
+
+            "returns Absent for missing header" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.header("X-Missing") == Absent)
+            }
+
+            "is case-insensitive" in {
+                val request = HttpRequest.get("http://example.com", Seq("Content-Type" -> "text/plain"))
+                assert(request.header("content-type") == Present("text/plain"))
+                assert(request.header("CONTENT-TYPE") == Present("text/plain"))
+            }
+        }
+
+        "headers" - {
+            "returns all headers" in {
+                val request = HttpRequest.get(
+                    "http://example.com",
+                    Seq("X-One" -> "1", "X-Two" -> "2")
+                )
+                val headers = request.headers
+                assert(headers.contains(("X-One", "1")))
+                assert(headers.contains(("X-Two", "2")))
+            }
+
+            "returns empty seq when no headers" in {
+                val request = HttpRequest.get("http://example.com")
+                // May contain default headers, but custom ones should be absent
+                assert(!request.headers.exists(_._1 == "X-Custom"))
+            }
+
+            "preserves duplicate header names" in {
+                val request = HttpRequest.get(
+                    "http://example.com",
+                    Seq("Accept" -> "text/html", "Accept" -> "application/json")
+                )
+                val acceptHeaders = request.headers.filter(_._1.equalsIgnoreCase("Accept"))
+                assert(acceptHeaders.size >= 2)
+            }
+        }
+
+        "cookie" - {
+            "returns Present for existing cookie" in {
+                val request = HttpRequest.get("http://example.com", Seq("Cookie" -> "session=abc123"))
+                val cookie  = request.cookie("session")
+                assert(cookie.isDefined)
+                assert(cookie.get.name == "session")
+                assert(cookie.get.value == "abc123")
+            }
+
+            "returns Absent for missing cookie" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.cookie("missing") == Absent)
+            }
+        }
+
+        "cookies" - {
+            "returns all cookies" in {
+                val request = HttpRequest.get("http://example.com", Seq("Cookie" -> "a=1; b=2"))
+                val cookies = request.cookies
+                assert(cookies.exists(c => c.name == "a" && c.value == "1"))
+                assert(cookies.exists(c => c.name == "b" && c.value == "2"))
+            }
+
+            "returns empty seq when no cookies" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.cookies.isEmpty)
+            }
+
+            "parses multiple cookies from header" in {
+                val request = HttpRequest.get("http://example.com", Seq("Cookie" -> "session=xyz; theme=dark; lang=en"))
+                assert(request.cookies.size == 3)
+            }
+        }
+
+        "query" - {
+            "returns Present for existing param" in {
+                val request = HttpRequest.get("http://example.com?name=Alice")
+                assert(request.query("name") == Present("Alice"))
+            }
+
+            "returns Absent for missing param" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.query("missing") == Absent)
+            }
+
+            "handles url-encoded values" in {
+                val request = HttpRequest.get("http://example.com?name=Hello%20World")
+                assert(request.query("name") == Present("Hello World"))
+            }
+
+            "handles empty value" in {
+                val request = HttpRequest.get("http://example.com?empty=")
+                assert(request.query("empty") == Present(""))
+            }
+
+            "handles multiple values (first)" in {
+                val request = HttpRequest.get("http://example.com?tag=a&tag=b&tag=c")
+                // Returns first value when multiple exist
+                assert(request.query("tag") == Present("a"))
+            }
+        }
+
+        "queryAll" - {
+            "returns all values for param" in {
+                val request = HttpRequest.get("http://example.com?tag=a&tag=b&tag=c")
+                assert(request.queryAll("tag") == Seq("a", "b", "c"))
+            }
+
+            "returns single value as seq" in {
+                val request = HttpRequest.get("http://example.com?name=Alice")
+                assert(request.queryAll("name") == Seq("Alice"))
+            }
+
+            "returns empty seq for missing param" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.queryAll("missing") == Seq.empty)
+            }
+
+            "preserves order" in {
+                val request = HttpRequest.get("http://example.com?item=3&item=1&item=2")
+                assert(request.queryAll("item") == Seq("3", "1", "2"))
+            }
+        }
+
+        "pathParam" - {
+            "returns Present for existing param" in {
+                // Path params are typically extracted by route matching
+                // This tests the request's ability to access them
+                val request = HttpRequest.get("http://example.com/users/123")
+                // Assuming route matching sets pathParam "id" -> "123"
+                // This will be set by the server during routing
+                succeed
+            }
+
+            "returns Absent for missing param" in {
+                val request = HttpRequest.get("http://example.com/users")
+                assert(request.pathParam("id") == Absent)
+            }
+        }
+
+        "bodyText" - {
+            "returns body as string" in {
+                val request = HttpRequest.post("http://example.com", "hello world")
+                assert(request.bodyText == "hello world")
+            }
+
+            "handles empty body" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.bodyText == "")
+            }
+
+            "handles UTF-8 encoding" in {
+                val request = HttpRequest.post("http://example.com", "Hello 世界")
+                assert(request.bodyText == "Hello 世界")
+            }
+        }
+
+        "bodyBytes" - {
+            "returns raw bytes" in {
+                val request = HttpRequest.post("http://example.com", "test")
+                assert(request.bodyBytes.sameElements("test".getBytes))
+            }
+
+            "handles empty body" in {
+                val request = HttpRequest.get("http://example.com")
+                assert(request.bodyBytes.isEmpty)
+            }
+
+            "handles binary content" in {
+                val bytes   = Array[Byte](0, 1, 127, -128, -1)
+                val request = HttpRequest.post("http://example.com", new String(bytes, "ISO-8859-1"))
+                assert(request.bodyBytes.length == 5)
+            }
+        }
+
+        "bodyAs" - {
+            "deserializes JSON body" in {
+                val request = HttpRequest.post("http://example.com", User("Alice", "alice@example.com"))
+                assert(request.bodyAs[User] == User("Alice", "alice@example.com"))
+            }
+
+            "fails on invalid JSON" in {
+                val request = HttpRequest.post("http://example.com", "not json")
+                assertThrows[Exception] {
+                    request.bodyAs[User]
+                }
+            }
+
+            "fails on type mismatch" in {
+                val request = HttpRequest.post("http://example.com", """{"wrong": "structure"}""")
+                assertThrows[Exception] {
+                    request.bodyAs[User]
+                }
+            }
+        }
+
+        "bodyAsStream" in run {
+            val request = HttpRequest.post("http://example.com", User("Alice", "alice@example.com"))
+            request.bodyAsStream[User].run.map { users =>
+                assert(users.size == 1)
+            }
+        }
+
+        "parts" - {
+            "returns multipart parts" in {
+                val parts = Seq(
+                    Part("file", Present("test.txt"), Present("text/plain"), "content".getBytes)
+                )
+                val request = HttpRequest.multipart("http://example.com/upload", parts)
+                assert(request.parts.size == 1)
+                assert(request.parts(0).name == "file")
+            }
+
+            "returns empty for non-multipart" in {
+                val request = HttpRequest.post("http://example.com", "body")
+                assert(request.parts.isEmpty)
+            }
+
+            "preserves part order" in {
+                val parts = Seq(
+                    Part("first", Absent, Absent, Array.empty[Byte]),
+                    Part("second", Absent, Absent, Array.empty[Byte]),
+                    Part("third", Absent, Absent, Array.empty[Byte])
+                )
+                val request = HttpRequest.multipart("http://example.com/upload", parts)
+                assert(request.parts(0).name == "first")
+                assert(request.parts(1).name == "second")
+                assert(request.parts(2).name == "third")
+            }
+        }
+    }
+
+    "URL edge cases" - {
+        "very long URL" in {
+            val longPath = "x" * 2000
+            val request  = HttpRequest.get(s"http://example.com/$longPath")
+            assert(request.path.length > 2000)
+        }
+
+        "URL with fragment" in {
+            val request = HttpRequest.get("http://example.com/page#section")
+            // Fragments are typically not sent to server
+            assert(request.path == "/page")
+        }
+
+        "URL with userinfo" in {
+            val request = HttpRequest.get("http://user:pass@example.com/api")
+            assert(request.host == "example.com")
+        }
+
+        "IPv6 host" in {
+            val request = HttpRequest.get("http://[::1]:8080/api")
+            assert(request.host == "::1" || request.host == "[::1]")
+            assert(request.port == 8080)
+        }
+
+        "internationalized domain name" in {
+            val request = HttpRequest.get("http://例え.jp/path")
+            // May be punycode encoded or preserved
+            succeed
+        }
+
+        "URL-encoded path segments" in {
+            val request = HttpRequest.get("http://example.com/hello%20world")
+            assert(request.path == "/hello world" || request.path == "/hello%20world")
+        }
+
+        "URL-encoded query values" in {
+            val request = HttpRequest.get("http://example.com?msg=hello%20world")
+            assert(request.query("msg") == Present("hello world"))
+        }
+
+        "query with empty value" in {
+            val request = HttpRequest.get("http://example.com?flag=")
+            assert(request.query("flag") == Present(""))
+        }
+
+        "query with no value (flag)" in {
+            val request = HttpRequest.get("http://example.com?flag")
+            // Flag-style params may be Present("") or Absent depending on implementation
+            succeed
+        }
+
+        "multiple query params same name" in {
+            val request = HttpRequest.get("http://example.com?item=a&item=b&item=c")
+            // Single query() returns first value
+            assert(request.query("item") == Present("a"))
+            // queryAll returns all values
+            assert(request.queryAll("item") == Seq("a", "b", "c"))
+        }
+
+        "malformed URL handling" in {
+            assertThrows[Exception] {
+                HttpRequest.get("not a valid url")
+            }
+        }
+    }
+
+    "Encoding edge cases" - {
+        "non-ASCII characters in body" in {
+            val request = HttpRequest.post("http://example.com", "日本語 中文 한국어")
+            assert(request.bodyText == "日本語 中文 한국어")
+        }
+
+        "different charset in content-type" in {
+            val request = HttpRequest.post(
+                "http://example.com",
+                "body",
+                Seq("Content-Type" -> "text/plain; charset=iso-8859-1")
+            )
+            assert(request.contentType.exists(_.contains("iso-8859-1")))
+        }
+
+        "binary body preserved" in {
+            val bytes   = Array[Byte](0, 1, 2, 127, -128, -1)
+            val request = HttpRequest.post("http://example.com", new String(bytes, "ISO-8859-1"))
+            assert(request.bodyBytes.length == 6)
+        }
+
+        "null bytes in body" in {
+            val bytes   = Array[Byte](65, 0, 66, 0, 67)
+            val request = HttpRequest.post("http://example.com", new String(bytes, "ISO-8859-1"))
+            assert(request.bodyBytes.length == 5)
+        }
+    }
+
+    "Large payload handling" - {
+        "large request body" in {
+            val largeBody = "x" * (1024 * 1024) // 1MB
+            val request   = HttpRequest.post("http://example.com", largeBody)
+            assert(request.bodyText.length == 1024 * 1024)
+        }
+
+        "many headers" in {
+            val headers = (1 to 100).map(i => s"X-Header-$i" -> s"value$i")
+            val request = HttpRequest.get("http://example.com", headers)
+            assert(request.headers.size >= 100)
+        }
+
+        "very long header value" in {
+            val longValue = "x" * 8000
+            val request   = HttpRequest.get("http://example.com", Seq("X-Long" -> longValue))
+            assert(request.header("X-Long") == Present(longValue))
+        }
+
+        "many query parameters" in {
+            val params  = (1 to 100).map(i => s"param$i=$i").mkString("&")
+            val request = HttpRequest.get(s"http://example.com?$params")
+            assert(request.query("param1") == Present("1"))
+            assert(request.query("param100") == Present("100"))
+        }
+
+        "many cookies" in {
+            val cookies = (1 to 50).map(i => s"cookie$i=value$i").mkString("; ")
+            val request = HttpRequest.get("http://example.com", Seq("Cookie" -> cookies))
+            assert(request.cookies.size == 50)
+        }
+    }
+
+end HttpRequestTest

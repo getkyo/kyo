@@ -117,6 +117,7 @@ lazy val kyoJVM = project
         `kyo-aeron`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
+        `kyo-http`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -527,6 +528,18 @@ lazy val `kyo-tapir` =
             `kyo-settings`,
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.34",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.34"
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-http` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-http"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "io.netty" % "netty-codec-http" % "4.2.1.Final"
         )
         .jvmSettings(mimaCheck(false))
 
