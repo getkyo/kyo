@@ -31,7 +31,8 @@ final class HttpClient private (
     private val poolMap: ConcurrentHashMap[HttpClient.PoolKey, ChannelPool],
     private val sslContext: SslContext,
     private val maxConnectionsPerHost: Maybe[Int],
-    private val connectionAcquireTimeout: Duration
+    private val connectionAcquireTimeout: Duration,
+    private val maxResponseSize: Int
 ):
     def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
         HttpClient.configLocal.use { config =>
@@ -43,12 +44,56 @@ final class HttpClient private (
                     sslContext,
                     maxConnectionsPerHost,
                     connectionAcquireTimeout,
+                    maxResponseSize,
                     effectiveUrl,
                     request,
                     config
                 )
             }
         }
+
+    /** Pre-establishes connections to reduce first-request latency.
+      *
+      * @param url
+      *   URL to warm up (e.g., "https://api.example.com")
+      * @param connections
+      *   Number of connections to pre-establish
+      */
+    def warmup(url: String, connections: Int = 1)(using Frame): Unit < Async =
+        import HttpClient.{PoolKey, HttpPort, HttpsPort}
+        require(connections > 0, s"connections must be positive: $connections")
+        val uri    = new java.net.URI(url)
+        val scheme = if uri.getScheme == null then "http" else uri.getScheme
+        val host   = uri.getHost
+        val port   = if uri.getPort > 0 then uri.getPort else if scheme == "https" then HttpsPort else HttpPort
+        val ssl    = scheme == "https"
+        val key    = PoolKey(host, port, ssl)
+        Sync.Unsafe {
+            val pool = HttpClient.getOrCreatePool(
+                bootstrap,
+                poolMap,
+                sslContext,
+                maxConnectionsPerHost,
+                connectionAcquireTimeout,
+                maxResponseSize,
+                key,
+                Absent
+            )
+            Async.fill(connections) {
+                NettyUtil.future(pool.acquire()).map { channel =>
+                    pool.release(channel)
+                }
+            }
+        }.unit
+    end warmup
+
+    /** Pre-establishes connections to multiple URLs.
+      *
+      * @param urls
+      *   URLs to warm up
+      */
+    def warmup(urls: Seq[String])(using Frame): Unit < Async =
+        Async.foreach(urls)(url => warmup(url, 1)).unit
 
     def closeNow(using Frame): Unit < Async =
         close(Duration.Zero)
@@ -77,16 +122,18 @@ object HttpClient:
 
     def init(
         maxConnectionsPerHost: Maybe[Int] = Absent,
-        connectionAcquireTimeout: Duration = 30.seconds
+        connectionAcquireTimeout: Duration = 30.seconds,
+        maxResponseSize: Int = 1048576
     )(using Frame): HttpClient < Sync =
         maxConnectionsPerHost.foreach(n => require(n > 0, s"maxConnectionsPerHost must be positive: $n"))
         require(connectionAcquireTimeout > Duration.Zero, s"connectionAcquireTimeout must be positive: $connectionAcquireTimeout")
+        require(maxResponseSize > 0, s"maxResponseSize must be positive: $maxResponseSize")
         Sync.Unsafe {
             val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
             val bootstrap   = createBootstrap(workerGroup)
             val poolMap     = new ConcurrentHashMap[PoolKey, ChannelPool]()
             val sslContext  = SslContextBuilder.forClient().build()
-            new HttpClient(workerGroup, bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout)
+            new HttpClient(workerGroup, bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSize)
         }
     end init
 
@@ -185,7 +232,7 @@ object HttpClient:
         val bootstrap  = createBootstrap(workerGroup)
         val poolMap    = new ConcurrentHashMap[PoolKey, ChannelPool]()
         val sslContext = SslContextBuilder.forClient().build()
-        new HttpClient(workerGroup, bootstrap, poolMap, sslContext, Absent, 30.seconds)
+        new HttpClient(workerGroup, bootstrap, poolMap, sslContext, Absent, 30.seconds, 1048576)
     end sharedClient
 
     private val clientLocal      = Local.init(sharedClient)
@@ -204,6 +251,7 @@ object HttpClient:
         sslContext: SslContext,
         maxConnectionsPerHost: Maybe[Int],
         connectionAcquireTimeout: Duration,
+        maxResponseSize: Int,
         key: PoolKey,
         connectTimeout: Maybe[Duration]
     )(using AllowUnsafe): ChannelPool =
@@ -216,7 +264,7 @@ object HttpClient:
                         if key.ssl then
                             discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), key.host, key.port)))
                         discard(pipeline.addLast("codec", new HttpClientCodec()))
-                        discard(pipeline.addLast("aggregator", new HttpObjectAggregator(1048576)))
+                        discard(pipeline.addLast("aggregator", new HttpObjectAggregator(maxResponseSize)))
                     end channelCreated
                 val remoteBootstrap = bootstrap.clone().remoteAddress(new InetSocketAddress(key.host, key.port))
                 connectTimeout.foreach { timeout =>
@@ -273,6 +321,7 @@ object HttpClient:
         sslContext: SslContext,
         maxConnectionsPerHost: Maybe[Int],
         connectionAcquireTimeout: Duration,
+        maxResponseSize: Int,
         url: String,
         request: HttpRequest,
         config: Config,
@@ -292,7 +341,16 @@ object HttpClient:
 
         val key = PoolKey(host, port, useSsl)
         val pool =
-            getOrCreatePool(bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout, key, config.connectTimeout)
+            getOrCreatePool(
+                bootstrap,
+                poolMap,
+                sslContext,
+                maxConnectionsPerHost,
+                connectionAcquireTimeout,
+                maxResponseSize,
+                key,
+                config.connectTimeout
+            )
 
         // Acquire channel from pool
         val acquirePromise = Promise.Unsafe.init[Channel, Any]()
@@ -344,6 +402,7 @@ object HttpClient:
                                         sslContext,
                                         maxConnectionsPerHost,
                                         connectionAcquireTimeout,
+                                        maxResponseSize,
                                         redirectUrl,
                                         request,
                                         config,
@@ -367,6 +426,7 @@ object HttpClient:
                                                 sslContext,
                                                 maxConnectionsPerHost,
                                                 connectionAcquireTimeout,
+                                                maxResponseSize,
                                                 url,
                                                 request,
                                                 config,

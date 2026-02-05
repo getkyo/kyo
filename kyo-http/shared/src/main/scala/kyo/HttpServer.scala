@@ -9,6 +9,7 @@ import io.netty.handler.codec.http.HttpHeaderValues
 import io.netty.handler.codec.http.HttpObjectAggregator
 import io.netty.handler.codec.http.HttpServerCodec
 import io.netty.handler.codec.http.HttpUtil
+import io.netty.handler.flush.FlushConsolidationHandler
 import java.net.InetSocketAddress
 import java.util.concurrent.TimeUnit
 import kyo.HttpRequest.Method
@@ -104,12 +105,16 @@ object HttpServer:
                     .childHandler(new ChannelInitializer[SocketChannel]:
                         override def initChannel(ch: SocketChannel): Unit =
                             val pipeline = ch.pipeline()
+                            discard(pipeline.addLast(new FlushConsolidationHandler(256, true)))
                             discard(pipeline.addLast(new HttpServerCodec()))
                             discard(pipeline.addLast(new HttpObjectAggregator(config.maxContentLength)))
                             discard(pipeline.addLast(new HttpServerHandler(allHandlers, aspects, config.strictCookieParsing))))
                     .option(ChannelOption.SO_BACKLOG, Integer.valueOf(config.backlog))
                     .childOption(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.valueOf(config.keepAlive))
+                    .childOption(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
             }
+            if config.tcpFastOpen then
+                NettyTransport.applyTcpFastOpen(bootstrap, config.backlog)
 
             val bindFuture = bootstrap.bind(config.host, config.port)
 
@@ -139,6 +144,7 @@ object HttpServer:
         strictCookieParsing: Boolean = false,
         backlog: Int = 128,
         keepAlive: Boolean = true,
+        tcpFastOpen: Boolean = false,
         openApi: Maybe[Config.OpenApi] = Absent
     ):
         require(port >= 0 && port <= 65535, s"Port must be between 0 and 65535: $port")
@@ -154,6 +160,7 @@ object HttpServer:
         def withStrictCookieParsing(b: Boolean): Config = copy(strictCookieParsing = b)
         def withBacklog(n: Int): Config                 = copy(backlog = n)
         def withKeepAlive(b: Boolean): Config           = copy(keepAlive = b)
+        def withTcpFastOpen(b: Boolean): Config         = copy(tcpFastOpen = b)
         def withOpenApi(path: String = "/openapi.json", title: String = "API", version: String = "1.0.0"): Config =
             copy(openApi = Present(Config.OpenApi(path, title, version)))
     end Config

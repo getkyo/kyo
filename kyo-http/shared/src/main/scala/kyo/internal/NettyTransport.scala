@@ -6,6 +6,7 @@ import io.netty.channel.socket.ServerSocketChannel
 import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
+import kyo.Maybe
 import scala.util.Try
 
 private[kyo] object NettyTransport:
@@ -15,6 +16,33 @@ private[kyo] object NettyTransport:
     lazy val socketChannelClass: Class[? <: SocketChannel] = selected._2
 
     lazy val serverSocketChannelClass: Class[? <: ServerSocketChannel] = selected._3
+
+    /** True if using Linux epoll transport */
+    lazy val isEpoll: Boolean =
+        serverSocketChannelClass.getName.startsWith("io.netty.channel.epoll.")
+
+    /** True if using macOS kqueue transport */
+    lazy val isKqueue: Boolean =
+        serverSocketChannelClass.getName.startsWith("io.netty.channel.kqueue.")
+
+    /** True if using native transport (epoll or kqueue) */
+    lazy val isNative: Boolean = isEpoll || isKqueue
+
+    /** TCP_FASTOPEN option, if available (Linux epoll only) */
+    private lazy val tcpFastOpenOption: Maybe[io.netty.channel.ChannelOption[Integer]] =
+        if isEpoll then
+            try
+                val optionClass = Class.forName("io.netty.channel.epoll.EpollChannelOption")
+                Maybe(optionClass.getField("TCP_FASTOPEN").get(null).asInstanceOf[io.netty.channel.ChannelOption[Integer]])
+            catch
+                case _: ClassNotFoundException | _: NoSuchFieldException => Maybe.empty
+        else Maybe.empty
+
+    /** Applies TCP Fast Open to the server bootstrap if supported (Linux epoll only). No-op on other platforms. */
+    def applyTcpFastOpen(bootstrap: io.netty.bootstrap.ServerBootstrap, backlog: Int): Unit =
+        tcpFastOpenOption.foreach { opt =>
+            val _ = bootstrap.option(opt, Integer.valueOf(backlog))
+        }
 
     private lazy val selected: (IoHandlerFactory, Class[? <: SocketChannel], Class[? <: ServerSocketChannel]) =
         tryEpoll().orElse(tryKQueue()).getOrElse(nio())
