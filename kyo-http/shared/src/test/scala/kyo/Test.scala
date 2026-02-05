@@ -98,18 +98,24 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
     /** Asserts that the response body text matches the expected string. */
     def assertBodyText(response: HttpResponse, expected: String): Assertion =
-        val actual = response.bodyText
-        assert(actual == expected, s"Expected body '$expected' but got '$actual'")
+        Abort.run(response.bodyText).eval match
+            case Result.Success(actual) => assert(actual == expected, s"Expected body '$expected' but got '$actual'")
+            case Result.Failure(e)      => fail(s"Unexpected error accessing body: $e")
+            case Result.Panic(ex)       => throw ex
 
     /** Asserts that the response body text contains the expected substring. */
     def assertBodyContains(response: HttpResponse, expected: String): Assertion =
-        val actual = response.bodyText
-        assert(actual.contains(expected), s"Expected body to contain '$expected' but got '$actual'")
+        Abort.run(response.bodyText).eval match
+            case Result.Success(actual) => assert(actual.contains(expected), s"Expected body to contain '$expected' but got '$actual'")
+            case Result.Failure(e)      => fail(s"Unexpected error accessing body: $e")
+            case Result.Panic(ex)       => throw ex
 
     /** Asserts that the response body deserializes to the expected value. */
     def assertBody[A: Schema](response: HttpResponse, expected: A)(using CanEqual[A, A]): Assertion =
-        val actual = response.bodyAs[A]
-        assert(actual == expected, s"Expected body $expected but got $actual")
+        Abort.run(response.bodyAs[A]).eval match
+            case Result.Success(actual) => assert(actual == expected, s"Expected body $expected but got $actual")
+            case Result.Failure(e)      => fail(s"Unexpected error accessing body: $e")
+            case Result.Panic(ex)       => throw ex
 
     /** Asserts that the response has a header with the expected value. */
     def assertHeader(response: HttpResponse, name: String, expected: String): Assertion =

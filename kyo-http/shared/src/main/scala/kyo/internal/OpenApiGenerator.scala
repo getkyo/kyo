@@ -11,6 +11,7 @@ import scala.collection.mutable
 private[kyo] object OpenApiGenerator:
 
     // --- OpenAPI 3.0 Data Model ---
+    // Note: These classes use Option for zio-schema derivation compatibility (JSON serialization)
 
     case class OpenApi(
         openapi: String,
@@ -247,8 +248,9 @@ private[kyo] object OpenApiGenerator:
         // Try UUID
         try
             parse("00000000-0000-0000-0000-000000000000") match
-                case _: java.util.UUID => return SchemaObject(Some("string"), Some("uuid"), None, None, None, None, None, None, None)
-                case _                 => // continue
+                case _: java.util.UUID =>
+                    return SchemaObject(Some("string"), Some("uuid"), None, None, None, None, None, None, None)
+                case _ => // continue
         catch
             case _: Exception => // continue
         end try

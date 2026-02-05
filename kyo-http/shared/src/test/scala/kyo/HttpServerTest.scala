@@ -34,31 +34,31 @@ class HttpServerTest extends Test:
 
         "builder methods" - {
             "withPort" in {
-                val config = HttpServer.Config.default.withPort(9000)
+                val config = HttpServer.Config.default.port(9000)
                 assert(config.port == 9000)
             }
 
             "withHost" in {
-                val config = HttpServer.Config.default.withHost("localhost")
+                val config = HttpServer.Config.default.host("localhost")
                 assert(config.host == "localhost")
             }
 
             "withMaxContentLength" in {
-                val config = HttpServer.Config.default.withMaxContentLength(1024 * 1024)
+                val config = HttpServer.Config.default.maxContentLength(1024 * 1024)
                 assert(config.maxContentLength == 1024 * 1024)
             }
 
             "withIdleTimeout" in {
-                val config = HttpServer.Config.default.withIdleTimeout(120.seconds)
+                val config = HttpServer.Config.default.idleTimeout(120.seconds)
                 assert(config.idleTimeout == 120.seconds)
             }
 
             "chaining" in {
                 val config = HttpServer.Config.default
-                    .withPort(9000)
-                    .withHost("localhost")
-                    .withMaxContentLength(2 * 1024 * 1024)
-                    .withIdleTimeout(90.seconds)
+                    .port(9000)
+                    .host("localhost")
+                    .maxContentLength(2 * 1024 * 1024)
+                    .idleTimeout(90.seconds)
                 assert(config.port == 9000)
                 assert(config.host == "localhost")
                 assert(config.maxContentLength == 2 * 1024 * 1024)
@@ -127,33 +127,6 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
             val server  = HttpServer.init(config)(handler)
             server.map(s => succeed)
-        }
-
-        "with aspects and handlers" in run {
-            val aspect  = HttpRequestAspect.init
-            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
-            // Note: init(aspects, handlers*) delegates to init(Config.default, aspects)(handlers*)
-            // Using config with port=0 to avoid port conflicts in tests
-            HttpServer.init(HttpServer.Config(port = 0), Seq(aspect))(handler).map { server =>
-                Scope.ensure(server.stopNow).andThen {
-                    testGet(server.port, "/health").map { response =>
-                        assertStatus(response, Status.OK)
-                    }
-                }
-            }
-        }
-
-        "with config, aspects, and handlers" in run {
-            val config  = HttpServer.Config(port = 0)
-            val aspect  = HttpRequestAspect.init
-            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
-            HttpServer.init(config, Seq(aspect))(handler).map { server =>
-                Scope.ensure(server.stopNow).andThen {
-                    testGet(server.port, "/health").map { response =>
-                        assertStatus(response, Status.OK)
-                    }
-                }
-            }
         }
 
         "with named parameters" in run {
@@ -233,7 +206,7 @@ class HttpServerTest extends Test:
         }
 
         "openApi" in run {
-            val route   = HttpRoute.get("users").output[Seq[User]].withTag("Users")
+            val route   = HttpRoute.get("users").output[Seq[User]].tag("Users")
             val handler = route.handle(_ => Seq(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
@@ -360,273 +333,6 @@ class HttpServerTest extends Test:
         }
     }
 
-    "HttpRequestAspect" - {
-
-        "init" in {
-            val aspect = HttpRequestAspect.init
-            succeed
-        }
-
-        "apply with custom logic" in {
-            val aspect = HttpRequestAspect { (request, next) =>
-                val start = java.lang.System.currentTimeMillis()
-                next(request).map { response =>
-                    val elapsed = java.lang.System.currentTimeMillis() - start
-                    response.addHeader("X-Response-Time", s"${elapsed}ms")
-                }
-            }
-            succeed
-        }
-
-        "logging" in {
-            val aspect = HttpRequestAspect.logging
-            succeed
-        }
-
-        "metrics" in {
-            val aspect = HttpRequestAspect.metrics
-            succeed
-        }
-
-        "timeout" - {
-            "with duration" in {
-                val aspect = HttpRequestAspect.timeout(5.seconds)
-                succeed
-            }
-
-            "exceeding timeout" in run {
-                val aspect = HttpRequestAspect.timeout(10.millis)
-                val handler = HttpHandler.get("/slow") { (_, _) =>
-                    Async.delay(100.millis)(HttpResponse.ok)
-                }
-                // When request exceeds timeout, should return 504 Gateway Timeout
-                succeed
-            }
-
-            "zero duration throws" in {
-                assertThrows[IllegalArgumentException] {
-                    HttpRequestAspect.timeout(Duration.Zero)
-                }
-            }
-
-            "negative duration throws" in {
-                assertThrows[IllegalArgumentException] {
-                    HttpRequestAspect.timeout(-1.seconds)
-                }
-            }
-        }
-
-        "cors" - {
-            "with defaults" in {
-                val aspect = HttpRequestAspect.cors()
-                succeed
-            }
-
-            "with custom origin" in {
-                val aspect = HttpRequestAspect.cors(allowOrigin = "https://example.com")
-                succeed
-            }
-
-            "with multiple methods" in {
-                val aspect = HttpRequestAspect.cors(
-                    allowMethods = Seq(Method.GET, Method.POST, Method.PUT, Method.DELETE, Method.PATCH)
-                )
-                succeed
-            }
-
-            "with credentials" in {
-                val aspect = HttpRequestAspect.cors(allowCredentials = true)
-                succeed
-            }
-
-            "with max age" in {
-                val aspect = HttpRequestAspect.cors(maxAge = Present(1.hour))
-                succeed
-            }
-
-            "preflight request handling" in run {
-                // OPTIONS request should be handled by CORS aspect
-                val aspect = HttpRequestAspect.cors()
-                succeed
-            }
-
-            "empty origin throws" in {
-                assertThrows[IllegalArgumentException] {
-                    HttpRequestAspect.cors(allowOrigin = "")
-                }
-            }
-
-        }
-
-        "rate limiting" - {
-            "with meter" in run {
-                Meter.initRateLimiter(100, 1.second).map { meter =>
-                    val aspect = HttpRequestAspect.rateLimit(meter)
-                    succeed
-                }
-            }
-
-            "with requests per second" in {
-                val aspect = HttpRequestAspect.rateLimit(100)
-                succeed
-            }
-
-            "by IP" in {
-                val aspect = HttpRequestAspect.rateLimitByIp(10)
-                succeed
-            }
-
-            "by header" in {
-                val aspect = HttpRequestAspect.rateLimitByHeader("X-API-Key", 100)
-                succeed
-            }
-
-            "exceeding limit returns 429" in run {
-                val aspect = HttpRequestAspect.rateLimit(1) // 1 req/sec
-                // Second request within same second should get 429
-                succeed
-            }
-
-            "zero requests per second throws" in {
-                assertThrows[IllegalArgumentException] {
-                    HttpRequestAspect.rateLimit(0)
-                }
-            }
-
-            "negative requests per second throws" in {
-                assertThrows[IllegalArgumentException] {
-                    HttpRequestAspect.rateLimit(-1)
-                }
-            }
-
-            "empty header name throws" in {
-                assertThrows[IllegalArgumentException] {
-                    HttpRequestAspect.rateLimitByHeader("", 100)
-                }
-            }
-        }
-
-        "compression" - {
-            "auto compression" in {
-                val aspect = HttpRequestAspect.compression
-                succeed
-            }
-
-            "gzip" in {
-                val aspect = HttpRequestAspect.gzip
-                succeed
-            }
-
-            "deflate" in {
-                val aspect = HttpRequestAspect.deflate
-                succeed
-            }
-
-            "respects Accept-Encoding" in run {
-                // If client sends Accept-Encoding: gzip, response should be gzipped
-                val aspect = HttpRequestAspect.compression
-                succeed
-            }
-        }
-
-        "caching" - {
-            "etag" in {
-                val aspect = HttpRequestAspect.etag
-                succeed
-            }
-
-            "conditional requests" in {
-                val aspect = HttpRequestAspect.conditionalRequests
-                succeed
-            }
-
-            "304 on match" in run {
-                // If If-None-Match matches ETag, should return 304
-                val aspect = HttpRequestAspect.conditionalRequests
-                succeed
-            }
-        }
-
-        "authentication" - {
-            "basic auth success" in run {
-                val aspect = HttpRequestAspect.basicAuth { (user, pass) =>
-                    user == "admin" && pass == "secret"
-                }
-                // Request with valid credentials should pass through
-                succeed
-            }
-
-            "basic auth failure" in run {
-                val aspect = HttpRequestAspect.basicAuth { (user, pass) =>
-                    user == "admin" && pass == "secret"
-                }
-                // Request with invalid credentials should get 401
-                succeed
-            }
-
-            "bearer auth success" in run {
-                val aspect = HttpRequestAspect.bearerAuth { token =>
-                    token == "valid-token"
-                }
-                succeed
-            }
-
-            "bearer auth failure" in run {
-                val aspect = HttpRequestAspect.bearerAuth { token =>
-                    token == "valid-token"
-                }
-                // Invalid token should get 401
-                succeed
-            }
-
-            "missing credentials" in run {
-                val aspect = HttpRequestAspect.basicAuth { (_, _) => true }
-                // Request without Authorization header should get 401
-                succeed
-            }
-        }
-
-        "composition" - {
-            "multiple aspects" in {
-                val aspects = Seq(
-                    HttpRequestAspect.logging,
-                    HttpRequestAspect.cors(),
-                    HttpRequestAspect.compression
-                )
-                succeed
-            }
-
-            "aspect order" in run {
-                // Aspects should be applied in order (first aspect wraps second, etc.)
-                var order = List.empty[String]
-                val aspect1 = HttpRequestAspect { (req, next) =>
-                    order = order :+ "before1"
-                    next(req).map { res =>
-                        order = order :+ "after1"
-                        res
-                    }
-                }
-                val aspect2 = HttpRequestAspect { (req, next) =>
-                    order = order :+ "before2"
-                    next(req).map { res =>
-                        order = order :+ "after2"
-                        res
-                    }
-                }
-                // Expected: before1 -> before2 -> handler -> after2 -> after1
-                succeed
-            }
-
-            "short-circuit on failure" in run {
-                val failAspect = HttpRequestAspect { (_, _) =>
-                    HttpResponse.unauthorized
-                }
-                // Handler should not be called if aspect short-circuits
-                succeed
-            }
-        }
-    }
-
     "Integration scenarios" - {
 
         "server with single handler" in run {
@@ -652,19 +358,6 @@ class HttpServerTest extends Test:
                     assertStatus(r1, Status.OK)
                     assertStatus(r2, Status.OK)
                 end for
-            }
-        }
-
-        "server with aspects" in run {
-            val aspect  = HttpRequestAspect.logging
-            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
-            HttpServer.init(HttpServer.Config(port = 0), Seq(aspect))(handler).map { server =>
-                val port = server.port
-                testGet(port, "/health").map { response =>
-                    Scope.ensure(server.stopNow).andThen {
-                        assertStatus(response, Status.OK)
-                    }
-                }
             }
         }
 
@@ -733,7 +426,7 @@ class HttpServerTest extends Test:
                     }
                     startTestServer(slowHandler).map { port =>
                         // Client request with short timeout (100ms < 300ms handler delay)
-                        HttpClient.withConfig(_.withTimeout(100.millis)) {
+                        HttpClient.withConfig(_.timeout(100.millis)) {
                             Abort.run(HttpClient.get[String](s"http://localhost:$port/slow"))
                         }.map { result =>
                             // Client should have timed out

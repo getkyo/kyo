@@ -3,6 +3,7 @@ package kyo
 import kyo.internal.OpenApiGenerator
 
 /** Public API for OpenAPI spec generation from routes and handlers. */
+// TODO please move ALL code relatred to openapi here. Move OpenApi.Spec to be the OpenApi type itself as a class. Reduce duplication where possible.
 object OpenApi:
 
     /** Default path for serving OpenAPI spec. */

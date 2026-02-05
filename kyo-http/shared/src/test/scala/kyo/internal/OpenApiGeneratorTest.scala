@@ -172,9 +172,9 @@ class OpenApiGeneratorTest extends Test:
 
         "includes operation metadata" in run {
             val route = HttpRoute.get("/users")
-                .withTag("users")
-                .withSummary("Get all users")
-                .withDescription("Returns a list of all users")
+                .tag("users")
+                .summary("Get all users")
+                .description("Returns a list of all users")
                 .output[List[User]]
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
@@ -250,7 +250,7 @@ class OpenApiGeneratorTest extends Test:
 
         "generates operationId" in run {
             val route = HttpRoute.get("/users")
-                .withOperationId("listUsers")
+                .operationId("listUsers")
                 .output[List[User]]
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>

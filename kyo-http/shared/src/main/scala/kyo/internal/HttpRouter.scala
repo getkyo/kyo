@@ -68,13 +68,11 @@ final class HttpRouter private (
         loop(0, 0)
     end findNodeIndex
 
-    @tailrec private def skipSlashes(path: String, pos: Int, len: Int): Int =
-        if pos < len && path.charAt(pos) == '/' then skipSlashes(path, pos + 1, len)
-        else pos
+    private def skipSlashes(path: String, pos: Int, len: Int): Int =
+        PathUtil.skipSlashes(path, pos, len)
 
-    @tailrec private def findSegmentEnd(path: String, pos: Int, len: Int): Int =
-        if pos < len && path.charAt(pos) != '/' then findSegmentEnd(path, pos + 1, len)
-        else pos
+    private def findSegmentEnd(path: String, pos: Int, len: Int): Int =
+        PathUtil.findSegmentEnd(path, pos, len)
 
     /** Binary search for segment in sorted literal children (parallel arrays) */
     private def binarySearchSegment(

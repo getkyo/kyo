@@ -19,6 +19,7 @@ import kyo.internal.HttpRouter
 import kyo.internal.NettyTransport
 import kyo.internal.NettyUtil
 import kyo.internal.OpenApiGenerator
+import kyo.internal.PathUtil
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
@@ -50,6 +51,7 @@ final class HttpServer private (
     def await(using Frame): Unit < Async =
         NettyUtil.channelFuture(channel.closeFuture()).unit
 
+    // TODO let's have an HttpOpenApi impl in the kyo package for this. It'll be a class with the equivalent of OpenApiGenerator.OpenApi (not opauqe type) and a metrhod to serialize it to json. We don't need the Spec and string methods separation here. Return HttpOpenApi and then the user can decide to get the json
     def openApiSpec: OpenApiGenerator.OpenApi =
         OpenApiGenerator.generate(handlers)
 
@@ -72,56 +74,54 @@ object HttpServer:
         init(Config.default)(handlers*)
 
     def init(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
-        init(config, Seq.empty)(handlers*)
+        // Capture filter from Local to apply per-request
+        HttpFilter.use { filter =>
+            Sync.defer {
+                // Add OpenAPI handler if configured
+                val allHandlers = config.openApi match
+                    case Present(openApiConfig) =>
+                        val spec = OpenApiGenerator.generate(
+                            handlers,
+                            OpenApiGenerator.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
+                        )
+                        val json = Schema[OpenApiGenerator.OpenApi].encode(spec)
+                        val openApiHandler = HttpHandler.get(openApiConfig.path) { (_, _) =>
+                            HttpResponse.ok(json).addHeader("Content-Type", "application/json")
+                        }
+                        handlers :+ openApiHandler
+                    case Absent =>
+                        handlers
 
-    def init(aspects: Seq[HttpRequestAspect], handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
-        init(Config.default, aspects)(handlers*)
+                val bossGroup   = new MultiThreadIoEventLoopGroup(1, NettyTransport.ioHandlerFactory)
+                val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
 
-    def init(config: Config, aspects: Seq[HttpRequestAspect])(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
-        Sync.defer {
-            // Add OpenAPI handler if configured
-            val allHandlers = config.openApi match
-                case Present(openApiConfig) =>
-                    val spec = OpenApiGenerator.generate(
-                        handlers,
-                        OpenApiGenerator.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
-                    )
-                    val json = Schema[OpenApiGenerator.OpenApi].encode(spec)
-                    val openApiHandler = HttpHandler.get(openApiConfig.path) { (_, _) =>
-                        HttpResponse.ok(json).addHeader("Content-Type", "application/json")
-                    }
-                    handlers :+ openApiHandler
-                case Absent =>
-                    handlers
+                val bootstrap = new ServerBootstrap()
+                discard {
+                    bootstrap
+                        .group(bossGroup, workerGroup)
+                        .channel(NettyTransport.serverSocketChannelClass)
+                        .childHandler(new ChannelInitializer[SocketChannel]:
+                            override def initChannel(ch: SocketChannel): Unit =
+                                val pipeline = ch.pipeline()
+                                discard(pipeline.addLast(new FlushConsolidationHandler(256, true)))
+                                discard(pipeline.addLast(new HttpServerCodec()))
+                                discard(pipeline.addLast(new HttpObjectAggregator(config.maxContentLength)))
+                                discard(pipeline.addLast(new HttpServerHandler(allHandlers, config.strictCookieParsing, filter))))
+                        .option(ChannelOption.SO_BACKLOG, Integer.valueOf(config.backlog))
+                        .childOption(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.valueOf(config.keepAlive))
+                        .childOption(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
+                }
+                if config.tcpFastOpen then
+                    NettyTransport.applyTcpFastOpen(bootstrap, config.backlog)
 
-            val bossGroup   = new MultiThreadIoEventLoopGroup(1, NettyTransport.ioHandlerFactory)
-            val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
+                val bindFuture = bootstrap.bind(config.host, config.port)
 
-            val bootstrap = new ServerBootstrap()
-            discard {
-                bootstrap
-                    .group(bossGroup, workerGroup)
-                    .channel(NettyTransport.serverSocketChannelClass)
-                    .childHandler(new ChannelInitializer[SocketChannel]:
-                        override def initChannel(ch: SocketChannel): Unit =
-                            val pipeline = ch.pipeline()
-                            discard(pipeline.addLast(new FlushConsolidationHandler(256, true)))
-                            discard(pipeline.addLast(new HttpServerCodec()))
-                            discard(pipeline.addLast(new HttpObjectAggregator(config.maxContentLength)))
-                            discard(pipeline.addLast(new HttpServerHandler(allHandlers, aspects, config.strictCookieParsing))))
-                    .option(ChannelOption.SO_BACKLOG, Integer.valueOf(config.backlog))
-                    .childOption(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.valueOf(config.keepAlive))
-                    .childOption(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
-            }
-            if config.tcpFastOpen then
-                NettyTransport.applyTcpFastOpen(bootstrap, config.backlog)
-
-            val bindFuture = bootstrap.bind(config.host, config.port)
-
-            NettyUtil.channelFuture(bindFuture).map { channel =>
-                // Safe cast: NioServerSocketChannel always returns InetSocketAddress
-                val address = channel.localAddress().asInstanceOf[InetSocketAddress]
-                new HttpServer(channel, bossGroup, workerGroup, address, allHandlers)
+                // TODO let's implement an optimization here. Add a second function parameter (separate param group for nice syntax) to channelFuture that takes the continuation we're setting here via `.map`
+                NettyUtil.channelFuture(bindFuture).map { channel =>
+                    // Safe cast: NioServerSocketChannel always returns InetSocketAddress
+                    val address = channel.localAddress().asInstanceOf[InetSocketAddress]
+                    new HttpServer(channel, bossGroup, workerGroup, address, allHandlers)
+                }
             }
         }
     end init
@@ -153,15 +153,15 @@ object HttpServer:
         require(idleTimeout > Duration.Zero, s"idleTimeout must be positive: $idleTimeout")
         require(backlog > 0, s"backlog must be positive: $backlog")
 
-        def withPort(p: Int): Config                    = copy(port = p)
-        def withHost(h: String): Config                 = copy(host = h)
-        def withMaxContentLength(n: Int): Config        = copy(maxContentLength = n)
-        def withIdleTimeout(d: Duration): Config        = copy(idleTimeout = d)
-        def withStrictCookieParsing(b: Boolean): Config = copy(strictCookieParsing = b)
-        def withBacklog(n: Int): Config                 = copy(backlog = n)
-        def withKeepAlive(b: Boolean): Config           = copy(keepAlive = b)
-        def withTcpFastOpen(b: Boolean): Config         = copy(tcpFastOpen = b)
-        def withOpenApi(path: String = "/openapi.json", title: String = "API", version: String = "1.0.0"): Config =
+        def port(p: Int): Config                    = copy(port = p)
+        def host(h: String): Config                 = copy(host = h)
+        def maxContentLength(n: Int): Config        = copy(maxContentLength = n)
+        def idleTimeout(d: Duration): Config        = copy(idleTimeout = d)
+        def strictCookieParsing(b: Boolean): Config = copy(strictCookieParsing = b)
+        def backlog(n: Int): Config                 = copy(backlog = n)
+        def keepAlive(b: Boolean): Config           = copy(keepAlive = b)
+        def tcpFastOpen(b: Boolean): Config         = copy(tcpFastOpen = b)
+        def openApi(path: String = "/openapi.json", title: String = "API", version: String = "1.0.0"): Config =
             copy(openApi = Present(Config.OpenApi(path, title, version)))
     end Config
 
@@ -176,14 +176,11 @@ object HttpServer:
         )
     end Config
 
-    // Internal header to communicate cookie parsing mode to request
-    private[kyo] val StrictCookieHeader = "X-Kyo-Strict-Cookies"
-
     // Internal handler for processing HTTP requests
     private class HttpServerHandler(
         handlers: Seq[HttpHandler[Any]],
-        aspects: Seq[HttpRequestAspect],
-        strictCookieParsing: Boolean
+        strictCookieParsing: Boolean,
+        filter: HttpFilter
     )(using Frame) extends SimpleChannelInboundHandler[NettyFullHttpRequest]:
 
         // Build prefix tree router for O(path-segments) lookup
@@ -193,20 +190,22 @@ object HttpServer:
             import AllowUnsafe.embrace.danger
 
             // retain() increments refcount for async fiber processing (no copy)
-            val request = nettyRequest.retain()
-            // Set cookie parsing mode from server config
-            if strictCookieParsing then
-                discard(request.headers().set(StrictCookieHeader, "true"))
+            val retained = nettyRequest.retain()
+
+            // Convert Netty request to immutable HttpRequest
+            val request =
+                val req = kyo.HttpRequest.fromNetty(retained)
+                if strictCookieParsing then req.withStrictCookieParsing(true) else req
 
             // Find matching handler using prefix tree and execute asynchronously
-            val method = kyo.HttpRequest.Method.fromNetty(nettyRequest.method())
-            val path   = extractPath(nettyRequest.uri())
+            val method = request.method
+            val path   = request.path
 
             router.find(method, path) match
                 case Result.Success(handler) =>
-                    // Start fiber for async execution
+                    // Apply filter captured at server init time
                     val fiber = Sync.Unsafe.evalOrThrow(
-                        Fiber.initUnscoped(handler.apply(request.asInstanceOf[HttpRequest]))
+                        Fiber.initUnscoped(filter(request, handler.apply))
                     )
                     // Interrupt handler fiber if client disconnects
                     discard {
@@ -220,26 +219,26 @@ object HttpServer:
                             case Result.Success(r) => r.asInstanceOf[kyo.HttpResponse]
                             case Result.Failure(e) => kyo.HttpResponse.serverError(e.toString)
                             case Result.Panic(e)   => kyo.HttpResponse.serverError(e.getMessage)
-                        sendResponse(ctx, request, response)
+                        sendResponse(ctx, retained, response)
                     }
                 case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
                     val allowHeader = allowed.map(_.name).mkString(", ")
                     val response    = kyo.HttpResponse(kyo.HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
-                    sendResponse(ctx, request, response)
+                    sendResponse(ctx, retained, response)
                 case Result.Failure(HttpRouter.FindError.NotFound) =>
-                    sendResponse(ctx, request, kyo.HttpResponse.notFound)
+                    sendResponse(ctx, retained, kyo.HttpResponse.notFound)
                 case Result.Panic(e) =>
-                    sendResponse(ctx, request, kyo.HttpResponse.serverError(e.getMessage))
+                    sendResponse(ctx, retained, kyo.HttpResponse.serverError(e.getMessage))
             end match
         end channelRead0
 
         private def sendResponse(
             ctx: ChannelHandlerContext,
-            request: NettyFullHttpRequest,
+            nettyRequest: NettyFullHttpRequest,
             response: kyo.HttpResponse
         ): Unit =
             val nettyResponse = response.toNetty
-            val keepAlive     = HttpUtil.isKeepAlive(request)
+            val keepAlive     = HttpUtil.isKeepAlive(nettyRequest)
 
             // Set Content-Length if not already set
             if !nettyResponse.headers().contains(HttpHeaderNames.CONTENT_LENGTH) then
@@ -253,7 +252,7 @@ object HttpServer:
                 discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
                 discard(ctx.writeAndFlush(nettyResponse).addListener(ChannelFutureListener.CLOSE))
             end if
-            discard(request.release())
+            discard(nettyRequest.release())
         end sendResponse
 
         private def extractPath(uri: String): String =
@@ -329,6 +328,7 @@ object HttpHandler:
             end apply
 
     // Try to encode an error using registered error schemas and return appropriate HTTP response
+    // TODO is this schema transformation mechanism depending on the error well tested?
     private def findErrorResponse(err: Any, errorSchemas: Seq[(HttpResponse.Status, Schema[?])]): Option[kyo.HttpResponse] =
         errorSchemas.collectFirst {
             case (status, schema) =>
@@ -418,48 +418,11 @@ object HttpHandler:
                 val parts = parsePathSegments(requestPath)
                 extractFromSegment(segment, parts)._1
 
-    // Parse path into segments without intermediate collections
     private def parsePathSegments(path: String): List[String] =
-        val len = path.length
-        @tailrec def loop(start: Int, acc: List[String]): List[String] =
-            if start >= len then acc.reverse
-            else
-                // Skip leading slashes
-                val segStart = if path.charAt(start) == '/' then start + 1 else start
-                if segStart >= len then acc.reverse
-                else
-                    // Find end of segment
-                    @tailrec def findEnd(i: Int): Int =
-                        if i >= len || path.charAt(i) == '/' then i
-                        else findEnd(i + 1)
-                    val segEnd = findEnd(segStart)
-                    if segEnd > segStart then
-                        loop(segEnd, path.substring(segStart, segEnd) :: acc)
-                    else
-                        loop(segEnd, acc)
-                    end if
-                end if
-        loop(0, Nil)
-    end parsePathSegments
+        PathUtil.parseSegments(path)
 
-    // Count non-empty path segments without allocating intermediate collections
     private def countPathSegments(path: String): Int =
-        val len = path.length
-        @tailrec def loop(start: Int, count: Int): Int =
-            if start >= len then count
-            else
-                val segStart = if path.charAt(start) == '/' then start + 1 else start
-                if segStart >= len then count
-                else
-                    @tailrec def findEnd(i: Int): Int =
-                        if i >= len || path.charAt(i) == '/' then i
-                        else findEnd(i + 1)
-                    val segEnd = findEnd(segStart)
-                    if segEnd > segStart then loop(segEnd, count + 1)
-                    else loop(segEnd, count)
-                end if
-        loop(0, 0)
-    end countPathSegments
+        PathUtil.countSegments(path)
 
     private def extractFromSegment(segment: HttpRoute.Path.Segment[?], parts: List[String]): (Any, List[String]) =
         segment match
@@ -485,6 +448,7 @@ object HttpHandler:
                 (combined, remaining2)
 
     @nowarn("msg=anonymous")
+    // TODO member reorg, most useful public first, privates last
     inline def init[A, S](method: Method, path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using
         Frame
     ): HttpHandler[S] =
@@ -525,71 +489,3 @@ object HttpHandler:
         init(Method.OPTIONS, path)(f)
 
 end HttpHandler
-
-type HttpRequestAspect = Aspect[Const[HttpRequest], Const[kyo.HttpResponse], Async]
-
-object HttpRequestAspect:
-
-    def init(using Frame): HttpRequestAspect =
-        Aspect.init[Const[HttpRequest], Const[kyo.HttpResponse], Async]
-
-    def apply(f: (HttpRequest, HttpRequest => kyo.HttpResponse < Async) => kyo.HttpResponse < Async)(using Frame): HttpRequestAspect =
-        // Create aspect and set up the cut
-        val aspect = Aspect.init[Const[HttpRequest], Const[kyo.HttpResponse], Async]
-        aspect
-    end apply
-
-    // Logging & Metrics
-    def logging(using Frame): HttpRequestAspect = init
-    def metrics(using Frame): HttpRequestAspect = init
-
-    // Timeouts
-    def timeout(duration: Duration)(using Frame): HttpRequestAspect =
-        require(duration > Duration.Zero, "Timeout duration must be positive")
-        init
-
-    // CORS
-    def cors(
-        allowOrigin: String = "*",
-        allowMethods: Seq[Method] = Seq(Method.GET, Method.POST, Method.PUT, Method.DELETE),
-        allowHeaders: Seq[String] = Seq.empty,
-        exposeHeaders: Seq[String] = Seq.empty,
-        allowCredentials: Boolean = false,
-        maxAge: Maybe[Duration] = Absent
-    )(using Frame): HttpRequestAspect =
-        require(allowOrigin.nonEmpty, "CORS origin cannot be empty")
-        maxAge.foreach(d => require(d >= Duration.Zero, "CORS maxAge cannot be negative"))
-        init
-    end cors
-
-    // Rate Limiting
-    def rateLimit(meter: Meter)(using Frame): HttpRequestAspect = init
-
-    def rateLimit(requestsPerSecond: Int)(using Frame): HttpRequestAspect =
-        require(requestsPerSecond > 0, "Requests per second must be positive")
-        init
-
-    def rateLimitByIp(requestsPerSecond: Int)(using Frame): HttpRequestAspect =
-        require(requestsPerSecond > 0, "Requests per second must be positive")
-        init
-
-    def rateLimitByHeader(header: String, requestsPerSecond: Int)(using Frame): HttpRequestAspect =
-        require(header.nonEmpty, "Header name cannot be empty")
-        require(requestsPerSecond > 0, "Requests per second must be positive")
-        init
-    end rateLimitByHeader
-
-    // Compression
-    def compression(using Frame): HttpRequestAspect = init
-    def gzip(using Frame): HttpRequestAspect        = init
-    def deflate(using Frame): HttpRequestAspect     = init
-
-    // Caching
-    def etag(using Frame): HttpRequestAspect                = init
-    def conditionalRequests(using Frame): HttpRequestAspect = init
-
-    // Security
-    def basicAuth(validate: (String, String) => Boolean < Async)(using Frame): HttpRequestAspect = init
-    def bearerAuth(validate: String => Boolean < Async)(using Frame): HttpRequestAspect          = init
-
-end HttpRequestAspect

@@ -35,20 +35,26 @@ final class HttpClient private (
     private val maxResponseSize: Int
 ):
     def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
-        HttpClient.configLocal.use { config =>
-            Sync.Unsafe {
-                val effectiveUrl = HttpClient.buildEffectiveUrl(config, request)
-                HttpClient.sendRaw(
-                    bootstrap,
-                    poolMap,
-                    sslContext,
-                    maxConnectionsPerHost,
-                    connectionAcquireTimeout,
-                    maxResponseSize,
-                    effectiveUrl,
-                    request,
-                    config
-                )
+        HttpFilter.use { filter =>
+            HttpClient.configLocal.use { config =>
+                Sync.Unsafe {
+                    filter(
+                        request,
+                        filteredRequest =>
+                            val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
+                            HttpClient.sendRaw(
+                                bootstrap,
+                                poolMap,
+                                sslContext,
+                                maxConnectionsPerHost,
+                                connectionAcquireTimeout,
+                                maxResponseSize,
+                                effectiveUrl,
+                                filteredRequest,
+                                config
+                            )
+                    )
+                }
             }
         }
 
@@ -60,12 +66,12 @@ final class HttpClient private (
       *   Number of connections to pre-establish
       */
     def warmup(url: String, connections: Int = 1)(using Frame): Unit < Async =
-        import HttpClient.{PoolKey, HttpPort, HttpsPort}
+        import HttpClient.{PoolKey, DefaultHttpPort, DefaultHttpsPort}
         require(connections > 0, s"connections must be positive: $connections")
         val uri    = new java.net.URI(url)
         val scheme = if uri.getScheme == null then "http" else uri.getScheme
         val host   = uri.getHost
-        val port   = if uri.getPort > 0 then uri.getPort else if scheme == "https" then HttpsPort else HttpPort
+        val port   = if uri.getPort > 0 then uri.getPort else if scheme == "https" then DefaultHttpsPort else DefaultHttpPort
         val ssl    = scheme == "https"
         val key    = PoolKey(host, port, ssl)
         Sync.Unsafe {
@@ -115,27 +121,53 @@ end HttpClient
 
 object HttpClient:
 
-    private[kyo] inline def HttpPort  = 80
-    private[kyo] inline def HttpsPort = 443
+    private[kyo] inline def DefaultHttpPort                   = 80
+    private[kyo] inline def DefaultHttpsPort                  = 443
+    private[kyo] val DefaultMaxConnectionsPerHost: Maybe[Int] = Present(100)
 
     // --- Factory methods ---
 
     def init(
-        maxConnectionsPerHost: Maybe[Int] = Absent,
+        maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
         connectionAcquireTimeout: Duration = 30.seconds,
         maxResponseSize: Int = 1048576
     )(using Frame): HttpClient < Sync =
-        maxConnectionsPerHost.foreach(n => require(n > 0, s"maxConnectionsPerHost must be positive: $n"))
-        require(connectionAcquireTimeout > Duration.Zero, s"connectionAcquireTimeout must be positive: $connectionAcquireTimeout")
-        require(maxResponseSize > 0, s"maxResponseSize must be positive: $maxResponseSize")
         Sync.Unsafe {
-            val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
-            val bootstrap   = createBootstrap(workerGroup)
-            val poolMap     = new ConcurrentHashMap[PoolKey, ChannelPool]()
-            val sslContext  = SslContextBuilder.forClient().build()
-            new HttpClient(workerGroup, bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSize)
+            Unsafe.init(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSize)
         }
     end init
+
+    // --- Unsafe ---
+
+    object Unsafe:
+        /** Low-level client initialization requiring AllowUnsafe.
+          * @param daemon
+          *   If true, uses daemon threads (JVM can exit while client is active)
+          */
+        def init(
+            maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
+            connectionAcquireTimeout: Duration = 30.seconds,
+            maxResponseSize: Int = 1048576, // TODO is this in bytes. Add a suffix here and other places it appears
+            daemon: Boolean = false         // TODO let's expose this in the safe init
+        )(using AllowUnsafe): HttpClient =
+            maxConnectionsPerHost.foreach(n => require(n > 0, s"maxConnectionsPerHost must be positive: $n"))
+            require(connectionAcquireTimeout > Duration.Zero, s"connectionAcquireTimeout must be positive: $connectionAcquireTimeout")
+            require(maxResponseSize > 0, s"maxResponseSize must be positive: $maxResponseSize")
+            val workerGroup =
+                if daemon then
+                    new MultiThreadIoEventLoopGroup(
+                        0,
+                        new io.netty.util.concurrent.DefaultThreadFactory("kyo-http-client", true),
+                        NettyTransport.ioHandlerFactory
+                    )
+                else
+                    new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
+            val bootstrap  = createBootstrap(workerGroup)
+            val poolMap    = new ConcurrentHashMap[PoolKey, ChannelPool]()
+            val sslContext = SslContextBuilder.forClient().build()
+            new HttpClient(workerGroup, bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSize)
+        end init
+    end Unsafe
 
     // --- Convenience methods (use shared client) ---
 
@@ -153,10 +185,9 @@ object HttpClient:
 
     private def checkStatusAndParse[A: Schema](response: HttpResponse)(using Frame): A < Abort[HttpError] =
         if response.status.isError then
-            Abort.fail(HttpError.InvalidResponse(s"HTTP error: ${response.status.code}"))
+            response.bodyText.map(body => Abort.fail(HttpError.StatusError(response.status, body)))
         else
-            try response.bodyAs[A]
-            catch case e: Throwable => Abort.fail(HttpError.InvalidResponse(s"Failed to parse response: ${e.getMessage}"))
+            response.bodyAs[A]
 
     def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
         clientLocal.use(_.send(request))
@@ -184,22 +215,22 @@ object HttpClient:
         timeout.foreach(d => require(d > Duration.Zero, s"timeout must be positive: $d"))
         connectTimeout.foreach(d => require(d > Duration.Zero, s"connectTimeout must be positive: $d"))
 
-        def withBaseUrl(url: String): Config =
+        def baseUrl(url: String): Config =
             copy(baseUrl = Present(url))
-        def withTimeout(d: Duration): Config =
+        def timeout(d: Duration): Config =
             require(d > Duration.Zero, s"timeout must be positive: $d")
             copy(timeout = Present(d))
-        def withConnectTimeout(d: Duration): Config =
+        def connectTimeout(d: Duration): Config =
             require(d > Duration.Zero, s"connectTimeout must be positive: $d")
             copy(connectTimeout = Present(d))
-        def withFollowRedirects(b: Boolean): Config =
+        def followRedirects(b: Boolean): Config =
             copy(followRedirects = b)
-        def withMaxRedirects(n: Int): Config =
+        def maxRedirects(n: Int): Config =
             require(n >= 0, s"maxRedirects must be non-negative: $n")
             copy(maxRedirects = n)
-        def withRetry(schedule: Schedule): Config =
+        def retry(schedule: Schedule): Config =
             copy(retrySchedule = Present(schedule))
-        def withRetryWhen(f: HttpResponse => Boolean): Config =
+        def retryWhen(f: HttpResponse => Boolean): Config =
             copy(retryOn = f)
     end Config
 
@@ -224,16 +255,7 @@ object HttpClient:
     // Shared client uses daemon threads so JVM can exit
     private lazy val sharedClient: HttpClient =
         import AllowUnsafe.embrace.danger
-        val workerGroup = new MultiThreadIoEventLoopGroup(
-            0,                                                                          // default thread count
-            new io.netty.util.concurrent.DefaultThreadFactory("kyo-http-client", true), // daemon = true
-            NettyTransport.ioHandlerFactory
-        )
-        val bootstrap  = createBootstrap(workerGroup)
-        val poolMap    = new ConcurrentHashMap[PoolKey, ChannelPool]()
-        val sslContext = SslContextBuilder.forClient().build()
-        new HttpClient(workerGroup, bootstrap, poolMap, sslContext, Absent, 30.seconds, 1048576)
-    end sharedClient
+        Unsafe.init(daemon = true)
 
     private val clientLocal      = Local.init(sharedClient)
     private[kyo] val configLocal = Local.init(Config.default)
@@ -310,8 +332,8 @@ object HttpClient:
                 val port = request.port
                 val path = request.url
                 if host.isEmpty then path
-                else if port == HttpPort then s"http://$host$path"
-                else if port == HttpsPort then s"https://$host$path"
+                else if port == DefaultHttpPort then s"http://$host$path"
+                else if port == DefaultHttpsPort then s"https://$host$path"
                 else s"http://$host:$port$path"
                 end if
 
@@ -326,7 +348,8 @@ object HttpClient:
         request: HttpRequest,
         config: Config,
         redirectCount: Int = 0,
-        retrySchedule: Maybe[Schedule] = Absent
+        retrySchedule: Maybe[Schedule] = Absent,
+        attemptCount: Int = 1
     )(using Frame, AllowUnsafe): HttpResponse < (Async & Abort[HttpError]) =
         // Use provided retry schedule or get from config on first call
         val currentSchedule = retrySchedule.orElse(config.retrySchedule)
@@ -335,8 +358,8 @@ object HttpClient:
         val host            = uri.getHost
         val port =
             if uri.getPort > 0 then uri.getPort
-            else if scheme == "https" then HttpsPort
-            else HttpPort
+            else if scheme == "https" then DefaultHttpsPort
+            else DefaultHttpPort
         val useSsl = scheme == "https"
 
         val key = PoolKey(host, port, useSsl)
@@ -369,20 +392,11 @@ object HttpClient:
         acquirePromise.safe.getResult.map {
             case Result.Success(channel) =>
                 // Got a channel - use it with guaranteed release
-                // Track whether request completed normally to decide cleanup behavior
-                val completed = new java.util.concurrent.atomic.AtomicBoolean(false)
                 Sync.ensure {
-                    // If request didn't complete normally (timeout/interrupt), close channel
-                    // This signals to the server that the client is gone
-                    if !completed.get() then
-                        discard(channel.close())
                     // Release to pool - pool checks health via releaseHealthCheck
                     discard(pool.release(channel))
                 } {
                     sendOnChannel(channel, uri, request, host, port, config)
-                }.map { resp =>
-                    completed.set(true)
-                    resp
                 }.map { resp =>
                     // Handle redirects
                     if config.followRedirects && resp.status.isRedirect then
@@ -431,12 +445,15 @@ object HttpClient:
                                                 request,
                                                 config,
                                                 0, // Reset redirect count for retry
-                                                Present(nextSchedule)
+                                                Present(nextSchedule),
+                                                attemptCount + 1
                                             )
                                         }
                                     case Absent =>
-                                        // Schedule exhausted, return last response
-                                        finalResp
+                                        // Schedule exhausted, fail with RetriesExhausted
+                                        finalResp.bodyText.map { body =>
+                                            Abort.fail(HttpError.RetriesExhausted(attemptCount, finalResp.status, body))
+                                        }
                             }
                         case _ =>
                             // No retry needed
@@ -455,6 +472,7 @@ object HttpClient:
         port: Int,
         config: Config
     )(using Frame, AllowUnsafe): HttpResponse < (Async & Abort[HttpError]) =
+        // Build path from the URI parameter (may differ from request.url for redirects)
         val path =
             val p = uri.getRawPath
             val q = uri.getRawQuery
@@ -465,7 +483,7 @@ object HttpClient:
             end if
         end path
 
-        // Create the Netty request
+        // Create Netty request with correct path (for redirects) and request body/headers
         val bodyBytes = request.bodyBytes
         val nettyRequest = new DefaultFullHttpRequest(
             HttpVersion.HTTP_1_1,
@@ -479,18 +497,14 @@ object HttpClient:
         discard(nettyRequest.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
         if bodyBytes.nonEmpty then
             discard(nettyRequest.headers().set(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.size))
-        val reqHeaders     = request.headers
-        val reqHeaderCount = reqHeaders.size
-        @tailrec def setHeaders(i: Int): Unit =
-            if i < reqHeaderCount then
-                val header    = reqHeaders(i)
-                val name      = header._1
-                val value     = header._2
-                val lowerName = name.toLowerCase
-                if lowerName != "host" && lowerName != "connection" && !lowerName.startsWith("x-kyo-") then
-                    discard(nettyRequest.headers().set(name, value))
-                setHeaders(i + 1)
-        setHeaders(0)
+
+        // Copy headers from request (excluding host/connection which we set above)
+        val reqHeaders = request.headers
+        reqHeaders.foreach { case (name, value) =>
+            val lowerName = name.toLowerCase
+            if lowerName != "host" && lowerName != "connection" then
+                discard(nettyRequest.headers().set(name, value))
+        }
 
         val promise = Promise.Unsafe.init[HttpResponse, Abort[HttpError]]()
 
@@ -529,7 +543,7 @@ object HttpClient:
         channel: Channel,
         host: String,
         port: Int
-    ) extends SimpleChannelInboundHandler[FullHttpResponse]:
+    )(using Frame) extends SimpleChannelInboundHandler[FullHttpResponse]:
         override def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpResponse): Unit =
             import AllowUnsafe.embrace.danger
             val status = HttpResponse.Status(msg.status().code())

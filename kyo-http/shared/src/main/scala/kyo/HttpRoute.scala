@@ -133,16 +133,16 @@ case class HttpRoute[In, Out, Err](
 
     // --- Documentation ---
 
-    def withTag(t: String): HttpRoute[In, Out, Err] =
+    def tag(t: String): HttpRoute[In, Out, Err] =
         copy(tag = Present(t))
 
-    def withSummary(s: String): HttpRoute[In, Out, Err] =
+    def summary(s: String): HttpRoute[In, Out, Err] =
         copy(summary = Present(s))
 
-    def withDescription(d: String): HttpRoute[In, Out, Err] =
+    def description(d: String): HttpRoute[In, Out, Err] =
         copy(description = Present(d))
 
-    def withOperationId(id: String): HttpRoute[In, Out, Err] =
+    def operationId(id: String): HttpRoute[In, Out, Err] =
         copy(operationId = Present(id))
 
     def deprecated: HttpRoute[In, Out, Err] =
@@ -180,17 +180,19 @@ case class HttpRoute[In, Out, Err](
 
         HttpClient.send(request).map { response =>
             if response.status.isError then
-                val errOpt = errorSchemas.collectFirst {
-                    case (status, schema) if response.status == status =>
-                        try Some(schema.asInstanceOf[Schema[Any]].decode(response.bodyText))
-                        catch case _: Exception => None
-                }.flatten
-                errOpt match
-                    case Some(err) => Abort.fail(err.asInstanceOf[Err])
-                    case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: ${response.status}"))
+                response.bodyText.map { body =>
+                    val errOpt = errorSchemas.collectFirst {
+                        case (status, schema) if response.status == status =>
+                            try Some(schema.asInstanceOf[Schema[Any]].decode(body))
+                            catch case _: Exception => None
+                    }.flatten
+                    errOpt match
+                        case Some(err) => Abort.fail(err.asInstanceOf[Err])
+                        case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: ${response.status}"))
+                }
             else
                 outputSchema match
-                    case Present(schema) => schema.asInstanceOf[Schema[Out]].decode(response.bodyText)
+                    case Present(schema) => response.bodyText.map(body => schema.asInstanceOf[Schema[Out]].decode(body))
                     case Absent          => ().asInstanceOf[Out]
         }
     end call
@@ -271,6 +273,7 @@ object HttpRoute:
 
     // --- Path ---
 
+    // TODO let's move this to kyo.HttpPath and incorporate the code that is in PathUtil in HttpPath
     opaque type Path[+A] = String | Path.Segment[?]
 
     object Path:

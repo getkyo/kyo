@@ -7,6 +7,24 @@ class HttpResponseTest extends Test:
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class ErrorBody(message: String) derives Schema, CanEqual
 
+    // Helper to extract body text for unit tests
+    private def getBodyText(response: HttpResponse): String =
+        Abort.run(response.bodyText).eval match
+            case Result.Success(s) => s
+            case other             => fail(s"Unexpected result: $other")
+
+    // Helper to extract body bytes for unit tests
+    private def getBodyBytes(response: HttpResponse): Span[Byte] =
+        Abort.run(response.bodyBytes).eval match
+            case Result.Success(b) => b
+            case other             => fail(s"Unexpected result: $other")
+
+    // Helper to extract typed body for unit tests
+    private def getBodyAs[A: Schema](response: HttpResponse): A =
+        Abort.run(response.bodyAs[A]).eval match
+            case Result.Success(a) => a
+            case other             => fail(s"Unexpected result: $other")
+
     "Status" - {
 
         "construction" - {
@@ -359,19 +377,19 @@ class HttpResponseTest extends Test:
             "with status and empty body" in {
                 val response = HttpResponse(Status.OK)
                 assert(response.status == Status.OK)
-                assert(response.bodyText == "")
+                assert(getBodyText(response) == "")
             }
 
             "with status and string body" in {
                 val response = HttpResponse(Status.OK, "hello")
                 assert(response.status == Status.OK)
-                assert(response.bodyText == "hello")
+                assert(getBodyText(response) == "hello")
             }
 
             "with status and typed body" in {
                 val response = HttpResponse(Status.OK, User(1, "Alice"))
                 assert(response.status == Status.OK)
-                assert(response.bodyAs[User] == User(1, "Alice"))
+                assert(getBodyAs[User](response) == User(1, "Alice"))
             }
         }
 
@@ -384,19 +402,19 @@ class HttpResponseTest extends Test:
             "ok with string body" in {
                 val response = HttpResponse.ok("success")
                 assert(response.status == Status.OK)
-                assert(response.bodyText == "success")
+                assert(getBodyText(response) == "success")
             }
 
             "ok with typed body" in {
                 val response = HttpResponse.ok(User(1, "Alice"))
                 assert(response.status == Status.OK)
-                assert(response.bodyAs[User] == User(1, "Alice"))
+                assert(getBodyAs[User](response) == User(1, "Alice"))
             }
 
             "created with body" in {
                 val response = HttpResponse.created(User(1, "Alice"))
                 assert(response.status == Status.Created)
-                assert(response.bodyAs[User] == User(1, "Alice"))
+                assert(getBodyAs[User](response) == User(1, "Alice"))
             }
 
             "created with body and location" in {
@@ -418,7 +436,7 @@ class HttpResponseTest extends Test:
             "noContent" in {
                 val response = HttpResponse.noContent
                 assert(response.status == Status.NoContent)
-                assert(response.bodyText == "")
+                assert(getBodyText(response) == "")
             }
         }
 
@@ -462,13 +480,13 @@ class HttpResponseTest extends Test:
             "badRequest with string body" in {
                 val response = HttpResponse.badRequest("Invalid input")
                 assert(response.status == Status.BadRequest)
-                assert(response.bodyText == "Invalid input")
+                assert(getBodyText(response) == "Invalid input")
             }
 
             "badRequest with typed body" in {
                 val response = HttpResponse.badRequest(ErrorBody("Invalid"))
                 assert(response.status == Status.BadRequest)
-                assert(response.bodyAs[ErrorBody] == ErrorBody("Invalid"))
+                assert(getBodyAs[ErrorBody](response) == ErrorBody("Invalid"))
             }
 
             "unauthorized without body" in {
@@ -479,7 +497,7 @@ class HttpResponseTest extends Test:
             "unauthorized with body" in {
                 val response = HttpResponse.unauthorized("Please login")
                 assert(response.status == Status.Unauthorized)
-                assert(response.bodyText == "Please login")
+                assert(getBodyText(response) == "Please login")
             }
 
             "forbidden without body" in {
@@ -490,7 +508,7 @@ class HttpResponseTest extends Test:
             "forbidden with body" in {
                 val response = HttpResponse.forbidden("Access denied")
                 assert(response.status == Status.Forbidden)
-                assert(response.bodyText == "Access denied")
+                assert(getBodyText(response) == "Access denied")
             }
 
             "notFound without body" in {
@@ -501,7 +519,7 @@ class HttpResponseTest extends Test:
             "notFound with body" in {
                 val response = HttpResponse.notFound("Resource not found")
                 assert(response.status == Status.NotFound)
-                assert(response.bodyText == "Resource not found")
+                assert(getBodyText(response) == "Resource not found")
             }
 
             "conflict without body" in {
@@ -512,7 +530,7 @@ class HttpResponseTest extends Test:
             "conflict with body" in {
                 val response = HttpResponse.conflict("Already exists")
                 assert(response.status == Status.Conflict)
-                assert(response.bodyText == "Already exists")
+                assert(getBodyText(response) == "Already exists")
             }
 
             "unprocessableEntity without body" in {
@@ -546,7 +564,7 @@ class HttpResponseTest extends Test:
             "serverError with string body" in {
                 val response = HttpResponse.serverError("Something went wrong")
                 assert(response.status == Status.InternalServerError)
-                assert(response.bodyText == "Something went wrong")
+                assert(getBodyText(response) == "Something went wrong")
             }
 
             "serverError with typed body" in {
@@ -636,17 +654,17 @@ class HttpResponseTest extends Test:
 
         "bodyText" in {
             val response = HttpResponse.ok("hello world")
-            assert(response.bodyText == "hello world")
+            assert(getBodyText(response) == "hello world")
         }
 
         "bodyBytes" in {
             val response = HttpResponse.ok("hello")
-            assert(response.bodyBytes.toArray.sameElements("hello".getBytes))
+            assert(getBodyBytes(response).toArray.sameElements("hello".getBytes))
         }
 
         "bodyAs" in {
             val response = HttpResponse.ok(User(1, "Alice"))
-            assert(response.bodyAs[User] == User(1, "Alice"))
+            assert(getBodyAs[User](response) == User(1, "Alice"))
         }
 
         "bodyAsStream" in run {
@@ -844,25 +862,25 @@ class HttpResponseTest extends Test:
     "Body edge cases" - {
         "empty body" in {
             val response = HttpResponse.ok("")
-            assert(response.bodyText == "")
-            assert(response.bodyBytes.isEmpty)
+            assert(getBodyText(response) == "")
+            assert(getBodyBytes(response).isEmpty)
         }
 
         "null bytes in body" in {
             val bytes    = Array[Byte](0, 1, 2, 0, 3)
             val response = HttpResponse(Status.OK, new String(bytes))
-            assert(response.bodyBytes.size == 5)
+            assert(getBodyBytes(response).size == 5)
         }
 
         "very large body" in {
             val largeBody = "x" * (1024 * 1024) // 1MB
             val response  = HttpResponse.ok(largeBody)
-            assert(response.bodyText.length == 1024 * 1024)
+            assert(getBodyText(response).length == 1024 * 1024)
         }
 
         "unicode body" in {
             val response = HttpResponse.ok("Hello 世界 🌍")
-            assert(response.bodyText == "Hello 世界 🌍")
+            assert(getBodyText(response) == "Hello 世界 🌍")
         }
 
         "binary body" in {
@@ -870,7 +888,7 @@ class HttpResponseTest extends Test:
             // Bytes outside ASCII range get multi-byte UTF-8 encoding
             val bytes    = Array[Byte](0, 1, 64, 127, 65)
             val response = HttpResponse(Status.OK, new String(bytes, "ISO-8859-1"))
-            assert(response.bodyBytes.size == 5)
+            assert(getBodyBytes(response).size == 5)
         }
     }
 

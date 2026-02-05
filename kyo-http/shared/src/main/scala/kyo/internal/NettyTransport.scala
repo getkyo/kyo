@@ -7,7 +7,7 @@ import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
 import kyo.Maybe
-import scala.util.Try
+import kyo.Result
 
 private[kyo] object NettyTransport:
 
@@ -50,8 +50,8 @@ private[kyo] object NettyTransport:
     private def nio(): (IoHandlerFactory, Class[? <: SocketChannel], Class[? <: ServerSocketChannel]) =
         (NioIoHandler.newFactory(), classOf[NioSocketChannel], classOf[NioServerSocketChannel])
 
-    private def tryEpoll(): Option[(IoHandlerFactory, Class[? <: SocketChannel], Class[? <: ServerSocketChannel])] =
-        Try {
+    private def tryEpoll(): Result[Throwable, (IoHandlerFactory, Class[? <: SocketChannel], Class[? <: ServerSocketChannel])] =
+        Result.catching[Throwable] {
             val epollClass  = Class.forName("io.netty.channel.epoll.Epoll")
             val isAvailable = epollClass.getMethod("isAvailable").invoke(null).asInstanceOf[Boolean]
             if isAvailable then
@@ -60,13 +60,14 @@ private[kyo] object NettyTransport:
                 val socketClass  = Class.forName("io.netty.channel.epoll.EpollSocketChannel").asInstanceOf[Class[? <: SocketChannel]]
                 val serverClass =
                     Class.forName("io.netty.channel.epoll.EpollServerSocketChannel").asInstanceOf[Class[? <: ServerSocketChannel]]
-                Some((factory, socketClass, serverClass))
-            else None
+                (factory, socketClass, serverClass)
+            else
+                throw new RuntimeException("Epoll not available")
             end if
-        }.toOption.flatten
+        }
 
-    private def tryKQueue(): Option[(IoHandlerFactory, Class[? <: SocketChannel], Class[? <: ServerSocketChannel])] =
-        Try {
+    private def tryKQueue(): Result[Throwable, (IoHandlerFactory, Class[? <: SocketChannel], Class[? <: ServerSocketChannel])] =
+        Result.catching[Throwable] {
             val kqueueClass = Class.forName("io.netty.channel.kqueue.KQueue")
             val isAvailable = kqueueClass.getMethod("isAvailable").invoke(null).asInstanceOf[Boolean]
             if isAvailable then
@@ -75,9 +76,10 @@ private[kyo] object NettyTransport:
                 val socketClass  = Class.forName("io.netty.channel.kqueue.KQueueSocketChannel").asInstanceOf[Class[? <: SocketChannel]]
                 val serverClass =
                     Class.forName("io.netty.channel.kqueue.KQueueServerSocketChannel").asInstanceOf[Class[? <: ServerSocketChannel]]
-                Some((factory, socketClass, serverClass))
-            else None
+                (factory, socketClass, serverClass)
+            else
+                throw new RuntimeException("KQueue not available")
             end if
-        }.toOption.flatten
+        }
 
 end NettyTransport

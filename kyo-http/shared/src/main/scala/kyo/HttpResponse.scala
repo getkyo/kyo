@@ -24,19 +24,23 @@ final class HttpResponse private (
 
     // --- Body accessors ---
 
-    def bodyText: String =
+    def bodyText(using Frame): String < Abort[HttpError] =
         _body match
             case Left(bytes) => new String(bytes, StandardCharsets.UTF_8)
-            case Right(_)    => ""
+            case Right(_) => Abort.fail(HttpError.StreamingBody("Cannot access bodyText on streaming response; use bodyAsStream instead"))
 
-    def bodyBytes: Span[Byte] =
+    def bodyBytes(using Frame): Span[Byte] < Abort[HttpError] =
         _body match
             case Left(bytes) => Span.fromUnsafe(bytes)
-            case Right(_)    => Span.empty[Byte]
+            case Right(_) => Abort.fail(HttpError.StreamingBody("Cannot access bodyBytes on streaming response; use bodyAsStream instead"))
 
-    def bodyAs[A: Schema]: A =
-        Schema[A].decode(bodyText)
+    def bodyAs[A: Schema](using Frame): A < Abort[HttpError] =
+        bodyText.map { text =>
+            try Schema[A].decode(text)
+            catch case e: Throwable => Abort.fail(HttpError.ParseError(s"Failed to parse response body", e))
+        }
 
+    // TODO it seems this is the only streaming API we have? How does the body become streaming or not? Don't we need streaming apis in client and server?
     def bodyAsStream[A: Schema: Tag](using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
         _body match
             case Left(bytes) =>
