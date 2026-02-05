@@ -16,9 +16,14 @@ end HttpError
 object HttpError:
     /** Convert a Throwable to an HttpError based on its type. */
     private[kyo] def fromThrowable(cause: Throwable, host: String, port: Int): HttpError =
+        def safeMessage(e: Throwable): String =
+            val msg = e.getMessage
+            if msg != null then msg else e.getClass.getName
         cause match
             case e: ConnectException => HttpError.ConnectionFailed(host, port, e)
-            case e: TimeoutException => HttpError.Timeout(e.getMessage)
-            case e: SSLException     => HttpError.SslError(e.getMessage, e)
-            case e                   => HttpError.InvalidResponse(e.getMessage)
+            case e: TimeoutException => HttpError.Timeout(safeMessage(e))
+            case e: SSLException     => HttpError.SslError(safeMessage(e), e)
+            case e                   => HttpError.InvalidResponse(safeMessage(e))
+        end match
+    end fromThrowable
 end HttpError

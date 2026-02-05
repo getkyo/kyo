@@ -4,8 +4,11 @@ import io.netty.bootstrap.ServerBootstrap
 import io.netty.channel.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.codec.http.FullHttpRequest as NettyFullHttpRequest
+import io.netty.handler.codec.http.HttpHeaderNames
+import io.netty.handler.codec.http.HttpHeaderValues
 import io.netty.handler.codec.http.HttpObjectAggregator
 import io.netty.handler.codec.http.HttpServerCodec
+import io.netty.handler.codec.http.HttpUtil
 import java.net.InetSocketAddress
 import java.util.concurrent.TimeUnit
 import kyo.HttpRequest.Method
@@ -229,7 +232,20 @@ object HttpServer:
             response: kyo.HttpResponse
         ): Unit =
             val nettyResponse = response.toNetty
-            discard(ctx.writeAndFlush(nettyResponse).addListener(ChannelFutureListener.CLOSE))
+            val keepAlive     = HttpUtil.isKeepAlive(request)
+
+            // Set Content-Length if not already set
+            if !nettyResponse.headers().contains(HttpHeaderNames.CONTENT_LENGTH) then
+                discard(nettyResponse.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, nettyResponse.content().readableBytes()))
+
+            // Set Connection header based on client request
+            if keepAlive then
+                discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
+                discard(ctx.writeAndFlush(nettyResponse))
+            else
+                discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
+                discard(ctx.writeAndFlush(nettyResponse).addListener(ChannelFutureListener.CLOSE))
+            end if
             discard(request.release())
         end sendResponse
 

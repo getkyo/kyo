@@ -117,8 +117,8 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/health") { (_, _) =>
                 HttpResponse.ok("healthy")
             }
-            val server = HttpServer.init(handler)
-            // Server should start and bind to default port
+            // Use port 0 to avoid conflicts in parallel test runs
+            val server = HttpServer.init(HttpServer.Config(port = 0))(handler)
             server.map(s => succeed)
         }
 
@@ -129,9 +129,32 @@ class HttpServerTest extends Test:
             server.map(s => succeed)
         }
 
-        "with aspects and handlers" in pending
+        "with aspects and handlers" in run {
+            val aspect  = HttpRequestAspect.init
+            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
+            // Note: init(aspects, handlers*) delegates to init(Config.default, aspects)(handlers*)
+            // Using config with port=0 to avoid port conflicts in tests
+            HttpServer.init(HttpServer.Config(port = 0), Seq(aspect))(handler).map { server =>
+                Scope.ensure(server.stopNow).andThen {
+                    testGet(server.port, "/health").map { response =>
+                        assertStatus(response, Status.OK)
+                    }
+                }
+            }
+        }
 
-        "with config, aspects, and handlers" in pending
+        "with config, aspects, and handlers" in run {
+            val config  = HttpServer.Config(port = 0)
+            val aspect  = HttpRequestAspect.init
+            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
+            HttpServer.init(config, Seq(aspect))(handler).map { server =>
+                Scope.ensure(server.stopNow).andThen {
+                    testGet(server.port, "/health").map { response =>
+                        assertStatus(response, Status.OK)
+                    }
+                }
+            }
+        }
 
         "with named parameters" in run {
             val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
@@ -144,9 +167,34 @@ class HttpServerTest extends Test:
             server.map(s => succeed)
         }
 
-        "with empty handlers" in pending
+        "with empty handlers" in run {
+            // Server with no handlers should return 404 for all requests
+            HttpServer.init(HttpServer.Config(port = 0))().map { server =>
+                Scope.ensure(server.stopNow).andThen {
+                    testGet(server.port, "/anything").map { response =>
+                        assertStatus(response, Status.NotFound)
+                    }
+                }
+            }
+        }
 
-        "with multiple handlers" in pending
+        "with multiple handlers" in run {
+            val health = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("healthy") }
+            val status = HttpHandler.get("/status") { (_, _) => HttpResponse.ok("running") }
+            HttpServer.init(HttpServer.Config(port = 0))(health, status).map { server =>
+                Scope.ensure(server.stopNow).andThen {
+                    for
+                        r1 <- testGet(server.port, "/health")
+                        r2 <- testGet(server.port, "/status")
+                    yield
+                        assertStatus(r1, Status.OK)
+                        assertBodyText(r1, "healthy")
+                        assertStatus(r2, Status.OK)
+                        assertBodyText(r2, "running")
+                    end for
+                }
+            }
+        }
     }
 
     "HttpServer extensions" - {
@@ -161,7 +209,7 @@ class HttpServerTest extends Test:
 
         "host" in run {
             val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
-            HttpServer.init(HttpServer.Config(host = "localhost"))(handler).map { server =>
+            HttpServer.init(HttpServer.Config(port = 0, host = "localhost"))(handler).map { server =>
                 assert(server.host == "localhost" || server.host == "127.0.0.1")
             }
         }
@@ -184,7 +232,21 @@ class HttpServerTest extends Test:
             }
         }
 
-        "openApi" in pending
+        "openApi" in run {
+            val route   = HttpRoute.get("users").output[Seq[User]].withTag("Users")
+            val handler = route.handle(_ => Seq(User(1, "Alice")))
+            HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
+                Scope.ensure(server.stopNow).andThen {
+                    val spec = server.openApiSpec("Test API", "1.0.0")
+                    assert(spec.info.title == "Test API")
+                    assert(spec.info.version == "1.0.0")
+                    // Also test the JSON generation
+                    val json = server.openApi("Test API")
+                    assert(json.contains("Test API"))
+                    succeed
+                }
+            }
+        }
     }
 
     "HttpHandler" - {
@@ -673,8 +735,7 @@ class HttpServerTest extends Test:
                     }
                     startTestServer(slowHandler).map { port =>
                         // Client request with short timeout (100ms < 300ms handler delay)
-                        val config = HttpClient.Config.default.withTimeout(100.millis)
-                        HttpClient.let(config) {
+                        HttpClient.withConfig(_.withTimeout(100.millis)) {
                             Abort.run(HttpClient.get[String](s"http://localhost:$port/slow"))
                         }.map { result =>
                             // Client should have timed out

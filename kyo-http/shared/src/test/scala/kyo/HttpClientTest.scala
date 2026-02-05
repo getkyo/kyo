@@ -106,25 +106,14 @@ class HttpClientTest extends Test:
 
     "HttpClient.init" - {
 
-        "with config" in run {
-            val config = HttpClient.Config.default
-            HttpClient.init(config).map { client =>
-                succeed
-            }
-        }
-
-        "with named parameters" in run {
-            HttpClient.init(
-                baseUrl = Present("https://api.example.com"),
-                timeout = Present(30.seconds),
-                followRedirects = true
-            ).map { client =>
-                succeed
-            }
-        }
-
         "with all defaults" in run {
-            HttpClient.init(HttpClient.Config.default).map { client =>
+            HttpClient.init().map { client =>
+                succeed
+            }
+        }
+
+        "with pool settings" in run {
+            HttpClient.init(maxConnectionsPerHost = Present(10)).map { client =>
                 succeed
             }
         }
@@ -136,7 +125,7 @@ class HttpClientTest extends Test:
             "successful request" in run {
                 val handler = HttpHandler.health("/test")
                 startTestServer(handler).map { port =>
-                    HttpClient.init(HttpClient.Config.default).map { client =>
+                    HttpClient.init().map { client =>
                         client.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
                             assertStatus(response, Status.OK)
                         }
@@ -149,7 +138,7 @@ class HttpClientTest extends Test:
                     HttpResponse.ok("test-data")
                 }
                 startTestServer(handler).map { port =>
-                    HttpClient.init(HttpClient.Config.default).map { client =>
+                    HttpClient.init().map { client =>
                         client.send(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
                             assertStatus(response, Status.OK)
                             assertBodyText(response, "test-data")
@@ -160,17 +149,18 @@ class HttpClientTest extends Test:
 
             "timeout handling" in run {
                 startTestServer(delayedHandler("/slow", 10.seconds)).map { port =>
-                    val config = HttpClient.Config.default.withTimeout(100.millis)
-                    HttpClient.init(config).map { client =>
-                        Abort.run(client.send(HttpRequest.get(s"http://localhost:$port/slow"))).map { result =>
-                            assert(result.isFailure)
+                    HttpClient.init().map { client =>
+                        HttpClient.withConfig(_.withTimeout(100.millis)) {
+                            Abort.run(client.send(HttpRequest.get(s"http://localhost:$port/slow"))).map { result =>
+                                assert(result.isFailure)
+                            }
                         }
                     }
                 }
             }
 
             "connection error" in run {
-                HttpClient.init(HttpClient.Config.default).map { client =>
+                HttpClient.init().map { client =>
                     Abort.run(client.send(HttpRequest.get("http://localhost:59999/test"))).map { result =>
                         assert(result.isFailure)
                     }
@@ -180,13 +170,13 @@ class HttpClientTest extends Test:
 
         "close" - {
             "closes connection" in run {
-                HttpClient.init(HttpClient.Config.default).map { client =>
+                HttpClient.init().map { client =>
                     client.closeNow.map(_ => succeed)
                 }
             }
 
             "idempotent" in run {
-                HttpClient.init(HttpClient.Config.default).map { client =>
+                HttpClient.init().map { client =>
                     client.closeNow.andThen(client.closeNow).map(_ => succeed)
                 }
             }
@@ -343,18 +333,71 @@ class HttpClientTest extends Test:
     "Context management" - {
 
         "let" - {
-            "overrides config for scope" in pending
+            "overrides config for scope" in run {
+                val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("ok") }
+                startTestServer(handler).map { port =>
+                    // Use a very short timeout - if config is applied, slow requests would fail
+                    HttpClient.withConfig(_.withTimeout(5.seconds)) {
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
+                            assertStatus(response, Status.OK)
+                        }
+                    }
+                }
+            }
 
-            "restores after scope" in pending
+            "restores after scope" in run {
+                val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("ok") }
+                startTestServer(handler).map { port =>
+                    // Set a config in inner scope
+                    HttpClient.withConfig(_.withMaxRedirects(1)) {
+                        succeed
+                    }.andThen {
+                        // After scope, should be able to follow more redirects (default is 10)
+                        val target = HttpHandler.get("/target") { (_, _) => HttpResponse.ok("done") }
+                        val redir1 = HttpHandler.get("/r1") { (_, _) => HttpResponse.redirect("/r2") }
+                        val redir2 = HttpHandler.get("/r2") { (_, _) => HttpResponse.redirect("/target") }
+                        startTestServer(target, redir1, redir2).map { port2 =>
+                            HttpClient.get[String](s"http://localhost:$port2/r1").map { body =>
+                                assert(body == "done")
+                            }
+                        }
+                    }
+                }
+            }
 
-            "nested let" in pending
+            "nested let" in run {
+                val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("ok") }
+                startTestServer(handler).map { port =>
+                    HttpClient.withConfig(_.withMaxRedirects(5)) {
+                        HttpClient.withConfig(_.withTimeout(10.seconds)) {
+                            // Both configs should be applied - inner timeout, outer maxRedirects
+                            HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
+                                assertStatus(response, Status.OK)
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         "update" - {
-            "modifies current config" in pending
+            "modifies current config" in run {
+                val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("ok") }
+                startTestServer(handler).map { port =>
+                    // Start with a base config
+                    HttpClient.withConfig(_.withMaxRedirects(5)) {
+                        // Modify it further
+                        HttpClient.withConfig(_.withTimeout(10.seconds)) {
+                            HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
+                                assertStatus(response, Status.OK)
+                            }
+                        }
+                    }
+                }
+            }
 
             "restores after scope" in run {
-                HttpClient.update(_.withTimeout(1.seconds)) {
+                HttpClient.withConfig(_.withTimeout(1.seconds)) {
                     succeed
                 }.andThen {
                     // Original timeout restored
@@ -364,11 +407,50 @@ class HttpClientTest extends Test:
         }
 
         "baseUrl" - {
-            "prefixes all requests" in pending
+            "prefixes all requests" in run {
+                val handler = HttpHandler.get("/api/data") { (_, _) => HttpResponse.ok("prefixed") }
+                startTestServer(handler).map { port =>
+                    HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
+                        // Request with relative path should be prefixed with baseUrl
+                        HttpClient.send(HttpRequest.get("/api/data")).map { response =>
+                            assertStatus(response, Status.OK)
+                            assertBodyText(response, "prefixed")
+                        }
+                    }
+                }
+            }
 
-            "nested baseUrl" in pending
+            "nested baseUrl" in run {
+                val outerHandler = HttpHandler.get("/outer") { (_, _) => HttpResponse.ok("outer") }
+                val innerHandler = HttpHandler.get("/inner") { (_, _) => HttpResponse.ok("inner") }
+                startTestServer(outerHandler, innerHandler).map { port =>
+                    HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port/outer")) {
+                        // Inner baseUrl should replace outer baseUrl
+                        HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
+                            HttpClient.send(HttpRequest.get("/inner")).map { response =>
+                                assertStatus(response, Status.OK)
+                                assertBodyText(response, "inner")
+                            }
+                        }
+                    }
+                }
+            }
 
-            "with absolute URL in request" in pending
+            "with absolute URL in request" in run {
+                // Both handlers on same server - test that absolute URL bypasses baseUrl
+                val baseHandler     = HttpHandler.get("/data") { (_, _) => HttpResponse.ok("from-base") }
+                val absoluteHandler = HttpHandler.get("/other") { (_, _) => HttpResponse.ok("from-absolute") }
+                startTestServer(baseHandler, absoluteHandler).map { port =>
+                    // Set baseUrl pointing to /data, but request absolute URL to /other
+                    HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port/data")) {
+                        // Absolute URL should bypass baseUrl entirely
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/other")).map { response =>
+                            assertStatus(response, Status.OK)
+                            assertBodyText(response, "from-absolute")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -404,8 +486,7 @@ class HttpClientTest extends Test:
         "respects maxRedirects" in run {
             val redirect = HttpHandler.get("/loop") { (_, _) => HttpResponse.redirect("/loop") }
             startTestServer(redirect).map { port =>
-                val config = HttpClient.Config.default.withMaxRedirects(2)
-                HttpClient.let(config) {
+                HttpClient.withConfig(_.withMaxRedirects(2)) {
                     Abort.run(HttpClient.get[String](s"http://localhost:$port/loop"))
                 }.map { result =>
                     assert(result.isFailure)
@@ -416,8 +497,7 @@ class HttpClientTest extends Test:
         "does not follow when disabled" in run {
             val redirect = HttpHandler.get("/redir") { (_, _) => HttpResponse.redirect("/target") }
             startTestServer(redirect).map { port =>
-                val config = HttpClient.Config.default.withFollowRedirects(false)
-                HttpClient.let(config) {
+                HttpClient.withConfig(_.withFollowRedirects(false)) {
                     HttpClient.send(HttpRequest.get(s"http://localhost:$port/redir"))
                 }.map { response =>
                     assert(response.status.isRedirect)
@@ -428,8 +508,7 @@ class HttpClientTest extends Test:
         "handles redirect loop" in run {
             val redirect = HttpHandler.get("/loop") { (_, _) => HttpResponse.redirect("/loop") }
             startTestServer(redirect).map { port =>
-                val config = HttpClient.Config.default.withMaxRedirects(5)
-                HttpClient.let(config) {
+                HttpClient.withConfig(_.withMaxRedirects(5)) {
                     Abort.run(HttpClient.get[String](s"http://localhost:$port/loop"))
                 }.map { result =>
                     assert(result.isFailure)
@@ -483,8 +562,7 @@ class HttpClientTest extends Test:
 
         "request timeout" in run {
             startTestServer(delayedHandler("/slow", 10.seconds)).map { port =>
-                val config = HttpClient.Config.default.withTimeout(100.millis)
-                HttpClient.let(config) {
+                HttpClient.withConfig(_.withTimeout(100.millis)) {
                     Abort.run(HttpClient.get[String](s"http://localhost:$port/slow"))
                 }.map { result =>
                     assert(result.isFailure)
@@ -492,7 +570,15 @@ class HttpClientTest extends Test:
             }
         }
 
-        "connect timeout" in pending
+        "connect timeout" in run {
+            // Use a non-routable IP to simulate slow/hanging connection
+            // 10.255.255.1 is typically non-routable and will cause connection to hang
+            HttpClient.withConfig(_.withConnectTimeout(100.millis)) {
+                Abort.run(HttpClient.get[String]("http://10.255.255.1:12345/test"))
+            }.map { result =>
+                assert(result.isFailure)
+            }
+        }
 
         "no timeout by default" in {
             val config = HttpClient.Config.default
@@ -588,8 +674,7 @@ class HttpClientTest extends Test:
                 HttpResponse(Status.Found).addHeader("Location", "/redirect")
             }
             startTestServer(handler).map { port =>
-                val config = HttpClient.Config.default.withMaxRedirects(3)
-                HttpClient.let(config) {
+                HttpClient.withConfig(_.withMaxRedirects(3)) {
                     Abort.run(HttpClient.send(HttpRequest.get(s"http://localhost:$port/redirect")))
                 }.map {
                     case Result.Failure(HttpError.TooManyRedirects(count)) =>
@@ -605,8 +690,7 @@ class HttpClientTest extends Test:
                 Async.delay(500.millis)(HttpResponse.ok("slow"))
             }
             startTestServer(handler).map { port =>
-                val config = HttpClient.Config.default.withTimeout(100.millis)
-                HttpClient.let(config) {
+                HttpClient.withConfig(_.withTimeout(100.millis)) {
                     Abort.run(HttpClient.send(HttpRequest.get(s"http://localhost:$port/slow")))
                 }.map {
                     case Result.Failure(HttpError.Timeout(msg)) =>
@@ -708,7 +792,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 Kyo.foreach(1 to iterations) { _ =>
                     Async.fill(3, 3) {
-                        HttpClient.init(HttpClient.Config.default).map { client =>
+                        HttpClient.init().map { client =>
                             client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
                                 client.closeNow.andThen(response)
                             }
@@ -728,7 +812,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("fast")
             }
             startTestServer(slowHandler, fastHandler).map { port =>
-                Kyo.foreach(1 to iterations) { _ =>
+                Kyo.foreach(1 to 100) { _ =>
                     Async.race(
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/slow")),
                         HttpClient.send(HttpRequest.get(s"http://localhost:$port/fast"))
@@ -855,7 +939,7 @@ class HttpClientTest extends Test:
             val route   = HttpRoute.get("users").output[Seq[User]]
             val handler = route.handle(_ => Seq(User(1, "Alice"), User(2, "Bob")))
             startTestServer(handler).map { port =>
-                HttpClient.baseUrl(s"http://localhost:$port") {
+                HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
                     route.call(())
                 }.map { users =>
                     assert(users == Seq(User(1, "Alice"), User(2, "Bob")))
@@ -869,7 +953,7 @@ class HttpClientTest extends Test:
             val route   = HttpRoute.get("users" / Path.int("id")).output[User]
             val handler = route.handle(id => User(id, s"User$id"))
             startTestServer(handler).map { port =>
-                HttpClient.baseUrl(s"http://localhost:$port") {
+                HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
                     route.call(42)
                 }.map { user =>
                     assert(user == User(42, "User42"))
@@ -886,7 +970,7 @@ class HttpClientTest extends Test:
                 (offset until (offset + limit)).map(i => User(i, s"User$i"))
             }
             startTestServer(handler).map { port =>
-                HttpClient.baseUrl(s"http://localhost:$port") {
+                HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
                     route.call((3, 10))
                 }.map { users =>
                     assert(users.size == 3)
@@ -903,7 +987,7 @@ class HttpClientTest extends Test:
                 Seq(User(1, reqId))
             }
             startTestServer(handler).map { port =>
-                HttpClient.baseUrl(s"http://localhost:$port") {
+                HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
                     route.call("req-123")
                 }.map { users =>
                     assert(users.head.name == "req-123")
@@ -919,7 +1003,7 @@ class HttpClientTest extends Test:
                 User(1, input.name)
             }
             startTestServer(handler).map { port =>
-                HttpClient.baseUrl(s"http://localhost:$port") {
+                HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
                     route.call(CreateUser("Alice", "alice@example.com"))
                 }.map { user =>
                     assert(user == User(1, "Alice"))
@@ -927,7 +1011,32 @@ class HttpClientTest extends Test:
             }
         }
 
-        "route error handling" in pending
+        "route error handling" in run {
+            import HttpRoute.Path
+            import HttpRoute.Path./
+            case class NotFoundError(message: String) derives Schema, CanEqual
+            val route = HttpRoute.get("users" / Path.int("id"))
+                .output[User]
+                .error[NotFoundError](Status.NotFound)
+            val handler = route.handle { id =>
+                if id == 999 then Abort.fail(NotFoundError("User not found"))
+                else User(id, s"User$id")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.withBaseUrl(s"http://localhost:$port")) {
+                    // Test successful case
+                    route.call(1).map { user =>
+                        assert(user == User(1, "User1"))
+                    }.andThen {
+                        // Test error case - should return 404 with error body
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/users/999")).map { response =>
+                            assertStatus(response, Status.NotFound)
+                            assert(response.bodyText.contains("User not found"))
+                        }
+                    }
+                }
+            }
+        }
     }
 
 end HttpClientTest

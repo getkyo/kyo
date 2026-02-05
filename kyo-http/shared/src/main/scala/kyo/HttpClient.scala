@@ -3,6 +3,7 @@ package kyo
 import io.netty.bootstrap.Bootstrap
 import io.netty.buffer.Unpooled
 import io.netty.channel.*
+import io.netty.channel.pool.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.codec.http.DefaultFullHttpRequest
 import io.netty.handler.codec.http.FullHttpResponse
@@ -12,9 +13,13 @@ import io.netty.handler.codec.http.HttpHeaderValues
 import io.netty.handler.codec.http.HttpMethod
 import io.netty.handler.codec.http.HttpObjectAggregator
 import io.netty.handler.codec.http.HttpVersion
+import io.netty.handler.ssl.SslContext
 import io.netty.handler.ssl.SslContextBuilder
+import io.netty.util.concurrent.Future as NettyFuture
+import java.net.InetSocketAddress
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kyo.internal.NettyTransport
 import kyo.internal.NettyUtil
@@ -23,13 +28,26 @@ import scala.annotation.tailrec
 final class HttpClient private (
     private val workerGroup: MultiThreadIoEventLoopGroup,
     private val bootstrap: Bootstrap,
-    private val config: HttpClient.Config
+    private val poolMap: ConcurrentHashMap[HttpClient.PoolKey, ChannelPool],
+    private val sslContext: SslContext,
+    private val maxConnectionsPerHost: Maybe[Int],
+    private val connectionAcquireTimeout: Duration
 ):
     def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
-        Sync.Unsafe.withLocal(HttpClient.local) { localConfig =>
-            val effectiveConfig = if localConfig eq HttpClient.Config.default then config else localConfig
-            val effectiveUrl    = HttpClient.buildEffectiveUrl(effectiveConfig, request)
-            HttpClient.sendRaw(bootstrap, effectiveUrl, request, effectiveConfig)
+        HttpClient.configLocal.use { config =>
+            Sync.Unsafe {
+                val effectiveUrl = HttpClient.buildEffectiveUrl(config, request)
+                HttpClient.sendRaw(
+                    bootstrap,
+                    poolMap,
+                    sslContext,
+                    maxConnectionsPerHost,
+                    connectionAcquireTimeout,
+                    effectiveUrl,
+                    request,
+                    config
+                )
+            }
         }
 
     def closeNow(using Frame): Unit < Async =
@@ -39,8 +57,15 @@ final class HttpClient private (
         close(30.seconds)
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        val graceMs = gracePeriod.toMillis
-        NettyUtil.future(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)).unit
+        Sync.Unsafe {
+            import AllowUnsafe.embrace.danger
+            import scala.jdk.CollectionConverters.*
+            poolMap.values().asScala.foreach(_.close())
+            poolMap.clear()
+        }.andThen {
+            val graceMs = gracePeriod.toMillis
+            NettyUtil.future(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)).unit
+        }
 end HttpClient
 
 object HttpClient:
@@ -50,23 +75,20 @@ object HttpClient:
 
     // --- Factory methods ---
 
-    def init(config: Config)(using Frame): HttpClient < Sync =
+    def init(
+        maxConnectionsPerHost: Maybe[Int] = Absent,
+        connectionAcquireTimeout: Duration = 30.seconds
+    )(using Frame): HttpClient < Sync =
+        maxConnectionsPerHost.foreach(n => require(n > 0, s"maxConnectionsPerHost must be positive: $n"))
+        require(connectionAcquireTimeout > Duration.Zero, s"connectionAcquireTimeout must be positive: $connectionAcquireTimeout")
         Sync.Unsafe {
             val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
             val bootstrap   = createBootstrap(workerGroup)
-            new HttpClient(workerGroup, bootstrap, config)
+            val poolMap     = new ConcurrentHashMap[PoolKey, ChannelPool]()
+            val sslContext  = SslContextBuilder.forClient().build()
+            new HttpClient(workerGroup, bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout)
         }
-
-    def init(
-        baseUrl: Maybe[String] = Config.default.baseUrl,
-        timeout: Maybe[Duration] = Config.default.timeout,
-        connectTimeout: Maybe[Duration] = Config.default.connectTimeout,
-        followRedirects: Boolean = Config.default.followRedirects,
-        maxRedirects: Int = Config.default.maxRedirects,
-        retrySchedule: Maybe[Schedule] = Config.default.retrySchedule,
-        retryOn: HttpResponse => Boolean = Config.default.retryOn
-    )(using Frame): HttpClient < Sync =
-        init(Config(baseUrl, timeout, connectTimeout, followRedirects, maxRedirects, retrySchedule, retryOn))
+    end init
 
     // --- Convenience methods (use shared client) ---
 
@@ -90,21 +112,15 @@ object HttpClient:
             catch case e: Throwable => Abort.fail(HttpError.InvalidResponse(s"Failed to parse response: ${e.getMessage}"))
 
     def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
-        Sync.Unsafe.withLocal(HttpClient.local) { config =>
-            val effectiveUrl = buildEffectiveUrl(config, request)
-            sendRaw(sharedBootstrap, effectiveUrl, request, config)
-        }
+        clientLocal.use(_.send(request))
 
     // --- Context management ---
 
-    def let[A, S](config: Config)(v: A < S)(using Frame): A < S =
-        local.let(config)(v)
+    def let[A, S](client: HttpClient)(v: A < S)(using Frame): A < S =
+        clientLocal.let(client)(v)
 
-    def update[A, S](f: Config => Config)(v: A < S)(using Frame): A < S =
-        local.use(c => local.let(f(c))(v))
-
-    def baseUrl[A, S](url: String)(v: A < S)(using Frame): A < S =
-        update(_.copy(baseUrl = Present(url)))(v)
+    def withConfig[A, S](f: Config => Config)(v: A < S)(using Frame): A < S =
+        configLocal.use(c => configLocal.let(f(c))(v))
 
     // --- Config ---
 
@@ -121,6 +137,8 @@ object HttpClient:
         timeout.foreach(d => require(d > Duration.Zero, s"timeout must be positive: $d"))
         connectTimeout.foreach(d => require(d > Duration.Zero, s"connectTimeout must be positive: $d"))
 
+        def withBaseUrl(url: String): Config =
+            copy(baseUrl = Present(url))
         def withTimeout(d: Duration): Config =
             require(d > Duration.Zero, s"timeout must be positive: $d")
             copy(timeout = Present(d))
@@ -154,16 +172,81 @@ object HttpClient:
 
     // --- Private implementation ---
 
-    private val sharedWorkerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
-    private val sharedBootstrap   = createBootstrap(sharedWorkerGroup)(using AllowUnsafe.embrace.danger)
+    private case class PoolKey(host: String, port: Int, ssl: Boolean)
 
-    private val local = Local.init[Config](Config.default)
+    // Shared client uses daemon threads so JVM can exit
+    private lazy val sharedClient: HttpClient =
+        import AllowUnsafe.embrace.danger
+        val workerGroup = new MultiThreadIoEventLoopGroup(
+            0,                                                                          // default thread count
+            new io.netty.util.concurrent.DefaultThreadFactory("kyo-http-client", true), // daemon = true
+            NettyTransport.ioHandlerFactory
+        )
+        val bootstrap  = createBootstrap(workerGroup)
+        val poolMap    = new ConcurrentHashMap[PoolKey, ChannelPool]()
+        val sslContext = SslContextBuilder.forClient().build()
+        new HttpClient(workerGroup, bootstrap, poolMap, sslContext, Absent, 30.seconds)
+    end sharedClient
+
+    private val clientLocal      = Local.init(sharedClient)
+    private[kyo] val configLocal = Local.init(Config.default)
 
     private def createBootstrap(workerGroup: MultiThreadIoEventLoopGroup)(using AllowUnsafe): Bootstrap =
         new Bootstrap()
             .group(workerGroup)
             .channel(NettyTransport.socketChannelClass)
             .option(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.TRUE)
+            .option(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
+
+    private def getOrCreatePool(
+        bootstrap: Bootstrap,
+        poolMap: ConcurrentHashMap[PoolKey, ChannelPool],
+        sslContext: SslContext,
+        maxConnectionsPerHost: Maybe[Int],
+        connectionAcquireTimeout: Duration,
+        key: PoolKey,
+        connectTimeout: Maybe[Duration]
+    )(using AllowUnsafe): ChannelPool =
+        poolMap.computeIfAbsent(
+            key,
+            _ =>
+                val handler = new AbstractChannelPoolHandler:
+                    override def channelCreated(ch: Channel): Unit =
+                        val pipeline = ch.pipeline()
+                        if key.ssl then
+                            discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), key.host, key.port)))
+                        discard(pipeline.addLast("codec", new HttpClientCodec()))
+                        discard(pipeline.addLast("aggregator", new HttpObjectAggregator(1048576)))
+                    end channelCreated
+                val remoteBootstrap = bootstrap.clone().remoteAddress(new InetSocketAddress(key.host, key.port))
+                connectTimeout.foreach { timeout =>
+                    discard(remoteBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Integer.valueOf(timeout.toMillis.toInt)))
+                }
+                maxConnectionsPerHost match
+                    case Present(maxConnections) =>
+                        // Fixed pool with connection limit and acquire timeout
+                        new FixedChannelPool(
+                            remoteBootstrap,
+                            handler,
+                            ChannelHealthChecker.ACTIVE,
+                            FixedChannelPool.AcquireTimeoutAction.FAIL,
+                            connectionAcquireTimeout.toMillis,
+                            maxConnections,
+                            Int.MaxValue, // maxPendingAcquires
+                            true,         // releaseHealthCheck - validate before returning to pool
+                            true          // lastRecentUsed - LIFO for better cache locality
+                        )
+                    case Absent =>
+                        // Unlimited pool - no connection limit
+                        new SimpleChannelPool(
+                            remoteBootstrap,
+                            handler,
+                            ChannelHealthChecker.ACTIVE,
+                            true, // releaseHealthCheck
+                            true  // lastRecentUsed
+                        )
+                end match
+        )
 
     private def buildEffectiveUrl(config: Config, request: HttpRequest): String =
         config.baseUrl match
@@ -186,51 +269,15 @@ object HttpClient:
 
     private def sendRaw(
         bootstrap: Bootstrap,
+        poolMap: ConcurrentHashMap[PoolKey, ChannelPool],
+        sslContext: SslContext,
+        maxConnectionsPerHost: Maybe[Int],
+        connectionAcquireTimeout: Duration,
         url: String,
         request: HttpRequest,
         config: Config,
         redirectCount: Int = 0
     )(using Frame, AllowUnsafe): HttpResponse < (Async & Abort[HttpError]) =
-        // Kyo timeout provides request-level control; onComplete handles cleanup on both success and interrupt
-
-        val promise = Promise.Unsafe.init[HttpResponse, Abort[HttpError]]()
-        val channel = setupConnection(bootstrap, url, request, promise)
-
-        config.timeout.foreach { duration =>
-            val expire: Runnable = () =>
-                if promise.complete(Result.fail(HttpError.Timeout(s"Request timed out after $duration"))) then
-                    discard(channel.close())
-            val timeoutTask = channel.eventLoop().schedule(expire, duration.toMillis, TimeUnit.MILLISECONDS)
-            promise.onComplete(_ => discard(timeoutTask.cancel(true)))
-        }
-
-        promise.safe.use { response =>
-            // Handle redirects
-            if config.followRedirects && response.status.isRedirect then
-                if redirectCount >= config.maxRedirects then
-                    Abort.fail(HttpError.TooManyRedirects(redirectCount))
-                else
-                    response.header("Location") match
-                        case Present(location) =>
-                            val redirectUrl =
-                                if location.startsWith("http://") || location.startsWith("https://") then
-                                    location
-                                else
-                                    new URI(url).resolve(location).toString
-                            sendRaw(bootstrap, redirectUrl, request, config, redirectCount + 1)
-                        case Absent =>
-                            response
-            else
-                response
-        }
-    end sendRaw
-
-    private def setupConnection(
-        bootstrap: Bootstrap,
-        url: String,
-        request: HttpRequest,
-        promise: Promise.Unsafe[HttpResponse, Abort[HttpError]]
-    )(using AllowUnsafe): Channel =
         val uri    = new URI(url)
         val scheme = if uri.getScheme == null then "http" else uri.getScheme
         val host   = uri.getHost
@@ -238,6 +285,76 @@ object HttpClient:
             if uri.getPort > 0 then uri.getPort
             else if scheme == "https" then HttpsPort
             else HttpPort
+        val useSsl = scheme == "https"
+
+        val key = PoolKey(host, port, useSsl)
+        val pool =
+            getOrCreatePool(bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout, key, config.connectTimeout)
+
+        // Acquire channel from pool
+        val acquirePromise = Promise.Unsafe.init[Channel, Any]()
+        val acquireFuture  = pool.acquire()
+        discard {
+            acquireFuture.addListener { (future: NettyFuture[Channel]) =>
+                import AllowUnsafe.embrace.danger
+                if future.isSuccess then
+                    discard(acquirePromise.complete(Result.succeed(future.getNow)))
+                else
+                    discard(acquirePromise.complete(Result.panic(future.cause())))
+                end if
+            }
+        }
+
+        acquirePromise.safe.getResult.map {
+            case Result.Success(channel) =>
+                // Got a channel - use it with guaranteed release
+                Async.ensure {
+                    // Always release - pool checks health via releaseHealthCheck
+                    discard(pool.release(channel))
+                } {
+                    sendOnChannel(channel, uri, request, host, port, config)
+                }.map { resp =>
+                    // Handle redirects
+                    if config.followRedirects && resp.status.isRedirect then
+                        if redirectCount >= config.maxRedirects then
+                            Abort.fail(HttpError.TooManyRedirects(redirectCount))
+                        else
+                            resp.header("Location") match
+                                case Present(location) =>
+                                    val redirectUrl =
+                                        if location.startsWith("http://") || location.startsWith("https://") then
+                                            location
+                                        else
+                                            new URI(url).resolve(location).toString
+                                    sendRaw(
+                                        bootstrap,
+                                        poolMap,
+                                        sslContext,
+                                        maxConnectionsPerHost,
+                                        connectionAcquireTimeout,
+                                        redirectUrl,
+                                        request,
+                                        config,
+                                        redirectCount + 1
+                                    )
+                                case Absent =>
+                                    resp
+                    else
+                        resp
+                }
+            case Result.Panic(e)   => Abort.fail(HttpError.fromThrowable(e, host, port))
+            case Result.Failure(e) => Abort.fail(HttpError.ConnectionFailed(host, port, new RuntimeException(e.toString)))
+        }
+    end sendRaw
+
+    private def sendOnChannel(
+        channel: Channel,
+        uri: URI,
+        request: HttpRequest,
+        host: String,
+        port: Int,
+        config: Config
+    )(using Frame, AllowUnsafe): HttpResponse < (Async & Abort[HttpError]) =
         val path =
             val p = uri.getRawPath
             val q = uri.getRawQuery
@@ -248,8 +365,6 @@ object HttpClient:
             end if
         end path
 
-        val useSsl = scheme == "https"
-
         // Create the Netty request
         val bodyBytes = request.bodyBytes
         val nettyRequest = new DefaultFullHttpRequest(
@@ -259,61 +374,57 @@ object HttpClient:
             Unpooled.wrappedBuffer(bodyBytes.toArrayUnsafe)
         )
 
-        // Set headers
+        // Set headers - use keep-alive for connection reuse
         discard(nettyRequest.headers().set(HttpHeaderNames.HOST, host))
-        discard(nettyRequest.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
+        discard(nettyRequest.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
         if bodyBytes.nonEmpty then
             discard(nettyRequest.headers().set(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.size))
         val reqHeaders     = request.headers
         val reqHeaderCount = reqHeaders.size
         @tailrec def setHeaders(i: Int): Unit =
             if i < reqHeaderCount then
-                val header = reqHeaders(i)
-                val name   = header._1
-                val value  = header._2
-                // Filter out internal headers (host, connection) and kyo-specific headers
+                val header    = reqHeaders(i)
+                val name      = header._1
+                val value     = header._2
                 val lowerName = name.toLowerCase
                 if lowerName != "host" && lowerName != "connection" && !lowerName.startsWith("x-kyo-") then
                     discard(nettyRequest.headers().set(name, value))
                 setHeaders(i + 1)
         setHeaders(0)
 
-        // Configure the channel with response handler
-        val configuredBootstrap = bootstrap.clone().handler(new ChannelInitializer[SocketChannel]:
-            override def initChannel(ch: SocketChannel): Unit =
-                val pipeline = ch.pipeline()
-                if useSsl then
-                    val sslContext = SslContextBuilder.forClient().build()
-                    discard(pipeline.addLast(sslContext.newHandler(ch.alloc(), host, port)))
-                end if
-                discard(pipeline.addLast(new HttpClientCodec()))
-                discard(pipeline.addLast(new HttpObjectAggregator(1048576))) // 1MB max
-                discard(pipeline.addLast(new ResponseHandler(promise, host, port))))
+        val promise = Promise.Unsafe.init[HttpResponse, Abort[HttpError]]()
 
-        // Connect and send
-        val connectFuture = configuredBootstrap.connect(host, port)
+        // Add response handler
+        val pipeline    = channel.pipeline()
+        val handlerName = "responseHandler"
+        if pipeline.get(handlerName) != null then
+            discard(pipeline.remove(handlerName))
+        discard(pipeline.addLast(handlerName, new ResponseHandler(promise, channel, host, port)))
+
+        // Set up timeout
+        config.timeout.foreach { duration =>
+            val expire: Runnable = () =>
+                discard(promise.complete(Result.fail(HttpError.Timeout(s"Request timed out after $duration"))))
+            val timeoutTask = channel.eventLoop().schedule(expire, duration.toMillis, TimeUnit.MILLISECONDS)
+            promise.onComplete(_ => discard(timeoutTask.cancel(true)))
+        }
+
+        // Send the request
+        val writeFuture = channel.writeAndFlush(nettyRequest)
         discard {
-            connectFuture.addListener((future: ChannelFuture) =>
-                if future.isSuccess then
-                    val channel     = future.channel()
-                    val writeFuture = channel.writeAndFlush(nettyRequest)
-                    discard {
-                        writeFuture.addListener((wf: ChannelFuture) =>
-                            if !wf.isSuccess then
-                                discard(promise.complete(Result.fail(HttpError.fromThrowable(wf.cause(), host, port))))
-                        )
-                    }
-                else
-                    discard(promise.complete(Result.fail(HttpError.fromThrowable(future.cause(), host, port))))
+            writeFuture.addListener((wf: ChannelFuture) =>
+                if !wf.isSuccess then
+                    discard(promise.complete(Result.fail(HttpError.fromThrowable(wf.cause(), host, port))))
             )
         }
 
-        connectFuture.channel()
-    end setupConnection
+        promise.safe.get
+    end sendOnChannel
 
-    // Handler to collect the response
+    // Response handler - just completes the promise, doesn't manage pool
     private class ResponseHandler(
         promise: Promise.Unsafe[HttpResponse, Abort[HttpError]],
+        channel: Channel,
         host: String,
         port: Int
     ) extends SimpleChannelInboundHandler[FullHttpResponse]:
@@ -323,7 +434,6 @@ object HttpClient:
             val body   = new Array[Byte](msg.content().readableBytes())
             msg.content().readBytes(body)
 
-            // Extract headers using two-pass algorithm
             val nettyHeaders = msg.headers()
             val headerCount  = nettyHeaders.size()
             val headers      = new Array[(String, String)](headerCount)
@@ -337,7 +447,6 @@ object HttpClient:
 
             fillHeaders(0)
 
-            // Build response with headers
             @tailrec def addHeaders(resp: HttpResponse, i: Int): HttpResponse =
                 if i >= headerCount then resp
                 else
@@ -345,15 +454,18 @@ object HttpClient:
                     addHeaders(resp.addHeader(name, value), i + 1)
 
             val response = addHeaders(HttpResponse(status, new String(body, StandardCharsets.UTF_8)), 0)
-
             discard(promise.complete(Result.succeed(response)))
-            discard(ctx.close())
         end channelRead0
+
+        override def channelInactive(ctx: ChannelHandlerContext): Unit =
+            import AllowUnsafe.embrace.danger
+            discard(promise.complete(Result.fail(HttpError.InvalidResponse("Connection closed by server"))))
+            super.channelInactive(ctx)
+        end channelInactive
 
         override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
             import AllowUnsafe.embrace.danger
             discard(promise.complete(Result.fail(HttpError.fromThrowable(cause, host, port))))
-            discard(ctx.close())
         end exceptionCaught
     end ResponseHandler
 
