@@ -341,9 +341,6 @@ class HttpResponseTest extends Test:
                 assert(cookie.maxAge == Present(Duration.Zero))
             }
 
-            // Kyo's Duration converts negative values to Zero, so this validation cannot be tested
-            "negative max age throws" in pending
-
             "empty domain" in {
                 val cookie = HttpResponse.Cookie("a", "b").domain("")
                 assert(cookie.domain == Present(""))

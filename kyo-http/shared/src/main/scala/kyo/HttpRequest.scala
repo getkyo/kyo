@@ -352,10 +352,21 @@ object HttpRequest:
         val request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method.toNetty, pathAndQuery, content)
         val uriHost = uri.getHost
         val scheme  = uri.getScheme
+
+        // Add user headers first (using add() to preserve duplicates like multiple Accept)
+        val headerCount = headers.length
+        @tailrec def setHeaders(i: Int): Unit =
+            if i < headerCount then
+                val header = headers(i)
+                discard(request.headers().add(header._1, header._2))
+                setHeaders(i + 1)
+        setHeaders(0)
+
         // Internal header to preserve scheme through Netty's opaque type (used by fullUrl, port methods)
         if scheme != null then
             discard(request.headers().set("X-Kyo-Scheme", scheme))
-        if uriHost != null then
+        // Set Host header only if not provided by user
+        if uriHost != null && !request.headers().contains(HttpHeaderNames.HOST) then
             val port = uri.getPort
             // Note: Java URI.getHost() already returns IPv6 addresses with brackets
             val host =
@@ -365,17 +376,13 @@ object HttpRequest:
                     uriHost
             discard(request.headers().set(HttpHeaderNames.HOST, host))
         end if
+        // Set Content-Type and Content-Length only if not provided by user
         if body.nonEmpty then
-            discard(request.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType))
-            discard(request.headers().set(HttpHeaderNames.CONTENT_LENGTH, body.length))
-        val headerCount = headers.length
-        @tailrec def setHeaders(i: Int): Unit =
-            if i < headerCount then
-                val header = headers(i)
-                // Use set to allow user headers to override built-in headers
-                discard(request.headers().set(header._1, header._2))
-                setHeaders(i + 1)
-        setHeaders(0)
+            if !request.headers().contains(HttpHeaderNames.CONTENT_TYPE) then
+                discard(request.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType))
+            if !request.headers().contains(HttpHeaderNames.CONTENT_LENGTH) then
+                discard(request.headers().set(HttpHeaderNames.CONTENT_LENGTH, body.length))
+        end if
         request
     end initBytes
 

@@ -456,8 +456,6 @@ class HttpServerTest extends Test:
                 }
             }
 
-            // Kyo's Duration converts negative values to Zero, so this validation cannot be tested
-            "negative max age throws" in pending
         }
 
         "rate limiting" - {
@@ -747,12 +745,8 @@ class HttpServerTest extends Test:
                                     assert(started, "Handler should have started")
                                 }.andThen {
                                     handlerCompleted.get.map { completed =>
-                                        // BUG: Handler continues running after client timeout
-                                        // After fix: handler should be interrupted, completed = false
-                                        if completed then
-                                            pending // Bug exists: handler completed despite client timeout
-                                        else
-                                            succeed // Fixed: handler was interrupted
+                                        // Handler should be interrupted when client times out
+                                        assert(!completed, "Handler should have been interrupted")
                                     }
                                 }
                             }
@@ -788,11 +782,8 @@ class HttpServerTest extends Test:
                                             assert(started, "Handler should have started")
                                         }.andThen {
                                             handlerCompleted.get.map { completed =>
-                                                // BUG: Handler continues running after client disconnect
-                                                if completed then
-                                                    pending // Bug exists: handler completed despite client disconnect
-                                                else
-                                                    succeed // Fixed: handler was interrupted
+                                                // Handler should be interrupted when client disconnects
+                                                assert(!completed, "Handler should have been interrupted")
                                             }
                                         }
                                     }

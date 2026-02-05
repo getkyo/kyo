@@ -456,19 +456,126 @@ class HttpClientTest extends Test:
 
     "Retry behavior" - {
 
-        "no retry by default on client error" in pending
-
-        "retry on server error" in pending
-
-        "retry with custom schedule" - {
-            "exponential backoff" in pending
-
-            "max attempts" in pending
+        "no retry by default on client error" in run {
+            // 4xx errors should not trigger retry (default retryOn is _.status.isServerError)
+            var attempts = 0
+            val handler = HttpHandler.get("/client-error") { (_, _) =>
+                attempts += 1
+                HttpResponse.badRequest
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.withRetry(Schedule.repeat(3))) {
+                    HttpClient.send(HttpRequest.get(s"http://localhost:$port/client-error"))
+                }.map { response =>
+                    assertStatus(response, Status.BadRequest)
+                    assert(attempts == 1, s"Expected 1 attempt but got $attempts")
+                }
+            }
         }
 
-        "custom retry predicate" in pending
+        "retry on server error" in run {
+            // 5xx errors should trigger retry
+            var attempts = 0
+            val handler = HttpHandler.get("/server-error") { (_, _) =>
+                attempts += 1
+                if attempts < 3 then HttpResponse.serverError("temporary")
+                else HttpResponse.ok("recovered")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.withRetry(Schedule.repeat(5))) {
+                    HttpClient.send(HttpRequest.get(s"http://localhost:$port/server-error"))
+                }.map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "recovered")
+                    assert(attempts == 3, s"Expected 3 attempts but got $attempts")
+                }
+            }
+        }
 
-        "no retry after success" in pending
+        "retry with custom schedule" - {
+            "exponential backoff" in run {
+                var attempts   = 0
+                var timestamps = List.empty[Long]
+                val handler = HttpHandler.get("/slow-recovery") { (_, _) =>
+                    attempts += 1
+                    timestamps = timestamps :+ java.lang.System.currentTimeMillis()
+                    if attempts < 3 then HttpResponse.serverError("wait")
+                    else HttpResponse.ok("done")
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.withConfig(_.withRetry(Schedule.exponential(50.millis, 2.0).take(5))) {
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/slow-recovery"))
+                    }.map { response =>
+                        assertStatus(response, Status.OK)
+                        assert(attempts == 3)
+                        // Verify delays are increasing (roughly exponential)
+                        if timestamps.size >= 3 then
+                            val delay1 = timestamps(1) - timestamps(0)
+                            val delay2 = timestamps(2) - timestamps(1)
+                            assert(delay2 >= delay1, s"Expected increasing delays: $delay1, $delay2")
+                        else
+                            succeed
+                        end if
+                    }
+                }
+            }
+
+            "max attempts" in run {
+                var attempts = 0
+                val handler = HttpHandler.get("/always-fail") { (_, _) =>
+                    attempts += 1
+                    HttpResponse.serverError("always fails")
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.withConfig(_.withRetry(Schedule.repeat(3))) {
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/always-fail"))
+                    }.map { response =>
+                        // After 3 retries (4 total attempts), should return last error response
+                        assertStatus(response, Status.InternalServerError)
+                        assert(attempts == 4, s"Expected 4 attempts (1 + 3 retries) but got $attempts")
+                    }
+                }
+            }
+        }
+
+        "custom retry predicate" in run {
+            // Retry on 503 Service Unavailable but not on 500
+            var attempts = 0
+            val handler = HttpHandler.get("/custom") { (_, _) =>
+                attempts += 1
+                if attempts == 1 then HttpResponse(Status.ServiceUnavailable)
+                else if attempts == 2 then HttpResponse.serverError("500 error")
+                else HttpResponse.ok("done")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(
+                    _.withRetry(Schedule.repeat(5))
+                        .withRetryWhen(_.status == Status.ServiceUnavailable)
+                ) {
+                    HttpClient.send(HttpRequest.get(s"http://localhost:$port/custom"))
+                }.map { response =>
+                    // Should retry 503, then stop at 500 (not matching predicate)
+                    assertStatus(response, Status.InternalServerError)
+                    assert(attempts == 2, s"Expected 2 attempts but got $attempts")
+                }
+            }
+        }
+
+        "no retry after success" in run {
+            var attempts = 0
+            val handler = HttpHandler.get("/success") { (_, _) =>
+                attempts += 1
+                HttpResponse.ok("immediate success")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.withRetry(Schedule.repeat(5))) {
+                    HttpClient.send(HttpRequest.get(s"http://localhost:$port/success"))
+                }.map { response =>
+                    assertStatus(response, Status.OK)
+                    assert(attempts == 1, s"Expected 1 attempt but got $attempts")
+                }
+            }
+        }
     }
 
     "Redirect handling" - {

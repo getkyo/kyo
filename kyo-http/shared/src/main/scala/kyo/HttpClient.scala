@@ -276,11 +276,14 @@ object HttpClient:
         url: String,
         request: HttpRequest,
         config: Config,
-        redirectCount: Int = 0
+        redirectCount: Int = 0,
+        retrySchedule: Maybe[Schedule] = Absent
     )(using Frame, AllowUnsafe): HttpResponse < (Async & Abort[HttpError]) =
-        val uri    = new URI(url)
-        val scheme = if uri.getScheme == null then "http" else uri.getScheme
-        val host   = uri.getHost
+        // Use provided retry schedule or get from config on first call
+        val currentSchedule = retrySchedule.orElse(config.retrySchedule)
+        val uri             = new URI(url)
+        val scheme          = if uri.getScheme == null then "http" else uri.getScheme
+        val host            = uri.getHost
         val port =
             if uri.getPort > 0 then uri.getPort
             else if scheme == "https" then HttpsPort
@@ -308,11 +311,20 @@ object HttpClient:
         acquirePromise.safe.getResult.map {
             case Result.Success(channel) =>
                 // Got a channel - use it with guaranteed release
-                Async.ensure {
-                    // Always release - pool checks health via releaseHealthCheck
+                // Track whether request completed normally to decide cleanup behavior
+                val completed = new java.util.concurrent.atomic.AtomicBoolean(false)
+                Sync.ensure {
+                    // If request didn't complete normally (timeout/interrupt), close channel
+                    // This signals to the server that the client is gone
+                    if !completed.get() then
+                        discard(channel.close())
+                    // Release to pool - pool checks health via releaseHealthCheck
                     discard(pool.release(channel))
                 } {
                     sendOnChannel(channel, uri, request, host, port, config)
+                }.map { resp =>
+                    completed.set(true)
+                    resp
                 }.map { resp =>
                     // Handle redirects
                     if config.followRedirects && resp.status.isRedirect then
@@ -341,6 +353,34 @@ object HttpClient:
                                     resp
                     else
                         resp
+                }.map { finalResp =>
+                    // Handle retry based on response
+                    currentSchedule match
+                        case Present(schedule) if config.retryOn(finalResp) =>
+                            Clock.now.map { now =>
+                                schedule.next(now) match
+                                    case Present((delay, nextSchedule)) =>
+                                        Async.delay(delay) {
+                                            sendRaw(
+                                                bootstrap,
+                                                poolMap,
+                                                sslContext,
+                                                maxConnectionsPerHost,
+                                                connectionAcquireTimeout,
+                                                url,
+                                                request,
+                                                config,
+                                                0, // Reset redirect count for retry
+                                                Present(nextSchedule)
+                                            )
+                                        }
+                                    case Absent =>
+                                        // Schedule exhausted, return last response
+                                        finalResp
+                            }
+                        case _ =>
+                            // No retry needed
+                            finalResp
                 }
             case Result.Panic(e)   => Abort.fail(HttpError.fromThrowable(e, host, port))
             case Result.Failure(e) => Abort.fail(HttpError.ConnectionFailed(host, port, new RuntimeException(e.toString)))
@@ -404,6 +444,8 @@ object HttpClient:
         // Set up timeout
         config.timeout.foreach { duration =>
             val expire: Runnable = () =>
+                // Close channel so server can detect timeout and interrupt handler
+                discard(channel.close())
                 discard(promise.complete(Result.fail(HttpError.Timeout(s"Request timed out after $duration"))))
             val timeoutTask = channel.eventLoop().schedule(expire, duration.toMillis, TimeUnit.MILLISECONDS)
             promise.onComplete(_ => discard(timeoutTask.cancel(true)))

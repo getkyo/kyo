@@ -408,15 +408,13 @@ class HttpRequestTest extends Test:
                 assert(!request.headers.exists(_._1 == "X-Custom"))
             }
 
-            // Currently user headers use set() which replaces duplicates.
-            // Supporting both duplicate headers and override requires API change.
-            "preserves duplicate header names" in pendingUntilFixed {
+            "preserves duplicate header names" in {
                 val request = HttpRequest.get(
                     "http://example.com",
                     Seq("Accept" -> "text/html", "Accept" -> "application/json")
                 )
                 val acceptHeaders = request.headers.filter(_._1.equalsIgnoreCase("Accept"))
-                assert(acceptHeaders.size >= 2): @annotation.nowarn
+                assert(acceptHeaders.size >= 2)
             }
         }
 
@@ -589,13 +587,15 @@ class HttpRequestTest extends Test:
         }
 
         "parts" - {
-            "returns multipart parts" in pendingUntilFixed {
+            "returns multipart parts" in {
                 val parts = Seq(
                     Part("file", Present("test.txt"), Present("text/plain"), "content".getBytes)
                 )
                 val request = HttpRequest.multipart("http://example.com/upload", parts)
-                assert(request.parts.size == 1)
-                assert(request.parts(0).name == "file"): @annotation.nowarn
+                // Call parts once and store result - buffer may be consumed
+                val parsedParts = request.parts
+                assert(parsedParts.size == 1)
+                assert(parsedParts(0).name == "file")
             }
 
             "returns empty for non-multipart" in {
@@ -603,16 +603,18 @@ class HttpRequestTest extends Test:
                 assert(request.parts.isEmpty)
             }
 
-            "preserves part order" in pendingUntilFixed {
+            "preserves part order" in {
                 val parts = Seq(
                     Part("first", Absent, Absent, Array.empty[Byte]),
                     Part("second", Absent, Absent, Array.empty[Byte]),
                     Part("third", Absent, Absent, Array.empty[Byte])
                 )
                 val request = HttpRequest.multipart("http://example.com/upload", parts)
-                assert(request.parts(0).name == "first")
-                assert(request.parts(1).name == "second")
-                assert(request.parts(2).name == "third"): @annotation.nowarn
+                // Call parts once and store result - buffer is consumed on read
+                val parsedParts = request.parts
+                assert(parsedParts(0).name == "first")
+                assert(parsedParts(1).name == "second")
+                assert(parsedParts(2).name == "third")
             }
         }
     }
