@@ -405,6 +405,97 @@ class HttpServerTest extends Test:
                 }
             }
         }
+
+        "error schema returns correct status and JSON body" in run {
+            case class NotFoundError(message: String) derives Schema
+            val route = HttpRoute.get("users" / Path.int("id"))
+                .output[User]
+                .error[NotFoundError](Status.NotFound)
+            val handler = route.handle { id =>
+                Abort.fail(NotFoundError("User not found"))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/users/1").map { response =>
+                    assertStatus(response, Status.NotFound)
+                    assertBodyText(response, """{"message":"User not found"}""")
+                    assert(response.header("Content-Type") == Present("application/json"))
+                }
+            }
+        }
+
+        "multiple error schemas select correct status by error type" in run {
+            case class NotFoundError(message: String) derives Schema
+            case class ValidationError(field: String, reason: String) derives Schema
+            val route = HttpRoute.get("users" / Path.int("id"))
+                .output[User]
+                .error[NotFoundError](Status.NotFound)
+                .error[ValidationError](Status.BadRequest)
+            val handler = route.handle { id =>
+                if id == 999 then Abort.fail(NotFoundError("No such user"))
+                else Abort.fail(ValidationError("id", "must be positive"))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/users/999").map { response =>
+                    assertStatus(response, Status.NotFound)
+                    assertBodyText(response, """{"message":"No such user"}""")
+                }.andThen {
+                    testGet(port, "/users/0").map { response =>
+                        assertStatus(response, Status.BadRequest)
+                        assertBodyText(response, """{"field":"id","reason":"must be positive"}""")
+                    }
+                }
+            }
+        }
+
+        "first error schema matches when error type is first" in run {
+            case class NotFoundError(message: String) derives Schema
+            case class ValidationError(field: String, reason: String) derives Schema
+            val route = HttpRoute.get("items" / Path.int("id"))
+                .output[User]
+                .error[NotFoundError](Status.NotFound)
+                .error[ValidationError](Status.BadRequest)
+            val handler = route.handle { id =>
+                Abort.fail(NotFoundError("Item missing"))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/items/1").map { response =>
+                    assertStatus(response, Status.NotFound)
+                    assertBodyText(response, """{"message":"Item missing"}""")
+                }
+            }
+        }
+
+        "successful response on route with error schemas" in run {
+            case class NotFoundError(message: String) derives Schema
+            val route = HttpRoute.get("users" / Path.int("id"))
+                .output[User]
+                .error[NotFoundError](Status.NotFound)
+            val handler = route.handle { id =>
+                User(id, s"User$id")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/users/42").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "User42")
+                }
+            }
+        }
+
+        "handler panic returns 500 even with error schemas registered" in run {
+            case class NotFoundError(message: String) derives Schema
+            val route = HttpRoute.get("users" / Path.int("id"))
+                .output[User]
+                .error[NotFoundError](Status.NotFound)
+            val handler = route.handle { id =>
+                throw new RuntimeException("unexpected panic")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/users/1").map { response =>
+                    assertStatus(response, Status.InternalServerError)
+                }
+            }
+        }
+
     }
 
     "Client disconnect handling" - {

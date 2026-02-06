@@ -41,15 +41,15 @@ final class HttpServer private (
 
     def stop(gracePeriod: Duration)(using Frame): Unit < Async =
         val graceMs = gracePeriod.toMillis
-        NettyUtil.channelFuture(channel.close()).andThen {
-            NettyUtil.future(bossGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)).andThen {
-                NettyUtil.future(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)).unit
+        NettyUtil.channelFuture(channel.close()) { _ =>
+            NettyUtil.future(bossGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)) { _ =>
+                NettyUtil.future(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS))(_ => ())
             }
         }
     end stop
 
     def await(using Frame): Unit < Async =
-        NettyUtil.channelFuture(channel.closeFuture()).unit
+        NettyUtil.channelFuture(channel.closeFuture())(_ => ())
 
     // TODO let's have an HttpOpenApi impl in the kyo package for this. It'll be a class with the equivalent of OpenApiGenerator.OpenApi (not opauqe type) and a metrhod to serialize it to json. We don't need the Spec and string methods separation here. Return HttpOpenApi and then the user can decide to get the json
     def openApiSpec: OpenApiGenerator.OpenApi =
@@ -116,8 +116,7 @@ object HttpServer:
 
                 val bindFuture = bootstrap.bind(config.host, config.port)
 
-                // TODO let's implement an optimization here. Add a second function parameter (separate param group for nice syntax) to channelFuture that takes the continuation we're setting here via `.map`
-                NettyUtil.channelFuture(bindFuture).map { channel =>
+                NettyUtil.channelFuture(bindFuture) { channel =>
                     // Safe cast: NioServerSocketChannel always returns InetSocketAddress
                     val address = channel.localAddress().asInstanceOf[InetSocketAddress]
                     new HttpServer(channel, bossGroup, workerGroup, address, allHandlers)
@@ -327,19 +326,61 @@ object HttpHandler:
                 }
             end apply
 
+    @nowarn("msg=anonymous")
+    inline def init[A, S](method: Method, path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using
+        Frame
+    ): HttpHandler[S] =
+        new HttpHandler[S]:
+            val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[Path[Any]], Status.OK, false, false, Absent, Absent)
+            def apply(request: HttpRequest): kyo.HttpResponse < (Async & S) =
+                // For simple paths without captures, A is Unit
+                f(().asInstanceOf[A], request)
+
+    def health(path: Path[Unit] = "/health")(using Frame): HttpHandler[Any] =
+        init(Method.GET, path)((_, _) => kyo.HttpResponse.ok("healthy"))
+
+    def const[A](method: Method, path: Path[A], status: Status)(using Frame): HttpHandler[Any] =
+        init(method, path)((_, _) => kyo.HttpResponse(status))
+
+    def const[A](method: Method, path: Path[A], response: kyo.HttpResponse)(using Frame): HttpHandler[Any] =
+        init(method, path)((_, _) => response)
+
+    inline def get[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+        init(Method.GET, path)(f)
+
+    inline def post[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+        init(Method.POST, path)(f)
+
+    inline def put[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+        init(Method.PUT, path)(f)
+
+    inline def patch[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+        init(Method.PATCH, path)(f)
+
+    inline def delete[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+        init(Method.DELETE, path)(f)
+
+    inline def head[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+        init(Method.HEAD, path)(f)
+
+    inline def options[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+        init(Method.OPTIONS, path)(f)
+
+    // --- Private implementation ---
+
     // Try to encode an error using registered error schemas and return appropriate HTTP response
-    // TODO is this schema transformation mechanism depending on the error well tested?
     private def findErrorResponse(err: Any, errorSchemas: Seq[(HttpResponse.Status, Schema[?])]): Option[kyo.HttpResponse] =
-        errorSchemas.collectFirst {
-            case (status, schema) =>
-                try
-                    // Try to encode the error with this schema
-                    val json = schema.asInstanceOf[Schema[Any]].encode(err)
-                    // If encoding succeeds, return the response with this status
-                    Some(kyo.HttpResponse(status, json).addHeader("Content-Type", "application/json"))
-                catch
-                    case _: Exception => None
-        }.flatten
+        @tailrec def loop(remaining: Seq[(HttpResponse.Status, Schema[?])]): Option[kyo.HttpResponse] =
+            remaining match
+                case Seq() => None
+                case (status, schema) +: tail =>
+                    try
+                        val json = schema.asInstanceOf[Schema[Any]].encode(err)
+                        Some(kyo.HttpResponse(status, json).addHeader("Content-Type", "application/json"))
+                    catch
+                        case _: Exception => loop(tail)
+        loop(errorSchemas)
+    end findErrorResponse
 
     // Note: isInstanceOf[Unit] is used here because we're working with Any at runtime.
     // At compile time, the Inputs[A, B] match type handles Unit specially, but at runtime
@@ -446,46 +487,5 @@ object HttpHandler:
                             case (v1, v2: Tuple)        => Tuple.fromArray(v1 +: v2.toArray)
                             case (v1, v2)               => (v1, v2)
                 (combined, remaining2)
-
-    @nowarn("msg=anonymous")
-    // TODO member reorg, most useful public first, privates last
-    inline def init[A, S](method: Method, path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using
-        Frame
-    ): HttpHandler[S] =
-        new HttpHandler[S]:
-            val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[Path[Any]], Status.OK, false, false, Absent, Absent)
-            def apply(request: HttpRequest): kyo.HttpResponse < (Async & S) =
-                // For simple paths without captures, A is Unit
-                f(().asInstanceOf[A], request)
-
-    def health(path: Path[Unit] = "/health")(using Frame): HttpHandler[Any] =
-        init(Method.GET, path)((_, _) => kyo.HttpResponse.ok("healthy"))
-
-    def const[A](method: Method, path: Path[A], status: Status)(using Frame): HttpHandler[Any] =
-        init(method, path)((_, _) => kyo.HttpResponse(status))
-
-    def const[A](method: Method, path: Path[A], response: kyo.HttpResponse)(using Frame): HttpHandler[Any] =
-        init(method, path)((_, _) => response)
-
-    inline def get[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
-        init(Method.GET, path)(f)
-
-    inline def post[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
-        init(Method.POST, path)(f)
-
-    inline def put[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
-        init(Method.PUT, path)(f)
-
-    inline def patch[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
-        init(Method.PATCH, path)(f)
-
-    inline def delete[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
-        init(Method.DELETE, path)(f)
-
-    inline def head[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
-        init(Method.HEAD, path)(f)
-
-    inline def options[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
-        init(Method.OPTIONS, path)(f)
 
 end HttpHandler

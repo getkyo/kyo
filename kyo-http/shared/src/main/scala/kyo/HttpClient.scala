@@ -32,7 +32,7 @@ final class HttpClient private (
     private val sslContext: SslContext,
     private val maxConnectionsPerHost: Maybe[Int],
     private val connectionAcquireTimeout: Duration,
-    private val maxResponseSize: Int
+    private val maxResponseSizeBytes: Int
 ):
     def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
         HttpFilter.use { filter =>
@@ -48,7 +48,7 @@ final class HttpClient private (
                                 sslContext,
                                 maxConnectionsPerHost,
                                 connectionAcquireTimeout,
-                                maxResponseSize,
+                                maxResponseSizeBytes,
                                 effectiveUrl,
                                 filteredRequest,
                                 config
@@ -81,12 +81,12 @@ final class HttpClient private (
                 sslContext,
                 maxConnectionsPerHost,
                 connectionAcquireTimeout,
-                maxResponseSize,
+                maxResponseSizeBytes,
                 key,
                 Absent
             )
             Async.fill(connections) {
-                NettyUtil.future(pool.acquire()).map { channel =>
+                NettyUtil.future(pool.acquire()) { channel =>
                     pool.release(channel)
                 }
             }
@@ -115,7 +115,7 @@ final class HttpClient private (
             poolMap.clear()
         }.andThen {
             val graceMs = gracePeriod.toMillis
-            NettyUtil.future(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)).unit
+            NettyUtil.future(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS))(_ => ())
         }
 end HttpClient
 
@@ -130,10 +130,11 @@ object HttpClient:
     def init(
         maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
         connectionAcquireTimeout: Duration = 30.seconds,
-        maxResponseSize: Int = 1048576
+        maxResponseSizeBytes: Int = 1048576,
+        daemon: Boolean = false
     )(using Frame): HttpClient < Sync =
         Sync.Unsafe {
-            Unsafe.init(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSize)
+            Unsafe.init(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon)
         }
     end init
 
@@ -147,12 +148,12 @@ object HttpClient:
         def init(
             maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
             connectionAcquireTimeout: Duration = 30.seconds,
-            maxResponseSize: Int = 1048576, // TODO is this in bytes. Add a suffix here and other places it appears
-            daemon: Boolean = false         // TODO let's expose this in the safe init
+            maxResponseSizeBytes: Int = 1048576,
+            daemon: Boolean = false
         )(using AllowUnsafe): HttpClient =
             maxConnectionsPerHost.foreach(n => require(n > 0, s"maxConnectionsPerHost must be positive: $n"))
             require(connectionAcquireTimeout > Duration.Zero, s"connectionAcquireTimeout must be positive: $connectionAcquireTimeout")
-            require(maxResponseSize > 0, s"maxResponseSize must be positive: $maxResponseSize")
+            require(maxResponseSizeBytes > 0, s"maxResponseSizeBytes must be positive: $maxResponseSizeBytes")
             val workerGroup =
                 if daemon then
                     new MultiThreadIoEventLoopGroup(
@@ -165,7 +166,15 @@ object HttpClient:
             val bootstrap  = createBootstrap(workerGroup)
             val poolMap    = new ConcurrentHashMap[PoolKey, ChannelPool]()
             val sslContext = SslContextBuilder.forClient().build()
-            new HttpClient(workerGroup, bootstrap, poolMap, sslContext, maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSize)
+            new HttpClient(
+                workerGroup,
+                bootstrap,
+                poolMap,
+                sslContext,
+                maxConnectionsPerHost,
+                connectionAcquireTimeout,
+                maxResponseSizeBytes
+            )
         end init
     end Unsafe
 
@@ -273,7 +282,7 @@ object HttpClient:
         sslContext: SslContext,
         maxConnectionsPerHost: Maybe[Int],
         connectionAcquireTimeout: Duration,
-        maxResponseSize: Int,
+        maxResponseSizeBytes: Int,
         key: PoolKey,
         connectTimeout: Maybe[Duration]
     )(using AllowUnsafe): ChannelPool =
@@ -286,7 +295,7 @@ object HttpClient:
                         if key.ssl then
                             discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), key.host, key.port)))
                         discard(pipeline.addLast("codec", new HttpClientCodec()))
-                        discard(pipeline.addLast("aggregator", new HttpObjectAggregator(maxResponseSize)))
+                        discard(pipeline.addLast("aggregator", new HttpObjectAggregator(maxResponseSizeBytes)))
                     end channelCreated
                 val remoteBootstrap = bootstrap.clone().remoteAddress(new InetSocketAddress(key.host, key.port))
                 connectTimeout.foreach { timeout =>
@@ -343,7 +352,7 @@ object HttpClient:
         sslContext: SslContext,
         maxConnectionsPerHost: Maybe[Int],
         connectionAcquireTimeout: Duration,
-        maxResponseSize: Int,
+        maxResponseSizeBytes: Int,
         url: String,
         request: HttpRequest,
         config: Config,
@@ -370,7 +379,7 @@ object HttpClient:
                 sslContext,
                 maxConnectionsPerHost,
                 connectionAcquireTimeout,
-                maxResponseSize,
+                maxResponseSizeBytes,
                 key,
                 config.connectTimeout
             )
@@ -416,7 +425,7 @@ object HttpClient:
                                         sslContext,
                                         maxConnectionsPerHost,
                                         connectionAcquireTimeout,
-                                        maxResponseSize,
+                                        maxResponseSizeBytes,
                                         redirectUrl,
                                         request,
                                         config,
@@ -440,7 +449,7 @@ object HttpClient:
                                                 sslContext,
                                                 maxConnectionsPerHost,
                                                 connectionAcquireTimeout,
-                                                maxResponseSize,
+                                                maxResponseSizeBytes,
                                                 url,
                                                 request,
                                                 config,
