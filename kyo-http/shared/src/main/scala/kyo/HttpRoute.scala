@@ -1,14 +1,13 @@
 package kyo
 
+import HttpPath.Inputs
 import HttpRequest.Method
 import HttpRequest.Part
 import HttpResponse.Status
-import java.util.UUID
-import scala.language.implicitConversions
 
 case class HttpRoute[In, Out, Err](
     method: Method,
-    path: HttpRoute.Path[Any],
+    path: HttpPath[Any],
     outputStatus: Status,
     streamInput: Boolean,
     streamOutput: Boolean,
@@ -199,21 +198,21 @@ case class HttpRoute[In, Out, Err](
 
     // --- Private helpers ---
 
-    private def buildPath(path: Path[Any], in: In): String =
+    private def buildPath(path: HttpPath[Any], in: In): String =
         path match
-            case s: String                => s
-            case segment: Path.Segment[?] => buildUrlFromSegment(segment, in, 0)._1
+            case s: String                    => s
+            case segment: HttpPath.Segment[?] => buildUrlFromSegment(segment, in, 0)._1
 
-    private def buildUrlFromSegment(segment: Path.Segment[?], in: Any, idx: Int): (String, Int) =
+    private def buildUrlFromSegment(segment: HttpPath.Segment[?], in: Any, idx: Int): (String, Int) =
         segment match
-            case Path.Segment.Literal(value) =>
+            case HttpPath.Segment.Literal(value) =>
                 (value, idx)
-            case Path.Segment.Capture(name, _) =>
+            case HttpPath.Segment.Capture(name, _) =>
                 val value = extractInputAt(in, idx)
                 (s"/$value", idx + 1)
-            case Path.Segment.Concat(left, right) =>
-                val (leftStr, nextIdx)  = buildUrlFromSegment(left.asInstanceOf[Path.Segment[?]], in, idx)
-                val (rightStr, lastIdx) = buildUrlFromSegment(right.asInstanceOf[Path.Segment[?]], in, nextIdx)
+            case HttpPath.Segment.Concat(left, right) =>
+                val (leftStr, nextIdx)  = buildUrlFromSegment(left.asInstanceOf[HttpPath.Segment[?]], in, idx)
+                val (rightStr, lastIdx) = buildUrlFromSegment(right.asInstanceOf[HttpPath.Segment[?]], in, nextIdx)
                 (leftStr + rightStr, lastIdx)
 
     private def extractInputAt(in: Any, idx: Int): Any =
@@ -246,18 +245,18 @@ case class HttpRoute[In, Out, Err](
             }
             pairs.mkString("&")
 
-    private def countPathCaptures(path: Path[Any]): Int =
+    private def countPathCaptures(path: HttpPath[Any]): Int =
         path match
-            case _: String                => 0
-            case segment: Path.Segment[?] => countSegmentCaptures(segment)
+            case _: String                    => 0
+            case segment: HttpPath.Segment[?] => countSegmentCaptures(segment)
 
-    private def countSegmentCaptures(segment: Path.Segment[?]): Int =
+    private def countSegmentCaptures(segment: HttpPath.Segment[?]): Int =
         segment match
-            case Path.Segment.Literal(_)    => 0
-            case Path.Segment.Capture(_, _) => 1
-            case Path.Segment.Concat(left, right) =>
-                countSegmentCaptures(left.asInstanceOf[Path.Segment[?]]) +
-                    countSegmentCaptures(right.asInstanceOf[Path.Segment[?]])
+            case HttpPath.Segment.Literal(_)    => 0
+            case HttpPath.Segment.Capture(_, _) => 1
+            case HttpPath.Segment.Concat(left, right) =>
+                countSegmentCaptures(left.asInstanceOf[HttpPath.Segment[?]]) +
+                    countSegmentCaptures(right.asInstanceOf[HttpPath.Segment[?]])
 
     private def extractBody(in: In): Any = in
 
@@ -271,61 +270,12 @@ object HttpRoute:
     case class HeaderParam(name: String, default: Maybe[String])
     case class CookieParam(name: String, default: Maybe[String])
 
-    // --- Path ---
-
-    // TODO let's move this to kyo.HttpPath and incorporate the code that is in PathUtil in HttpPath
-    opaque type Path[+A] = String | Path.Segment[?]
-
-    object Path:
-
-        def apply(s: String): Path[Unit] = s
-
-        implicit def stringToPath(s: String): Path[Unit] = apply(s)
-
-        private[kyo] enum Segment[+A]:
-            case Literal(value: String)                            extends Segment[Unit]
-            case Capture[A](name: String, parse: String => A)      extends Segment[A]
-            case Concat[A, B](left: Segment[?], right: Segment[?]) extends Segment[Inputs[A, B]]
-        end Segment
-
-        def int(name: String): Path[Int] =
-            require(name.nonEmpty, "Capture name cannot be empty")
-            Segment.Capture(name, _.toInt)
-
-        def long(name: String): Path[Long] =
-            require(name.nonEmpty, "Capture name cannot be empty")
-            Segment.Capture(name, _.toLong)
-
-        def string(name: String): Path[String] =
-            require(name.nonEmpty, "Capture name cannot be empty")
-            Segment.Capture(name, identity)
-
-        def uuid(name: String): Path[UUID] =
-            require(name.nonEmpty, "Capture name cannot be empty")
-            Segment.Capture(name, UUID.fromString)
-
-        def boolean(name: String): Path[Boolean] =
-            require(name.nonEmpty, "Capture name cannot be empty")
-            Segment.Capture(name, _.toBoolean)
-
-        private def toSegment[A](path: Path[A]): Segment[A] =
-            path match
-                case s: String       => Segment.Literal(s).asInstanceOf[Segment[A]]
-                case seg: Segment[?] => seg.asInstanceOf[Segment[A]]
-
-        extension [A](self: Path[A])
-            def /[B](next: Path[B]): Path[Inputs[A, B]] =
-                Segment.Concat[A, B](toSegment(self), toSegment(next))
-        end extension
-
-    end Path
-
     // --- Route factory methods ---
 
-    private def init[A](method: Method, path: Path[A]): HttpRoute[A, Unit, Nothing] =
+    private def init[A](method: Method, path: HttpPath[A]): HttpRoute[A, Unit, Nothing] =
         HttpRoute(
             method = method,
-            path = path.asInstanceOf[Path[Any]],
+            path = path.asInstanceOf[HttpPath[Any]],
             outputStatus = Status.OK,
             streamInput = false,
             streamOutput = false,
@@ -333,24 +283,12 @@ object HttpRoute:
             summary = Absent
         )
 
-    def get[A](path: Path[A]): HttpRoute[A, Unit, Nothing]     = init(Method.GET, path)
-    def post[A](path: Path[A]): HttpRoute[A, Unit, Nothing]    = init(Method.POST, path)
-    def put[A](path: Path[A]): HttpRoute[A, Unit, Nothing]     = init(Method.PUT, path)
-    def patch[A](path: Path[A]): HttpRoute[A, Unit, Nothing]   = init(Method.PATCH, path)
-    def delete[A](path: Path[A]): HttpRoute[A, Unit, Nothing]  = init(Method.DELETE, path)
-    def head[A](path: Path[A]): HttpRoute[A, Unit, Nothing]    = init(Method.HEAD, path)
-    def options[A](path: Path[A]): HttpRoute[A, Unit, Nothing] = init(Method.OPTIONS, path)
-
-    // --- Type-level utilities (internal) ---
-
-    type Inputs[A, B] = A match
-        case Unit => B
-        case _ => B match
-                case Unit => A
-                case _    => Tuple.Concat[IntoTuple[A], IntoTuple[B]]
-
-    type IntoTuple[A] = A match
-        case Tuple => A
-        case _     => A *: EmptyTuple
+    def get[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]     = init(Method.GET, path)
+    def post[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]    = init(Method.POST, path)
+    def put[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]     = init(Method.PUT, path)
+    def patch[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]   = init(Method.PATCH, path)
+    def delete[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]  = init(Method.DELETE, path)
+    def head[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing]    = init(Method.HEAD, path)
+    def options[A](path: HttpPath[A]): HttpRoute[A, Unit, Nothing] = init(Method.OPTIONS, path)
 
 end HttpRoute

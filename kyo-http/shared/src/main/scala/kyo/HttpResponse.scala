@@ -40,7 +40,6 @@ final class HttpResponse private (
             catch case e: Throwable => Abort.fail(HttpError.ParseError(s"Failed to parse response body", e))
         }
 
-    // TODO it seems this is the only streaming API we have? How does the body become streaming or not? Don't we need streaming apis in client and server?
     def bodyAsStream[A: Schema: Tag](using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
         _body match
             case Left(bytes) =>
@@ -176,6 +175,17 @@ final class HttpResponse private (
         _body match
             case Right(stream) => Present(stream)
             case Left(_)       => Absent
+
+    /** Materializes a streaming response into a buffered one by collecting all stream chunks. Non-streaming responses are returned as-is.
+      */
+    private[kyo] def collect(using Frame): HttpResponse < Async =
+        _body match
+            case Left(_) => this
+            case Right(stream) =>
+                stream.run.map { chunks =>
+                    val allBytes = chunks.flattenChunk.toArray
+                    new HttpResponse(status, _headers, _cookies, Left(allBytes))
+                }
 
 end HttpResponse
 

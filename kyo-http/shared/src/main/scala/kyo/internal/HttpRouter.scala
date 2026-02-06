@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.HttpHandler
+import kyo.HttpPath
 import kyo.HttpRequest.Method
 import kyo.HttpRoute
 import scala.annotation.tailrec
@@ -69,10 +70,10 @@ final class HttpRouter private (
     end findNodeIndex
 
     private def skipSlashes(path: String, pos: Int, len: Int): Int =
-        PathUtil.skipSlashes(path, pos, len)
+        HttpPath.skipSlashes(path, pos, len)
 
     private def findSegmentEnd(path: String, pos: Int, len: Int): Int =
-        PathUtil.findSegmentEnd(path, pos, len)
+        HttpPath.findSegmentEnd(path, pos, len)
 
     /** Binary search for segment in sorted literal children (parallel arrays) */
     private def binarySearchSegment(
@@ -303,21 +304,21 @@ object HttpRouter:
         case object Capture               extends Segment
 
     /** Convert a route path to segments */
-    private def pathToSegments(path: HttpRoute.Path[Any]): List[Segment] =
+    private def pathToSegments(path: HttpPath[Any]): List[Segment] =
         path match
             case s: String =>
                 s.split('/').filter(_.nonEmpty).map(Segment.Literal(_)).toList
-            case segment: HttpRoute.Path.Segment[?] =>
+            case segment: HttpPath.Segment[?] =>
                 segmentToList(segment)
 
-    private def segmentToList(segment: HttpRoute.Path.Segment[?]): List[Segment] =
+    private def segmentToList(segment: HttpPath.Segment[?]): List[Segment] =
         segment match
-            case HttpRoute.Path.Segment.Literal(value) =>
+            case HttpPath.Segment.Literal(value) =>
                 value.split('/').filter(_.nonEmpty).map(Segment.Literal(_)).toList
-            case HttpRoute.Path.Segment.Capture(_, _) =>
+            case HttpPath.Segment.Capture(_, _) =>
                 List(Segment.Capture)
-            case HttpRoute.Path.Segment.Concat(left, right) =>
-                segmentToList(left.asInstanceOf[HttpRoute.Path.Segment[?]]) ++
-                    segmentToList(right.asInstanceOf[HttpRoute.Path.Segment[?]])
+            case HttpPath.Segment.Concat(left, right) =>
+                segmentToList(left.asInstanceOf[HttpPath.Segment[?]]) ++
+                    segmentToList(right.asInstanceOf[HttpPath.Segment[?]])
 
 end HttpRouter

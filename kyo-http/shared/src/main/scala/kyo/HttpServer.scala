@@ -14,12 +14,9 @@ import java.net.InetSocketAddress
 import java.util.concurrent.TimeUnit
 import kyo.HttpRequest.Method
 import kyo.HttpResponse.Status
-import kyo.HttpRoute.Path
 import kyo.internal.HttpRouter
 import kyo.internal.NettyTransport
 import kyo.internal.NettyUtil
-import kyo.internal.OpenApiGenerator
-import kyo.internal.PathUtil
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
@@ -51,18 +48,11 @@ final class HttpServer private (
     def await(using Frame): Unit < Async =
         NettyUtil.channelFuture(channel.closeFuture())(_ => ())
 
-    // TODO let's have an HttpOpenApi impl in the kyo package for this. It'll be a class with the equivalent of OpenApiGenerator.OpenApi (not opauqe type) and a metrhod to serialize it to json. We don't need the Spec and string methods separation here. Return HttpOpenApi and then the user can decide to get the json
-    def openApiSpec: OpenApiGenerator.OpenApi =
-        OpenApiGenerator.generate(handlers)
+    def openApi: HttpOpenApi =
+        HttpOpenApi.fromHandlers(handlers*)
 
-    def openApiSpec(title: String, version: String = "1.0.0", description: Maybe[String] = Absent): OpenApiGenerator.OpenApi =
-        OpenApiGenerator.generate(handlers, OpenApiGenerator.Config(title, version, description))
-
-    def openApi: String =
-        Schema[OpenApiGenerator.OpenApi].encode(openApiSpec)
-
-    def openApi(title: String, version: String = "1.0.0", description: Maybe[String] = Absent): String =
-        Schema[OpenApiGenerator.OpenApi].encode(openApiSpec(title, version, description))
+    def openApi(title: String, version: String = "1.0.0", description: Maybe[String] = Absent): HttpOpenApi =
+        HttpOpenApi.fromHandlers(HttpOpenApi.Config(title, version, description))(handlers*)
 
 end HttpServer
 
@@ -80,11 +70,10 @@ object HttpServer:
                 // Add OpenAPI handler if configured
                 val allHandlers = config.openApi match
                     case Present(openApiConfig) =>
-                        val spec = OpenApiGenerator.generate(
-                            handlers,
-                            OpenApiGenerator.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
-                        )
-                        val json = Schema[OpenApiGenerator.OpenApi].encode(spec)
+                        val spec = HttpOpenApi.fromHandlers(
+                            HttpOpenApi.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
+                        )(handlers*)
+                        val json = spec.toJson
                         val openApiHandler = HttpHandler.get(openApiConfig.path) { (_, _) =>
                             HttpResponse.ok(json).addHeader("Content-Type", "application/json")
                         }
@@ -202,9 +191,9 @@ object HttpServer:
 
             router.find(method, path) match
                 case Result.Success(handler) =>
-                    // Apply filter captured at server init time
+                    // Apply filter captured at server init time, then collect streaming bodies
                     val fiber = Sync.Unsafe.evalOrThrow(
-                        Fiber.initUnscoped(filter(request, handler.apply))
+                        Fiber.initUnscoped(filter(request, handler.apply).map(_.collect))
                     )
                     // Interrupt handler fiber if client disconnects
                     discard {
@@ -327,43 +316,43 @@ object HttpHandler:
             end apply
 
     @nowarn("msg=anonymous")
-    inline def init[A, S](method: Method, path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using
+    inline def init[A, S](method: Method, path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using
         Frame
     ): HttpHandler[S] =
         new HttpHandler[S]:
-            val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[Path[Any]], Status.OK, false, false, Absent, Absent)
+            val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, false, false, Absent, Absent)
             def apply(request: HttpRequest): kyo.HttpResponse < (Async & S) =
                 // For simple paths without captures, A is Unit
                 f(().asInstanceOf[A], request)
 
-    def health(path: Path[Unit] = "/health")(using Frame): HttpHandler[Any] =
+    def health(path: HttpPath[Unit] = "/health")(using Frame): HttpHandler[Any] =
         init(Method.GET, path)((_, _) => kyo.HttpResponse.ok("healthy"))
 
-    def const[A](method: Method, path: Path[A], status: Status)(using Frame): HttpHandler[Any] =
+    def const[A](method: Method, path: HttpPath[A], status: Status)(using Frame): HttpHandler[Any] =
         init(method, path)((_, _) => kyo.HttpResponse(status))
 
-    def const[A](method: Method, path: Path[A], response: kyo.HttpResponse)(using Frame): HttpHandler[Any] =
+    def const[A](method: Method, path: HttpPath[A], response: kyo.HttpResponse)(using Frame): HttpHandler[Any] =
         init(method, path)((_, _) => response)
 
-    inline def get[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+    inline def get[A, S](path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
         init(Method.GET, path)(f)
 
-    inline def post[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+    inline def post[A, S](path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
         init(Method.POST, path)(f)
 
-    inline def put[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+    inline def put[A, S](path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
         init(Method.PUT, path)(f)
 
-    inline def patch[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+    inline def patch[A, S](path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
         init(Method.PATCH, path)(f)
 
-    inline def delete[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+    inline def delete[A, S](path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
         init(Method.DELETE, path)(f)
 
-    inline def head[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+    inline def head[A, S](path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
         init(Method.HEAD, path)(f)
 
-    inline def options[A, S](path: Path[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
+    inline def options[A, S](path: HttpPath[A])(inline f: (A, HttpRequest) => kyo.HttpResponse < (Async & S))(using Frame): HttpHandler[S] =
         init(Method.OPTIONS, path)(f)
 
     // --- Private implementation ---
@@ -452,31 +441,25 @@ object HttpHandler:
                     case Present(d) => d
                     case Absent     => throw new IllegalArgumentException(s"Missing required header: ${param.name}")
 
-    private def extractPathParams(routePath: HttpRoute.Path[Any], requestPath: String): Any =
+    private def extractPathParams(routePath: HttpPath[Any], requestPath: String): Any =
         routePath match
             case s: String => ()
-            case segment: HttpRoute.Path.Segment[?] =>
-                val parts = parsePathSegments(requestPath)
+            case segment: HttpPath.Segment[?] =>
+                val parts = HttpPath.parseSegments(requestPath)
                 extractFromSegment(segment, parts)._1
 
-    private def parsePathSegments(path: String): List[String] =
-        PathUtil.parseSegments(path)
-
-    private def countPathSegments(path: String): Int =
-        PathUtil.countSegments(path)
-
-    private def extractFromSegment(segment: HttpRoute.Path.Segment[?], parts: List[String]): (Any, List[String]) =
+    private def extractFromSegment(segment: HttpPath.Segment[?], parts: List[String]): (Any, List[String]) =
         segment match
-            case HttpRoute.Path.Segment.Literal(v) =>
+            case HttpPath.Segment.Literal(v) =>
                 // Skip literal parts
-                val literalSize = countPathSegments(v)
+                val literalSize = HttpPath.countSegments(v)
                 ((), parts.drop(literalSize))
-            case HttpRoute.Path.Segment.Capture(_, parse) =>
+            case HttpPath.Segment.Capture(_, parse) =>
                 val value = parse(parts.head)
                 (value, parts.tail)
-            case HttpRoute.Path.Segment.Concat(left, right) =>
-                val (leftVal, remaining)   = extractFromSegment(left.asInstanceOf[HttpRoute.Path.Segment[?]], parts)
-                val (rightVal, remaining2) = extractFromSegment(right.asInstanceOf[HttpRoute.Path.Segment[?]], remaining)
+            case HttpPath.Segment.Concat(left, right) =>
+                val (leftVal, remaining)   = extractFromSegment(left.asInstanceOf[HttpPath.Segment[?]], parts)
+                val (rightVal, remaining2) = extractFromSegment(right.asInstanceOf[HttpPath.Segment[?]], remaining)
                 val combined =
                     if leftVal.isInstanceOf[Unit] then rightVal
                     else if rightVal.isInstanceOf[Unit] then leftVal

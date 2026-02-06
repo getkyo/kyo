@@ -1,123 +1,19 @@
 package kyo.internal
 
 import kyo.*
+import kyo.HttpOpenApi.*
+import kyo.HttpPath
 import kyo.HttpRequest.Method
 import kyo.HttpResponse.Status
-import kyo.HttpRoute.Path
 import scala.annotation.tailrec
 import scala.collection.mutable
 
 /** Generates OpenAPI 3.0 specification from HttpHandler definitions. */
 private[kyo] object OpenApiGenerator:
 
-    // --- OpenAPI 3.0 Data Model ---
-    // Note: These classes use Option for zio-schema derivation compatibility (JSON serialization)
-
-    case class OpenApi(
-        openapi: String,
-        info: Info,
-        paths: Map[String, PathItem],
-        components: Option[Components]
-    ) derives Schema
-
-    case class Info(
-        title: String,
-        version: String,
-        description: Option[String]
-    ) derives Schema
-
-    case class PathItem(
-        get: Option[Operation],
-        post: Option[Operation],
-        put: Option[Operation],
-        delete: Option[Operation],
-        patch: Option[Operation],
-        head: Option[Operation],
-        options: Option[Operation]
-    ) derives Schema
-
-    case class Operation(
-        tags: Option[List[String]],
-        summary: Option[String],
-        description: Option[String],
-        operationId: Option[String],
-        deprecated: Option[Boolean],
-        parameters: Option[List[Parameter]],
-        requestBody: Option[RequestBody],
-        responses: Map[String, Response],
-        security: Option[List[Map[String, List[String]]]]
-    ) derives Schema
-
-    case class Parameter(
-        name: String,
-        in: String,
-        required: Option[Boolean],
-        schema: SchemaObject,
-        description: Option[String]
-    ) derives Schema
-
-    case class RequestBody(
-        required: Option[Boolean],
-        content: Map[String, MediaType],
-        description: Option[String]
-    ) derives Schema
-
-    case class Response(
-        description: String,
-        content: Option[Map[String, MediaType]]
-    ) derives Schema
-
-    case class MediaType(
-        schema: SchemaObject
-    ) derives Schema
-
-    case class SchemaObject(
-        `type`: Option[String],
-        format: Option[String],
-        items: Option[SchemaObject],
-        properties: Option[Map[String, SchemaObject]],
-        required: Option[List[String]],
-        additionalProperties: Option[SchemaObject],
-        oneOf: Option[List[SchemaObject]],
-        `enum`: Option[List[String]],
-        `$ref`: Option[String]
-    ) derives Schema
-
-    object SchemaObject:
-        def string: SchemaObject  = SchemaObject(Some("string"), None, None, None, None, None, None, None, None)
-        def integer: SchemaObject = SchemaObject(Some("integer"), Some("int32"), None, None, None, None, None, None, None)
-        def long: SchemaObject    = SchemaObject(Some("integer"), Some("int64"), None, None, None, None, None, None, None)
-        def number: SchemaObject  = SchemaObject(Some("number"), Some("double"), None, None, None, None, None, None, None)
-        def boolean: SchemaObject = SchemaObject(Some("boolean"), None, None, None, None, None, None, None, None)
-        def obj: SchemaObject     = SchemaObject(Some("object"), None, None, None, None, None, None, None, None)
-        def array(items: SchemaObject): SchemaObject =
-            SchemaObject(Some("array"), None, Some(items), None, None, None, None, None, None)
-    end SchemaObject
-
-    case class Components(
-        schemas: Option[Map[String, SchemaObject]],
-        securitySchemes: Option[Map[String, SecurityScheme]]
-    ) derives Schema
-
-    case class SecurityScheme(
-        `type`: String,
-        scheme: Option[String],
-        bearerFormat: Option[String],
-        name: Option[String],
-        in: Option[String]
-    ) derives Schema
-
-    // --- Generator ---
-
-    case class Config(
-        title: String = "API",
-        version: String = "1.0.0",
-        description: Maybe[String] = Absent
-    )
-
-    def generate(handlers: Seq[HttpHandler[Any]], config: Config = Config()): OpenApi =
+    def generate(handlers: Seq[HttpHandler[Any]], config: HttpOpenApi.Config = HttpOpenApi.Config()): HttpOpenApi =
         val paths = buildPaths(handlers)
-        OpenApi(
+        HttpOpenApi(
             openapi = "3.0.0",
             info = Info(
                 title = config.title,
@@ -209,21 +105,21 @@ private[kyo] object OpenApiGenerator:
         pathParams ++ queryParams ++ headerParams ++ cookieParams
     end buildParameters
 
-    private def extractPathParamsWithType(path: HttpRoute.Path[Any]): Seq[(String, SchemaObject)] =
+    private def extractPathParamsWithType(path: HttpPath[Any]): Seq[(String, SchemaObject)] =
         path match
             case s: String => Seq.empty
-            case segment: HttpRoute.Path.Segment[?] =>
+            case segment: HttpPath.Segment[?] =>
                 extractPathParamsFromSegmentWithType(segment)
 
-    private def extractPathParamsFromSegmentWithType(segment: HttpRoute.Path.Segment[?]): Seq[(String, SchemaObject)] =
+    private def extractPathParamsFromSegmentWithType(segment: HttpPath.Segment[?]): Seq[(String, SchemaObject)] =
         segment match
-            case HttpRoute.Path.Segment.Literal(_) => Seq.empty
-            case HttpRoute.Path.Segment.Capture(name, parse) =>
+            case HttpPath.Segment.Literal(_) => Seq.empty
+            case HttpPath.Segment.Capture(name, parse) =>
                 val schema = inferPathParamSchema(parse)
                 Seq((name, schema))
-            case HttpRoute.Path.Segment.Concat(left, right) =>
-                extractPathParamsFromSegmentWithType(left.asInstanceOf[HttpRoute.Path.Segment[?]]) ++
-                    extractPathParamsFromSegmentWithType(right.asInstanceOf[HttpRoute.Path.Segment[?]])
+            case HttpPath.Segment.Concat(left, right) =>
+                extractPathParamsFromSegmentWithType(left.asInstanceOf[HttpPath.Segment[?]]) ++
+                    extractPathParamsFromSegmentWithType(right.asInstanceOf[HttpPath.Segment[?]])
 
     private def inferPathParamSchema(parse: String => ?): SchemaObject =
         // Try to infer type from the parse function by testing with sample values
@@ -288,21 +184,21 @@ private[kyo] object OpenApiGenerator:
         Map(successStatus -> successResponse) ++ errorResponses
     end buildResponses
 
-    private def pathToOpenApi(path: HttpRoute.Path[Any]): String =
+    private def pathToOpenApi(path: HttpPath[Any]): String =
         path match
             case s: String => s
-            case segment: HttpRoute.Path.Segment[?] =>
+            case segment: HttpPath.Segment[?] =>
                 segmentToOpenApi(segment)
 
-    private def segmentToOpenApi(segment: HttpRoute.Path.Segment[?]): String =
+    private def segmentToOpenApi(segment: HttpPath.Segment[?]): String =
         segment match
-            case HttpRoute.Path.Segment.Literal(value) =>
+            case HttpPath.Segment.Literal(value) =>
                 // Ensure literal starts with / if it doesn't already
                 if value.startsWith("/") then value else "/" + value
-            case HttpRoute.Path.Segment.Capture(name, _) => s"/{$name}"
-            case HttpRoute.Path.Segment.Concat(left, right) =>
-                segmentToOpenApi(left.asInstanceOf[HttpRoute.Path.Segment[?]]) +
-                    segmentToOpenApi(right.asInstanceOf[HttpRoute.Path.Segment[?]])
+            case HttpPath.Segment.Capture(name, _) => s"/{$name}"
+            case HttpPath.Segment.Concat(left, right) =>
+                segmentToOpenApi(left.asInstanceOf[HttpPath.Segment[?]]) +
+                    segmentToOpenApi(right.asInstanceOf[HttpPath.Segment[?]])
 
     private def schemaToOpenApi(schema: kyo.Schema[?]): SchemaObject =
         zioSchemaToOpenApi(schema.zpiSchema)

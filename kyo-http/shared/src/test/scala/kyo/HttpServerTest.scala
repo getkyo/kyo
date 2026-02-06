@@ -1,9 +1,8 @@
 package kyo
 
+import HttpPath./
 import HttpRequest.Method
 import HttpResponse.Status
-import HttpRoute.Path
-import HttpRoute.Path./
 
 class HttpServerTest extends Test:
 
@@ -210,11 +209,11 @@ class HttpServerTest extends Test:
             val handler = route.handle(_ => Seq(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec("Test API", "1.0.0")
+                    val spec = server.openApi("Test API", "1.0.0")
                     assert(spec.info.title == "Test API")
                     assert(spec.info.version == "1.0.0")
                     // Also test the JSON generation
-                    val json = server.openApi("Test API")
+                    val json = server.openApi("Test API").toJson
                     assert(json.contains("Test API"))
                     succeed
                 }
@@ -232,7 +231,7 @@ class HttpServerTest extends Test:
             }
 
             "handler with path capture" in {
-                val route   = HttpRoute.get("users" / Path.int("id")).output[User]
+                val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
                 val handler = HttpHandler.init(route) { id => User(id, "User") }
                 succeed
             }
@@ -249,7 +248,7 @@ class HttpServerTest extends Test:
             }
 
             "handler with path + query params" in {
-                val route = HttpRoute.get("users" / Path.int("id"))
+                val route = HttpRoute.get("users" / HttpPath.int("id"))
                     .query[String]("fields")
                     .output[User]
                 val handler = HttpHandler.init(route) { case (id, fields) =>
@@ -259,7 +258,7 @@ class HttpServerTest extends Test:
             }
 
             "handler with path + header" in {
-                val route = HttpRoute.get("users" / Path.int("id"))
+                val route = HttpRoute.get("users" / HttpPath.int("id"))
                     .header("X-Request-Id")
                     .output[User]
                 val handler = HttpHandler.init(route) { case (id, requestId) =>
@@ -269,7 +268,7 @@ class HttpServerTest extends Test:
             }
 
             "handler with path + query + header" in {
-                val route = HttpRoute.get("users" / Path.int("id"))
+                val route = HttpRoute.get("users" / HttpPath.int("id"))
                     .query[Int]("limit")
                     .header("Authorization")
                     .output[User]
@@ -280,7 +279,7 @@ class HttpServerTest extends Test:
             }
 
             "handler with multiple path params + query + header" in {
-                val route = HttpRoute.get("orgs" / Path.string("org") / "users" / Path.int("id"))
+                val route = HttpRoute.get("orgs" / HttpPath.string("org") / "users" / HttpPath.int("id"))
                     .query[Boolean]("verbose", false)
                     .header("Accept")
                     .output[User]
@@ -408,7 +407,7 @@ class HttpServerTest extends Test:
 
         "error schema returns correct status and JSON body" in run {
             case class NotFoundError(message: String) derives Schema
-            val route = HttpRoute.get("users" / Path.int("id"))
+            val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
             val handler = route.handle { id =>
@@ -426,7 +425,7 @@ class HttpServerTest extends Test:
         "multiple error schemas select correct status by error type" in run {
             case class NotFoundError(message: String) derives Schema
             case class ValidationError(field: String, reason: String) derives Schema
-            val route = HttpRoute.get("users" / Path.int("id"))
+            val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
                 .error[ValidationError](Status.BadRequest)
@@ -450,7 +449,7 @@ class HttpServerTest extends Test:
         "first error schema matches when error type is first" in run {
             case class NotFoundError(message: String) derives Schema
             case class ValidationError(field: String, reason: String) derives Schema
-            val route = HttpRoute.get("items" / Path.int("id"))
+            val route = HttpRoute.get("items" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
                 .error[ValidationError](Status.BadRequest)
@@ -467,7 +466,7 @@ class HttpServerTest extends Test:
 
         "successful response on route with error schemas" in run {
             case class NotFoundError(message: String) derives Schema
-            val route = HttpRoute.get("users" / Path.int("id"))
+            val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
             val handler = route.handle { id =>
@@ -483,7 +482,7 @@ class HttpServerTest extends Test:
 
         "handler panic returns 500 even with error schemas registered" in run {
             case class NotFoundError(message: String) derives Schema
-            val route = HttpRoute.get("users" / Path.int("id"))
+            val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
             val handler = route.handle { id =>
@@ -496,6 +495,85 @@ class HttpServerTest extends Test:
             }
         }
 
+    }
+
+    "Streaming responses" - {
+
+        "stream handler delivers body to client" in run {
+            val handler = HttpHandler.get("/stream") { (_, _) =>
+                val items = Stream.init(Seq(User(1, "Alice"), User(2, "Bob")))
+                HttpResponse.stream(items)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/stream").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "Alice")
+                    assertBodyContains(response, "Bob")
+                }
+            }
+        }
+
+        "stream handler sets application/json content type" in run {
+            val handler = HttpHandler.get("/stream") { (_, _) =>
+                HttpResponse.stream(Stream.init(Seq(User(1, "A"))))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/stream").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertHeader(response, "Content-Type", "application/json")
+                }
+            }
+        }
+
+        "stream handler with custom status" in run {
+            val handler = HttpHandler.get("/stream") { (_, _) =>
+                HttpResponse.stream(Status.Created, Stream.init(Seq(User(1, "New"))))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/stream").map { response =>
+                    assertStatus(response, Status.Created)
+                    assertBodyContains(response, "New")
+                }
+            }
+        }
+
+        "sse handler delivers events to client" in run {
+            val handler = HttpHandler.get("/events") { (_, _) =>
+                HttpResponse.sse(Stream.init(Seq("event1", "event2", "event3")))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/events").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertHeader(response, "Content-Type", "text/event-stream")
+                    assertBodyContains(response, "data: event1")
+                    assertBodyContains(response, "data: event2")
+                }
+            }
+        }
+
+        "stream handler with empty stream returns empty body" in run {
+            val handler = HttpHandler.get("/stream") { (_, _) =>
+                HttpResponse.stream(Stream.init(Seq.empty[User]))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/stream").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "")
+                }
+            }
+        }
+
+        "stream handler with single item" in run {
+            val handler = HttpHandler.get("/stream") { (_, _) =>
+                HttpResponse.stream(Stream.init(Seq(User(42, "Solo"))))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/stream").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "Solo")
+                }
+            }
+        }
     }
 
     "Client disconnect handling" - {

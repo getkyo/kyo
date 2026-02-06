@@ -1,10 +1,10 @@
 package kyo
 
+import HttpPath./
+import HttpPath.Inputs
 import HttpRequest.Method
 import HttpRequest.Part
 import HttpResponse.Status
-import HttpRoute.*
-import HttpRoute.Path./
 
 class HttpRouteTest extends Test:
 
@@ -17,154 +17,154 @@ class HttpRouteTest extends Test:
 
         "construction" - {
             "from string" in {
-                val p: Path[Unit] = Path("users")
+                val p: HttpPath[Unit] = HttpPath("users")
                 succeed
             }
 
             "implicit string conversion" in {
-                val p: Path[Unit] = "users"
+                val p: HttpPath[Unit] = "users"
                 succeed
             }
         }
 
         "captures" - {
             "int" in {
-                val p: Path[Int] = Path.int("id")
+                val p: HttpPath[Int] = HttpPath.int("id")
                 succeed
             }
 
             "long" in {
-                val p: Path[Long] = Path.long("id")
+                val p: HttpPath[Long] = HttpPath.long("id")
                 succeed
             }
 
             "string" in {
-                val p: Path[String] = Path.string("slug")
+                val p: HttpPath[String] = HttpPath.string("slug")
                 succeed
             }
 
             "uuid" in {
-                val p: Path[java.util.UUID] = Path.uuid("id")
+                val p: HttpPath[java.util.UUID] = HttpPath.uuid("id")
                 succeed
             }
 
             "boolean" in {
-                val p: Path[Boolean] = Path.boolean("active")
+                val p: HttpPath[Boolean] = HttpPath.boolean("active")
                 succeed
             }
         }
 
         "concatenation" - {
             "string / string" in {
-                val p: Path[Unit] = "api" / "v1" / "users"
+                val p: HttpPath[Unit] = "api" / "v1" / "users"
                 succeed
             }
 
             "string / capture" in {
-                val p: Path[Int] = "users" / Path.int("id")
+                val p: HttpPath[Int] = "users" / HttpPath.int("id")
                 succeed
             }
 
             "capture / string" in {
-                val p: Path[Int] = Path.int("id") / "details"
+                val p: HttpPath[Int] = HttpPath.int("id") / "details"
                 succeed
             }
 
             "two captures" in {
-                val p: Path[(Int, Int)] = "users" / Path.int("userId") / "posts" / Path.int("postId")
+                val p: HttpPath[(Int, Int)] = "users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId")
                 succeed
             }
 
             "three captures" in {
-                val p: Path[(Int, String, Long)] =
-                    "org" / Path.int("orgId") / "users" / Path.string("name") / "items" / Path.long("itemId")
+                val p: HttpPath[(Int, String, Long)] =
+                    "org" / HttpPath.int("orgId") / "users" / HttpPath.string("name") / "items" / HttpPath.long("itemId")
                 succeed
             }
 
             "four captures" in {
-                val p: Path[(Int, String, Long, Boolean)] =
-                    "a" / Path.int("a") / "b" / Path.string("b") / "c" / Path.long("c") / "d" / Path.boolean("d")
+                val p: HttpPath[(Int, String, Long, Boolean)] =
+                    "a" / HttpPath.int("a") / "b" / HttpPath.string("b") / "c" / HttpPath.long("c") / "d" / HttpPath.boolean("d")
                 succeed
             }
 
             "capture / capture" in {
-                val p: Path[(Int, String)] = Path.int("id") / Path.string("name")
+                val p: HttpPath[(Int, String)] = HttpPath.int("id") / HttpPath.string("name")
                 succeed
             }
         }
 
         "edge cases" - {
             "empty string segment" in {
-                val p: Path[Unit] = Path("")
+                val p: HttpPath[Unit] = HttpPath("")
                 succeed
             }
 
             "segment with special characters" in {
-                val p: Path[Unit] = "users-v2" / "items_list"
+                val p: HttpPath[Unit] = "users-v2" / "items_list"
                 succeed
             }
 
             "segment with encoded slashes" in {
                 // Path segments shouldn't contain raw slashes
-                val p: Path[Unit] = "users%2Flist"
+                val p: HttpPath[Unit] = "users%2Flist"
                 succeed
             }
 
             "leading slash" in {
                 // Leading slash should be normalized
-                val p: Path[Unit] = Path("/users")
+                val p: HttpPath[Unit] = HttpPath("/users")
                 succeed
             }
 
             "trailing slash" in {
-                val p: Path[Unit] = "users/"
+                val p: HttpPath[Unit] = "users/"
                 succeed
             }
 
             "double slashes" in {
                 // Double slashes should be normalized
-                val p: Path[Unit] = "api" / "" / "users"
+                val p: HttpPath[Unit] = "api" / "" / "users"
                 succeed
             }
 
             "dot segments" in {
-                val p: Path[Unit] = "api" / "." / "users"
+                val p: HttpPath[Unit] = "api" / "." / "users"
                 succeed
             }
         }
 
         "parsing failures" - {
             "int capture with non-numeric value" in run {
-                val route = HttpRoute.get("users" / Path.int("id")).output[User]
+                val route = HttpRoute.get("users" / HttpPath.int("id")).output[User]
                 // When matching "/users/abc", should fail to parse
                 // This would be tested during route matching
                 succeed
             }
 
             "int capture with overflow" in run {
-                val route = HttpRoute.get("users" / Path.int("id")).output[User]
+                val route = HttpRoute.get("users" / HttpPath.int("id")).output[User]
                 // When matching "/users/99999999999999999999", should fail
                 succeed
             }
 
             "long capture with non-numeric value" in run {
-                val route = HttpRoute.get("items" / Path.long("id")).output[User]
+                val route = HttpRoute.get("items" / HttpPath.long("id")).output[User]
                 succeed
             }
 
             "long capture with overflow" in run {
-                val route = HttpRoute.get("items" / Path.long("id")).output[User]
+                val route = HttpRoute.get("items" / HttpPath.long("id")).output[User]
                 succeed
             }
 
             "uuid capture with invalid format" in run {
-                val route = HttpRoute.get("items" / Path.uuid("id")).output[User]
+                val route = HttpRoute.get("items" / HttpPath.uuid("id")).output[User]
                 // When matching "/items/not-a-uuid", should fail
                 succeed
             }
 
             "boolean capture with invalid value" in run {
-                val route = HttpRoute.get("flags" / Path.boolean("active")).output[User]
+                val route = HttpRoute.get("flags" / HttpPath.boolean("active")).output[User]
                 // When matching "/flags/maybe", should fail (only true/false valid)
                 succeed
             }
@@ -173,19 +173,19 @@ class HttpRouteTest extends Test:
         "capture name edge cases" - {
             "empty capture name throws" in {
                 assertThrows[IllegalArgumentException] {
-                    Path.int("")
+                    HttpPath.int("")
                 }
             }
 
             "capture name with special characters" in {
                 // Capture names should allow reasonable characters
-                val p: Path[Int] = Path.int("user_id")
+                val p: HttpPath[Int] = HttpPath.int("user_id")
                 succeed
             }
 
             "duplicate capture names" in {
                 // Same capture name used twice - might be allowed but confusing
-                val p: Path[(Int, Int)] = Path.int("id") / "sub" / Path.int("id")
+                val p: HttpPath[(Int, Int)] = HttpPath.int("id") / "sub" / HttpPath.int("id")
                 succeed
             }
         }
@@ -193,17 +193,17 @@ class HttpRouteTest extends Test:
 
     "IntoTuple type" - {
         "non-tuple becomes singleton tuple" in {
-            val _: HttpRoute.IntoTuple[Int] = Tuple1(42)
+            val _: HttpPath.IntoTuple[Int] = Tuple1(42)
             succeed
         }
 
         "tuple stays as tuple" in {
-            val _: HttpRoute.IntoTuple[(Int, String)] = (42, "hello")
+            val _: HttpPath.IntoTuple[(Int, String)] = (42, "hello")
             succeed
         }
 
         "Unit becomes singleton tuple" in {
-            val _: HttpRoute.IntoTuple[Unit] = Tuple1(())
+            val _: HttpPath.IntoTuple[Unit] = Tuple1(())
             succeed
         }
     }
@@ -286,13 +286,13 @@ class HttpRouteTest extends Test:
 
         "with path captures" - {
             "single capture" in {
-                val r: HttpRoute[Int, Unit, Nothing] = HttpRoute.get("users" / Path.int("id"))
+                val r: HttpRoute[Int, Unit, Nothing] = HttpRoute.get("users" / HttpPath.int("id"))
                 succeed
             }
 
             "multiple captures" in {
                 val r: HttpRoute[(Int, Int), Unit, Nothing] =
-                    HttpRoute.get("users" / Path.int("userId") / "posts" / Path.int("postId"))
+                    HttpRoute.get("users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId"))
                 succeed
             }
         }
@@ -324,7 +324,7 @@ class HttpRouteTest extends Test:
 
         "combined with path capture" in {
             val r: HttpRoute[(Int, String), Unit, Nothing] =
-                HttpRoute.get("users" / Path.int("id"))
+                HttpRoute.get("users" / HttpPath.int("id"))
                     .query[String]("fields")
             succeed
         }
@@ -426,7 +426,7 @@ class HttpRouteTest extends Test:
 
         "combined with path" in {
             val r: HttpRoute[(Int, String), Unit, Nothing] =
-                HttpRoute.get("users" / Path.int("id"))
+                HttpRoute.get("users" / HttpPath.int("id"))
                     .authBearer
             succeed
         }
@@ -471,7 +471,7 @@ class HttpRouteTest extends Test:
 
         "combined with path and query" in {
             val r: HttpRoute[(Int, String, CreateUser), Unit, Nothing] =
-                HttpRoute.put("users" / Path.int("id"))
+                HttpRoute.put("users" / HttpPath.int("id"))
                     .query[String]("reason")
                     .input[CreateUser]
             succeed
@@ -508,7 +508,7 @@ class HttpRouteTest extends Test:
     "Errors" - {
         "single error type" in {
             val r: HttpRoute[Int, User, NotFoundError] =
-                HttpRoute.get("users" / Path.int("id"))
+                HttpRoute.get("users" / HttpPath.int("id"))
                     .output[User]
                     .error[NotFoundError](Status.NotFound)
             succeed
@@ -580,7 +580,7 @@ class HttpRouteTest extends Test:
 
     "Client call" - {
         "invokes route with input" in run {
-            val route   = HttpRoute.get("users" / Path.int("id")).output[User]
+            val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
             val handler = route.handle(id => User(id, s"User$id"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -605,7 +605,7 @@ class HttpRouteTest extends Test:
         }
 
         "propagates errors via Abort" in run {
-            val route = HttpRoute.get("users" / Path.int("id"))
+            val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
             val handler = route.handle { id =>
@@ -624,7 +624,7 @@ class HttpRouteTest extends Test:
 
     "Handler creation" - {
         "from route" in {
-            val route = HttpRoute.get("users" / Path.int("id")).output[User]
+            val route = HttpRoute.get("users" / HttpPath.int("id")).output[User]
             val handler: HttpHandler[Any] = route.handle { id =>
                 User(id, "test")
             }
@@ -632,7 +632,7 @@ class HttpRouteTest extends Test:
         }
 
         "with multiple inputs" in {
-            val route = HttpRoute.put("users" / Path.int("id"))
+            val route = HttpRoute.put("users" / HttpPath.int("id"))
                 .query[Boolean]("notify", false)
                 .input[CreateUser]
                 .output[User]
@@ -667,7 +667,7 @@ class HttpRouteTest extends Test:
         }
 
         "path with captures match" in run {
-            val route   = HttpRoute.get("users" / Path.int("id")).output[User]
+            val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
             val handler = route.handle(id => User(id, s"User$id"))
             startTestServer(handler).map { port =>
                 for
@@ -730,7 +730,7 @@ class HttpRouteTest extends Test:
                     .output[Seq[User]]
                     .tag("Users")
 
-                val get = HttpRoute.get("users" / Path.int("id"))
+                val get = HttpRoute.get("users" / HttpPath.int("id"))
                     .output[User]
                     .error[NotFoundError](Status.NotFound)
                     .tag("Users")
@@ -742,7 +742,7 @@ class HttpRouteTest extends Test:
                     .error[ValidationError](Status.BadRequest)
                     .tag("Users")
 
-                val update = HttpRoute.put("users" / Path.int("id"))
+                val update = HttpRoute.put("users" / HttpPath.int("id"))
                     .authBearer
                     .input[CreateUser]
                     .output[User]
@@ -750,7 +750,7 @@ class HttpRouteTest extends Test:
                     .error[ValidationError](Status.BadRequest)
                     .tag("Users")
 
-                val delete = HttpRoute.delete("users" / Path.int("id"))
+                val delete = HttpRoute.delete("users" / HttpPath.int("id"))
                     .authBearer
                     .output[Unit]
                     .error[NotFoundError](Status.NotFound)

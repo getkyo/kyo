@@ -1,9 +1,9 @@
 package kyo.internal
 
 import kyo.*
+import kyo.HttpOpenApi.*
 import kyo.HttpRequest.Method
 import kyo.HttpResponse.Status
-import kyo.internal.OpenApiGenerator.*
 
 class OpenApiGeneratorTest extends Test:
 
@@ -19,7 +19,7 @@ class OpenApiGeneratorTest extends Test:
             }
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     assert(spec.openapi == "3.0.0")
                     assert(spec.info.title == "API")
                     assert(spec.info.version == "1.0.0")
@@ -34,7 +34,7 @@ class OpenApiGeneratorTest extends Test:
             }
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec("My API", "2.0.0")
+                    val spec = server.openApi("My API", "2.0.0")
                     assert(spec.info.title == "My API")
                     assert(spec.info.version == "2.0.0")
                 }
@@ -47,7 +47,7 @@ class OpenApiGeneratorTest extends Test:
             }
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec("My API", "1.0.0", Present("A test API"))
+                    val spec = server.openApi("My API", "1.0.0", Present("A test API"))
                     assert(spec.info.description == Some("A test API"))
                 }
             }
@@ -58,7 +58,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     assert(spec.paths.contains("/users"))
                     val pathItem = spec.paths("/users")
                     assert(pathItem.get.isDefined)
@@ -72,7 +72,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(create => User(1, create.name))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec     = server.openApiSpec
+                    val spec     = server.openApi
                     val pathItem = spec.paths("/users")
                     assert(pathItem.post.isDefined)
                     val op = pathItem.post.get
@@ -84,13 +84,12 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates path parameters" in run {
-            import HttpRoute.Path
-            import HttpRoute.Path./
-            val route   = HttpRoute.get("/users" / Path.int("id")).output[User]
+            import HttpPath./
+            val route   = HttpRoute.get("/users" / HttpPath.int("id")).output[User]
             val handler = route.handle(id => User(id, s"User$id"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     assert(spec.paths.contains("/users/{id}"))
                     val op = spec.paths("/users/{id}").get.get
                     assert(op.parameters.isDefined)
@@ -110,7 +109,7 @@ class OpenApiGeneratorTest extends Test:
             }
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec   = server.openApiSpec
+                    val spec   = server.openApi
                     val op     = spec.paths("/users").get.get
                     val params = op.parameters.get
                     assert(params.exists(p => p.name == "limit" && p.in == "query" && p.required == Some(true)))
@@ -126,7 +125,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => User(1, "Alice"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec   = server.openApiSpec
+                    val spec   = server.openApi
                     val op     = spec.paths("/protected").get.get
                     val params = op.parameters.get
                     assert(params.exists(p => p.name == "Authorization" && p.in == "header"))
@@ -139,7 +138,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     val op   = spec.paths("/users").get.get
                     assert(op.responses.contains("200"))
                     val response = op.responses("200")
@@ -160,7 +159,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => User(1, "Alice"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     val op   = spec.paths("/users").get.get
                     assert(op.responses.contains("200"))
                     assert(op.responses.contains("400"))
@@ -179,7 +178,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     val op   = spec.paths("/users").get.get
                     assert(op.tags == Some(List("users")))
                     assert(op.summary == Some("Get all users"))
@@ -193,7 +192,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => User(1, "Alice"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec   = server.openApiSpec
+                    val spec   = server.openApi
                     val schema = spec.paths("/user").get.get.responses("200").content.get("application/json").schema
                     assert(schema.`type` == Some("object"))
                     assert(schema.properties.isDefined)
@@ -211,7 +210,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec   = server.openApiSpec
+                    val spec   = server.openApi
                     val schema = spec.paths("/users").get.get.responses("200").content.get("application/json").schema
                     assert(schema.`type` == Some("array"))
                     assert(schema.items.isDefined)
@@ -227,7 +226,7 @@ class OpenApiGeneratorTest extends Test:
             val postHandler = postRoute.handle(create => User(1, create.name))
             HttpServer.init(HttpServer.Config(port = 0))(getHandler, postHandler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec     = server.openApiSpec
+                    val spec     = server.openApi
                     val pathItem = spec.paths("/users")
                     assert(pathItem.get.isDefined)
                     assert(pathItem.post.isDefined)
@@ -240,7 +239,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val json = server.openApi
+                    val json = server.openApi.toJson
                     assert(json.contains("\"openapi\":\"3.0.0\""))
                     assert(json.contains("\"paths\""))
                     assert(json.contains("\"/users\""))
@@ -255,7 +254,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     val op   = spec.paths("/users").get.get
                     assert(op.operationId == Some("listUsers"))
                 }
@@ -269,7 +268,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => User(1, "Alice"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     val op   = spec.paths("/old").get.get
                     assert(op.deprecated == Some(true))
                 }
@@ -283,7 +282,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => User(1, "Alice"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec   = server.openApiSpec
+                    val spec   = server.openApi
                     val op     = spec.paths("/session").get.get
                     val params = op.parameters.get
                     assert(params.exists(p => p.name == "sessionId" && p.in == "cookie"))
@@ -296,7 +295,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(user => user)
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     assert(spec.paths("/users").put.isDefined)
                 }
             }
@@ -307,7 +306,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => ())
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     assert(spec.paths("/users").delete.isDefined)
                 }
             }
@@ -318,7 +317,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(user => user)
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     assert(spec.paths("/users").patch.isDefined)
                 }
             }
@@ -329,7 +328,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(create => User(1, create.name))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApiSpec
+                    val spec = server.openApi
                     val op   = spec.paths("/users").post.get
                     assert(op.responses.contains("201"))
                     assert(!op.responses.contains("200"))
@@ -338,13 +337,12 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates integer schema for Int path param" in run {
-            import HttpRoute.Path
-            import HttpRoute.Path./
-            val route   = HttpRoute.get("/users" / Path.int("id")).output[User]
+            import HttpPath./
+            val route   = HttpRoute.get("/users" / HttpPath.int("id")).output[User]
             val handler = route.handle(id => User(id, s"User$id"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec    = server.openApiSpec
+                    val spec    = server.openApi
                     val op      = spec.paths("/users/{id}").get.get
                     val params  = op.parameters.get
                     val idParam = params.find(_.name == "id").get
@@ -354,13 +352,12 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates long schema for Long path param" in run {
-            import HttpRoute.Path
-            import HttpRoute.Path./
-            val route   = HttpRoute.get("/items" / Path.long("id")).output[User]
+            import HttpPath./
+            val route   = HttpRoute.get("/items" / HttpPath.long("id")).output[User]
             val handler = route.handle(id => User(id.toInt, s"Item$id"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec    = server.openApiSpec
+                    val spec    = server.openApi
                     val op      = spec.paths("/items/{id}").get.get
                     val params  = op.parameters.get
                     val idParam = params.find(_.name == "id").get
@@ -371,13 +368,12 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates uuid schema for UUID path param" in run {
-            import HttpRoute.Path
-            import HttpRoute.Path./
-            val route   = HttpRoute.get("/items" / Path.uuid("id")).output[User]
+            import HttpPath./
+            val route   = HttpRoute.get("/items" / HttpPath.uuid("id")).output[User]
             val handler = route.handle(id => User(1, id.toString))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec    = server.openApiSpec
+                    val spec    = server.openApi
                     val op      = spec.paths("/items/{id}").get.get
                     val params  = op.parameters.get
                     val idParam = params.find(_.name == "id").get
@@ -394,7 +390,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => List(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec        = server.openApiSpec
+                    val spec        = server.openApi
                     val op          = spec.paths("/users").get.get
                     val params      = op.parameters.get
                     val activeParam = params.find(_.name == "active").get
@@ -404,13 +400,12 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "generates multiple path parameters" in run {
-            import HttpRoute.Path
-            import HttpRoute.Path./
-            val route   = HttpRoute.get("/orgs" / Path.string("org") / "repos" / Path.string("repo")).output[User]
+            import HttpPath./
+            val route   = HttpRoute.get("/orgs" / HttpPath.string("org") / "repos" / HttpPath.string("repo")).output[User]
             val handler = route.handle { case (org, repo) => User(1, s"$org/$repo") }
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec   = server.openApiSpec
+                    val spec   = server.openApi
                     val op     = spec.paths("/orgs/{org}/repos/{repo}").get.get
                     val params = op.parameters.get
                     assert(params.exists(_.name == "org"))
@@ -424,7 +419,7 @@ class OpenApiGeneratorTest extends Test:
             val handler = route.handle(_ => User(1, "Alice"))
             HttpServer.init(HttpServer.Config(port = 0))(handler).map { server =>
                 Scope.ensure(server.stopNow).andThen {
-                    val spec   = server.openApiSpec
+                    val spec   = server.openApi
                     val schema = spec.paths("/user").get.get.responses("200").content.get("application/json").schema
                     assert(schema.required.isDefined)
                     assert(schema.required.get.contains("id"))

@@ -1068,9 +1068,8 @@ class HttpClientTest extends Test:
         }
 
         "route with path params" in run {
-            import HttpRoute.Path
-            import HttpRoute.Path./
-            val route   = HttpRoute.get("users" / Path.int("id")).output[User]
+            import HttpPath./
+            val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
             val handler = route.handle(id => User(id, s"User$id"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1132,10 +1131,9 @@ class HttpClientTest extends Test:
         }
 
         "route error handling" in run {
-            import HttpRoute.Path
-            import HttpRoute.Path./
+            import HttpPath./
             case class NotFoundError(message: String) derives Schema, CanEqual
-            val route = HttpRoute.get("users" / Path.int("id"))
+            val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
             val handler = route.handle { id =>
