@@ -579,13 +579,6 @@ class HttpRequestTest extends Test:
             }
         }
 
-        "bodyAsStream" in run {
-            val request = HttpRequest.post("http://example.com", User("Alice", "alice@example.com"))
-            request.bodyAsStream[User].run.map { users =>
-                assert(users.size == 1)
-            }
-        }
-
         "parts" - {
             "returns multipart parts" in {
                 val parts = Seq(

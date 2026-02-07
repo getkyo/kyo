@@ -18,12 +18,14 @@ import scala.jdk.CollectionConverters.*
   *
   * Requests are constructed via factory methods and can be modified using builder methods that return new instances. The underlying Netty
   * request is created lazily when needed (e.g., when sending via HttpClient).
+  *
+  * The type parameter B tracks the body type: `HttpBody.Bytes` for fully-buffered bodies, `HttpBody.Streamed` for streaming bodies.
   */
-final class HttpRequest private (
+final class HttpRequest[+B <: HttpBody] private (
     val method: HttpRequest.Method,
     private val _originalUrl: String,
     private val _headers: Seq[(String, String)],
-    private val _body: Array[Byte],
+    val body: B,
     private val _contentType: Maybe[String],
     private val _scheme: Maybe[String],
     private val _pathParams: Map[String, String],
@@ -35,7 +37,7 @@ final class HttpRequest private (
 
     /** Returns the request URI (path and query string, without scheme/host). */
     def url: String =
-        val uri      = new URI(_originalUrl)
+        val uri      = new URI(_originalUrl) // TODO if we need to keep converting, maybe originalUrl should be URI?
         val rawPath  = uri.getRawPath
         val rawQuery = uri.getRawQuery
         val pathPart = if rawPath == null || rawPath.isEmpty then "/" else rawPath
@@ -176,80 +178,6 @@ final class HttpRequest private (
 
     def pathParams: Map[String, String] = _pathParams
 
-    // --- Body accessors ---
-
-    def bodyText: String =
-        if _body.isEmpty then "" else new String(_body, StandardCharsets.UTF_8)
-
-    def bodyBytes: Span[Byte] = Span.fromUnsafe(_body)
-
-    def bodyAs[A: Schema]: A =
-        Schema[A].decode(bodyText)
-
-    def bodyAsStream[A: Schema](using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
-        // For a full request, we just have one body - wrap it in a single-element stream
-        Stream.init(Seq(bodyAs[A]))
-
-    def parts: Span[Part] =
-        // Need to convert to Netty request for multipart parsing
-        val nettyReq = toNetty
-        val factory  = new DefaultHttpDataFactory(DefaultHttpDataFactory.MINSIZE)
-        val decoder  = new HttpPostRequestDecoder(factory, nettyReq)
-        try
-            @tailrec def loop(arr: Array[Part], i: Int): (Array[Part], Int) =
-                if !decoder.hasNext then (arr, i)
-                else
-                    val data = decoder.next()
-                    data match
-                        case fileUpload: FileUpload =>
-                            val newArr =
-                                if i == arr.length then
-                                    val expanded = new Array[Part](arr.length * 2)
-                                    java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
-                                    expanded
-                                else arr
-                            newArr(i) = Part(
-                                name = fileUpload.getName,
-                                filename = if fileUpload.getFilename.isEmpty then Absent else Present(fileUpload.getFilename),
-                                contentType =
-                                    if fileUpload.getContentType == null then Absent else Present(fileUpload.getContentType),
-                                content = fileUpload.get()
-                            )
-                            loop(newArr, i + 1)
-                        case attribute: Attribute =>
-                            val newArr =
-                                if i == arr.length then
-                                    val expanded = new Array[Part](arr.length * 2)
-                                    java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
-                                    expanded
-                                else arr
-                            newArr(i) = Part(
-                                name = attribute.getName,
-                                filename = Absent,
-                                contentType = Absent,
-                                content = attribute.get()
-                            )
-                            loop(newArr, i + 1)
-                        case _ =>
-                            loop(arr, i)
-                    end match
-
-            val (arr, i) = loop(new Array[Part](4), 0)
-            if i == 0 then Span.empty[Part]
-            else if i == arr.length then Span.fromUnsafe(arr)
-            else
-                val result = new Array[Part](i)
-                java.lang.System.arraycopy(arr, 0, result, 0, i)
-                Span.fromUnsafe(result)
-            end if
-        catch
-            case _: HttpPostRequestDecoder.EndOfDataDecoderException =>
-                Span.empty[Part]
-        finally
-            decoder.destroy()
-        end try
-    end parts
-
     // --- Common header accessors ---
 
     def authorization: Maybe[String]   = header("Authorization")
@@ -261,209 +189,223 @@ final class HttpRequest private (
     def ifNoneMatch: Maybe[String]     = header("If-None-Match")
     def ifModifiedSince: Maybe[String] = header("If-Modified-Since")
 
-    // --- Builder methods (return new immutable instance) ---
+    // --- Builder methods (return new immutable instance, preserve body type) ---
 
-    def addHeader(name: String, value: String): HttpRequest =
-        new HttpRequest(method, _originalUrl, _headers :+ (name -> value), _body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+    def addHeader(name: String, value: String): HttpRequest[B] =
+        new HttpRequest(method, _originalUrl, _headers :+ (name -> value), body, _contentType, _scheme, _pathParams, _strictCookieParsing)
 
-    def addHeaders(headers: (String, String)*): HttpRequest =
-        new HttpRequest(method, _originalUrl, _headers ++ headers, _body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+    def addHeaders(headers: (String, String)*): HttpRequest[B] =
+        new HttpRequest(method, _originalUrl, _headers ++ headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
 
     // --- Internal: for server to set path params after routing ---
 
-    private[kyo] def withPathParam(name: String, value: String): HttpRequest =
-        new HttpRequest(method, _originalUrl, _headers, _body, _contentType, _scheme, _pathParams + (name -> value), _strictCookieParsing)
+    private[kyo] def withPathParam(name: String, value: String): HttpRequest[B] =
+        new HttpRequest(method, _originalUrl, _headers, body, _contentType, _scheme, _pathParams + (name -> value), _strictCookieParsing)
 
-    private[kyo] def withPathParams(params: Map[String, String]): HttpRequest =
-        new HttpRequest(method, _originalUrl, _headers, _body, _contentType, _scheme, _pathParams ++ params, _strictCookieParsing)
+    private[kyo] def withPathParams(params: Map[String, String]): HttpRequest[B] =
+        new HttpRequest(method, _originalUrl, _headers, body, _contentType, _scheme, _pathParams ++ params, _strictCookieParsing)
 
-    private[kyo] def withStrictCookieParsing(strict: Boolean): HttpRequest =
-        new HttpRequest(method, _originalUrl, _headers, _body, _contentType, _scheme, _pathParams, strict)
-
-    // --- Internal: convert to Netty for sending ---
-
-    private[kyo] def toNetty: FullHttpRequest =
-        import Method.toNetty
-        val uri      = new URI(_originalUrl)
-        val rawPath  = uri.getRawPath
-        val rawQuery = uri.getRawQuery
-        val pathStr  = if rawPath == null || rawPath.isEmpty then "/" else rawPath
-        val pathAndQuery =
-            if rawQuery == null then pathStr
-            else pathStr + "?" + rawQuery
-
-        val content    = if _body.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(_body)
-        val nettyReq   = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method.toNetty, pathAndQuery, content)
-        val nettyHdrs  = nettyReq.headers()
-        val headerSize = _headers.size
-
-        // Add all user headers
-        @tailrec def addHeaders(i: Int): Unit =
-            if i < headerSize then
-                val (name, value) = _headers(i)
-                discard(nettyHdrs.add(name, value))
-                addHeaders(i + 1)
-        addHeaders(0)
-
-        // Set Content-Type if body present and not already set
-        if _body.nonEmpty then
-            _contentType.foreach { ct =>
-                if !nettyHdrs.contains(HttpHeaderNames.CONTENT_TYPE) then
-                    discard(nettyHdrs.set(HttpHeaderNames.CONTENT_TYPE, ct))
-            }
-            if !nettyHdrs.contains(HttpHeaderNames.CONTENT_LENGTH) then
-                discard(nettyHdrs.set(HttpHeaderNames.CONTENT_LENGTH, _body.length))
-        end if
-
-        nettyReq
-    end toNetty
+    private[kyo] def withStrictCookieParsing(strict: Boolean): HttpRequest[B] =
+        new HttpRequest(method, _originalUrl, _headers, body, _contentType, _scheme, _pathParams, strict)
 
 end HttpRequest
 
 object HttpRequest:
 
+    // --- Extension methods for Bytes requests ---
+
+    // TODO instead of using extension methods to provide the methods depending on the http body, let's put them as class members and take an evidence =:=. This way you can add @implicitNotFound and have a better error message on why the method is not available. With extension methods, the method is just not found. Please fix this for ALL files in kyo-http.
+    extension (r: HttpRequest[HttpBody.Bytes])
+
+        def bodyText: String =
+            if r.body.data.isEmpty then "" else new String(r.body.data, StandardCharsets.UTF_8)
+
+        def bodyBytes: Span[Byte] = r.body.span
+
+        def bodyAs[A: Schema]: A =
+            Schema[A].decode(r.bodyText)
+
+        def parts: Span[Part] =
+            // Need to convert to Netty request for multipart parsing
+            val nettyReq = r.toNetty
+            val factory  = new DefaultHttpDataFactory(DefaultHttpDataFactory.MINSIZE)
+            val decoder  = new HttpPostRequestDecoder(factory, nettyReq)
+            try
+                @tailrec def loop(arr: Array[Part], i: Int): (Array[Part], Int) =
+                    if !decoder.hasNext then (arr, i)
+                    else
+                        val data = decoder.next()
+                        data match
+                            case fileUpload: FileUpload =>
+                                val newArr =
+                                    if i == arr.length then
+                                        val expanded = new Array[Part](arr.length * 2)
+                                        java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
+                                        expanded
+                                    else arr
+                                newArr(i) = Part(
+                                    name = fileUpload.getName,
+                                    filename = if fileUpload.getFilename.isEmpty then Absent else Present(fileUpload.getFilename),
+                                    contentType =
+                                        if fileUpload.getContentType == null then Absent else Present(fileUpload.getContentType),
+                                    content = fileUpload.get()
+                                )
+                                loop(newArr, i + 1)
+                            case attribute: Attribute =>
+                                val newArr =
+                                    if i == arr.length then
+                                        val expanded = new Array[Part](arr.length * 2)
+                                        java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
+                                        expanded
+                                    else arr
+                                newArr(i) = Part(
+                                    name = attribute.getName,
+                                    filename = Absent,
+                                    contentType = Absent,
+                                    content = attribute.get()
+                                )
+                                loop(newArr, i + 1)
+                            case _ =>
+                                loop(arr, i)
+                        end match
+
+                val (arr, i) = loop(new Array[Part](4), 0)
+                if i == 0 then Span.empty[Part]
+                else if i == arr.length then Span.fromUnsafe(arr)
+                else
+                    val result = new Array[Part](i)
+                    java.lang.System.arraycopy(arr, 0, result, 0, i)
+                    Span.fromUnsafe(result)
+                end if
+            catch
+                case _: HttpPostRequestDecoder.EndOfDataDecoderException =>
+                    Span.empty[Part]
+            finally
+                decoder.destroy()
+            end try
+        end parts
+
+        private[kyo] def toNetty: FullHttpRequest =
+            import Method.toNetty
+            val uri      = new URI(r.fullUrl)
+            val rawPath  = uri.getRawPath
+            val rawQuery = uri.getRawQuery
+            val pathStr  = if rawPath == null || rawPath.isEmpty then "/" else rawPath
+            val pathAndQuery =
+                if rawQuery == null then pathStr
+                else pathStr + "?" + rawQuery
+
+            val bodyData   = r.body.data
+            val content    = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
+            val nettyReq   = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, r.method.toNetty, pathAndQuery, content)
+            val nettyHdrs  = nettyReq.headers()
+            val headerSize = r.headers.size
+
+            // Add all user headers
+            @tailrec def addHeaders(i: Int): Unit =
+                if i < headerSize then
+                    val (name, value) = r.headers(i)
+                    discard(nettyHdrs.add(name, value))
+                    addHeaders(i + 1)
+            addHeaders(0)
+
+            // Set Content-Type if body present and not already set
+            if bodyData.nonEmpty then
+                r.contentType.foreach { ct =>
+                    if !nettyHdrs.contains(HttpHeaderNames.CONTENT_TYPE) then
+                        discard(nettyHdrs.set(HttpHeaderNames.CONTENT_TYPE, ct))
+                }
+                if !nettyHdrs.contains(HttpHeaderNames.CONTENT_LENGTH) then
+                    discard(nettyHdrs.set(HttpHeaderNames.CONTENT_LENGTH, bodyData.length))
+            end if
+
+            nettyReq
+        end toNetty
+
+    end extension
+
+    // --- Extension methods for Streamed requests ---
+
+    // TODO move to class with =:= evidence + @implicitNotFound
+    extension (r: HttpRequest[HttpBody.Streamed])
+        def bodyStream(using Frame): Stream[Span[Byte], Async] = r.body.stream
+    end extension
+
+    // --- Universal body stream (works for both types) ---
+
+    extension (r: HttpRequest[?])
+        // TODO move to class method
+        def bodyStreamUniversal(using Frame): Stream[Span[Byte], Async] =
+            r.body match
+                case b: HttpBody.Bytes    => Stream.init(Chunk(b.span))
+                case s: HttpBody.Streamed => s.stream
+    end extension
+
     // --- Factory methods for client-side requests ---
 
-    def get(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    // TODO common-to-use APIs should come first in the soruce file
+    def get(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.GET, url, Array.empty, headers, Absent)
 
-    def post[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def post[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         val json = Schema[A].encode(body)
         create(Method.POST, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
 
-    def postText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def postText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.POST, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("text/plain; charset=utf-8"))
 
-    def postForm(url: String, fields: Seq[(String, String)], headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def postForm(url: String, fields: Seq[(String, String)], headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         val body = fields.map { case (k, v) =>
             java.net.URLEncoder.encode(k, "UTF-8") + "=" + java.net.URLEncoder.encode(v, "UTF-8")
         }.mkString("&")
         create(Method.POST, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("application/x-www-form-urlencoded"))
     end postForm
 
-    def put[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def put[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         val json = Schema[A].encode(body)
         create(Method.PUT, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
 
-    def putText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def putText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.PUT, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("text/plain; charset=utf-8"))
 
-    def patch[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def patch[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         val json = Schema[A].encode(body)
         create(Method.PATCH, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
 
-    def patchText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def patchText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.PATCH, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("text/plain; charset=utf-8"))
 
-    def delete(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def delete(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.DELETE, url, Array.empty, headers, Absent)
 
-    def head(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def head(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.HEAD, url, Array.empty, headers, Absent)
 
-    def options(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def options(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.OPTIONS, url, Array.empty, headers, Absent)
 
-    def multipart(url: String, parts: Seq[Part], headers: Seq[(String, String)] = Seq.empty): HttpRequest =
+    def multipart(url: String, parts: Seq[Part], headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         val boundary    = "----" + java.util.UUID.randomUUID().toString
         val contentType = s"multipart/form-data; boundary=$boundary"
         val body        = buildMultipartBody(parts, boundary)
         create(Method.POST, url, body, headers, Present(contentType))
     end multipart
 
-    // --- Generic factory methods ---
+    // --- Streaming factory method ---
 
-    def init[A: Schema](
+    def stream(
         method: Method,
         url: String,
-        body: A,
-        headers: Seq[(String, String)] = Seq.empty
-    ): HttpRequest =
-        val json = Schema[A].encode(body)
-        create(method, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
-    end init
-
-    def init(
-        method: Method,
-        url: String,
-        headers: Seq[(String, String)]
-    ): HttpRequest =
-        create(method, url, Array.empty, headers, Absent)
-
-    def init(
-        method: Method,
-        url: String
-    ): HttpRequest =
-        create(method, url, Array.empty, Seq.empty, Absent)
-
-    /** Create a request with raw bytes body. */
-    def initBytes(
-        method: Method,
-        url: String,
-        body: Array[Byte],
-        headers: Seq[(String, String)],
-        contentType: String
-    ): HttpRequest =
-        create(method, url, body, headers, if contentType.isEmpty then Absent else Present(contentType))
-
-    // --- Internal: create from Netty request (server-side incoming requests) ---
-
-    private[kyo] def fromNetty(nettyRequest: FullHttpRequest): HttpRequest =
-        val method = Method.fromNetty(nettyRequest.method())
-        val url    = nettyRequest.uri()
-
-        // Extract headers
-        val nettyHeaders = nettyRequest.headers()
-        val headerCount  = nettyHeaders.size()
-        val headers      = new Array[(String, String)](headerCount)
-        val iter         = nettyHeaders.iteratorAsString()
-        @tailrec def fillHeaders(i: Int): Unit =
-            if i < headerCount && iter.hasNext then
-                val entry = iter.next()
-                headers(i) = (entry.getKey, entry.getValue)
-                fillHeaders(i + 1)
-        fillHeaders(0)
-
-        // Extract body
-        val content = nettyRequest.content()
-        val body =
-            if content.readableBytes() == 0 then Array.empty[Byte]
-            else
-                val bytes = new Array[Byte](content.readableBytes())
-                content.getBytes(content.readerIndex(), bytes)
-                bytes
-
-        // Extract content type
-        val contentType =
-            val ct = nettyHeaders.get(HttpHeaderNames.CONTENT_TYPE)
-            if ct == null then Absent else Present(ct)
-
-        new HttpRequest(
-            method = method,
-            _originalUrl = url,
-            _headers = headers.toSeq,
-            _body = body,
-            _contentType = contentType,
-            _scheme = Absent,
-            _pathParams = Map.empty,
-            _strictCookieParsing = false
-        )
-    end fromNetty
-
-    // --- Private: core create method ---
-
-    private def create(
-        method: Method,
-        url: String,
-        body: Array[Byte],
-        headers: Seq[(String, String)],
-        contentType: Maybe[String]
-    ): HttpRequest =
+        body: Stream[Span[Byte], Async],
+        headers: Seq[(String, String)] = Seq.empty,
+        contentType: Maybe[String] = Absent
+    ): HttpRequest[HttpBody.Streamed] =
         require(url.nonEmpty, "URL cannot be empty")
         val uri    = new URI(url)
         val scheme = if uri.getScheme == null then Absent else Present(uri.getScheme)
 
         // Build headers with Host if from URL and not already present
+        // TODO I think this code is duplicated?
         val headersWithHost =
             val uriHost = uri.getHost
             if uriHost != null && !headers.exists(_._1.equalsIgnoreCase("Host")) then
@@ -482,7 +424,197 @@ object HttpRequest:
             method = method,
             _originalUrl = url,
             _headers = headersWithHost,
-            _body = body,
+            body = HttpBody.stream(body),
+            _contentType = contentType,
+            _scheme = scheme,
+            _pathParams = Map.empty,
+            _strictCookieParsing = false
+        )
+    end stream
+
+    // --- Generic factory methods ---
+
+    def init[A: Schema](
+        method: Method,
+        url: String,
+        body: A,
+        headers: Seq[(String, String)] = Seq.empty
+    ): HttpRequest[HttpBody.Bytes] =
+        val json = Schema[A].encode(body)
+        create(method, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
+    end init
+
+    def init(
+        method: Method,
+        url: String,
+        headers: Seq[(String, String)]
+    ): HttpRequest[HttpBody.Bytes] =
+        create(method, url, Array.empty, headers, Absent)
+
+    def init(
+        method: Method,
+        url: String
+    ): HttpRequest[HttpBody.Bytes] =
+        create(method, url, Array.empty, Seq.empty, Absent)
+
+    /** Create a request with raw bytes body. */
+    def initBytes(
+        method: Method,
+        url: String,
+        body: Array[Byte],
+        headers: Seq[(String, String)],
+        contentType: String
+    ): HttpRequest[HttpBody.Bytes] =
+        create(method, url, body, headers, if contentType.isEmpty then Absent else Present(contentType))
+
+    // --- Internal: create from Netty request (server-side incoming requests) ---
+
+    private[kyo] def fromNetty(nettyRequest: FullHttpRequest): HttpRequest[HttpBody.Bytes] =
+        val method = Method.fromNetty(nettyRequest.method())
+        val url    = nettyRequest.uri()
+
+        // Extract headers
+        val nettyHeaders = nettyRequest.headers()
+        val headerCount  = nettyHeaders.size()
+        val headers      = new Array[(String, String)](headerCount)
+        val iter         = nettyHeaders.iteratorAsString()
+        @tailrec def fillHeaders(i: Int): Unit =
+            if i < headerCount && iter.hasNext then
+                val entry = iter.next()
+                headers(i) = (entry.getKey, entry.getValue)
+                fillHeaders(i + 1)
+        fillHeaders(0)
+
+        // Extract body
+        val content = nettyRequest.content()
+        val bodyData =
+            if content.readableBytes() == 0 then Array.empty[Byte]
+            else
+                val bytes = new Array[Byte](content.readableBytes())
+                content.getBytes(content.readerIndex(), bytes)
+                bytes
+
+        // Extract content type
+        val contentType =
+            val ct = nettyHeaders.get(HttpHeaderNames.CONTENT_TYPE)
+            if ct == null then Absent else Present(ct)
+
+        new HttpRequest(
+            method = method,
+            _originalUrl = url,
+            _headers = headers.toSeq,
+            body = HttpBody(bodyData),
+            _contentType = contentType,
+            _scheme = Absent,
+            _pathParams = Map.empty,
+            _strictCookieParsing = false
+        )
+    end fromNetty
+
+    /** Create from Netty headers (without aggregator) with provided body bytes. */
+    private[kyo] def fromNettyHeaders(
+        nettyRequest: io.netty.handler.codec.http.HttpRequest,
+        bodyData: Array[Byte]
+    ): HttpRequest[HttpBody.Bytes] =
+        val method = Method.fromNetty(nettyRequest.method())
+        val url    = nettyRequest.uri()
+
+        val nettyHeaders = nettyRequest.headers()
+        val headerCount  = nettyHeaders.size()
+        val headers      = new Array[(String, String)](headerCount)
+        val iter         = nettyHeaders.iteratorAsString()
+        @tailrec def fillHeaders(i: Int): Unit =
+            if i < headerCount && iter.hasNext then
+                val entry = iter.next()
+                headers(i) = (entry.getKey, entry.getValue)
+                fillHeaders(i + 1)
+        fillHeaders(0)
+
+        val contentType =
+            val ct = nettyHeaders.get(HttpHeaderNames.CONTENT_TYPE)
+            if ct == null then Absent else Present(ct)
+
+        new HttpRequest(
+            method = method,
+            _originalUrl = url,
+            _headers = headers.toSeq,
+            body = HttpBody(bodyData),
+            _contentType = contentType,
+            _scheme = Absent,
+            _pathParams = Map.empty,
+            _strictCookieParsing = false
+        )
+    end fromNettyHeaders
+
+    /** Create a streaming request from Netty headers with a body stream. */
+    private[kyo] def fromNettyStreaming(
+        nettyRequest: io.netty.handler.codec.http.HttpRequest,
+        bodyStream: Stream[Span[Byte], Async]
+    ): HttpRequest[HttpBody.Streamed] =
+        val method = Method.fromNetty(nettyRequest.method())
+        val url    = nettyRequest.uri()
+
+        val nettyHeaders = nettyRequest.headers()
+        val headerCount  = nettyHeaders.size()
+        val headers      = new Array[(String, String)](headerCount)
+        val iter         = nettyHeaders.iteratorAsString()
+        @tailrec def fillHeaders(i: Int): Unit =
+            if i < headerCount && iter.hasNext then
+                val entry = iter.next()
+                headers(i) = (entry.getKey, entry.getValue)
+                fillHeaders(i + 1)
+        fillHeaders(0)
+
+        val contentType =
+            val ct = nettyHeaders.get(HttpHeaderNames.CONTENT_TYPE)
+            if ct == null then Absent else Present(ct)
+
+        new HttpRequest(
+            method = method,
+            _originalUrl = url,
+            _headers = headers.toSeq,
+            body = HttpBody.stream(bodyStream),
+            _contentType = contentType,
+            _scheme = Absent,
+            _pathParams = Map.empty,
+            _strictCookieParsing = false
+        )
+    end fromNettyStreaming
+
+    // --- Private: core create method ---
+
+    private def create(
+        method: Method,
+        url: String,
+        bodyData: Array[Byte],
+        headers: Seq[(String, String)],
+        contentType: Maybe[String]
+    ): HttpRequest[HttpBody.Bytes] =
+        require(url.nonEmpty, "URL cannot be empty")
+        val uri    = new URI(url)
+        val scheme = if uri.getScheme == null then Absent else Present(uri.getScheme)
+
+        // Build headers with Host if from URL and not already present
+        // TODO this code also seems duplicated
+        val headersWithHost =
+            val uriHost = uri.getHost
+            if uriHost != null && !headers.exists(_._1.equalsIgnoreCase("Host")) then
+                val port = uri.getPort
+                val hostValue =
+                    if port > 0 && port != HttpClient.DefaultHttpPort && port != HttpClient.DefaultHttpsPort then
+                        s"$uriHost:$port"
+                    else
+                        uriHost
+                headers :+ ("Host" -> hostValue)
+            else headers
+            end if
+        end headersWithHost
+
+        new HttpRequest(
+            method = method,
+            _originalUrl = url,
+            _headers = headersWithHost,
+            body = HttpBody(bodyData),
             _contentType = contentType,
             _scheme = scheme,
             _pathParams = Map.empty,

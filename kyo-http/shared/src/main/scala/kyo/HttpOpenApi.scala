@@ -147,9 +147,6 @@ object HttpOpenApi:
     end handler
 
     private def routeToHandler(r: HttpRoute[?, ?, ?]): HttpHandler[Any] =
-        new HttpHandler[Any]:
-            val route: HttpRoute[?, ?, ?] = r
-            def apply(request: HttpRequest): HttpResponse < Async =
-                HttpResponse.ok
+        HttpHandler.stub(r)
 
 end HttpOpenApi

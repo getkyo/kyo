@@ -11,47 +11,15 @@ import io.netty.handler.codec.http.cookie.ServerCookieEncoder
 import java.nio.charset.StandardCharsets
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import kyo.internal.Utf8StreamDecoder
 import scala.annotation.tailrec
 
-final class HttpResponse private (
+final class HttpResponse[+B <: HttpBody] private (
     val status: HttpResponse.Status,
     private val _headers: Seq[(String, String)],
     private val _cookies: Seq[HttpResponse.Cookie],
-    private val _body: Either[Array[Byte], Stream[Chunk[Byte], Async]]
+    val body: B // TODO let's avoid vals in public api because of binary compatibility
 ):
     import HttpResponse.*
-
-    // --- Body accessors ---
-
-    def bodyText(using Frame): String < Abort[HttpError] =
-        _body match
-            case Left(bytes) => new String(bytes, StandardCharsets.UTF_8)
-            case Right(_) => Abort.fail(HttpError.StreamingBody("Cannot access bodyText on streaming response; use bodyAsStream instead"))
-
-    def bodyBytes(using Frame): Span[Byte] < Abort[HttpError] =
-        _body match
-            case Left(bytes) => Span.fromUnsafe(bytes)
-            case Right(_) => Abort.fail(HttpError.StreamingBody("Cannot access bodyBytes on streaming response; use bodyAsStream instead"))
-
-    def bodyAs[A: Schema](using Frame): A < Abort[HttpError] =
-        bodyText.map { text =>
-            try Schema[A].decode(text)
-            catch case e: Throwable => Abort.fail(HttpError.ParseError(s"Failed to parse response body", e))
-        }
-
-    def bodyAsStream[A: Schema: Tag](using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
-        _body match
-            case Left(bytes) =>
-                val text = new String(bytes, StandardCharsets.UTF_8)
-                Stream.init(Seq(Schema[A].decode(text)))
-            case Right(byteStream) =>
-                // Use stateful UTF-8 decoder to handle multi-byte characters split across chunks
-                val decoder = Utf8StreamDecoder()
-                byteStream.map { chunk =>
-                    val text = decoder.decode(chunk)
-                    Schema[A].decode(text)
-                }
 
     // --- Header accessors ---
 
@@ -70,11 +38,6 @@ final class HttpResponse private (
 
     def contentType: Maybe[String] = header("Content-Type")
 
-    def contentLength: Maybe[Long] =
-        _body match
-            case Left(bytes) => Present(bytes.length.toLong)
-            case Right(_)    => Absent
-
     // --- Cookie accessors ---
 
     def cookie(name: String): Maybe[Cookie] =
@@ -84,56 +47,69 @@ final class HttpResponse private (
 
     def cookies: Seq[Cookie] = _cookies
 
-    // --- Builders ---
+    // --- Body stream (universal) ---
 
-    def addHeader(name: String, value: String): HttpResponse =
+    // TODO should this require an evidence that the body is streaming?
+    def bodyStream(using Frame): Stream[Span[Byte], Async] =
+        body match
+            case b: HttpBody.Bytes    => Stream.init(Chunk(b.span))
+            case s: HttpBody.Streamed => s.stream
+
+    // --- Builders (preserve body type) ---
+
+    def addHeader(name: String, value: String): HttpResponse[B] =
         val lowerName  = name.toLowerCase
         val newHeaders = _headers.filterNot(_._1.toLowerCase == lowerName) :+ (name -> value)
-        new HttpResponse(status, newHeaders, _cookies, _body)
+        new HttpResponse(status, newHeaders, _cookies, body)
     end addHeader
 
-    def addHeaders(headers: (String, String)*): HttpResponse =
+    def addHeaders(headers: (String, String)*): HttpResponse[B] =
         headers.foldLeft(this)((r, h) => r.addHeader(h._1, h._2))
 
-    def addCookie(cookie: Cookie): HttpResponse =
-        new HttpResponse(status, _headers, _cookies :+ cookie, _body)
+    def addCookie(cookie: Cookie): HttpResponse[B] =
+        new HttpResponse(status, _headers, _cookies :+ cookie, body)
 
-    def addCookies(cookies: Cookie*): HttpResponse =
+    def addCookies(cookies: Cookie*): HttpResponse[B] =
         cookies.foldLeft(this)((r, c) => r.addCookie(c))
 
-    def contentDisposition(filename: String): HttpResponse =
+    def withBody[B2 <: HttpBody](newBody: B2): HttpResponse[B2] =
+        new HttpResponse(status, _headers, _cookies, newBody)
+
+    def contentDisposition(filename: String): HttpResponse[B] =
         contentDisposition(filename, isInline = false)
 
-    def contentDisposition(filename: String, isInline: Boolean): HttpResponse =
+    def contentDisposition(filename: String, isInline: Boolean): HttpResponse[B] =
         val disposition = if isInline then "inline" else "attachment"
         addHeader("Content-Disposition", s"""$disposition; filename="$filename"""")
 
-    def etag(value: String): HttpResponse =
+    def etag(value: String): HttpResponse[B] =
         val quotedEtag = if value.startsWith("\"") then value else s""""$value""""
         addHeader("ETag", quotedEtag)
 
-    def lastModified(time: java.time.Instant): HttpResponse =
+    def lastModified(time: java.time.Instant): HttpResponse[B] =
         addHeader("Last-Modified", HttpResponse.httpDateFormatter.format(time))
 
-    def cacheControl(directive: String): HttpResponse =
+    def cacheControl(directive: String): HttpResponse[B] =
         addHeader("Cache-Control", directive)
 
-    def noCache: HttpResponse = cacheControl("no-cache")
+    def noCache: HttpResponse[B] = cacheControl("no-cache")
 
-    def noStore: HttpResponse = cacheControl("no-store")
+    def noStore: HttpResponse[B] = cacheControl("no-store")
 
-    def contentEncoding(encoding: String): HttpResponse =
+    def contentEncoding(encoding: String): HttpResponse[B] =
         addHeader("Content-Encoding", encoding)
 
     // --- Private / Internal ---
 
+    /** Converts to a Netty FullHttpResponse. Only valid for Bytes bodies. */
     private[kyo] def toNetty: FullHttpResponse =
-        val content = _body match
-            case Left(bytes) =>
-                if bytes.isEmpty then Unpooled.EMPTY_BUFFER
-                else Unpooled.wrappedBuffer(bytes)
-            case Right(_) =>
-                Unpooled.EMPTY_BUFFER
+        val bodyBytes = body match
+            case b: HttpBody.Bytes    => b.data
+            case _: HttpBody.Streamed => Array.empty[Byte]
+
+        val content =
+            if bodyBytes.isEmpty then Unpooled.EMPTY_BUFFER
+            else Unpooled.wrappedBuffer(bodyBytes)
 
         val nettyResponse = new DefaultFullHttpResponse(
             HttpVersion.HTTP_1_1,
@@ -169,122 +145,156 @@ final class HttpResponse private (
         nettyResponse
     end toNetty
 
-    private[kyo] def isStreaming: Boolean = _body.isRight
-
-    private[kyo] def bodyStream: Maybe[Stream[Chunk[Byte], Async]] =
-        _body match
-            case Right(stream) => Present(stream)
-            case Left(_)       => Absent
-
-    /** Materializes a streaming response into a buffered one by collecting all stream chunks. Non-streaming responses are returned as-is.
-      */
-    private[kyo] def collect(using Frame): HttpResponse < Async =
-        _body match
-            case Left(_) => this
-            case Right(stream) =>
-                stream.run.map { chunks =>
-                    val allBytes = chunks.flattenChunk.toArray
-                    new HttpResponse(status, _headers, _cookies, Left(allBytes))
+    /** Materializes a streaming body into bytes, or returns self if already bytes. */
+    private[kyo] def ensureBytes(using Frame): HttpResponse[HttpBody.Bytes] < Async =
+        body match
+            case _: HttpBody.Bytes =>
+                this.asInstanceOf[HttpResponse[HttpBody.Bytes]]
+            case s: HttpBody.Streamed =>
+                s.stream.run.map { chunks =>
+                    val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
+                    val arr       = new Array[Byte](totalSize)
+                    var pos       = 0
+                    chunks.foreach { span =>
+                        val bytes = span.toArrayUnsafe
+                        java.lang.System.arraycopy(bytes, 0, arr, pos, bytes.length)
+                        pos += bytes.length
+                    }
+                    withBody(HttpBody(arr))
                 }
 
 end HttpResponse
 
 object HttpResponse:
 
-    // --- Factory methods ---
+    // --- Extension methods for Bytes responses ---
 
-    def apply(status: Status, body: String = ""): HttpResponse =
-        if body.isEmpty then new HttpResponse(status, Seq.empty, Seq.empty, Left(Array.empty))
+    // TODO move to class methods + @implicitnotFound
+    extension (r: HttpResponse[HttpBody.Bytes])
+        def bodyText: String                                     = r.body.text
+        def bodyBytes: Span[Byte]                                = r.body.span
+        def contentLength: Long                                  = r.body.data.length.toLong
+        def bodyAs[A: Schema](using Frame): A < Abort[HttpError] = r.body.as[A]
+    end extension
+
+    // --- Factory methods (all return Bytes) ---
+
+    def apply(status: Status, body: String = ""): HttpResponse[HttpBody.Bytes] =
+        if body.isEmpty then new HttpResponse(status, Seq.empty, Seq.empty, HttpBody.empty)
         else initText(status, body, "text/plain")
 
-    def apply[A: Schema](status: Status, body: A): HttpResponse =
+    def apply[A: Schema](status: Status, body: A): HttpResponse[HttpBody.Bytes] =
         initJson(status, body)
 
     // --- 2xx Success ---
 
-    def ok: HttpResponse                     = apply(Status.OK)
-    def ok(body: String): HttpResponse       = apply(Status.OK, body)
-    def ok[A: Schema](body: A): HttpResponse = initJson(Status.OK, body)
+    def ok: HttpResponse[HttpBody.Bytes]                     = apply(Status.OK)
+    def ok(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.OK, body)
+    def ok[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.OK, body)
 
-    def json(body: String): HttpResponse                 = initText(Status.OK, body, "application/json")
-    def json(status: Status, body: String): HttpResponse = initText(status, body, "application/json")
+    def json(body: String): HttpResponse[HttpBody.Bytes]                 = initText(Status.OK, body, "application/json")
+    def json(status: Status, body: String): HttpResponse[HttpBody.Bytes] = initText(status, body, "application/json")
 
-    def created[A: Schema](body: A): HttpResponse = initJson(Status.Created, body)
-    def created[A: Schema](body: A, location: String): HttpResponse =
+    def created[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.Created, body)
+    def created[A: Schema](body: A, location: String): HttpResponse[HttpBody.Bytes] =
         initJson(Status.Created, body).addHeader("Location", location)
 
-    def accepted: HttpResponse                     = apply(Status.Accepted)
-    def accepted[A: Schema](body: A): HttpResponse = initJson(Status.Accepted, body)
+    def accepted: HttpResponse[HttpBody.Bytes]                     = apply(Status.Accepted)
+    def accepted[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.Accepted, body)
 
-    def noContent: HttpResponse = apply(Status.NoContent)
+    def noContent: HttpResponse[HttpBody.Bytes] = apply(Status.NoContent)
 
     // --- 3xx Redirection ---
 
-    def redirect(url: String): HttpResponse = redirect(url, Status.Found)
-    def redirect(url: String, status: Status): HttpResponse =
+    def redirect(url: String): HttpResponse[HttpBody.Bytes] = redirect(url, Status.Found)
+    def redirect(url: String, status: Status): HttpResponse[HttpBody.Bytes] =
         require(url.nonEmpty, "Redirect URL cannot be empty")
-        new HttpResponse(status, Seq("Location" -> url), Seq.empty, Left(Array.empty))
+        new HttpResponse(status, Seq("Location" -> url), Seq.empty, HttpBody.empty)
 
-    def movedPermanently(url: String): HttpResponse = redirect(url, Status.MovedPermanently)
-    def notModified: HttpResponse                   = apply(Status.NotModified)
+    def movedPermanently(url: String): HttpResponse[HttpBody.Bytes] = redirect(url, Status.MovedPermanently)
+    def notModified: HttpResponse[HttpBody.Bytes]                   = apply(Status.NotModified)
 
     // --- 4xx Client Error ---
 
-    def badRequest: HttpResponse                     = apply(Status.BadRequest)
-    def badRequest(body: String): HttpResponse       = apply(Status.BadRequest, body)
-    def badRequest[A: Schema](body: A): HttpResponse = initJson(Status.BadRequest, body)
+    def badRequest: HttpResponse[HttpBody.Bytes]                     = apply(Status.BadRequest)
+    def badRequest(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.BadRequest, body)
+    def badRequest[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.BadRequest, body)
 
-    def unauthorized: HttpResponse                     = apply(Status.Unauthorized)
-    def unauthorized(body: String): HttpResponse       = apply(Status.Unauthorized, body)
-    def unauthorized[A: Schema](body: A): HttpResponse = initJson(Status.Unauthorized, body)
+    def unauthorized: HttpResponse[HttpBody.Bytes]                     = apply(Status.Unauthorized)
+    def unauthorized(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.Unauthorized, body)
+    def unauthorized[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.Unauthorized, body)
 
-    def forbidden: HttpResponse                     = apply(Status.Forbidden)
-    def forbidden(body: String): HttpResponse       = apply(Status.Forbidden, body)
-    def forbidden[A: Schema](body: A): HttpResponse = initJson(Status.Forbidden, body)
+    def forbidden: HttpResponse[HttpBody.Bytes]                     = apply(Status.Forbidden)
+    def forbidden(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.Forbidden, body)
+    def forbidden[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.Forbidden, body)
 
-    def notFound: HttpResponse                     = apply(Status.NotFound)
-    def notFound(body: String): HttpResponse       = apply(Status.NotFound, body)
-    def notFound[A: Schema](body: A): HttpResponse = initJson(Status.NotFound, body)
+    def notFound: HttpResponse[HttpBody.Bytes]                     = apply(Status.NotFound)
+    def notFound(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.NotFound, body)
+    def notFound[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.NotFound, body)
 
-    def conflict: HttpResponse                     = apply(Status.Conflict)
-    def conflict(body: String): HttpResponse       = apply(Status.Conflict, body)
-    def conflict[A: Schema](body: A): HttpResponse = initJson(Status.Conflict, body)
+    def conflict: HttpResponse[HttpBody.Bytes]                     = apply(Status.Conflict)
+    def conflict(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.Conflict, body)
+    def conflict[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.Conflict, body)
 
-    def unprocessableEntity: HttpResponse                     = apply(Status.UnprocessableEntity)
-    def unprocessableEntity[A: Schema](body: A): HttpResponse = initJson(Status.UnprocessableEntity, body)
+    def unprocessableEntity: HttpResponse[HttpBody.Bytes]                     = apply(Status.UnprocessableEntity)
+    def unprocessableEntity[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.UnprocessableEntity, body)
 
-    def tooManyRequests: HttpResponse = apply(Status.TooManyRequests)
-    def tooManyRequests(retryAfter: Duration): HttpResponse =
-        new HttpResponse(Status.TooManyRequests, Seq("Retry-After" -> retryAfter.toSeconds.toString), Seq.empty, Left(Array.empty))
+    def tooManyRequests: HttpResponse[HttpBody.Bytes] = apply(Status.TooManyRequests)
+    def tooManyRequests(retryAfter: Duration): HttpResponse[HttpBody.Bytes] =
+        new HttpResponse(Status.TooManyRequests, Seq("Retry-After" -> retryAfter.toSeconds.toString), Seq.empty, HttpBody.empty)
 
     // --- 5xx Server Error ---
 
-    def serverError: HttpResponse                     = apply(Status.InternalServerError)
-    def serverError(body: String): HttpResponse       = apply(Status.InternalServerError, body)
-    def serverError[A: Schema](body: A): HttpResponse = initJson(Status.InternalServerError, body)
+    def serverError: HttpResponse[HttpBody.Bytes]                     = apply(Status.InternalServerError)
+    def serverError(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.InternalServerError, body)
+    def serverError[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.InternalServerError, body)
 
-    def serviceUnavailable: HttpResponse = apply(Status.ServiceUnavailable)
-    def serviceUnavailable(retryAfter: Duration): HttpResponse =
-        new HttpResponse(Status.ServiceUnavailable, Seq("Retry-After" -> retryAfter.toSeconds.toString), Seq.empty, Left(Array.empty))
+    def serviceUnavailable: HttpResponse[HttpBody.Bytes] = apply(Status.ServiceUnavailable)
+    def serviceUnavailable(retryAfter: Duration): HttpResponse[HttpBody.Bytes] =
+        new HttpResponse(Status.ServiceUnavailable, Seq("Retry-After" -> retryAfter.toSeconds.toString), Seq.empty, HttpBody.empty)
 
-    // --- Streaming ---
+    // --- Streaming factory methods ---
 
-    def stream[A: Schema: Tag](body: Stream[A, Async])(using Tag[Emit[Chunk[A]]], Frame): HttpResponse =
-        stream(Status.OK, body)
+    def stream(s: Stream[Span[Byte], Async], status: Status = Status.OK): HttpResponse[HttpBody.Streamed] =
+        new HttpResponse(status, Seq.empty, Seq.empty, HttpBody.stream(s))
 
-    def stream[A: Schema: Tag](status: Status, body: Stream[A, Async])(using Tag[Emit[Chunk[A]]], Frame): HttpResponse =
-        val byteStream = body.map { a =>
-            Chunk.from(Schema[A].encode(a).getBytes(StandardCharsets.UTF_8))
-        }
-        new HttpResponse(status, Seq("Content-Type" -> "application/json"), Seq.empty, Right(byteStream))
-    end stream
-
-    def sse(events: Stream[String, Async])(using Frame): HttpResponse =
+    def streamSse[V: Schema: Tag](events: Stream[ServerSentEvent[V], Async], status: Status = Status.OK)(using
+        Frame,
+        Tag[Emit[Chunk[ServerSentEvent[V]]]]
+    ): HttpResponse[HttpBody.Streamed] =
+        val schema = Schema[V]
         val byteStream = events.map { event =>
-            Chunk.from(s"data: $event\n\n".getBytes(StandardCharsets.UTF_8))
+            val sb = new StringBuilder
+            event.event.foreach(e => discard(sb.append("event: ").append(e).append('\n')))
+            event.id.foreach(id => discard(sb.append("id: ").append(id).append('\n')))
+            event.retry.foreach(d => discard(sb.append("retry: ").append(d.toMillis).append('\n')))
+            discard(sb.append("data: ").append(schema.encode(event.data)).append('\n'))
+            discard(sb.append('\n'))
+            Span.fromUnsafe(sb.toString.getBytes(StandardCharsets.UTF_8))
         }
-        new HttpResponse(Status.OK, Seq("Content-Type" -> "text/event-stream"), Seq.empty, Right(byteStream))
-    end sse
+        new HttpResponse(
+            status,
+            Seq("Content-Type" -> "text/event-stream", "Cache-Control" -> "no-cache", "Connection" -> "keep-alive"),
+            Seq.empty,
+            HttpBody.stream(byteStream)
+        )
+    end streamSse
+
+    def streamNdjson[V: Schema: Tag](values: Stream[V, Async], status: Status = Status.OK)(using
+        Frame,
+        Tag[Emit[Chunk[V]]]
+    ): HttpResponse[HttpBody.Streamed] =
+        val schema = Schema[V]
+        val byteStream = values.map { value =>
+            Span.fromUnsafe((schema.encode(value) + "\n").getBytes(StandardCharsets.UTF_8))
+        }
+        new HttpResponse(
+            status,
+            Seq("Content-Type" -> "application/x-ndjson"),
+            Seq.empty,
+            HttpBody.stream(byteStream)
+        )
+    end streamNdjson
 
     // --- Auxiliary types ---
 
@@ -409,13 +419,20 @@ object HttpResponse:
 
     private val httpDateFormatter = DateTimeFormatter.RFC_1123_DATE_TIME.withZone(ZoneOffset.UTC)
 
-    private def initText(status: Status, body: String, contentType: String): HttpResponse =
+    private def initText(status: Status, body: String, contentType: String): HttpResponse[HttpBody.Bytes] =
         val bytes   = body.getBytes(StandardCharsets.UTF_8)
         val headers = Seq("Content-Type" -> contentType, "Content-Length" -> bytes.length.toString)
-        new HttpResponse(status, headers, Seq.empty, Left(bytes))
+        new HttpResponse(status, headers, Seq.empty, HttpBody(bytes))
     end initText
 
-    private def initJson[A: Schema](status: Status, body: A): HttpResponse =
+    private def initJson[A: Schema](status: Status, body: A): HttpResponse[HttpBody.Bytes] =
         initText(status, Schema[A].encode(body), "application/json")
+
+    private[kyo] def initStreaming(
+        status: Status,
+        headers: Seq[(String, String)],
+        stream: Stream[Span[Byte], Async]
+    ): HttpResponse[HttpBody.Streamed] =
+        new HttpResponse(status, headers, Seq.empty, HttpBody.stream(stream))
 
 end HttpResponse

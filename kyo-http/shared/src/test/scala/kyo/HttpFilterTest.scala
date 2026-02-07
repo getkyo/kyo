@@ -11,9 +11,9 @@ class HttpFilterTest extends Test:
         "custom filter wraps computation" in run {
             var called = false
             val customFilter = new HttpFilter:
-                def apply[S](request: HttpRequest, next: HttpRequest => HttpResponse < (Async & S))(using
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                     Frame
-                ): HttpResponse < (Async & S) =
+                ): HttpResponse[?] < (Async & S) =
                     called = true
                     next(request)
                 end apply
@@ -27,9 +27,9 @@ class HttpFilterTest extends Test:
 
         "custom filter can modify response" in run {
             val customFilter = new HttpFilter:
-                def apply[S](request: HttpRequest, next: HttpRequest => HttpResponse < (Async & S))(using
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                     Frame
-                ): HttpResponse < (Async & S) =
+                ): HttpResponse[?] < (Async & S) =
                     next(request).map(_.addHeader("X-Custom", "value"))
             HttpFilter.let(customFilter) {
                 for

@@ -42,10 +42,6 @@ object HttpError:
     case class RetriesExhausted(attempts: Int, lastStatus: HttpResponse.Status, lastBody: String)(using Frame)
         extends HttpError(s"Retries exhausted after $attempts attempts (last status: ${lastStatus.code})", lastBody)
 
-    /** Attempted to access buffered body on a streaming response. */
-    case class StreamingBody(message: String)(using Frame)
-        extends HttpError(message)
-
     /** Convert a Throwable to an HttpError based on its type. */
     private[kyo] def fromThrowable(cause: Throwable, host: String, port: Int)(using Frame): HttpError =
         def safeMessage(e: Throwable): String =
@@ -53,6 +49,7 @@ object HttpError:
             if msg != null then msg else e.getClass.getName
         cause match
             case e: ConnectException => ConnectionFailed(host, port, e)
+            // TODO there's kyo.Timeout as well I think
             case e: TimeoutException => Timeout(safeMessage(e))
             case e: SSLException     => SslError(safeMessage(e), e)
             case e                   => InvalidResponse(safeMessage(e))

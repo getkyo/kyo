@@ -2,28 +2,29 @@ package kyo
 
 import io.netty.bootstrap.Bootstrap
 import io.netty.buffer.Unpooled
-import io.netty.channel.*
+import io.netty.channel.{Channel as NettyChannel, *}
 import io.netty.channel.pool.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.codec.http.DefaultFullHttpRequest
-import io.netty.handler.codec.http.FullHttpResponse
 import io.netty.handler.codec.http.HttpClientCodec
 import io.netty.handler.codec.http.HttpHeaderNames
 import io.netty.handler.codec.http.HttpHeaderValues
 import io.netty.handler.codec.http.HttpMethod
 import io.netty.handler.codec.http.HttpObjectAggregator
 import io.netty.handler.codec.http.HttpVersion
+import io.netty.handler.codec.http.LastHttpContent
 import io.netty.handler.ssl.SslContext
 import io.netty.handler.ssl.SslContextBuilder
 import io.netty.util.concurrent.Future as NettyFuture
 import java.net.InetSocketAddress
 import java.net.URI
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kyo.internal.NettyTransport
 import kyo.internal.NettyUtil
-import scala.annotation.tailrec
+import kyo.internal.ResponseHandler
+import kyo.internal.StreamingHeaders
+import kyo.internal.StreamingResponseHandler
 
 final class HttpClient private (
     private val workerGroup: MultiThreadIoEventLoopGroup,
@@ -34,27 +35,92 @@ final class HttpClient private (
     private val connectionAcquireTimeout: Duration,
     private val maxResponseSizeBytes: Int
 ):
-    def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
+    def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpFilter.use { filter =>
             HttpClient.configLocal.use { config =>
+                // TODO let's push this suspension to HttpClient.sendRaw and make it suspend there not taking the ALloUnsafe in the method signature
                 Sync.Unsafe {
-                    filter(
-                        request,
-                        filteredRequest =>
-                            val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
-                            HttpClient.sendRaw(
-                                bootstrap,
-                                poolMap,
-                                sslContext,
-                                maxConnectionsPerHost,
-                                connectionAcquireTimeout,
-                                maxResponseSizeBytes,
-                                effectiveUrl,
-                                filteredRequest,
-                                config
-                            )
-                    )
+                    filter(request) { filteredRequest =>
+                        val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
+                        HttpClient.sendRaw(
+                            bootstrap,
+                            poolMap,
+                            sslContext,
+                            maxConnectionsPerHost,
+                            connectionAcquireTimeout,
+                            maxResponseSizeBytes,
+                            effectiveUrl,
+                            filteredRequest,
+                            config
+                        )
+                    }.map(_.ensureBytes) // TODO I don't get why the body could be streaming here
                 }
+            }
+        }
+
+    /** Streams the response as an HttpResponse with a streaming body.
+      *
+      * Uses a non-pooled connection. The connection is closed when the enclosing Scope exits. Applies filters to the request/response.
+      */
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+        HttpFilter.use { filter =>
+            HttpClient.configLocal.use { config =>
+                filter(request) { filteredRequest =>
+                    val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
+                    HttpClient.connectStreaming(bootstrap, sslContext, effectiveUrl, filteredRequest, config)
+                }.map { response =>
+                    response.body match
+                        case _: HttpBody.Streamed =>
+                            response.asInstanceOf[HttpResponse[HttpBody.Streamed]]
+                        case b: HttpBody.Bytes =>
+                            // A filter can short-circuit with a cached/mocked buffered response.
+                            // Wrap the bytes as a single-chunk stream so the streaming contract holds.
+                            response.withBody(HttpBody.stream(Stream.init(Chunk(b.span))))
+                }
+            }
+        }
+
+    /** Streams Server-Sent Events from the given URL. */
+    // TODO It's odd that this method specifically has a String overload. Either add overloads for the other methods or remove. What's best?
+    def streamSse[V: Schema: Tag](url: String)(using
+        Frame,
+        Tag[Emit[Chunk[ServerSentEvent[V]]]]
+    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        streamSse[V](HttpRequest.get(url))
+
+    /** Streams Server-Sent Events from the given request. */
+    def streamSse[V: Schema: Tag](request: HttpRequest[?])(using
+        Frame,
+        Tag[Emit[Chunk[ServerSentEvent[V]]]]
+    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        stream(request).map { response =>
+            val decoder = new kyo.internal.SseDecoder[V](Schema[V])
+            response.bodyStream.mapChunkPure[Span[Byte], ServerSentEvent[V]] { chunk =>
+                val result = Seq.newBuilder[ServerSentEvent[V]]
+                chunk.foreach(bytes => result ++= decoder.decode(bytes))
+                result.result()
+            }
+        }
+
+    /** Streams NDJSON values from the given URL. */
+    def streamNdjson[V: Schema: Tag](url: String)(using
+        Frame,
+        Tag[Emit[Chunk[V]]]
+    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
+        streamNdjson[V](HttpRequest.get(url))
+
+    /** Streams NDJSON values from the given request. */
+    def streamNdjson[V: Schema: Tag](request: HttpRequest[?])(using
+        Frame,
+        Tag[Emit[Chunk[V]]]
+    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
+        stream(request).map { response =>
+            // TODO import, don't reference the package on use.
+            val decoder = new kyo.internal.NdjsonDecoder[V](Schema[V])
+            response.bodyStream.mapChunkPure[Span[Byte], V] { chunk =>
+                val result = Seq.newBuilder[V]
+                chunk.foreach(bytes => result ++= decoder.decode(bytes))
+                result.result()
             }
         }
 
@@ -68,6 +134,7 @@ final class HttpClient private (
     def warmup(url: String, connections: Int = 1)(using Frame): Unit < Async =
         import HttpClient.{PoolKey, DefaultHttpPort, DefaultHttpsPort}
         require(connections > 0, s"connections must be positive: $connections")
+        // TODO this is low-level code. Can't we just use send?
         val uri    = new java.net.URI(url)
         val scheme = if uri.getScheme == null then "http" else uri.getScheme
         val host   = uri.getHost
@@ -75,6 +142,7 @@ final class HttpClient private (
         val ssl    = scheme == "https"
         val key    = PoolKey(host, port, ssl)
         Sync.Unsafe {
+            // TODO if you create a new, pool for the warmup, wont the connections be discarded?
             val pool = HttpClient.getOrCreatePool(
                 bootstrap,
                 poolMap,
@@ -121,15 +189,16 @@ end HttpClient
 
 object HttpClient:
 
-    private[kyo] inline def DefaultHttpPort                   = 80
-    private[kyo] inline def DefaultHttpsPort                  = 443
-    private[kyo] val DefaultMaxConnectionsPerHost: Maybe[Int] = Present(100)
+    private[kyo] inline def DefaultHttpPort       = 80
+    private[kyo] inline def DefaultHttpsPort      = 443
+    // TODO make constants inline def
+    private[kyo] val DefaultMaxConnectionsPerHost = Maybe(100)
 
     // --- Factory methods ---
 
     def init(
         maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
-        connectionAcquireTimeout: Duration = 30.seconds,
+        connectionAcquireTimeout: Duration = 30.seconds, // TODO extract defaults inline def as well
         maxResponseSizeBytes: Int = 1048576,
         daemon: Boolean = false
     )(using Frame): HttpClient < Sync =
@@ -147,7 +216,7 @@ object HttpClient:
           */
         def init(
             maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
-            connectionAcquireTimeout: Duration = 30.seconds,
+            connectionAcquireTimeout: Duration = 30.seconds, // TODO extract defaults inline def as well
             maxResponseSizeBytes: Int = 1048576,
             daemon: Boolean = false
         )(using AllowUnsafe): HttpClient =
@@ -180,6 +249,7 @@ object HttpClient:
 
     // --- Convenience methods (use shared client) ---
 
+    // TODO these are the most common public apis to be used likely. Most common should come first in the class member ordering
     def get[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
         send(HttpRequest.get(url)).map(checkStatusAndParse[A])
 
@@ -192,14 +262,45 @@ object HttpClient:
     def delete[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
         send(HttpRequest.delete(url)).map(checkStatusAndParse[A])
 
-    private def checkStatusAndParse[A: Schema](response: HttpResponse)(using Frame): A < Abort[HttpError] =
+    // TODO private memebrs go last
+    private def checkStatusAndParse[A: Schema](response: HttpResponse[HttpBody.Bytes])(using Frame): A < Abort[HttpError] =
         if response.status.isError then
-            response.bodyText.map(body => Abort.fail(HttpError.StatusError(response.status, body)))
+            Abort.fail(HttpError.StatusError(response.status, response.bodyText))
         else
             response.bodyAs[A]
 
-    def send(request: HttpRequest)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
+    def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         clientLocal.use(_.send(request))
+
+    def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+        clientLocal.use(_.stream(request))
+
+    def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+        clientLocal.use(_.stream(HttpRequest.get(url)))
+
+    def streamSse[V: Schema: Tag](url: String)(using
+        Frame,
+        Tag[Emit[Chunk[ServerSentEvent[V]]]]
+    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        clientLocal.use(_.streamSse[V](url))
+
+    def streamSse[V: Schema: Tag](request: HttpRequest[?])(using
+        Frame,
+        Tag[Emit[Chunk[ServerSentEvent[V]]]]
+    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        clientLocal.use(_.streamSse[V](request))
+
+    def streamNdjson[V: Schema: Tag](url: String)(using
+        Frame,
+        Tag[Emit[Chunk[V]]]
+    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
+        clientLocal.use(_.streamNdjson[V](url))
+
+    def streamNdjson[V: Schema: Tag](request: HttpRequest[?])(using
+        Frame,
+        Tag[Emit[Chunk[V]]]
+    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
+        clientLocal.use(_.streamNdjson[V](request))
 
     // --- Context management ---
 
@@ -218,7 +319,7 @@ object HttpClient:
         followRedirects: Boolean = true,
         maxRedirects: Int = 10,
         retrySchedule: Maybe[Schedule] = Absent,
-        retryOn: HttpResponse => Boolean = _.status.isServerError
+        retryOn: HttpResponse[?] => Boolean = _.status.isServerError
     ):
         require(maxRedirects >= 0, s"maxRedirects must be non-negative: $maxRedirects")
         timeout.foreach(d => require(d > Duration.Zero, s"timeout must be positive: $d"))
@@ -239,7 +340,7 @@ object HttpClient:
             copy(maxRedirects = n)
         def retry(schedule: Schedule): Config =
             copy(retrySchedule = Present(schedule))
-        def retryWhen(f: HttpResponse => Boolean): Config =
+        def retryWhen(f: HttpResponse[?] => Boolean): Config =
             copy(retryOn = f)
     end Config
 
@@ -290,7 +391,7 @@ object HttpClient:
             key,
             _ =>
                 val handler = new AbstractChannelPoolHandler:
-                    override def channelCreated(ch: Channel): Unit =
+                    override def channelCreated(ch: NettyChannel): Unit =
                         val pipeline = ch.pipeline()
                         if key.ssl then
                             discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), key.host, key.port)))
@@ -327,7 +428,7 @@ object HttpClient:
                 end match
         )
 
-    private def buildEffectiveUrl(config: Config, request: HttpRequest): String =
+    private def buildEffectiveUrl(config: Config, request: HttpRequest[?]): String =
         config.baseUrl match
             case Present(base) =>
                 val url = request.url
@@ -354,12 +455,12 @@ object HttpClient:
         connectionAcquireTimeout: Duration,
         maxResponseSizeBytes: Int,
         url: String,
-        request: HttpRequest,
+        request: HttpRequest[HttpBody.Bytes],
         config: Config,
         redirectCount: Int = 0,
         retrySchedule: Maybe[Schedule] = Absent,
         attemptCount: Int = 1
-    )(using Frame, AllowUnsafe): HttpResponse < (Async & Abort[HttpError]) =
+    )(using Frame, AllowUnsafe): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         // Use provided retry schedule or get from config on first call
         val currentSchedule = retrySchedule.orElse(config.retrySchedule)
         val uri             = new URI(url)
@@ -385,10 +486,11 @@ object HttpClient:
             )
 
         // Acquire channel from pool
-        val acquirePromise = Promise.Unsafe.init[Channel, Any]()
+        val acquirePromise = Promise.Unsafe.init[NettyChannel, Any]()
+        // TODO shouldn't we use NettyUtil here?
         val acquireFuture  = pool.acquire()
         discard {
-            acquireFuture.addListener { (future: NettyFuture[Channel]) =>
+            acquireFuture.addListener { (future: NettyFuture[NettyChannel]) =>
                 import AllowUnsafe.embrace.danger
                 if future.isSuccess then
                     discard(acquirePromise.complete(Result.succeed(future.getNow)))
@@ -460,9 +562,7 @@ object HttpClient:
                                         }
                                     case Absent =>
                                         // Schedule exhausted, fail with RetriesExhausted
-                                        finalResp.bodyText.map { body =>
-                                            Abort.fail(HttpError.RetriesExhausted(attemptCount, finalResp.status, body))
-                                        }
+                                        Abort.fail(HttpError.RetriesExhausted(attemptCount, finalResp.status, finalResp.bodyText))
                             }
                         case _ =>
                             // No retry needed
@@ -474,25 +574,17 @@ object HttpClient:
     end sendRaw
 
     private def sendOnChannel(
-        channel: Channel,
+        channel: NettyChannel,
         uri: URI,
-        request: HttpRequest,
+        request: HttpRequest[HttpBody.Bytes],
         host: String,
         port: Int,
         config: Config
-    )(using Frame, AllowUnsafe): HttpResponse < (Async & Abort[HttpError]) =
-        // Build path from the URI parameter (may differ from request.url for redirects)
-        val path =
-            val p = uri.getRawPath
-            val q = uri.getRawQuery
-            if p == null || p.isEmpty then
-                if q == null then "/" else "/?" + q
-            else if q == null then p
-            else p + "?" + q
-            end if
-        end path
+    )(using Frame, AllowUnsafe): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
+        val path = buildRequestPath(uri)
 
         // Create Netty request with correct path (for redirects) and request body/headers
+        // TODO shouldn't the conversion to netty be in HttpRequest.scala?
         val bodyBytes = request.bodyBytes
         val nettyRequest = new DefaultFullHttpRequest(
             HttpVersion.HTTP_1_1,
@@ -515,7 +607,7 @@ object HttpClient:
                 discard(nettyRequest.headers().set(name, value))
         }
 
-        val promise = Promise.Unsafe.init[HttpResponse, Abort[HttpError]]()
+        val promise = Promise.Unsafe.init[HttpResponse[HttpBody.Bytes], Abort[HttpError]]()
 
         // Add response handler
         val pipeline    = channel.pipeline()
@@ -535,6 +627,7 @@ object HttpClient:
         }
 
         // Send the request
+        // TODO use NettyUtil? or isn't there an equivalent there?
         val writeFuture = channel.writeAndFlush(nettyRequest)
         discard {
             writeFuture.addListener((wf: ChannelFuture) =>
@@ -546,52 +639,123 @@ object HttpClient:
         promise.safe.get
     end sendOnChannel
 
-    // Response handler - just completes the promise, doesn't manage pool
-    private class ResponseHandler(
-        promise: Promise.Unsafe[HttpResponse, Abort[HttpError]],
-        channel: Channel,
-        host: String,
-        port: Int
-    )(using Frame) extends SimpleChannelInboundHandler[FullHttpResponse]:
-        override def channelRead0(ctx: ChannelHandlerContext, msg: FullHttpResponse): Unit =
-            import AllowUnsafe.embrace.danger
-            val status = HttpResponse.Status(msg.status().code())
-            val body   = new Array[Byte](msg.content().readableBytes())
-            msg.content().readBytes(body)
+    private def buildRequestPath(uri: URI): String =
+        val p = uri.getRawPath
+        val q = uri.getRawQuery
+        if p == null || p.isEmpty then
+            if q == null then "/" else "/?" + q
+        else if q == null then p
+        else p + "?" + q
+        end if
+    end buildRequestPath
 
-            val nettyHeaders = msg.headers()
-            val headerCount  = nettyHeaders.size()
-            val headers      = new Array[(String, String)](headerCount)
-            val iter         = nettyHeaders.iteratorAsString()
+    private def connectStreaming(
+        bootstrap: Bootstrap,
+        sslContext: SslContext,
+        url: String,
+        request: HttpRequest[?],
+        config: Config
+    )(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+        val uri    = new URI(url)
+        val scheme = if uri.getScheme == null then "http" else uri.getScheme
+        val host   = uri.getHost
+        val port =
+            if uri.getPort > 0 then uri.getPort
+            else if scheme == "https" then DefaultHttpsPort
+            else DefaultHttpPort
+        val useSsl = scheme == "https"
 
-            @tailrec def fillHeaders(i: Int): Unit =
-                if i < headerCount && iter.hasNext then
-                    val entry = iter.next()
-                    headers(i) = (entry.getKey, entry.getValue)
-                    fillHeaders(i + 1)
+        Sync.Unsafe {
+            val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
+            val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
 
-            fillHeaders(0)
+            val b = bootstrap.clone().remoteAddress(new InetSocketAddress(host, port))
+            config.connectTimeout.foreach { timeout =>
+                discard(b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Integer.valueOf(timeout.toMillis.toInt)))
+            }
+            discard(b.handler(new ChannelInitializer[SocketChannel]:
+                override def initChannel(ch: SocketChannel): Unit =
+                    val pipeline = ch.pipeline()
+                    if useSsl then
+                        discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), host, port)))
+                    discard(pipeline.addLast("codec", new HttpClientCodec()))
+                    discard(pipeline.addLast(
+                        "handler",
+                        new StreamingResponseHandler(headerPromise, byteChannel, host, port)
+                    ))))
 
-            @tailrec def addHeaders(resp: HttpResponse, i: Int): HttpResponse =
-                if i >= headerCount then resp
-                else
-                    val (name, value) = headers(i)
-                    addHeaders(resp.addHeader(name, value), i + 1)
+            NettyUtil.channelFuture(b.connect()) { nettyChannel =>
+                // Close connection when scope exits; channelInactive will close byte channel
+                Scope.ensure(NettyUtil.channelFuture(nettyChannel.close())(_ => ())).andThen {
+                    val path = buildRequestPath(uri)
 
-            val response = addHeaders(HttpResponse(status, new String(body, StandardCharsets.UTF_8)), 0)
-            discard(promise.complete(Result.succeed(response)))
-        end channelRead0
+                    // Send request — branch on body type
+                    val sendRequest: Unit < (Async & Abort[HttpError]) = request.body match
+                        case bytes: HttpBody.Bytes =>
+                            // Buffered body: send as FullHttpRequest
+                            val bodyData = bytes.data
+                            val nettyRequest = new DefaultFullHttpRequest(
+                                HttpVersion.HTTP_1_1,
+                                HttpMethod.valueOf(request.method.name),
+                                path,
+                                Unpooled.wrappedBuffer(bodyData)
+                            )
+                            discard(nettyRequest.headers().set(HttpHeaderNames.HOST, host))
+                            discard(nettyRequest.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
+                            if bodyData.nonEmpty then
+                                discard(nettyRequest.headers().set(HttpHeaderNames.CONTENT_LENGTH, bodyData.length))
+                            request.headers.foreach { case (name, value) =>
+                                val lowerName = name.toLowerCase
+                                if lowerName != "host" && lowerName != "connection" then
+                                    discard(nettyRequest.headers().set(name, value))
+                            }
+                            val writeFuture = nettyChannel.writeAndFlush(nettyRequest)
+                            NettyUtil.channelFuture(writeFuture)(_ => ())
 
-        override def channelInactive(ctx: ChannelHandlerContext): Unit =
-            import AllowUnsafe.embrace.danger
-            discard(promise.complete(Result.fail(HttpError.InvalidResponse("Connection closed by server"))))
-            super.channelInactive(ctx)
-        end channelInactive
+                        case streamed: HttpBody.Streamed =>
+                            // Streaming body: send headers first, then stream chunks
+                            val nettyRequest = new io.netty.handler.codec.http.DefaultHttpRequest(
+                                HttpVersion.HTTP_1_1,
+                                HttpMethod.valueOf(request.method.name),
+                                path
+                            )
+                            discard(nettyRequest.headers().set(HttpHeaderNames.HOST, host))
+                            discard(nettyRequest.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
+                            discard(nettyRequest.headers().set(HttpHeaderNames.TRANSFER_ENCODING, HttpHeaderValues.CHUNKED))
+                            request.headers.foreach { case (name, value) =>
+                                val lowerName = name.toLowerCase
+                                if lowerName != "host" && lowerName != "connection" && lowerName != "transfer-encoding" then
+                                    discard(nettyRequest.headers().set(name, value))
+                            }
+                            // Send headers
+                            NettyUtil.channelFuture(nettyChannel.writeAndFlush(nettyRequest)) { _ =>
+                                // Stream body chunks
+                                streamed.stream.foreach { bytes =>
+                                    NettyUtil.channelFuture(
+                                        nettyChannel.writeAndFlush(
+                                            new io.netty.handler.codec.http.DefaultHttpContent(
+                                                Unpooled.wrappedBuffer(bytes.toArrayUnsafe)
+                                            )
+                                        )
+                                    )(_ => ())
+                                }.andThen {
+                                    // Send terminal chunk
+                                    NettyUtil.channelFuture(
+                                        nettyChannel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT)
+                                    )(_ => ())
+                                }
+                            }
 
-        override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
-            import AllowUnsafe.embrace.danger
-            discard(promise.complete(Result.fail(HttpError.fromThrowable(cause, host, port))))
-        end exceptionCaught
-    end ResponseHandler
+                    sendRequest.map { _ =>
+                        // Wait for response headers, then build streaming response
+                        headerPromise.safe.get.map { streamingHeaders =>
+                            val bodyStream = byteChannel.safe.streamUntilClosed()
+                            HttpResponse.initStreaming(streamingHeaders.status, streamingHeaders.headers, bodyStream)
+                        }
+                    }
+                }
+            }
+        }
+    end connectStreaming
 
 end HttpClient

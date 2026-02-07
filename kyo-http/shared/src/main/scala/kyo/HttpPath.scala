@@ -4,6 +4,7 @@ import java.util.UUID
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 
+// TODO let's try again opaque type HttpPath[+A] >: String and remove HttpPath.stirngToPath
 opaque type HttpPath[+A] = String | HttpPath.Segment[?]
 
 object HttpPath:
@@ -12,6 +13,7 @@ object HttpPath:
 
     implicit def stringToPath(s: String): HttpPath[Unit] = apply(s)
 
+    // TODO private stuff should go at the end.
     private[kyo] enum Segment[+A]:
         case Literal(value: String)                            extends Segment[Unit]
         case Capture[A](name: String, parse: String => A)      extends Segment[A]

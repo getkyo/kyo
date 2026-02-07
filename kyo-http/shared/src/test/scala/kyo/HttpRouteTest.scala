@@ -459,16 +459,6 @@ class HttpRouteTest extends Test:
             succeed
         }
 
-        "bytes input" in {
-            val r: HttpRoute[Stream[Byte, Async], Unit, Nothing] = HttpRoute.post("data").inputBytes
-            succeed
-        }
-
-        "stream input" in {
-            val r: HttpRoute[Stream[User, Async], Unit, Nothing] = HttpRoute.post("events").inputStream[User]
-            succeed
-        }
-
         "combined with path and query" in {
             val r: HttpRoute[(Int, String, CreateUser), Unit, Nothing] =
                 HttpRoute.put("users" / HttpPath.int("id"))
@@ -494,15 +484,6 @@ class HttpRouteTest extends Test:
             succeed
         }
 
-        "bytes output" in {
-            val r: HttpRoute[Unit, Stream[Byte, Async], Nothing] = HttpRoute.get("file").outputBytes
-            succeed
-        }
-
-        "stream output" in {
-            val r: HttpRoute[Unit, Stream[User, Async], Nothing] = HttpRoute.get("events").outputStream[User]
-            succeed
-        }
     }
 
     "Errors" - {

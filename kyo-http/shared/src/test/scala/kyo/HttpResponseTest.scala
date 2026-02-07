@@ -8,19 +8,15 @@ class HttpResponseTest extends Test:
     case class ErrorBody(message: String) derives Schema, CanEqual
 
     // Helper to extract body text for unit tests
-    private def getBodyText(response: HttpResponse): String =
-        Abort.run(response.bodyText).eval match
-            case Result.Success(s) => s
-            case other             => fail(s"Unexpected result: $other")
+    private def getBodyText(response: HttpResponse[HttpBody.Bytes]): String =
+        response.bodyText
 
     // Helper to extract body bytes for unit tests
-    private def getBodyBytes(response: HttpResponse): Span[Byte] =
-        Abort.run(response.bodyBytes).eval match
-            case Result.Success(b) => b
-            case other             => fail(s"Unexpected result: $other")
+    private def getBodyBytes(response: HttpResponse[HttpBody.Bytes]): Span[Byte] =
+        response.bodyBytes
 
     // Helper to extract typed body for unit tests
-    private def getBodyAs[A: Schema](response: HttpResponse): A =
+    private def getBodyAs[A: Schema](response: HttpResponse[HttpBody.Bytes]): A =
         Abort.run(response.bodyAs[A]).eval match
             case Result.Success(a) => a
             case other             => fail(s"Unexpected result: $other")
@@ -584,85 +580,6 @@ class HttpResponseTest extends Test:
             }
         }
 
-        "streaming" - {
-            "stream with typed body" in {
-                val events   = Stream.init(Seq(User(1, "A"), User(2, "B")))
-                val response = HttpResponse.stream(events)
-                assert(response.status == Status.OK)
-            }
-
-            "stream sets application/json content type" in {
-                val events   = Stream.init(Seq(User(1, "A")))
-                val response = HttpResponse.stream(events)
-                assert(response.contentType == Present("application/json"))
-            }
-
-            "stream with status and body" in {
-                val events   = Stream.init(Seq(User(1, "A")))
-                val response = HttpResponse.stream(Status.Created, events)
-                assert(response.status == Status.Created)
-            }
-
-            "stream with empty stream" in {
-                val events   = Stream.init(Seq.empty[User])
-                val response = HttpResponse.stream(events)
-                assert(response.status == Status.OK)
-                assert(response.isStreaming)
-            }
-
-            "sse with events" in {
-                val events   = Stream.init(Seq("event1", "event2"))
-                val response = HttpResponse.sse(events)
-                assert(response.status == Status.OK)
-                assert(response.contentType == Present("text/event-stream"))
-            }
-
-            "isStreaming true for streaming response" in {
-                val response = HttpResponse.stream(Stream.init(Seq(User(1, "A"))))
-                assert(response.isStreaming)
-            }
-
-            "isStreaming false for regular response" in {
-                val response = HttpResponse.ok("hello")
-                assert(!response.isStreaming)
-            }
-
-            "bodyStream returns Present for streaming response" in {
-                val response = HttpResponse.stream(Stream.init(Seq(User(1, "A"))))
-                assert(response.bodyStream.isDefined)
-            }
-
-            "bodyStream returns Absent for regular response" in {
-                val response = HttpResponse.ok("hello")
-                assert(response.bodyStream.isEmpty)
-            }
-
-            "bodyText fails on streaming response" in {
-                val response = HttpResponse.stream(Stream.init(Seq(User(1, "A"))))
-                Abort.run(response.bodyText).eval match
-                    case Result.Failure(_: HttpError.StreamingBody) => succeed
-                    case other                                      => fail(s"Expected StreamingBody error, got $other")
-            }
-
-            "bodyBytes fails on streaming response" in {
-                val response = HttpResponse.stream(Stream.init(Seq(User(1, "A"))))
-                Abort.run(response.bodyBytes).eval match
-                    case Result.Failure(_: HttpError.StreamingBody) => succeed
-                    case other                                      => fail(s"Expected StreamingBody error, got $other")
-            }
-
-            "bodyAsStream on non-streaming response" in run {
-                val response = HttpResponse.ok(User(1, "Alice"))
-                response.bodyAsStream[User].run.map { users =>
-                    assert(users == Chunk(User(1, "Alice")))
-                }
-            }
-
-            "contentLength absent for streaming response" in {
-                val response = HttpResponse.stream(Stream.init(Seq(User(1, "A"))))
-                assert(response.contentLength == Absent)
-            }
-        }
     }
 
     "Response abstract members" - {
@@ -678,7 +595,7 @@ class HttpResponseTest extends Test:
 
         "contentLength" in {
             val response = HttpResponse.ok("hello")
-            assert(response.contentLength == Present(5L))
+            assert(response.contentLength == 5L)
         }
 
         "header" in {
@@ -726,12 +643,6 @@ class HttpResponseTest extends Test:
             assert(getBodyAs[User](response) == User(1, "Alice"))
         }
 
-        "bodyAsStream" in run {
-            val response = HttpResponse.stream(Stream.init(Seq(User(1, "A"), User(2, "B"))))
-            response.bodyAsStream[User].run.map { users =>
-                assert(users == Chunk(User(1, "A"), User(2, "B")))
-            }
-        }
     }
 
     "Response extension methods" - {

@@ -9,8 +9,6 @@ case class HttpRoute[In, Out, Err](
     method: Method,
     path: HttpPath[Any],
     outputStatus: Status,
-    streamInput: Boolean,
-    streamOutput: Boolean,
     tag: Maybe[String],
     summary: Maybe[String],
     queryParams: Seq[HttpRoute.QueryParam[?]] = Seq.empty,
@@ -97,13 +95,6 @@ case class HttpRoute[In, Out, Err](
     def inputMultipart: HttpRoute[Inputs[In, Seq[Part]], Out, Err] =
         this.asInstanceOf[HttpRoute[Inputs[In, Seq[Part]], Out, Err]]
 
-    def inputBytes: HttpRoute[Inputs[In, Stream[Byte, Async]], Out, Err] =
-        copy(streamInput = true).asInstanceOf[HttpRoute[Inputs[In, Stream[Byte, Async]], Out, Err]]
-
-    def inputStream[A: Schema]: HttpRoute[Inputs[In, Stream[A, Async]], Out, Err] =
-        copy(streamInput = true, inputSchema = Present(Schema[A]))
-            .asInstanceOf[HttpRoute[Inputs[In, Stream[A, Async]], Out, Err]]
-
     // --- Response Body ---
 
     def output[O: Schema]: HttpRoute[In, O, Err] =
@@ -116,13 +107,6 @@ case class HttpRoute[In, Out, Err](
 
     def outputText: HttpRoute[In, String, Err] =
         output[String]
-
-    def outputBytes: HttpRoute[In, Stream[Byte, Async], Err] =
-        copy(streamOutput = true).asInstanceOf[HttpRoute[In, Stream[Byte, Async], Err]]
-
-    def outputStream[O: Schema]: HttpRoute[In, Stream[O, Async], Err] =
-        copy(streamOutput = true, outputSchema = Present(Schema[O]))
-            .asInstanceOf[HttpRoute[In, Stream[O, Async], Err]]
 
     // --- Errors ---
 
@@ -179,19 +163,18 @@ case class HttpRoute[In, Out, Err](
 
         HttpClient.send(request).map { response =>
             if response.status.isError then
-                response.bodyText.map { body =>
-                    val errOpt = errorSchemas.collectFirst {
-                        case (status, schema) if response.status == status =>
-                            try Some(schema.asInstanceOf[Schema[Any]].decode(body))
-                            catch case _: Exception => None
-                    }.flatten
-                    errOpt match
-                        case Some(err) => Abort.fail(err.asInstanceOf[Err])
-                        case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: ${response.status}"))
-                }
+                val body = response.bodyText
+                val errOpt = errorSchemas.collectFirst {
+                    case (status, schema) if response.status == status =>
+                        try Some(schema.asInstanceOf[Schema[Any]].decode(body))
+                        catch case _: Exception => None
+                }.flatten
+                errOpt match
+                    case Some(err) => Abort.fail(err.asInstanceOf[Err])
+                    case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: ${response.status}"))
             else
                 outputSchema match
-                    case Present(schema) => response.bodyText.map(body => schema.asInstanceOf[Schema[Out]].decode(body))
+                    case Present(schema) => schema.asInstanceOf[Schema[Out]].decode(response.bodyText)
                     case Absent          => ().asInstanceOf[Out]
         }
     end call
@@ -277,8 +260,6 @@ object HttpRoute:
             method = method,
             path = path.asInstanceOf[HttpPath[Any]],
             outputStatus = Status.OK,
-            streamInput = false,
-            streamOutput = false,
             tag = Absent,
             summary = Absent
         )

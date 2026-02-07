@@ -8,10 +8,8 @@ class HttpClientTest extends Test:
     case class CreateUser(name: String, email: String) derives Schema, CanEqual
 
     // Helper to extract body text for assertions
-    private def getBodyText(response: HttpResponse): String =
-        Abort.run(response.bodyText).eval match
-            case Result.Success(s) => s
-            case other             => fail(s"Unexpected result: $other")
+    private def getBodyText(response: HttpResponse[HttpBody.Bytes]): String =
+        response.bodyText
 
     "HttpClient.Config" - {
 
@@ -1346,6 +1344,196 @@ class HttpClientTest extends Test:
             }
         }
 
+    }
+
+    "Streaming" - {
+
+        case class Item(name: String) derives Schema, CanEqual
+
+        "stream" - {
+            "basic streaming response" in run {
+                val handler = HttpHandler.get("/data") { (_, _) =>
+                    HttpResponse.ok("streamed-body")
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.stream(s"http://localhost:$port/data").map { response =>
+                        assert(response.status == Status.OK)
+                        response.bodyStream.run.map { chunks =>
+                            val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
+                            assert(body.contains("streamed-body"))
+                        }
+                    }
+                }
+            }
+
+            "error status" in run {
+                val handler = HttpHandler.const(HttpRequest.Method.GET, "/missing", Status.NotFound)
+                startTestServer(handler).map { port =>
+                    Abort.run(HttpClient.stream(s"http://localhost:$port/missing")).map { result =>
+                        assert(result.isFailure)
+                    }
+                }
+            }
+
+            "with streaming request body" in run {
+                val handler = HttpHandler.streamingBody(HttpRequest.Method.POST, "/upload") { (_, request) =>
+                    request.bodyStream.run.map { chunks =>
+                        val totalBytes = chunks.foldLeft(0)(_ + _.size)
+                        HttpResponse.ok(s"received $totalBytes bytes")
+                    }
+                }
+                startTestServer(handler).map { port =>
+                    val bodyStream = Stream.init(Seq(Span.fromUnsafe("hello".getBytes("UTF-8"))))
+                    val request = HttpRequest.stream(
+                        HttpRequest.Method.POST,
+                        s"http://localhost:$port/upload",
+                        bodyStream
+                    )
+                    HttpClient.stream(request).map { response =>
+                        assert(response.status == Status.OK)
+                        response.bodyStream.run.map { chunks =>
+                            val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
+                            assert(body.contains("received 5 bytes"))
+                        }
+                    }
+                }
+            }
+
+            "with HttpRequest object" in run {
+                val handler = HttpHandler.get("/echo") { (_, req) =>
+                    req.header("X-Custom") match
+                        case Present(v) => HttpResponse.ok(v)
+                        case Absent     => HttpResponse.ok("no-header")
+                }
+                startTestServer(handler).map { port =>
+                    val request = HttpRequest.get(s"http://localhost:$port/echo", Seq("X-Custom" -> "test-value"))
+                    HttpClient.stream(request).map { response =>
+                        assert(response.status == Status.OK)
+                        response.bodyStream.run.map { chunks =>
+                            val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
+                            assert(body.contains("test-value"))
+                        }
+                    }
+                }
+            }
+        }
+
+        "streamSse" - {
+            "receives SSE events" in run {
+                val handler = HttpHandler.streamSse[Unit, Item, Any]("/events") { (_, _) =>
+                    Stream.init(Seq(
+                        ServerSentEvent(Item("a")),
+                        ServerSentEvent(Item("b")),
+                        ServerSentEvent(Item("c"))
+                    ))
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.streamSse[Item](s"http://localhost:$port/events").map { stream =>
+                        stream.run.map { chunk =>
+                            assert(chunk.size == 3)
+                            assert(chunk(0).data == Item("a"))
+                            assert(chunk(1).data == Item("b"))
+                            assert(chunk(2).data == Item("c"))
+                        }
+                    }
+                }
+            }
+
+            "empty stream" in run {
+                val handler = HttpHandler.streamSse[Unit, Item, Any]("/empty") { (_, _) =>
+                    Stream.empty[ServerSentEvent[Item]]
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.streamSse[Item](s"http://localhost:$port/empty").map { stream =>
+                        stream.run.map { chunk =>
+                            assert(chunk.isEmpty)
+                        }
+                    }
+                }
+            }
+
+            "with HttpRequest" in run {
+                val handler = HttpHandler.streamSse[Unit, Item, Any]("/events") { (_, _) =>
+                    Stream.init(Seq(ServerSentEvent(Item("x"))))
+                }
+                startTestServer(handler).map { port =>
+                    val request = HttpRequest.get(s"http://localhost:$port/events")
+                    HttpClient.streamSse[Item](request).map { stream =>
+                        stream.run.map { chunk =>
+                            assert(chunk.size == 1)
+                            assert(chunk(0).data == Item("x"))
+                        }
+                    }
+                }
+            }
+        }
+
+        "streamNdjson" - {
+            "receives NDJSON values" in run {
+                val handler = HttpHandler.stream[Unit, Item, Any]("/data") { (_, _) =>
+                    Stream.init(Seq(Item("x"), Item("y"), Item("z")))
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.streamNdjson[Item](s"http://localhost:$port/data").map { stream =>
+                        stream.run.map { chunk =>
+                            assert(chunk.size == 3)
+                            assert(chunk(0) == Item("x"))
+                            assert(chunk(1) == Item("y"))
+                            assert(chunk(2) == Item("z"))
+                        }
+                    }
+                }
+            }
+
+            "empty stream" in run {
+                val handler = HttpHandler.stream[Unit, Item, Any]("/empty") { (_, _) =>
+                    Stream.empty[Item]
+                }
+                startTestServer(handler).map { port =>
+                    HttpClient.streamNdjson[Item](s"http://localhost:$port/empty").map { stream =>
+                        stream.run.map { chunk =>
+                            assert(chunk.isEmpty)
+                        }
+                    }
+                }
+            }
+
+            "with HttpRequest" in run {
+                val handler = HttpHandler.stream[Unit, Item, Any]("/data") { (_, _) =>
+                    Stream.init(Seq(Item("q")))
+                }
+                startTestServer(handler).map { port =>
+                    val request = HttpRequest.get(s"http://localhost:$port/data")
+                    HttpClient.streamNdjson[Item](request).map { stream =>
+                        stream.run.map { chunk =>
+                            assert(chunk.size == 1)
+                            assert(chunk(0) == Item("q"))
+                        }
+                    }
+                }
+            }
+        }
+
+        "filter application to streaming" - {
+            "applies filter to stream request" in run {
+                val handler = HttpHandler.get("/auth") { (_, req) =>
+                    req.header("Authorization") match
+                        case Present(auth) => HttpResponse.ok(auth)
+                        case Absent        => HttpResponse.unauthorized
+                }
+                startTestServer(handler).map { port =>
+                    HttpFilter.client.bearerAuth("my-token").enable {
+                        HttpClient.stream(s"http://localhost:$port/auth").map { response =>
+                            assert(response.status == Status.OK)
+                            response.bodyStream.run.map { chunks =>
+                                val body = chunks.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
+                                assert(body.contains("Bearer my-token"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
 end HttpClientTest

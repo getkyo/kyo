@@ -1,12 +1,13 @@
 package kyo.internal
 
-import io.netty.channel.Channel
+import io.netty.channel.Channel as NettyChannel
 import io.netty.channel.ChannelFuture
 import kyo.*
 
 private[kyo] object NettyUtil:
 
-    def channelFuture[A, S](nettyFuture: ChannelFuture)(f: Channel => A < S)(using Frame): A < (Async & S) =
+    // TODO how about renaming both methods to "continue"
+    def channelFuture[A, S](nettyFuture: ChannelFuture)(f: NettyChannel => A < S)(using Frame): A < (Async & S) =
         Promise.initWith[A, S] { p =>
             p.onComplete(_ => Sync.defer(discard(nettyFuture.cancel(true)))).andThen {
                 nettyFuture.addListener((future: ChannelFuture) =>

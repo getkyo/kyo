@@ -36,7 +36,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     // Request helpers
 
     /** Makes a GET request to localhost on the given port, returns HttpResponse. */
-    def testGet(port: Int, path: String)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
+    def testGet(port: Int, path: String)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.get(s"http://localhost:$port$path"))
 
     /** Makes a GET request and parses the response body as type A. */
@@ -44,7 +44,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
         HttpClient.get[A](s"http://localhost:$port$path")
 
     /** Makes a POST request to localhost on the given port, returns HttpResponse. */
-    def testPost[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
+    def testPost[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.post(s"http://localhost:$port$path", body))
 
     /** Makes a POST request and parses the response body as type B. */
@@ -52,11 +52,11 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
         HttpClient.post[B, A](s"http://localhost:$port$path", body)
 
     /** Makes a PUT request to localhost on the given port, returns HttpResponse. */
-    def testPut[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
+    def testPut[A: Schema](port: Int, path: String, body: A)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.put(s"http://localhost:$port$path", body))
 
     /** Makes a DELETE request to localhost on the given port, returns HttpResponse. */
-    def testDelete(port: Int, path: String)(using Frame): HttpResponse < (Async & Abort[HttpError]) =
+    def testDelete(port: Int, path: String)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpClient.send(HttpRequest.delete(s"http://localhost:$port$path"))
 
     // Echo handler for testing client behavior
@@ -93,32 +93,28 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     // Response assertion helpers
 
     /** Asserts that the response has the expected status. */
-    def assertStatus(response: HttpResponse, expected: HttpResponse.Status): Assertion =
+    def assertStatus(response: HttpResponse[?], expected: HttpResponse.Status): Assertion =
         assert(response.status == expected, s"Expected status $expected but got ${response.status}")
 
     /** Asserts that the response body text matches the expected string. */
-    def assertBodyText(response: HttpResponse, expected: String): Assertion =
-        Abort.run(response.bodyText).eval match
-            case Result.Success(actual) => assert(actual == expected, s"Expected body '$expected' but got '$actual'")
-            case Result.Failure(e)      => fail(s"Unexpected error accessing body: $e")
-            case Result.Panic(ex)       => throw ex
+    def assertBodyText(response: HttpResponse[HttpBody.Bytes], expected: String): Assertion =
+        val actual = response.bodyText
+        assert(actual == expected, s"Expected body '$expected' but got '$actual'")
 
     /** Asserts that the response body text contains the expected substring. */
-    def assertBodyContains(response: HttpResponse, expected: String): Assertion =
-        Abort.run(response.bodyText).eval match
-            case Result.Success(actual) => assert(actual.contains(expected), s"Expected body to contain '$expected' but got '$actual'")
-            case Result.Failure(e)      => fail(s"Unexpected error accessing body: $e")
-            case Result.Panic(ex)       => throw ex
+    def assertBodyContains(response: HttpResponse[HttpBody.Bytes], expected: String): Assertion =
+        val actual = response.bodyText
+        assert(actual.contains(expected), s"Expected body to contain '$expected' but got '$actual'")
 
     /** Asserts that the response body deserializes to the expected value. */
-    def assertBody[A: Schema](response: HttpResponse, expected: A)(using CanEqual[A, A]): Assertion =
+    def assertBody[A: Schema](response: HttpResponse[HttpBody.Bytes], expected: A)(using CanEqual[A, A]): Assertion =
         Abort.run(response.bodyAs[A]).eval match
             case Result.Success(actual) => assert(actual == expected, s"Expected body $expected but got $actual")
             case Result.Failure(e)      => fail(s"Unexpected error accessing body: $e")
             case Result.Panic(ex)       => throw ex
 
     /** Asserts that the response has a header with the expected value. */
-    def assertHeader(response: HttpResponse, name: String, expected: String): Assertion =
+    def assertHeader(response: HttpResponse[?], name: String, expected: String): Assertion =
         response.header(name) match
             case Present(actual) =>
                 assert(actual == expected, s"Expected header '$name: $expected' but got '$name: $actual'")
@@ -126,11 +122,11 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
                 fail(s"Expected header '$name' but it was not present")
 
     /** Asserts that the response has the specified header (any value). */
-    def assertHasHeader(response: HttpResponse, name: String): Assertion =
+    def assertHasHeader(response: HttpResponse[?], name: String): Assertion =
         assert(response.header(name).isDefined, s"Expected header '$name' to be present")
 
     /** Asserts that the response has a cookie with the expected value. */
-    def assertCookie(response: HttpResponse, name: String, expected: String): Assertion =
+    def assertCookie(response: HttpResponse[?], name: String, expected: String): Assertion =
         response.cookie(name) match
             case Present(cookie) =>
                 assert(cookie.value == expected, s"Expected cookie '$name=$expected' but got '$name=${cookie.value}'")
@@ -138,7 +134,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
                 fail(s"Expected cookie '$name' but it was not present")
 
     /** Asserts that the response has the specified cookie (any value). */
-    def assertHasCookie(response: HttpResponse, name: String): Assertion =
+    def assertHasCookie(response: HttpResponse[?], name: String): Assertion =
         assert(response.cookie(name).isDefined, s"Expected cookie '$name' to be present")
 
     // Common test handlers (using API methods where available)
