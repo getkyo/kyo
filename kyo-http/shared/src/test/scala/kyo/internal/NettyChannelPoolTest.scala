@@ -163,14 +163,12 @@ class NettyChannelPoolTest extends Test:
                     val (pool, workerGroup) = initPool(port, maxConnections = Present(1))
                     pool.acquire().map { ch1 =>
                         Fiber.initUnscoped(pool.acquire()).map { fiber =>
-                            Async.delay(50.millis) {
-                                pool.release(ch1)
-                                fiber.get.map { ch2 =>
-                                    assert(ch2.isActive())
-                                    pool.release(ch2)
-                                    cleanup(pool, workerGroup)
-                                    succeed
-                                }
+                            pool.release(ch1)
+                            fiber.get.map { ch2 =>
+                                assert(ch2.isActive())
+                                pool.release(ch2)
+                                cleanup(pool, workerGroup)
+                                succeed
                             }
                         }
                     }
@@ -225,11 +223,10 @@ class NettyChannelPoolTest extends Test:
                         val channelRefs = channels.toSeq
                         channelRefs.foreach(ch => pool.release(ch))
                         pool.close()
-                        Async.delay(50.millis) {
-                            assert(channelRefs.forall(!_.isActive()), "All idle channels should be closed after pool close")
-                            discard(workerGroup.shutdownGracefully())
-                            succeed
-                        }
+                        channelRefs.foreach(ch => discard(ch.closeFuture().sync()))
+                        assert(channelRefs.forall(!_.isActive()), "All idle channels should be closed after pool close")
+                        discard(workerGroup.shutdownGracefully())
+                        succeed
                     }
                 }
             }
@@ -255,11 +252,10 @@ class NettyChannelPoolTest extends Test:
                         assert(ch.isActive())
                         pool.close()
                         pool.release(ch)
-                        Async.delay(50.millis) {
-                            assert(!ch.isActive(), "Channel should be closed after release to closed pool")
-                            discard(workerGroup.shutdownGracefully())
-                            succeed
-                        }
+                        discard(ch.closeFuture().sync())
+                        assert(!ch.isActive(), "Channel should be closed after release to closed pool")
+                        discard(workerGroup.shutdownGracefully())
+                        succeed
                     }
                 }
             }
@@ -327,9 +323,7 @@ class NettyChannelPoolTest extends Test:
                     Async.fill(20, 20) {
                         pool.acquire().map { ch =>
                             assert(ch.isActive())
-                            Async.delay(5.millis) {
-                                pool.release(ch)
-                            }
+                            pool.release(ch)
                         }
                     }.andThen {
                         cleanup(pool, workerGroup)
@@ -356,7 +350,7 @@ class NettyChannelPoolTest extends Test:
                     )
                     val closeFiber = Fiber.initUnscoped(
                         latch.safe.await.andThen(
-                            Async.delay(20.millis)(Sync.Unsafe(pool.close()))
+                            Sync.Unsafe(pool.close())
                         )
                     )
                     latch.release()
@@ -422,15 +416,13 @@ class NettyChannelPoolTest extends Test:
                     pool.acquire().map { ch1 =>
                         // Pool exhausted, next acquire will wait
                         Fiber.initUnscoped(pool.acquire()).map { fiber =>
-                            Async.delay(50.millis) {
-                                // Interrupt the waiting fiber instead of releasing
-                                fiber.interrupt.andThen {
-                                    fiber.getResult.map { result =>
-                                        assert(result.isPanic, s"Expected interrupted (panic) but got $result")
-                                        pool.release(ch1)
-                                        cleanup(pool, workerGroup)
-                                        succeed
-                                    }
+                            // Interrupt the waiting fiber instead of releasing
+                            fiber.interrupt.andThen {
+                                fiber.getResult.map { result =>
+                                    assert(result.isPanic, s"Expected interrupted (panic) but got $result")
+                                    pool.release(ch1)
+                                    cleanup(pool, workerGroup)
+                                    succeed
                                 }
                             }
                         }
@@ -455,13 +447,11 @@ class NettyChannelPoolTest extends Test:
                             }
                         ).map { fiber =>
                             // Release ch1 to start unblocking waiters
-                            Async.delay(50.millis) {
-                                pool.release(ch1)
-                                fiber.get.map { _ =>
-                                    assert(counter.get() == 3, s"Expected 3 completions but got ${counter.get()}")
-                                    cleanup(pool, workerGroup)
-                                    succeed
-                                }
+                            pool.release(ch1)
+                            fiber.get.map { _ =>
+                                assert(counter.get() == 3, s"Expected 3 completions but got ${counter.get()}")
+                                cleanup(pool, workerGroup)
+                                succeed
                             }
                         }
                     }

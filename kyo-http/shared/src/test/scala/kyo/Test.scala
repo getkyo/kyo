@@ -151,6 +151,14 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
             Async.delay(delay)(HttpResponse.ok("delayed"))
         }
 
+    /** A handler that never responds (blocks forever). Useful for timeout tests. */
+    def neverRespondHandler(path: String)(using Frame): HttpHandler[Any] =
+        HttpHandler.get(path) { (_, _) =>
+            Latch.init(1).map { latch =>
+                latch.await.andThen(HttpResponse.ok("never"))
+            }
+        }
+
     /** A handler that throws an exception. */
     def errorHandler(path: String)(using Frame): HttpHandler[Any] =
         HttpHandler.get(path) { (_, _) =>

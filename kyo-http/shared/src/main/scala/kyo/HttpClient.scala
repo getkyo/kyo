@@ -3,7 +3,6 @@ package kyo
 import io.netty.bootstrap.Bootstrap
 import io.netty.buffer.Unpooled
 import io.netty.channel.{Channel as NettyChannel, *}
-import io.netty.channel.pool.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.codec.http.DefaultFullHttpRequest
 import io.netty.handler.codec.http.HttpClientCodec
@@ -15,12 +14,12 @@ import io.netty.handler.codec.http.HttpVersion
 import io.netty.handler.codec.http.LastHttpContent
 import io.netty.handler.ssl.SslContext
 import io.netty.handler.ssl.SslContextBuilder
-import io.netty.util.concurrent.Future as NettyFuture
 import java.net.InetSocketAddress
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kyo.internal.NdjsonDecoder
+import kyo.internal.NettyChannelPool
 import kyo.internal.NettyTransport
 import kyo.internal.NettyUtil
 import kyo.internal.ResponseHandler
@@ -31,7 +30,7 @@ import kyo.internal.StreamingHeaders
 final class HttpClient private (
     private val workerGroup: MultiThreadIoEventLoopGroup,
     private val bootstrap: Bootstrap,
-    private val poolMap: ConcurrentHashMap[HttpClient.PoolKey, ChannelPool],
+    private val poolMap: ConcurrentHashMap[HttpClient.PoolKey, NettyChannelPool],
     private val sslContext: SslContext,
     private val maxConnectionsPerHost: Maybe[Int],
     private val connectionAcquireTimeout: Duration,
@@ -49,7 +48,6 @@ final class HttpClient private (
                             poolMap,
                             sslContext,
                             maxConnectionsPerHost,
-                            connectionAcquireTimeout,
                             maxResponseSizeBytes,
                             effectiveUrl,
                             filteredRequest.asInstanceOf[HttpRequest[HttpBody.Bytes]],
@@ -159,7 +157,6 @@ final class HttpClient private (
 
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.Unsafe {
-            import AllowUnsafe.embrace.danger
             import scala.jdk.CollectionConverters.*
             poolMap.values().asScala.foreach(_.close())
             poolMap.clear()
@@ -266,7 +263,7 @@ object HttpClient:
                 else
                     new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
             val bootstrap  = createBootstrap(workerGroup)
-            val poolMap    = new ConcurrentHashMap[PoolKey, ChannelPool]()
+            val poolMap    = new ConcurrentHashMap[PoolKey, NettyChannelPool]()
             val sslContext = SslContextBuilder.forClient().build()
             new HttpClient(
                 workerGroup,
@@ -361,53 +358,26 @@ object HttpClient:
 
     private def getOrCreatePool(
         bootstrap: Bootstrap,
-        poolMap: ConcurrentHashMap[PoolKey, ChannelPool],
+        poolMap: ConcurrentHashMap[PoolKey, NettyChannelPool],
         sslContext: SslContext,
         maxConnectionsPerHost: Maybe[Int],
-        connectionAcquireTimeout: Duration,
         maxResponseSizeBytes: Int,
         key: PoolKey,
         connectTimeout: Maybe[Duration]
-    )(using AllowUnsafe): ChannelPool =
+    )(using AllowUnsafe, Frame): NettyChannelPool =
         poolMap.computeIfAbsent(
             key,
             _ =>
-                val handler = new AbstractChannelPoolHandler:
-                    override def channelCreated(ch: NettyChannel): Unit =
-                        val pipeline = ch.pipeline()
-                        if key.ssl then
-                            discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), key.host, key.port)))
-                        discard(pipeline.addLast("codec", new HttpClientCodec()))
-                        discard(pipeline.addLast("aggregator", new HttpObjectAggregator(maxResponseSizeBytes)))
-                    end channelCreated
-                val remoteBootstrap = bootstrap.clone().remoteAddress(new InetSocketAddress(key.host, key.port))
-                connectTimeout.foreach { timeout =>
-                    discard(remoteBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Integer.valueOf(timeout.toMillis.toInt)))
-                }
-                maxConnectionsPerHost match
-                    case Present(maxConnections) =>
-                        // Fixed pool with connection limit and acquire timeout
-                        new FixedChannelPool(
-                            remoteBootstrap,
-                            handler,
-                            ChannelHealthChecker.ACTIVE,
-                            FixedChannelPool.AcquireTimeoutAction.FAIL,
-                            connectionAcquireTimeout.toMillis,
-                            maxConnections,
-                            Int.MaxValue, // maxPendingAcquires
-                            true,         // releaseHealthCheck - validate before returning to pool
-                            true          // lastRecentUsed - LIFO for better cache locality
-                        )
-                    case Absent =>
-                        // Unlimited pool - no connection limit
-                        new SimpleChannelPool(
-                            remoteBootstrap,
-                            handler,
-                            ChannelHealthChecker.ACTIVE,
-                            true, // releaseHealthCheck
-                            true  // lastRecentUsed
-                        )
-                end match
+                NettyChannelPool.init(
+                    bootstrap,
+                    sslContext,
+                    key.host,
+                    key.port,
+                    key.ssl,
+                    maxConnectionsPerHost,
+                    maxResponseSizeBytes,
+                    connectTimeout
+                )
         )
 
     private def buildEffectiveUrl(config: Config, request: HttpRequest[?]): String =
@@ -431,10 +401,9 @@ object HttpClient:
 
     private def sendRaw(
         bootstrap: Bootstrap,
-        poolMap: ConcurrentHashMap[PoolKey, ChannelPool],
+        poolMap: ConcurrentHashMap[PoolKey, NettyChannelPool],
         sslContext: SslContext,
         maxConnectionsPerHost: Maybe[Int],
-        connectionAcquireTimeout: Duration,
         maxResponseSizeBytes: Int,
         url: String,
         request: HttpRequest[HttpBody.Bytes],
@@ -462,98 +431,74 @@ object HttpClient:
                     poolMap,
                     sslContext,
                     maxConnectionsPerHost,
-                    connectionAcquireTimeout,
                     maxResponseSizeBytes,
                     key,
                     config.connectTimeout
                 )
 
-            // Acquire channel from pool — manual Promise used instead of NettyUtil.continue
-            // because we need getResult to pattern match on Success/Panic/Failure for
-            // specific error types (HttpError.fromThrowable vs ConnectionFailed)
-            val acquirePromise = Promise.Unsafe.init[NettyChannel, Any]()
-            val acquireFuture  = pool.acquire()
-            discard {
-                acquireFuture.addListener { (future: NettyFuture[NettyChannel]) =>
-                    import AllowUnsafe.embrace.danger
-                    if future.isSuccess then
-                        discard(acquirePromise.complete(Result.succeed(future.getNow)))
-                    else
-                        discard(acquirePromise.complete(Result.panic(future.cause())))
-                    end if
-                }
-            }
-
-            acquirePromise.safe.getResult.map {
-                case Result.Success(channel) =>
-                    // Got a channel - use it with guaranteed release
-                    Sync.ensure {
-                        // Release to pool - pool checks health via releaseHealthCheck
-                        discard(pool.release(channel))
-                    } {
-                        sendOnChannel(channel, uri, request, host, port, config)
-                    }.map { resp =>
-                        // Handle redirects
-                        if config.followRedirects && resp.status.isRedirect then
-                            if redirectCount >= config.maxRedirects then
-                                Abort.fail(HttpError.TooManyRedirects(redirectCount))
-                            else
-                                resp.header("Location") match
-                                    case Present(location) =>
-                                        val redirectUrl =
-                                            if location.startsWith("http://") || location.startsWith("https://") then
-                                                location
-                                            else
-                                                new URI(url).resolve(location).toString
-                                        sendRaw(
-                                            bootstrap,
-                                            poolMap,
-                                            sslContext,
-                                            maxConnectionsPerHost,
-                                            connectionAcquireTimeout,
-                                            maxResponseSizeBytes,
-                                            redirectUrl,
-                                            request,
-                                            config,
-                                            redirectCount + 1
-                                        )
-                                    case Absent =>
-                                        resp
+            pool.acquire().map { channel =>
+                Sync.ensure {
+                    pool.release(channel)
+                } {
+                    sendOnChannel(channel, uri, request, host, port, config)
+                }.map { resp =>
+                    // Handle redirects
+                    if config.followRedirects && resp.status.isRedirect then
+                        if redirectCount >= config.maxRedirects then
+                            Abort.fail(HttpError.TooManyRedirects(redirectCount))
                         else
-                            resp
-                    }.map { finalResp =>
-                        // Handle retry based on response
-                        currentSchedule match
-                            case Present(schedule) if config.retryOn(finalResp) =>
-                                Clock.now.map { now =>
-                                    schedule.next(now) match
-                                        case Present((delay, nextSchedule)) =>
-                                            Async.delay(delay) {
-                                                sendRaw(
-                                                    bootstrap,
-                                                    poolMap,
-                                                    sslContext,
-                                                    maxConnectionsPerHost,
-                                                    connectionAcquireTimeout,
-                                                    maxResponseSizeBytes,
-                                                    url,
-                                                    request,
-                                                    config,
-                                                    0, // Reset redirect count for retry
-                                                    Present(nextSchedule),
-                                                    attemptCount + 1
-                                                )
-                                            }
-                                        case Absent =>
-                                            // Schedule exhausted, fail with RetriesExhausted
-                                            Abort.fail(HttpError.RetriesExhausted(attemptCount, finalResp.status, finalResp.bodyText))
-                                }
-                            case _ =>
-                                // No retry needed
-                                finalResp
-                    }
-                case Result.Panic(e)   => Abort.fail(HttpError.fromThrowable(e, host, port))
-                case Result.Failure(e) => Abort.fail(HttpError.ConnectionFailed(host, port, new RuntimeException(e.toString)))
+                            resp.header("Location") match
+                                case Present(location) =>
+                                    val redirectUrl =
+                                        if location.startsWith("http://") || location.startsWith("https://") then
+                                            location
+                                        else
+                                            new URI(url).resolve(location).toString
+                                    sendRaw(
+                                        bootstrap,
+                                        poolMap,
+                                        sslContext,
+                                        maxConnectionsPerHost,
+                                        maxResponseSizeBytes,
+                                        redirectUrl,
+                                        request,
+                                        config,
+                                        redirectCount + 1
+                                    )
+                                case Absent =>
+                                    resp
+                    else
+                        resp
+                }.map { finalResp =>
+                    // Handle retry based on response
+                    currentSchedule match
+                        case Present(schedule) if config.retryOn(finalResp) =>
+                            Clock.now.map { now =>
+                                schedule.next(now) match
+                                    case Present((delay, nextSchedule)) =>
+                                        Async.delay(delay) {
+                                            sendRaw(
+                                                bootstrap,
+                                                poolMap,
+                                                sslContext,
+                                                maxConnectionsPerHost,
+                                                maxResponseSizeBytes,
+                                                url,
+                                                request,
+                                                config,
+                                                0, // Reset redirect count for retry
+                                                Present(nextSchedule),
+                                                attemptCount + 1
+                                            )
+                                        }
+                                    case Absent =>
+                                        // Schedule exhausted, fail with RetriesExhausted
+                                        Abort.fail(HttpError.RetriesExhausted(attemptCount, finalResp.status, finalResp.bodyText))
+                            }
+                        case _ =>
+                            // No retry needed
+                            finalResp
+                }
             }
         } // end Sync.Unsafe
     end sendRaw
