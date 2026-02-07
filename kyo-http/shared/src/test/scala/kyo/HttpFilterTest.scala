@@ -436,4 +436,73 @@ class HttpFilterTest extends Test:
         }
     }
 
+    "filter error handling" - {
+
+        "filter that throws propagates exception to caller" in run {
+            val throwingFilter = new HttpFilter:
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
+                    Frame
+                ): HttpResponse[?] < (Async & S) =
+                    throw new RuntimeException("filter exploded")
+            for
+                port <- startTestServer(simpleHandler)
+                result <- Abort.run {
+                    throwingFilter.enable {
+                        testGet(port, "/test")
+                    }
+                }
+            yield result match
+                case Result.Panic(e) =>
+                    assert(e.getMessage == "filter exploded")
+                case other => fail(s"Expected Panic but got $other")
+            end for
+        }
+
+        "filter that fails after next propagates exception to caller" in run {
+            val throwingFilter = new HttpFilter:
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
+                    Frame
+                ): HttpResponse[?] < (Async & S) =
+                    next(request).map { _ =>
+                        throw new RuntimeException("post-processing failed")
+                    }
+            for
+                port <- startTestServer(simpleHandler)
+                result <- Abort.run {
+                    throwingFilter.enable {
+                        testGet(port, "/test")
+                    }
+                }
+            yield result match
+                case Result.Panic(e) =>
+                    assert(e.getMessage == "post-processing failed")
+                case other => fail(s"Expected Panic but got $other")
+            end for
+        }
+
+        "composed filter short-circuits on first failure" in run {
+            var secondCalled = false
+            val first = new HttpFilter:
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
+                    Frame
+                ): HttpResponse[?] < (Async & S) =
+                    HttpResponse.unauthorized: HttpResponse[HttpBody.Bytes]
+            val second = new HttpFilter:
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
+                    Frame
+                ): HttpResponse[?] < (Async & S) =
+                    secondCalled = true
+                    next(request)
+                end apply
+            first.andThen(second).enable {
+                for
+                    port     <- startTestServer(simpleHandler)
+                    response <- testGet(port, "/test")
+                yield
+                    assertStatus(response, Status.Unauthorized)
+                    assert(!secondCalled)
+            }
+        }
+    }
+
 end HttpFilterTest

@@ -12,7 +12,8 @@ import scala.collection.mutable
 private[kyo] object OpenApiGenerator:
 
     def generate(handlers: Seq[HttpHandler[Any]], config: HttpOpenApi.Config = HttpOpenApi.Config()): HttpOpenApi =
-        val paths = buildPaths(handlers)
+        val paths           = buildPaths(handlers)
+        val securitySchemes = collectSecuritySchemes(handlers)
         HttpOpenApi(
             openapi = "3.0.0",
             info = Info(
@@ -21,7 +22,8 @@ private[kyo] object OpenApiGenerator:
                 description = config.description.toOption
             ),
             paths = paths,
-            components = None
+            components = if securitySchemes.isEmpty then None
+            else Some(Components(schemas = None, securitySchemes = Some(securitySchemes)))
         )
     end generate
 
@@ -57,7 +59,7 @@ private[kyo] object OpenApiGenerator:
             parameters = if parameters.isEmpty then None else Some(parameters.toList),
             requestBody = requestBody.toOption,
             responses = responses,
-            security = None
+            security = route.securityScheme.toOption.map(scheme => List(Map(scheme -> List.empty[String])))
         )
     end buildOperation
 
@@ -300,5 +302,29 @@ private[kyo] object OpenApiGenerator:
             end if
         end if
     end buildEnumSchema
+
+    private def collectSecuritySchemes(handlers: Seq[HttpHandler[Any]]): Map[String, SecurityScheme] =
+        handlers.flatMap { handler =>
+            handler.route.securityScheme.toOption.map { scheme =>
+                val hasAuthHeader = handler.route.headerParams.exists(_.name.equalsIgnoreCase("Authorization"))
+                val schemeObj =
+                    if !hasAuthHeader then
+                        // API key style - look for non-Authorization header params added by authApiKey
+                        val apiKeyHeader = handler.route.headerParams.lastOption.map(_.name).getOrElse("X-API-Key")
+                        SecurityScheme(
+                            `type` = "apiKey",
+                            scheme = None,
+                            bearerFormat = None,
+                            name = Some(apiKeyHeader),
+                            in = Some("header")
+                        )
+                    else if scheme.toLowerCase.contains("basic") then
+                        SecurityScheme(`type` = "http", scheme = Some("basic"), bearerFormat = None, name = None, in = None)
+                    else
+                        SecurityScheme(`type` = "http", scheme = Some("bearer"), bearerFormat = None, name = None, in = None)
+                scheme -> schemeObj
+            }
+        }.toMap
+    end collectSecuritySchemes
 
 end OpenApiGenerator

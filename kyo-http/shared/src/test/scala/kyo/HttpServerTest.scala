@@ -539,7 +539,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "handler fiber should be interrupted when client disconnects" ignore run {
+        "handler fiber should be interrupted when client disconnects" in run {
             AtomicBoolean.init(false).map { handlerCompleted =>
                 AtomicBoolean.init(false).map { handlerStarted =>
                     val slowHandler = HttpHandler.get("/slow") { (_, _) =>

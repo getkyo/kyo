@@ -602,6 +602,9 @@ object HttpClient:
             discard(pipeline.remove(handlerName))
         discard(pipeline.addLast(handlerName, new ResponseHandler(promise, channel, host, port)))
 
+        // Close channel on interrupt so server can detect disconnect
+        promise.onInterrupt(_ => discard(channel.close()))
+
         // Set up timeout
         config.timeout.foreach { duration =>
             val expire: Runnable = () =>

@@ -272,6 +272,55 @@ class OpenApiTest extends Test:
                 }
             }
         }
+
+        "security schemes" - {
+
+            "route with security scheme includes security in operation" in {
+                val route = HttpRoute.get("/users").authBearer.security("bearerAuth").output[List[User]]
+                val spec  = HttpOpenApi.fromRoutes(route)
+
+                val op = spec.paths("/users").get.get
+                assert(op.security.isDefined)
+                assert(op.security.get == List(Map("bearerAuth" -> List.empty[String])))
+            }
+
+            "route with bearer auth includes security scheme in components" in {
+                val route = HttpRoute.get("/users").authBearer.security("bearerAuth").output[List[User]]
+                val spec  = HttpOpenApi.fromRoutes(route)
+
+                assert(spec.components.isDefined)
+                val schemes = spec.components.get.securitySchemes.get
+                assert(schemes.contains("bearerAuth"))
+                assert(schemes("bearerAuth").`type` == "http")
+                assert(schemes("bearerAuth").scheme == Some("bearer"))
+            }
+
+            "route with basic auth includes security scheme in components" in {
+                val route = HttpRoute.get("/users").authBasic.security("basicAuth").output[List[User]]
+                val spec  = HttpOpenApi.fromRoutes(route)
+
+                assert(spec.components.isDefined)
+                val schemes = spec.components.get.securitySchemes.get
+                assert(schemes.contains("basicAuth"))
+                assert(schemes("basicAuth").`type` == "http")
+                assert(schemes("basicAuth").scheme == Some("basic"))
+            }
+
+            "route without security scheme has no security on operation" in {
+                val route = HttpRoute.get("/users").output[List[User]]
+                val spec  = HttpOpenApi.fromRoutes(route)
+
+                val op = spec.paths("/users").get.get
+                assert(op.security.isEmpty)
+            }
+
+            "no components when no security schemes" in {
+                val route = HttpRoute.get("/users").output[List[User]]
+                val spec  = HttpOpenApi.fromRoutes(route)
+
+                assert(spec.components.isEmpty)
+            }
+        }
     }
 
 end OpenApiTest
