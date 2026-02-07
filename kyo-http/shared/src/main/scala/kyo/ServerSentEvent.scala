@@ -1,6 +1,5 @@
 package kyo
 
-// TODO
 case class ServerSentEvent[+A](
     data: A,
     event: Maybe[String] = Absent,

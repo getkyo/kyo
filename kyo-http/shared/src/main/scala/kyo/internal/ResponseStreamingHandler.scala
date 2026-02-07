@@ -11,7 +11,7 @@ private[kyo] case class StreamingHeaders(
 )
 
 /** Streaming response handler — splits headers from body chunks (no HttpObjectAggregator). */
-private[kyo] class StreamingResponseHandler(
+private[kyo] class ResponseStreamingHandler(
     headerPromise: Promise.Unsafe[StreamingHeaders, Abort[HttpError]],
     byteChannel: Channel.Unsafe[Span[Byte]],
     host: String,
@@ -75,4 +75,4 @@ private[kyo] class StreamingResponseHandler(
         ))
         discard(byteChannel.closeAwaitEmpty())
     end exceptionCaught
-end StreamingResponseHandler
+end ResponseStreamingHandler

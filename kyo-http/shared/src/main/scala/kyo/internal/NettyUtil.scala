@@ -6,8 +6,7 @@ import kyo.*
 
 private[kyo] object NettyUtil:
 
-    // TODO how about renaming both methods to "continue"
-    def channelFuture[A, S](nettyFuture: ChannelFuture)(f: NettyChannel => A < S)(using Frame): A < (Async & S) =
+    def continue[A, S](nettyFuture: ChannelFuture)(f: NettyChannel => A < S)(using Frame): A < (Async & S) =
         Promise.initWith[A, S] { p =>
             p.onComplete(_ => Sync.defer(discard(nettyFuture.cancel(true)))).andThen {
                 nettyFuture.addListener((future: ChannelFuture) =>
@@ -21,7 +20,7 @@ private[kyo] object NettyUtil:
             }
         }
 
-    def future[A, B, S](f: io.netty.util.concurrent.Future[A])(cont: A => B < S)(using Frame): B < (Async & S) =
+    def continue[A, B, S](f: io.netty.util.concurrent.Future[A])(cont: A => B < S)(using Frame): B < (Async & S) =
         Promise.initWith[B, S] { p =>
             p.onComplete(_ => Sync.defer(discard(f.cancel(true)))).andThen {
                 f.addListener((future: io.netty.util.concurrent.Future[A]) =>
@@ -34,5 +33,13 @@ private[kyo] object NettyUtil:
                 p.get
             }
         }
+
+    /** Await a ChannelFuture, discarding its result. */
+    def await(nettyFuture: ChannelFuture)(using Frame): Unit < Async =
+        continue(nettyFuture)(_ => ())
+
+    /** Await a Netty Future, discarding its result. */
+    def await[A](f: io.netty.util.concurrent.Future[A])(using Frame): Unit < Async =
+        continue(f)(_ => ())
 
 end NettyUtil

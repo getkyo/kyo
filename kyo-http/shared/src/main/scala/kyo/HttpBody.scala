@@ -19,23 +19,21 @@ object HttpBody:
 
     def stream(s: Stream[Span[Byte], Async]): Streamed = new Streamed(s)
 
-    // TODO can we use Span for data? Let's try to isolate Array usage as much as possible. Review it for the entire kyo-http module!
-    // TODO let's not expose `val`s in APIs (see `data`). It complicates binary compatibility
-    final class Bytes private[kyo] (val data: Array[Byte]) extends HttpBody:
+    final class Bytes private[kyo] (private val _data: Array[Byte]) extends HttpBody:
+        def data: Array[Byte] = _data
         def text: String =
-            if data.isEmpty then "" else new String(data, StandardCharsets.UTF_8)
-        def span: Span[Byte] = Span.fromUnsafe(data)
+            if _data.isEmpty then "" else new String(_data, StandardCharsets.UTF_8)
+        def span: Span[Byte] = Span.fromUnsafe(_data)
         def as[A: Schema](using Frame): A < Abort[HttpError] =
             val t = text
-            // TODO how about we return a `Result` in decode?
             try Schema[A].decode(t)
             catch case e: Throwable => Abort.fail(HttpError.ParseError(s"Failed to parse response body", e))
         end as
-        def isEmpty: Boolean = data.isEmpty
+        def isEmpty: Boolean = _data.isEmpty
     end Bytes
 
-    // TODO let's not expose `val`s in APIs (stream). It complicates binary compatibility
-    final class Streamed private[kyo] (val stream: Stream[Span[Byte], Async]) extends HttpBody:
-        def isEmpty: Boolean = false
+    final class Streamed private[kyo] (private val _stream: Stream[Span[Byte], Async]) extends HttpBody:
+        def stream: Stream[Span[Byte], Async] = _stream
+        def isEmpty: Boolean                  = false
 
 end HttpBody

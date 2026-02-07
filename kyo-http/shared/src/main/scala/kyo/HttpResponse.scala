@@ -17,8 +17,9 @@ final class HttpResponse[+B <: HttpBody] private (
     val status: HttpResponse.Status,
     private val _headers: Seq[(String, String)],
     private val _cookies: Seq[HttpResponse.Cookie],
-    val body: B // TODO let's avoid vals in public api because of binary compatibility
+    private val _body: B
 ):
+    def body: B = _body
     import HttpResponse.*
 
     // --- Header accessors ---
@@ -47,9 +48,21 @@ final class HttpResponse[+B <: HttpBody] private (
 
     def cookies: Seq[Cookie] = _cookies
 
-    // --- Body stream (universal) ---
+    // --- Body accessors (type-safe via =:= evidence) ---
 
-    // TODO should this require an evidence that the body is streaming?
+    /** Returns the response body as a String. Only available for buffered responses. */
+    def bodyText(using ev: B <:< HttpBody.Bytes): String = ev(body).text
+
+    /** Returns the response body as a Span[Byte]. Only available for buffered responses. */
+    def bodyBytes(using ev: B <:< HttpBody.Bytes): Span[Byte] = ev(body).span
+
+    /** Returns the Content-Length of the response body. Only available for buffered responses. */
+    def contentLength(using ev: B <:< HttpBody.Bytes): Long = ev(body).data.length.toLong
+
+    /** Parses the response body as type A. Only available for buffered responses. */
+    def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes)(using Frame): A < Abort[HttpError] = ev(body).as[A]
+
+    /** Returns the body as a byte stream. Works for both buffered and streaming responses. */
     def bodyStream(using Frame): Stream[Span[Byte], Async] =
         body match
             case b: HttpBody.Bytes    => Stream.init(Chunk(b.span))
@@ -166,16 +179,6 @@ final class HttpResponse[+B <: HttpBody] private (
 end HttpResponse
 
 object HttpResponse:
-
-    // --- Extension methods for Bytes responses ---
-
-    // TODO move to class methods + @implicitnotFound
-    extension (r: HttpResponse[HttpBody.Bytes])
-        def bodyText: String                                     = r.body.text
-        def bodyBytes: Span[Byte]                                = r.body.span
-        def contentLength: Long                                  = r.body.data.length.toLong
-        def bodyAs[A: Schema](using Frame): A < Abort[HttpError] = r.body.as[A]
-    end extension
 
     // --- Factory methods (all return Bytes) ---
 

@@ -49,8 +49,8 @@ object HttpError:
             if msg != null then msg else e.getClass.getName
         cause match
             case e: ConnectException => ConnectionFailed(host, port, e)
-            // TODO there's kyo.Timeout as well I think
             case e: TimeoutException => Timeout(safeMessage(e))
+            case e: kyo.Timeout      => Timeout(safeMessage(e))
             case e: SSLException     => SslError(safeMessage(e), e)
             case e                   => InvalidResponse(safeMessage(e))
         end match

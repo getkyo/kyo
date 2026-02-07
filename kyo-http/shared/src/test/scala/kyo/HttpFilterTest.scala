@@ -7,7 +7,7 @@ class HttpFilterTest extends Test:
 
     val simpleHandler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("hello") }
 
-    "HttpFilter.init" - {
+    "HttpFilter" - {
         "custom filter wraps computation" in run {
             var called = false
             val customFilter = new HttpFilter:
@@ -45,7 +45,7 @@ class HttpFilterTest extends Test:
                 receivedHeader = req.header("X-Init-Test")
                 HttpResponse.ok
             }
-            HttpFilter.let(HttpFilter.init(_.addHeader("X-Init-Test", "works"))) {
+            HttpFilter.let(HttpFilter.request(_.addHeader("X-Init-Test", "works"))) {
                 for
                     port <- startTestServer(handler)
                     _    <- testGet(port, "/test")

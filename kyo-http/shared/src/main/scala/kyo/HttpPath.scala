@@ -4,7 +4,6 @@ import java.util.UUID
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 
-// TODO let's try again opaque type HttpPath[+A] >: String and remove HttpPath.stirngToPath
 opaque type HttpPath[+A] = String | HttpPath.Segment[?]
 
 object HttpPath:
@@ -12,13 +11,6 @@ object HttpPath:
     def apply(s: String): HttpPath[Unit] = s
 
     implicit def stringToPath(s: String): HttpPath[Unit] = apply(s)
-
-    // TODO private stuff should go at the end.
-    private[kyo] enum Segment[+A]:
-        case Literal(value: String)                            extends Segment[Unit]
-        case Capture[A](name: String, parse: String => A)      extends Segment[A]
-        case Concat[A, B](left: Segment[?], right: Segment[?]) extends Segment[Inputs[A, B]]
-    end Segment
 
     def int(name: String): HttpPath[Int] =
         require(name.nonEmpty, "Capture name cannot be empty")
@@ -40,11 +32,6 @@ object HttpPath:
         require(name.nonEmpty, "Capture name cannot be empty")
         Segment.Capture(name, _.toBoolean)
 
-    private def toSegment[A](path: HttpPath[A]): Segment[A] =
-        path match
-            case s: String       => Segment.Literal(s).asInstanceOf[Segment[A]]
-            case seg: Segment[?] => seg.asInstanceOf[Segment[A]]
-
     extension [A](self: HttpPath[A])
         def /[B](next: HttpPath[B]): HttpPath[Inputs[A, B]] =
             Segment.Concat[A, B](toSegment(self), toSegment(next))
@@ -62,7 +49,18 @@ object HttpPath:
         case Tuple => A
         case _     => A *: EmptyTuple
 
-    // --- Path parsing utilities (from PathUtil) ---
+    // --- Private ---
+
+    private[kyo] enum Segment[+A]:
+        case Literal(value: String)                            extends Segment[Unit]
+        case Capture[A](name: String, parse: String => A)      extends Segment[A]
+        case Concat[A, B](left: Segment[?], right: Segment[?]) extends Segment[Inputs[A, B]]
+    end Segment
+
+    private def toSegment[A](path: HttpPath[A]): Segment[A] =
+        path match
+            case s: String       => Segment.Literal(s).asInstanceOf[Segment[A]]
+            case seg: Segment[?] => seg.asInstanceOf[Segment[A]]
 
     /** Parse path into non-empty segments. "/api/users/123" -> List("api", "users", "123") */
     private[kyo] def parseSegments(path: String): List[String] =

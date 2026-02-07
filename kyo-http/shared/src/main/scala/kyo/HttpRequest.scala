@@ -23,7 +23,7 @@ import scala.jdk.CollectionConverters.*
   */
 final class HttpRequest[+B <: HttpBody] private (
     val method: HttpRequest.Method,
-    private val _originalUrl: String,
+    private val _originalUrl: URI,
     private val _headers: Seq[(String, String)],
     val body: B,
     private val _contentType: Maybe[String],
@@ -37,31 +37,32 @@ final class HttpRequest[+B <: HttpBody] private (
 
     /** Returns the request URI (path and query string, without scheme/host). */
     def url: String =
-        val uri      = new URI(_originalUrl) // TODO if we need to keep converting, maybe originalUrl should be URI?
-        val rawPath  = uri.getRawPath
-        val rawQuery = uri.getRawQuery
+        val rawPath  = _originalUrl.getRawPath
+        val rawQuery = _originalUrl.getRawQuery
         val pathPart = if rawPath == null || rawPath.isEmpty then "/" else rawPath
         if rawQuery == null then pathPart else s"$pathPart?$rawQuery"
     end url
 
     /** Returns just the path without query string. */
     def path: String =
-        val uri     = new URI(_originalUrl)
-        val rawPath = uri.getRawPath
+        val rawPath = _originalUrl.getRawPath
         if rawPath == null || rawPath.isEmpty then "/"
         else rawPath
     end path
 
     /** Returns the full URL including scheme and host. */
     def fullUrl: String =
+        val urlStr = _originalUrl.toString
         // If original URL has scheme, return as-is; otherwise construct from Host header
-        if _originalUrl.startsWith("http://") || _originalUrl.startsWith("https://") then _originalUrl
+        if _originalUrl.getScheme != null then urlStr
         else
             header("Host") match
-                case Absent => _originalUrl
+                case Absent => urlStr
                 case Present(hostHeader) =>
                     val scheme = _scheme.getOrElse("http")
-                    s"$scheme://$hostHeader$_originalUrl"
+                    s"$scheme://$hostHeader$urlStr"
+        end if
+    end fullUrl
 
     def host: String =
         header("Host").map { h =>
@@ -143,8 +144,7 @@ final class HttpRequest[+B <: HttpBody] private (
     // --- Query parameter accessors ---
 
     def query(name: String): Maybe[String] =
-        val uri         = new URI(_originalUrl)
-        val queryString = uri.getRawQuery
+        val queryString = _originalUrl.getRawQuery
         if queryString == null then Absent
         else
             val decoder = new QueryStringDecoder(queryString, false)
@@ -158,8 +158,7 @@ final class HttpRequest[+B <: HttpBody] private (
     end query
 
     def queryAll(name: String): Seq[String] =
-        val uri         = new URI(_originalUrl)
-        val queryString = uri.getRawQuery
+        val queryString = _originalUrl.getRawQuery
         if queryString == null then Seq.empty
         else
             val decoder = new QueryStringDecoder(queryString, false)
@@ -189,6 +188,127 @@ final class HttpRequest[+B <: HttpBody] private (
     def ifNoneMatch: Maybe[String]     = header("If-None-Match")
     def ifModifiedSince: Maybe[String] = header("If-Modified-Since")
 
+    // --- Body accessors (type-safe via =:= evidence) ---
+
+    /** Returns the request body as a String. Only available for buffered requests. */
+    def bodyText(using ev: B <:< HttpBody.Bytes): String =
+        val data = ev(body).data
+        if data.isEmpty then "" else new String(data, StandardCharsets.UTF_8)
+
+    /** Returns the request body as a Span[Byte]. Only available for buffered requests. */
+    def bodyBytes(using ev: B <:< HttpBody.Bytes): Span[Byte] = ev(body).span
+
+    /** Parses the request body as type A. Only available for buffered requests. */
+    def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes): A =
+        Schema[A].decode(bodyText)
+
+    /** Returns multipart parts from the request body. Only available for buffered requests. */
+    def parts(using ev: B <:< HttpBody.Bytes): Span[HttpRequest.Part] =
+        val nettyReq = toNetty
+        val factory  = new DefaultHttpDataFactory(DefaultHttpDataFactory.MINSIZE)
+        val decoder  = new HttpPostRequestDecoder(factory, nettyReq)
+        try
+            @tailrec def loop(arr: Array[HttpRequest.Part], i: Int): (Array[HttpRequest.Part], Int) =
+                if !decoder.hasNext then (arr, i)
+                else
+                    val data = decoder.next()
+                    data match
+                        case fileUpload: FileUpload =>
+                            val newArr =
+                                if i == arr.length then
+                                    val expanded = new Array[HttpRequest.Part](arr.length * 2)
+                                    java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
+                                    expanded
+                                else arr
+                            newArr(i) = HttpRequest.Part(
+                                name = fileUpload.getName,
+                                filename = if fileUpload.getFilename.isEmpty then Absent else Present(fileUpload.getFilename),
+                                contentType =
+                                    if fileUpload.getContentType == null then Absent else Present(fileUpload.getContentType),
+                                content = fileUpload.get()
+                            )
+                            loop(newArr, i + 1)
+                        case attribute: Attribute =>
+                            val newArr =
+                                if i == arr.length then
+                                    val expanded = new Array[HttpRequest.Part](arr.length * 2)
+                                    java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
+                                    expanded
+                                else arr
+                            newArr(i) = HttpRequest.Part(
+                                name = attribute.getName,
+                                filename = Absent,
+                                contentType = Absent,
+                                content = attribute.get()
+                            )
+                            loop(newArr, i + 1)
+                        case _ =>
+                            loop(arr, i)
+                    end match
+
+            val (arr, i) = loop(new Array[HttpRequest.Part](4), 0)
+            if i == 0 then Span.empty[HttpRequest.Part]
+            else if i == arr.length then Span.fromUnsafe(arr)
+            else
+                val result = new Array[HttpRequest.Part](i)
+                java.lang.System.arraycopy(arr, 0, result, 0, i)
+                Span.fromUnsafe(result)
+            end if
+        catch
+            case _: HttpPostRequestDecoder.EndOfDataDecoderException =>
+                Span.empty[HttpRequest.Part]
+        finally
+            decoder.destroy()
+        end try
+    end parts
+
+    /** Converts to a Netty FullHttpRequest. Only valid for buffered requests. */
+    private[kyo] def toNetty(using ev: B <:< HttpBody.Bytes): FullHttpRequest =
+        import HttpRequest.Method.toNetty
+        val uri      = new URI(fullUrl)
+        val rawPath  = uri.getRawPath
+        val rawQuery = uri.getRawQuery
+        val pathStr  = if rawPath == null || rawPath.isEmpty then "/" else rawPath
+        val pathAndQuery =
+            if rawQuery == null then pathStr
+            else pathStr + "?" + rawQuery
+
+        val bodyData   = ev(body).data
+        val content    = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
+        val nettyReq   = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method.toNetty, pathAndQuery, content)
+        val nettyHdrs  = nettyReq.headers()
+        val headerSize = headers.size
+
+        // Add all user headers
+        @tailrec def addHeaders(i: Int): Unit =
+            if i < headerSize then
+                val (name, value) = headers(i)
+                discard(nettyHdrs.add(name, value))
+                addHeaders(i + 1)
+        addHeaders(0)
+
+        // Set Content-Type if body present and not already set
+        if bodyData.nonEmpty then
+            contentType.foreach { ct =>
+                if !nettyHdrs.contains(HttpHeaderNames.CONTENT_TYPE) then
+                    discard(nettyHdrs.set(HttpHeaderNames.CONTENT_TYPE, ct))
+            }
+            if !nettyHdrs.contains(HttpHeaderNames.CONTENT_LENGTH) then
+                discard(nettyHdrs.set(HttpHeaderNames.CONTENT_LENGTH, bodyData.length))
+        end if
+
+        nettyReq
+    end toNetty
+
+    /** Returns the body as a byte stream. Only available for streaming requests. */
+    def bodyStream(using ev: B <:< HttpBody.Streamed)(using Frame): Stream[Span[Byte], Async] = ev(body).stream
+
+    /** Returns the body as a byte stream. Works for both buffered and streaming requests. */
+    def bodyStreamUniversal(using Frame): Stream[Span[Byte], Async] =
+        body match
+            case b: HttpBody.Bytes    => Stream.init(Chunk(b.span))
+            case s: HttpBody.Streamed => s.stream
+
     // --- Builder methods (return new immutable instance, preserve body type) ---
 
     def addHeader(name: String, value: String): HttpRequest[B] =
@@ -212,138 +332,8 @@ end HttpRequest
 
 object HttpRequest:
 
-    // --- Extension methods for Bytes requests ---
-
-    // TODO instead of using extension methods to provide the methods depending on the http body, let's put them as class members and take an evidence =:=. This way you can add @implicitNotFound and have a better error message on why the method is not available. With extension methods, the method is just not found. Please fix this for ALL files in kyo-http.
-    extension (r: HttpRequest[HttpBody.Bytes])
-
-        def bodyText: String =
-            if r.body.data.isEmpty then "" else new String(r.body.data, StandardCharsets.UTF_8)
-
-        def bodyBytes: Span[Byte] = r.body.span
-
-        def bodyAs[A: Schema]: A =
-            Schema[A].decode(r.bodyText)
-
-        def parts: Span[Part] =
-            // Need to convert to Netty request for multipart parsing
-            val nettyReq = r.toNetty
-            val factory  = new DefaultHttpDataFactory(DefaultHttpDataFactory.MINSIZE)
-            val decoder  = new HttpPostRequestDecoder(factory, nettyReq)
-            try
-                @tailrec def loop(arr: Array[Part], i: Int): (Array[Part], Int) =
-                    if !decoder.hasNext then (arr, i)
-                    else
-                        val data = decoder.next()
-                        data match
-                            case fileUpload: FileUpload =>
-                                val newArr =
-                                    if i == arr.length then
-                                        val expanded = new Array[Part](arr.length * 2)
-                                        java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
-                                        expanded
-                                    else arr
-                                newArr(i) = Part(
-                                    name = fileUpload.getName,
-                                    filename = if fileUpload.getFilename.isEmpty then Absent else Present(fileUpload.getFilename),
-                                    contentType =
-                                        if fileUpload.getContentType == null then Absent else Present(fileUpload.getContentType),
-                                    content = fileUpload.get()
-                                )
-                                loop(newArr, i + 1)
-                            case attribute: Attribute =>
-                                val newArr =
-                                    if i == arr.length then
-                                        val expanded = new Array[Part](arr.length * 2)
-                                        java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
-                                        expanded
-                                    else arr
-                                newArr(i) = Part(
-                                    name = attribute.getName,
-                                    filename = Absent,
-                                    contentType = Absent,
-                                    content = attribute.get()
-                                )
-                                loop(newArr, i + 1)
-                            case _ =>
-                                loop(arr, i)
-                        end match
-
-                val (arr, i) = loop(new Array[Part](4), 0)
-                if i == 0 then Span.empty[Part]
-                else if i == arr.length then Span.fromUnsafe(arr)
-                else
-                    val result = new Array[Part](i)
-                    java.lang.System.arraycopy(arr, 0, result, 0, i)
-                    Span.fromUnsafe(result)
-                end if
-            catch
-                case _: HttpPostRequestDecoder.EndOfDataDecoderException =>
-                    Span.empty[Part]
-            finally
-                decoder.destroy()
-            end try
-        end parts
-
-        private[kyo] def toNetty: FullHttpRequest =
-            import Method.toNetty
-            val uri      = new URI(r.fullUrl)
-            val rawPath  = uri.getRawPath
-            val rawQuery = uri.getRawQuery
-            val pathStr  = if rawPath == null || rawPath.isEmpty then "/" else rawPath
-            val pathAndQuery =
-                if rawQuery == null then pathStr
-                else pathStr + "?" + rawQuery
-
-            val bodyData   = r.body.data
-            val content    = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
-            val nettyReq   = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, r.method.toNetty, pathAndQuery, content)
-            val nettyHdrs  = nettyReq.headers()
-            val headerSize = r.headers.size
-
-            // Add all user headers
-            @tailrec def addHeaders(i: Int): Unit =
-                if i < headerSize then
-                    val (name, value) = r.headers(i)
-                    discard(nettyHdrs.add(name, value))
-                    addHeaders(i + 1)
-            addHeaders(0)
-
-            // Set Content-Type if body present and not already set
-            if bodyData.nonEmpty then
-                r.contentType.foreach { ct =>
-                    if !nettyHdrs.contains(HttpHeaderNames.CONTENT_TYPE) then
-                        discard(nettyHdrs.set(HttpHeaderNames.CONTENT_TYPE, ct))
-                }
-                if !nettyHdrs.contains(HttpHeaderNames.CONTENT_LENGTH) then
-                    discard(nettyHdrs.set(HttpHeaderNames.CONTENT_LENGTH, bodyData.length))
-            end if
-
-            nettyReq
-        end toNetty
-
-    end extension
-
-    // --- Extension methods for Streamed requests ---
-
-    // TODO move to class with =:= evidence + @implicitNotFound
-    extension (r: HttpRequest[HttpBody.Streamed])
-        def bodyStream(using Frame): Stream[Span[Byte], Async] = r.body.stream
-    end extension
-
-    // --- Universal body stream (works for both types) ---
-
-    extension (r: HttpRequest[?])
-        // TODO move to class method
-        def bodyStreamUniversal(using Frame): Stream[Span[Byte], Async] =
-            r.body match
-                case b: HttpBody.Bytes    => Stream.init(Chunk(b.span))
-                case s: HttpBody.Streamed => s.stream
-    end extension
-
     // --- Factory methods for client-side requests ---
 
-    // TODO common-to-use APIs should come first in the soruce file
     def get(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.GET, url, Array.empty, headers, Absent)
 
@@ -404,26 +394,10 @@ object HttpRequest:
         val uri    = new URI(url)
         val scheme = if uri.getScheme == null then Absent else Present(uri.getScheme)
 
-        // Build headers with Host if from URL and not already present
-        // TODO I think this code is duplicated?
-        val headersWithHost =
-            val uriHost = uri.getHost
-            if uriHost != null && !headers.exists(_._1.equalsIgnoreCase("Host")) then
-                val port = uri.getPort
-                val hostValue =
-                    if port > 0 && port != HttpClient.DefaultHttpPort && port != HttpClient.DefaultHttpsPort then
-                        s"$uriHost:$port"
-                    else
-                        uriHost
-                headers :+ ("Host" -> hostValue)
-            else headers
-            end if
-        end headersWithHost
-
         new HttpRequest(
             method = method,
-            _originalUrl = url,
-            _headers = headersWithHost,
+            _originalUrl = uri,
+            _headers = withHostHeader(uri, headers),
             body = HttpBody.stream(body),
             _contentType = contentType,
             _scheme = scheme,
@@ -471,7 +445,7 @@ object HttpRequest:
 
     private[kyo] def fromNetty(nettyRequest: FullHttpRequest): HttpRequest[HttpBody.Bytes] =
         val method = Method.fromNetty(nettyRequest.method())
-        val url    = nettyRequest.uri()
+        val uri    = new URI(nettyRequest.uri())
 
         // Extract headers
         val nettyHeaders = nettyRequest.headers()
@@ -501,7 +475,7 @@ object HttpRequest:
 
         new HttpRequest(
             method = method,
-            _originalUrl = url,
+            _originalUrl = uri,
             _headers = headers.toSeq,
             body = HttpBody(bodyData),
             _contentType = contentType,
@@ -517,7 +491,7 @@ object HttpRequest:
         bodyData: Array[Byte]
     ): HttpRequest[HttpBody.Bytes] =
         val method = Method.fromNetty(nettyRequest.method())
-        val url    = nettyRequest.uri()
+        val uri    = new URI(nettyRequest.uri())
 
         val nettyHeaders = nettyRequest.headers()
         val headerCount  = nettyHeaders.size()
@@ -536,7 +510,7 @@ object HttpRequest:
 
         new HttpRequest(
             method = method,
-            _originalUrl = url,
+            _originalUrl = uri,
             _headers = headers.toSeq,
             body = HttpBody(bodyData),
             _contentType = contentType,
@@ -552,7 +526,7 @@ object HttpRequest:
         bodyStream: Stream[Span[Byte], Async]
     ): HttpRequest[HttpBody.Streamed] =
         val method = Method.fromNetty(nettyRequest.method())
-        val url    = nettyRequest.uri()
+        val uri    = new URI(nettyRequest.uri())
 
         val nettyHeaders = nettyRequest.headers()
         val headerCount  = nettyHeaders.size()
@@ -571,7 +545,7 @@ object HttpRequest:
 
         new HttpRequest(
             method = method,
-            _originalUrl = url,
+            _originalUrl = uri,
             _headers = headers.toSeq,
             body = HttpBody.stream(bodyStream),
             _contentType = contentType,
@@ -594,26 +568,10 @@ object HttpRequest:
         val uri    = new URI(url)
         val scheme = if uri.getScheme == null then Absent else Present(uri.getScheme)
 
-        // Build headers with Host if from URL and not already present
-        // TODO this code also seems duplicated
-        val headersWithHost =
-            val uriHost = uri.getHost
-            if uriHost != null && !headers.exists(_._1.equalsIgnoreCase("Host")) then
-                val port = uri.getPort
-                val hostValue =
-                    if port > 0 && port != HttpClient.DefaultHttpPort && port != HttpClient.DefaultHttpsPort then
-                        s"$uriHost:$port"
-                    else
-                        uriHost
-                headers :+ ("Host" -> hostValue)
-            else headers
-            end if
-        end headersWithHost
-
         new HttpRequest(
             method = method,
-            _originalUrl = url,
-            _headers = headersWithHost,
+            _originalUrl = uri,
+            _headers = withHostHeader(uri, headers),
             body = HttpBody(bodyData),
             _contentType = contentType,
             _scheme = scheme,
@@ -621,6 +579,22 @@ object HttpRequest:
             _strictCookieParsing = false
         )
     end create
+
+    // --- Private helpers ---
+
+    private def withHostHeader(uri: URI, headers: Seq[(String, String)]): Seq[(String, String)] =
+        val uriHost = uri.getHost
+        if uriHost != null && !headers.exists(_._1.equalsIgnoreCase("Host")) then
+            val port = uri.getPort
+            val hostValue =
+                if port > 0 && port != HttpClient.DefaultHttpPort && port != HttpClient.DefaultHttpsPort then
+                    s"$uriHost:$port"
+                else
+                    uriHost
+            headers :+ ("Host" -> hostValue)
+        else headers
+        end if
+    end withHostHeader
 
     // --- Method type ---
 

@@ -637,7 +637,7 @@ class HttpServerTest extends Test:
         }
 
         "NDJSON stream returns correct body" in run {
-            val handler = HttpHandler.stream[Unit, Event, Any]("/data") { (_, _) =>
+            val handler = HttpHandler.streamNdjson[Unit, Event, Any]("/data") { (_, _) =>
                 Stream.init(Seq(Event(10), Event(20), Event(30)))
             }
             startTestServer(handler).map { port =>
@@ -666,7 +666,7 @@ class HttpServerTest extends Test:
         }
 
         "empty NDJSON stream" in run {
-            val handler = HttpHandler.stream[Unit, Event, Any]("/empty") { (_, _) =>
+            val handler = HttpHandler.streamNdjson[Unit, Event, Any]("/empty") { (_, _) =>
                 Stream.empty[Event]
             }
             startTestServer(handler).map { port =>
@@ -692,7 +692,7 @@ class HttpServerTest extends Test:
         }
 
         "NDJSON stream with POST method" in run {
-            val handler = HttpHandler.stream[Unit, Event, Any](Method.POST, "/data") { (_, _) =>
+            val handler = HttpHandler.streamNdjson[Unit, Event, Any](Method.POST, "/data") { (_, _) =>
                 Stream.init(Seq(Event(42)))
             }
             startTestServer(handler).map { port =>
@@ -766,7 +766,7 @@ class HttpServerTest extends Test:
         }
 
         "stream receives NDJSON values" in run {
-            val handler = HttpHandler.stream[Unit, Item, Any]("/data") { (_, _) =>
+            val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/data") { (_, _) =>
                 Stream.init(Seq(Item("x"), Item("y"), Item("z")))
             }
             startTestServer(handler).map { port =>
@@ -795,7 +795,7 @@ class HttpServerTest extends Test:
         }
 
         "stream with empty NDJSON" in run {
-            val handler = HttpHandler.stream[Unit, Item, Any]("/empty") { (_, _) =>
+            val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/empty") { (_, _) =>
                 Stream.empty[Item]
             }
             startTestServer(handler).map { port =>

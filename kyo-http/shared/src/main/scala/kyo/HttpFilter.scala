@@ -29,21 +29,6 @@ abstract class HttpFilter:
 
     def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame): HttpResponse[?] < (Async & S)
 
-    /** Apply this filter with a type-preserving next function.
-      *
-      * Unlike the uncurried `apply(request, next)` which operates on `HttpRequest[?]`, this curried overload preserves the body type
-      * parameter, avoiding casts at call sites.
-      */
-    @scala.annotation.targetName("applyTyped")
-    // TODO let's remove this and cast on the call site. This is terrible
-    final def apply[B <: HttpBody, S](request: HttpRequest[B])(
-        next: HttpRequest[B] => HttpResponse[?] < (Async & S)
-    )(using Frame): HttpResponse[?] < (Async & S) =
-        this.apply[S](
-            request: HttpRequest[?],
-            (req: HttpRequest[?]) => next(req.asInstanceOf[HttpRequest[B]])
-        )
-
     /** Compose this filter with another */
     final def andThen(other: HttpFilter): HttpFilter =
         val self = this
@@ -70,59 +55,13 @@ object HttpFilter:
         ): HttpResponse[?] < (Async & S) =
             next(request)
 
-    /** Create a filter from a function that transforms request before calling next */
-    // TODO init doesn't seem a good name. Maybe HttpFilter.request?
-    def init(f: HttpRequest[?] => HttpRequest[?]): HttpFilter =
+    /** Create a filter from a function that transforms the request before calling next */
+    def request(f: HttpRequest[?] => HttpRequest[?]): HttpFilter =
         new HttpFilter:
             def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                 Frame
             ): HttpResponse[?] < (Async & S) =
                 next(f(request))
-
-    // --- Local-based API ---
-
-    private val local: Local[HttpFilter] = Local.init(noop)
-
-    /** Run computation with filter added to the current filter stack */
-    // TODO I think we can keep only filter.enable?
-    def let[A, S](filter: HttpFilter)(v: => A < S)(using Frame): A < S =
-        // TODO I think there's local.update
-        local.use { current =>
-            local.let(current.andThen(filter))(v)
-        }
-
-    /** Access current filter */
-    // TODO not sure this should be exposed to users
-    def use[A, S](f: HttpFilter => A < S)(using Frame): A < S =
-        local.use(f)
-
-    /** Get current filter as an effect */
-    def get(using Frame): HttpFilter < Any =
-        local.get
-
-    // --- Shared utilities ---
-
-    private val md5ThreadLocal = new ThreadLocal[MessageDigest]:
-        override def initialValue() = MessageDigest.getInstance("MD5")
-
-    private def computeETag(bytes: Array[Byte]): String =
-        // TODO double check this code is correct
-        val md5 = md5ThreadLocal.get()
-        md5.reset()
-        val hash = md5.digest(bytes)
-        "\"" + hash.map("%02x".format(_)).mkString + "\""
-    end computeETag
-
-    // --- Shared filters ---
-
-    /** Logs requests with custom handler. Shared implementation for server and client. */
-    // TODO if there's only one shared filter, let's make this private and move to the end.
-    def logging(log: (HttpRequest[?], HttpResponse[?]) => Unit < Sync): HttpFilter =
-        new HttpFilter:
-            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                next(request).map { response =>
-                    log(request, response).andThen(response)
-                }
 
     // --- Server-side filters ---
 
@@ -133,11 +72,9 @@ object HttpFilter:
         def logging(using Frame): HttpFilter =
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    // TODO there's Clock.stopwatch
-                    Clock.now.map { start =>
+                    Clock.stopwatch.map { sw =>
                         next(request).map { response =>
-                            Clock.now.map { end =>
-                                val dur = end - start
+                            sw.elapsed.map { dur =>
                                 Log.info(s"${request.method.name} ${request.path} -> ${response.status.code} (${dur.toMillis}ms)")
                                     .andThen(response)
                             }
@@ -148,11 +85,10 @@ object HttpFilter:
         def logging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    // TODO there's Clock.stopwatch
-                    Clock.now.map { start =>
+                    Clock.stopwatch.map { sw =>
                         next(request).map { response =>
-                            Clock.now.map { end =>
-                                log(request, response, end - start).andThen(response)
+                            sw.elapsed.map { dur =>
+                                log(request, response, dur).andThen(response)
                             }
                         }
                     }
@@ -340,10 +276,9 @@ object HttpFilter:
         def logging(using Frame): HttpFilter =
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    Clock.now.map { start =>
+                    Clock.stopwatch.map { sw =>
                         next(request).map { response =>
-                            Clock.now.map { end =>
-                                val dur = end - start
+                            sw.elapsed.map { dur =>
                                 Log.info(s"${request.method.name} ${request.url} -> ${response.status.code} (${dur.toMillis}ms)")
                                     .andThen(response)
                             }
@@ -354,31 +289,65 @@ object HttpFilter:
         def logging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    Clock.now.map { start =>
+                    Clock.stopwatch.map { sw =>
                         next(request).map { response =>
-                            Clock.now.map { end =>
-                                log(request, response, end - start).andThen(response)
+                            sw.elapsed.map { dur =>
+                                log(request, response, dur).andThen(response)
                             }
                         }
                     }
 
         /** Adds a header to outgoing requests. */
         def addHeader(name: String, value: String): HttpFilter =
-            init(_.addHeader(name, value))
+            HttpFilter.request(_.addHeader(name, value))
 
         /** Adds HTTP Basic Authentication header to outgoing requests. */
         def basicAuth(username: String, password: String): HttpFilter =
             val encoded = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
-            init(_.addHeader("Authorization", s"Basic $encoded"))
+            HttpFilter.request(_.addHeader("Authorization", s"Basic $encoded"))
 
         /** Adds HTTP Bearer token header to outgoing requests. */
         def bearerAuth(token: String): HttpFilter =
-            init(_.addHeader("Authorization", s"Bearer $token"))
+            HttpFilter.request(_.addHeader("Authorization", s"Bearer $token"))
 
         /** Adds a custom header to all outgoing requests. */
         def customHeader(name: String, value: String): HttpFilter =
-            init(_.addHeader(name, value))
+            HttpFilter.request(_.addHeader(name, value))
 
     end client
+
+    // --- Private ---
+
+    private val local: Local[HttpFilter] = Local.init(noop)
+
+    /** Run computation with filter added to the current filter stack */
+    private[kyo] def let[A, S](filter: HttpFilter)(v: => A < S)(using Frame): A < S =
+        local.update(_.andThen(filter))(v)
+
+    /** Access current filter */
+    private[kyo] def use[A, S](f: HttpFilter => A < S)(using Frame): A < S =
+        local.use(f)
+
+    /** Get current filter as an effect */
+    private[kyo] def get(using Frame): HttpFilter < Any =
+        local.get
+
+    private val md5ThreadLocal = new ThreadLocal[MessageDigest]:
+        override def initialValue() = MessageDigest.getInstance("MD5")
+
+    private def computeETag(bytes: Array[Byte]): String =
+        val md5 = md5ThreadLocal.get()
+        md5.reset()
+        val hash = md5.digest(bytes)
+        "\"" + hash.map("%02x".format(_)).mkString + "\""
+    end computeETag
+
+    /** Logs requests with custom handler. Shared implementation for server and client. */
+    private def logging(log: (HttpRequest[?], HttpResponse[?]) => Unit < Sync): HttpFilter =
+        new HttpFilter:
+            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
+                next(request).map { response =>
+                    log(request, response).andThen(response)
+                }
 
 end HttpFilter

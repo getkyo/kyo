@@ -10,7 +10,7 @@ import io.netty.handler.codec.http.HttpVersion
 import io.netty.handler.codec.http.LastHttpContent
 import kyo.*
 
-class StreamingResponseHandlerTest extends Test:
+class ResponseStreamingHandlerTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -20,12 +20,12 @@ class StreamingResponseHandlerTest extends Test:
     ): Maybe[Result[HttpError, StreamingHeaders]] =
         promise.poll().map(_.map(_.asInstanceOf[StreamingHeaders]))
 
-    "StreamingResponseHandler" - {
+    "ResponseStreamingHandler" - {
 
         "completes header promise with status and headers" in {
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
-            val handler       = new StreamingResponseHandler(headerPromise, byteChannel, "localhost", 8080)
+            val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
             val channel       = new EmbeddedChannel(handler)
 
             val response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK)
@@ -44,7 +44,7 @@ class StreamingResponseHandlerTest extends Test:
         "streams body chunks to byte channel" in {
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
-            val handler       = new StreamingResponseHandler(headerPromise, byteChannel, "localhost", 8080)
+            val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
             val channel       = new EmbeddedChannel(handler)
 
             // Send headers first
@@ -76,7 +76,7 @@ class StreamingResponseHandlerTest extends Test:
         "handles error status" in {
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
-            val handler       = new StreamingResponseHandler(headerPromise, byteChannel, "localhost", 8080)
+            val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
             val channel       = new EmbeddedChannel(handler)
 
             val response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR)
@@ -90,7 +90,7 @@ class StreamingResponseHandlerTest extends Test:
         "closes byte channel on last content" in {
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
-            val handler       = new StreamingResponseHandler(headerPromise, byteChannel, "localhost", 8080)
+            val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
             val channel       = new EmbeddedChannel(handler)
 
             val response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK)
@@ -106,7 +106,7 @@ class StreamingResponseHandlerTest extends Test:
         "handles channel inactive" in {
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
-            val handler       = new StreamingResponseHandler(headerPromise, byteChannel, "localhost", 8080)
+            val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
             val channel       = new EmbeddedChannel(handler)
 
             channel.pipeline().fireChannelInactive()
@@ -119,7 +119,7 @@ class StreamingResponseHandlerTest extends Test:
         "handles exception" in {
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
-            val handler       = new StreamingResponseHandler(headerPromise, byteChannel, "localhost", 8080)
+            val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
             val channel       = new EmbeddedChannel(handler)
 
             channel.pipeline().fireExceptionCaught(new RuntimeException("connection reset"))
@@ -130,4 +130,4 @@ class StreamingResponseHandlerTest extends Test:
         }
     }
 
-end StreamingResponseHandlerTest
+end ResponseStreamingHandlerTest

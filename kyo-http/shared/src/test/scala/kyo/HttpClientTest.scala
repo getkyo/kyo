@@ -1470,7 +1470,7 @@ class HttpClientTest extends Test:
 
         "streamNdjson" - {
             "receives NDJSON values" in run {
-                val handler = HttpHandler.stream[Unit, Item, Any]("/data") { (_, _) =>
+                val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/data") { (_, _) =>
                     Stream.init(Seq(Item("x"), Item("y"), Item("z")))
                 }
                 startTestServer(handler).map { port =>
@@ -1486,7 +1486,7 @@ class HttpClientTest extends Test:
             }
 
             "empty stream" in run {
-                val handler = HttpHandler.stream[Unit, Item, Any]("/empty") { (_, _) =>
+                val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/empty") { (_, _) =>
                     Stream.empty[Item]
                 }
                 startTestServer(handler).map { port =>
@@ -1499,7 +1499,7 @@ class HttpClientTest extends Test:
             }
 
             "with HttpRequest" in run {
-                val handler = HttpHandler.stream[Unit, Item, Any]("/data") { (_, _) =>
+                val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/data") { (_, _) =>
                     Stream.init(Seq(Item("q")))
                 }
                 startTestServer(handler).map { port =>

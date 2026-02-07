@@ -43,7 +43,7 @@ final class SseDecoder[V](schema: Schema[V]):
                 id = Present(line.substring(4))
             else if line.startsWith("retry: ") then
                 line.substring(7).toLongOption.foreach(ms => retry = Present(Duration.fromUnits(ms, Duration.Units.Millis)))
-            // Lines starting with ':' are comments (keep-alive), ignored
+            // Per SSE spec, unknown fields and comment lines (starting with ':') are silently ignored
         }
 
         val data = dataLines.result()
