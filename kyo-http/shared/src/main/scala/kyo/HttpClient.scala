@@ -262,14 +262,20 @@ object HttpClient:
         val fullPath    = if queryString.isEmpty then pathStr else s"$pathStr?$queryString"
         val headers     = buildRouteHeaders(route.headerParams, route.cookieParams, in, route.path, route.queryParams)
 
-        val request = route.inputSchema match
-            case Present(schema) =>
-                val bodyIndex = countPathCaptures(route.path) + route.queryParams.size + route.headerParams.size + route.cookieParams.size
-                val bodyValue = extractInputAt(in, bodyIndex)
-                val json      = schema.asInstanceOf[Schema[Any]].encode(bodyValue)
-                HttpRequest.initBytes(route.method, fullPath, json.getBytes("UTF-8"), headers, "application/json")
-            case Absent =>
-                HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
+        val bodyIndex = countPathCaptures(route.path) + route.queryParams.size + route.headerParams.size + route.cookieParams.size
+
+        val request =
+            if route.multipartInput then
+                val bodyValue = extractInputAt(in, bodyIndex).asInstanceOf[Seq[HttpRequest.Part]]
+                HttpRequest.multipart(fullPath, bodyValue, headers)
+            else
+                route.inputSchema match
+                    case Present(schema) =>
+                        val bodyValue = extractInputAt(in, bodyIndex)
+                        val json      = schema.asInstanceOf[Schema[Any]].encode(bodyValue)
+                        HttpRequest.initBytes(route.method, fullPath, json.getBytes("UTF-8"), headers, "application/json")
+                    case Absent =>
+                        HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
 
         // On error status, try to decode typed error via route's error schemas before falling back
         send(request).map { response =>

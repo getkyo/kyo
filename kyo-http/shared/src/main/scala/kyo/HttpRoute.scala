@@ -68,7 +68,8 @@ case class HttpRoute[In, Out, Err](
     isDeprecated: Boolean = false,
     externalDocsUrl: Maybe[String] = Absent,
     externalDocsDesc: Maybe[String] = Absent,
-    securityScheme: Maybe[String] = Absent
+    securityScheme: Maybe[String] = Absent,
+    multipartInput: Boolean = false
 ):
     import HttpRoute.*
 
@@ -144,7 +145,8 @@ case class HttpRoute[In, Out, Err](
         input[A]
 
     def inputMultipart: HttpRoute[Inputs[In, Seq[Part]], Out, Err] =
-        this.asInstanceOf[HttpRoute[Inputs[In, Seq[Part]], Out, Err]]
+        copy(multipartInput = true)
+            .asInstanceOf[HttpRoute[Inputs[In, Seq[Part]], Out, Err]]
 
     // --- Response Body ---
 

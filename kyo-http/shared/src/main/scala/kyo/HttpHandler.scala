@@ -76,11 +76,22 @@ object HttpHandler:
                 val pathInput   = extractPathParams(r.path, req.path)
                 val queryInput  = extractQueryParams(r.queryParams, req)
                 val headerInput = extractHeaderParams(r.headerParams, req)
-                val bodyInput = r.inputSchema match
-                    case Present(schema) =>
-                        schema.asInstanceOf[Schema[Any]].decode(req.bodyText)
-                    case Absent =>
-                        ()
+                val bodyInput =
+                    if r.multipartInput then
+                        val parts = req.parts
+                        val seq   = new Array[Any](parts.size)
+                        var i     = 0
+                        while i < parts.size do
+                            seq(i) = parts(i)
+                            i += 1
+                        end while
+                        seq.toSeq
+                    else
+                        r.inputSchema match
+                            case Present(schema) =>
+                                schema.asInstanceOf[Schema[Any]].decode(req.bodyText)
+                            case Absent =>
+                                ()
                 // Order must match route's In type: path → query → header → body
                 val fullInput = combineAllInputs(pathInput, queryInput, headerInput, bodyInput)
                 val computation = f(fullInput.asInstanceOf[In]).map { output =>

@@ -1262,6 +1262,111 @@ class HttpClientTest extends Test:
             }
         }
 
+        "route with multipart body" in run {
+            val route = HttpRoute.post("upload")
+                .inputMultipart
+                .outputText
+            val handler = route.handle { parts =>
+                val summary = parts.map(p => s"${p.name}:${p.content.length}").mkString(",")
+                s"count=${parts.size},$summary"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    val parts = Seq(
+                        HttpRequest.Part("file", Present("test.txt"), Present("text/plain"), "hello".getBytes("UTF-8"))
+                    )
+                    HttpClient.call(route, parts)
+                }.map { result =>
+                    assert(result == "count=1,file:5")
+                }
+            }
+        }
+
+        "route with path params and multipart body" in run {
+            import HttpPath./
+            val route = HttpRoute.post("uploads" / HttpPath.string("category"))
+                .inputMultipart
+                .outputText
+            val handler = route.handle { case (category, parts) =>
+                s"category=$category,count=${parts.size}"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    val parts = Seq(
+                        HttpRequest.Part("file", Present("a.txt"), Present("text/plain"), "aaa".getBytes("UTF-8")),
+                        HttpRequest.Part("file2", Present("b.txt"), Present("text/plain"), "bbb".getBytes("UTF-8"))
+                    )
+                    HttpClient.call(route, ("photos", parts))
+                }.map { result =>
+                    assert(result == "category=photos,count=2")
+                }
+            }
+        }
+
+        "route with query params and multipart body" in run {
+            val route = HttpRoute.post("upload")
+                .query[String]("tag")
+                .inputMultipart
+                .outputText
+            val handler = route.handle { case (tag, parts) =>
+                s"tag=$tag,count=${parts.size}"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    val parts = Seq(
+                        HttpRequest.Part("doc", Present("doc.pdf"), Present("application/pdf"), "pdf-data".getBytes("UTF-8"))
+                    )
+                    HttpClient.call(route, ("important", parts))
+                }.map { result =>
+                    assert(result == "tag=important,count=1")
+                }
+            }
+        }
+
+        "route with multipart preserves part details" in run {
+            val route = HttpRoute.post("upload")
+                .inputMultipart
+                .outputText
+            val handler = route.handle { parts =>
+                val p = parts.head
+                s"name=${p.name},filename=${p.filename.getOrElse("none")},ct=${p.contentType.getOrElse("none")},size=${p.content.length}"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    val parts = Seq(
+                        HttpRequest.Part("photo", Present("sunset.jpg"), Present("image/jpeg"), Array[Byte](1, 2, 3, 4, 5))
+                    )
+                    HttpClient.call(route, parts)
+                }.map { result =>
+                    assert(result == "name=photo,filename=sunset.jpg,ct=image/jpeg,size=5")
+                }
+            }
+        }
+
+        "route with multipart form fields and files" in run {
+            val route = HttpRoute.post("upload")
+                .inputMultipart
+                .outputText
+            val handler = route.handle { parts =>
+                parts.map { p =>
+                    val isFile = p.filename.isDefined
+                    val value  = new String(p.content, "UTF-8")
+                    s"${p.name}:${if isFile then "file" else "field"}=$value"
+                }.mkString(";")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    val parts = Seq(
+                        HttpRequest.Part("title", Absent, Absent, "My Doc".getBytes("UTF-8")),
+                        HttpRequest.Part("file", Present("doc.txt"), Present("text/plain"), "content".getBytes("UTF-8"))
+                    )
+                    HttpClient.call(route, parts)
+                }.map { result =>
+                    assert(result == "title:field=My Doc;file:file=content")
+                }
+            }
+        }
+
         "route error handling" in run {
             import HttpPath./
             case class NotFoundError(message: String) derives Schema, CanEqual
