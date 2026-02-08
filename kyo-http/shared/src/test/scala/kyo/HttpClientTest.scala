@@ -1122,6 +1122,146 @@ class HttpClientTest extends Test:
             }
         }
 
+        "route with path params and body" in run {
+            import HttpPath./
+            val route = HttpRoute.post("users" / HttpPath.int("id"))
+                .input[CreateUser]
+                .output[User]
+            val handler = route.handle { case (id, input) =>
+                User(id, input.name)
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, (42, CreateUser("Alice", "alice@example.com")))
+                }.map { user =>
+                    assert(user == User(42, "Alice"))
+                }
+            }
+        }
+
+        "route with query params and body" in run {
+            val route = HttpRoute.post("users")
+                .query[String]("role")
+                .input[CreateUser]
+                .output[User]
+            val handler = route.handle { case (role, input) =>
+                User(1, s"${input.name}:$role")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, ("admin", CreateUser("Alice", "alice@example.com")))
+                }.map { user =>
+                    assert(user == User(1, "Alice:admin"))
+                }
+            }
+        }
+
+        "route with header and body" in run {
+            val route = HttpRoute.post("users")
+                .header("X-Tenant")
+                .input[CreateUser]
+                .output[User]
+            val handler = route.handle { case (tenant, input) =>
+                User(1, s"${input.name}@$tenant")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, ("acme", CreateUser("Alice", "alice@example.com")))
+                }.map { user =>
+                    assert(user == User(1, "Alice@acme"))
+                }
+            }
+        }
+
+        "route with path and query params" in run {
+            import HttpPath./
+            val route = HttpRoute.get("users" / HttpPath.int("id"))
+                .query[String]("fields")
+                .output[User]
+            val handler = route.handle { case (id, fields) =>
+                User(id, fields)
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, (42, "name,email"))
+                }.map { user =>
+                    assert(user == User(42, "name,email"))
+                }
+            }
+        }
+
+        "route with path, query, and body" in run {
+            import HttpPath./
+            val route = HttpRoute.post("users" / HttpPath.int("id"))
+                .query[String]("action")
+                .input[CreateUser]
+                .output[User]
+            val handler = route.handle { case (id, action, input) =>
+                User(id, s"${input.name}:$action")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, (42, "update", CreateUser("Alice", "alice@example.com")))
+                }.map { user =>
+                    assert(user == User(42, "Alice:update"))
+                }
+            }
+        }
+
+        "route with path, header, and body" in run {
+            import HttpPath./
+            val route = HttpRoute.post("users" / HttpPath.int("id"))
+                .header("X-Tenant")
+                .input[CreateUser]
+                .output[User]
+            val handler = route.handle { case (id, tenant, input) =>
+                User(id, s"${input.name}@$tenant")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, (42, "acme", CreateUser("Alice", "alice@example.com")))
+                }.map { user =>
+                    assert(user == User(42, "Alice@acme"))
+                }
+            }
+        }
+
+        "route with path, query, header, and body" in run {
+            import HttpPath./
+            val route = HttpRoute.post("users" / HttpPath.int("id"))
+                .query[String]("action")
+                .header("X-Tenant")
+                .input[CreateUser]
+                .output[User]
+            val handler = route.handle { case (id, action, tenant, input) =>
+                User(id, s"${input.name}:$action@$tenant")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, (42, "create", "acme", CreateUser("Alice", "alice@example.com")))
+                }.map { user =>
+                    assert(user == User(42, "Alice:create@acme"))
+                }
+            }
+        }
+
+        "route with multiple path captures and body" in run {
+            import HttpPath./
+            val route = HttpRoute.post("orgs" / HttpPath.string("org") / "users" / HttpPath.int("id"))
+                .input[CreateUser]
+                .output[User]
+            val handler = route.handle { case (org, id, input) =>
+                User(id, s"${input.name}@$org")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, ("acme", 42, CreateUser("Alice", "alice@example.com")))
+                }.map { user =>
+                    assert(user == User(42, "Alice@acme"))
+                }
+            }
+        }
+
         "route error handling" in run {
             import HttpPath./
             case class NotFoundError(message: String) derives Schema, CanEqual

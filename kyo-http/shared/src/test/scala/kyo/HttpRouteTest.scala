@@ -615,7 +615,20 @@ class HttpRouteTest extends Test:
     }
 
     "Client call" - {
-        "invokes route with input" in run {
+        "literal-only path" in run {
+            val route   = HttpRoute.get("users").output[Seq[User]]
+            val handler = route.handle(_ => Seq(User(1, "Alice"), User(2, "Bob")))
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, ())
+                }.map { users =>
+                    assert(users.size == 2)
+                    assert(users.head == User(1, "Alice"))
+                }
+            }
+        }
+
+        "literal / capture" in run {
             val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
             val handler = route.handle(id => User(id, s"User$id"))
             startTestServer(handler).map { port =>
@@ -627,15 +640,59 @@ class HttpRouteTest extends Test:
             }
         }
 
-        "returns typed output" in run {
-            val route   = HttpRoute.get("users").output[Seq[User]]
-            val handler = route.handle(_ => Seq(User(1, "Alice"), User(2, "Bob")))
+        "literal / capture / literal" in run {
+            val route   = HttpRoute.get("users" / HttpPath.int("id") / "profile").output[User]
+            val handler = route.handle(id => User(id, "profile"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, ())
-                }.map { users =>
-                    assert(users.size == 2)
-                    assert(users.head == User(1, "Alice"))
+                    HttpClient.call(route, 42)
+                }.map { user =>
+                    assert(user == User(42, "profile"))
+                }
+            }
+        }
+
+        "literal / capture / literal / capture" in run {
+            val route = HttpRoute.get("orgs" / HttpPath.string("org") / "users" / HttpPath.int("id"))
+                .output[User]
+            val handler = route.handle { case (org, id) =>
+                User(id, org)
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, ("acme", 42))
+                }.map { user =>
+                    assert(user == User(42, "acme"))
+                }
+            }
+        }
+
+        "capture / capture (adjacent)" in run {
+            val route = HttpRoute.get("items" / HttpPath.string("category") / HttpPath.int("id"))
+                .output[User]
+            val handler = route.handle { case (category, id) =>
+                User(id, category)
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, ("books", 99))
+                }.map { user =>
+                    assert(user == User(99, "books"))
+                }
+            }
+        }
+
+        "deep path: literal / capture / literal / capture / literal" in run {
+            val route = HttpRoute.get("api" / HttpPath.string("version") / "users" / HttpPath.int("id") / "settings")
+                .output[User]
+            val handler = route.handle { case (version, id) =>
+                User(id, version)
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
+                    HttpClient.call(route, ("v2", 7))
+                }.map { user =>
+                    assert(user == User(7, "v2"))
                 }
             }
         }

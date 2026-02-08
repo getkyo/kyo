@@ -264,7 +264,9 @@ object HttpClient:
 
         val request = route.inputSchema match
             case Present(schema) =>
-                val json = schema.asInstanceOf[Schema[Any]].encode(in)
+                val bodyIndex = countPathCaptures(route.path) + route.queryParams.size + route.headerParams.size + route.cookieParams.size
+                val bodyValue = extractInputAt(in, bodyIndex)
+                val json      = schema.asInstanceOf[Schema[Any]].encode(bodyValue)
                 HttpRequest.initBytes(route.method, fullPath, json.getBytes("UTF-8"), headers, "application/json")
             case Absent =>
                 HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
@@ -593,7 +595,8 @@ object HttpClient:
             case HttpPath.Segment.Concat(left, right) =>
                 val (leftStr, nextIdx)  = buildUrlFromSegment(left.asInstanceOf[HttpPath.Segment[?]], in, idx)
                 val (rightStr, lastIdx) = buildUrlFromSegment(right.asInstanceOf[HttpPath.Segment[?]], in, nextIdx)
-                (leftStr + rightStr, lastIdx)
+                if rightStr.startsWith("/") then (leftStr + rightStr, lastIdx)
+                else (leftStr + "/" + rightStr, lastIdx)
 
     private def extractInputAt(in: Any, idx: Int): Any =
         in match
