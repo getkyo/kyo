@@ -27,12 +27,21 @@ object TestBackend extends Backend:
         end new
     end connectionFactory
 
-    def server(config: HttpServer.Config, handler: Backend.ServerHandler)(using Frame): Backend.Server < Async =
-        val assignedPort = if config.port == 0 then nextPort.getAndIncrement() else config.port
-        servers.put(assignedPort, ServerEntry(handler, config.maxContentLength))
+    def server(
+        serverPort: Int,
+        serverHost: String,
+        maxContentLength: Int,
+        backlog: Int,
+        keepAlive: Boolean,
+        tcpFastOpen: Boolean,
+        flushConsolidationLimit: Int,
+        handler: Backend.ServerHandler
+    )(using Frame): Backend.Server < Async =
+        val assignedPort = if serverPort == 0 then nextPort.getAndIncrement() else serverPort
+        servers.put(assignedPort, ServerEntry(handler, maxContentLength))
         new Backend.Server:
             def port: Int    = assignedPort
-            def host: String = config.host
+            def host: String = serverHost
             def stop(gracePeriod: Duration)(using Frame): Unit < Async =
                 servers.remove(assignedPort)
                 ()

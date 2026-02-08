@@ -76,9 +76,9 @@ final class HttpRequest[+B <: HttpBody] private (
             if portIdx >= 0 then h.substring(portIdx + 1).toInt
             else
                 // Use scheme to determine default port
-                if _scheme.contains("https") then HttpClient.DefaultHttpsPort else HttpClient.DefaultHttpPort
+                if _scheme.contains("https") then HttpRequest.DefaultHttpsPort else HttpRequest.DefaultHttpPort
             end if
-        }.getOrElse(HttpClient.DefaultHttpPort)
+        }.getOrElse(HttpRequest.DefaultHttpPort)
 
     // --- Header accessors ---
 
@@ -452,7 +452,7 @@ object HttpRequest:
                 // Wrap IPv6 addresses in brackets for Host header (if not already wrapped)
                 val hostPart = if h.startsWith("[") then h else if h.contains(':') then s"[$h]" else h
                 val hostValue =
-                    if port > 0 && port != HttpClient.DefaultHttpPort && port != HttpClient.DefaultHttpsPort then
+                    if port > 0 && port != HttpRequest.DefaultHttpPort && port != HttpRequest.DefaultHttpsPort then
                         s"$hostPart:$port"
                     else
                         hostPart
@@ -680,6 +680,11 @@ object HttpRequest:
         end while
         -1
     end indexOf
+
+    // --- Constants ---
+
+    private[kyo] inline def DefaultHttpPort  = 80
+    private[kyo] inline def DefaultHttpsPort = 443
 
     // --- Method type ---
 

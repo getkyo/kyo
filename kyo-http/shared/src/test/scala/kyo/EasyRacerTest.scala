@@ -56,12 +56,12 @@ class EasyRacerTest extends Test:
         }
     }
 
-    "scenario 3 - race 100 concurrent requests" in run {
+    "scenario 3 - race 10000 concurrent requests" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
                 val handler = HttpHandler.get("/3") { (_, _) =>
                     counter.incrementAndGet.map { num =>
-                        if num < 100 then
+                        if num < 10000 then
                             promise.get.andThen {
                                 Async.sleep(1.hour).andThen(HttpResponse.ok("wrong"))
                             }
@@ -73,7 +73,7 @@ class EasyRacerTest extends Test:
                 }
                 startTestServer(handler).map { port =>
                     val url  = s"http://localhost:$port/3"
-                    val reqs = Seq.fill(100)(req(url))
+                    val reqs = Seq.fill(10000)(req(url))
                     Async.race(reqs).map { result =>
                         assert(result == "right")
                     }
@@ -83,15 +83,21 @@ class EasyRacerTest extends Test:
     }
 
     "scenario 4 - race 2 concurrent requests, one with 1s timeout" in run {
-        val handler = HttpHandler.get("/4") { (_, _) =>
-            Async.sleep(3.seconds).andThen(HttpResponse.ok("right"))
-        }
-        startTestServer(handler).map { port =>
-            val url            = s"http://localhost:$port/4"
-            val normalReq      = req(url)
-            val reqWithTimeout = Async.timeout(1.second)(req(url))
-            Async.race(normalReq, reqWithTimeout).map { result =>
-                assert(result == "right")
+        Promise.init[Unit, Nothing].map { promise =>
+            val handler = HttpHandler.get("/4") { (_, _) =>
+                promise.get.andThen(HttpResponse.ok("right"))
+            }
+            startTestServer(handler).map { port =>
+                val url       = s"http://localhost:$port/4"
+                val normalReq = req(url)
+                val reqWithTimeout =
+                    Abort.run(Async.timeout(1.second)(req(url)))
+                        .map(_ => promise.completeUnitDiscard)
+                        .andThen(Async.sleep(1.hour))
+                        .andThen("never")
+                Async.race(normalReq, reqWithTimeout).map { result =>
+                    assert(result == "right")
+                }
             }
         }
     }

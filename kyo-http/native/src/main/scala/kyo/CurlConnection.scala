@@ -103,7 +103,7 @@ final private[kyo] class CurlConnection(
         val hasHost = request.headers.exists(_._1.equalsIgnoreCase("Host"))
         if !hasHost then
             val hostHeader =
-                if port == HttpClient.DefaultHttpPort || port == HttpClient.DefaultHttpsPort then host
+                if port == HttpRequest.DefaultHttpPort || port == HttpRequest.DefaultHttpsPort then host
                 else s"$host:$port"
             headerList = curl_slist_append(headerList, toCString(s"Host: $hostHeader"))
         end if

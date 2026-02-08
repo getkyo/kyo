@@ -1071,7 +1071,7 @@ class HttpClientTest extends Test:
             val handler = route.handle(_ => Seq(User(1, "Alice"), User(2, "Bob")))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    route.call(())
+                    HttpClient.call(route, ())
                 }.map { users =>
                     assert(users == Seq(User(1, "Alice"), User(2, "Bob")))
                 }
@@ -1084,7 +1084,7 @@ class HttpClientTest extends Test:
             val handler = route.handle(id => User(id, s"User$id"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    route.call(42)
+                    HttpClient.call(route, 42)
                 }.map { user =>
                     assert(user == User(42, "User42"))
                 }
@@ -1101,7 +1101,7 @@ class HttpClientTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    route.call((3, 10))
+                    HttpClient.call(route, (3, 10))
                 }.map { users =>
                     assert(users.size == 3)
                     assert(users.head.id == 10)
@@ -1118,7 +1118,7 @@ class HttpClientTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    route.call("req-123")
+                    HttpClient.call(route, "req-123")
                 }.map { users =>
                     assert(users.head.name == "req-123")
                 }
@@ -1134,7 +1134,7 @@ class HttpClientTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    route.call(CreateUser("Alice", "alice@example.com"))
+                    HttpClient.call(route, CreateUser("Alice", "alice@example.com"))
                 }.map { user =>
                     assert(user == User(1, "Alice"))
                 }
@@ -1154,7 +1154,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     // Test successful case
-                    route.call(1).map { user =>
+                    HttpClient.call(route, 1).map { user =>
                         assert(user == User(1, "User1"))
                     }.andThen {
                         // Test error case - should return 404 with error body

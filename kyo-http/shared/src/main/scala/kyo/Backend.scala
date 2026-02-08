@@ -16,7 +16,13 @@ abstract class Backend:
 
     /** Bind a server to a port and start accepting requests. */
     def server(
-        config: HttpServer.Config,
+        port: Int,
+        host: String,
+        maxContentLength: Int,
+        backlog: Int,
+        keepAlive: Boolean,
+        tcpFastOpen: Boolean,
+        flushConsolidationLimit: Int,
         handler: Backend.ServerHandler
     )(using Frame): Backend.Server < Async
 

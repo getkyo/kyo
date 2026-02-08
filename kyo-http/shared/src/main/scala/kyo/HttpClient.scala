@@ -193,6 +193,40 @@ object HttpClient:
     ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
         clientLocal.use(_.streamNdjson[V](request))
 
+    // --- Route-based client ---
+
+    /** Invoke a typed route, sending a request built from the route definition and input. */
+    def call[In, Out, Err](route: HttpRoute[In, Out, Err], in: In)(using Frame): Out < (Async & Abort[HttpError] & Abort[Err]) =
+        val pathStr     = buildRoutePath(route.path, in)
+        val queryString = buildRouteQueryString(route.queryParams, in, route.path)
+        val fullPath    = if queryString.isEmpty then pathStr else s"$pathStr?$queryString"
+        val headers     = buildRouteHeaders(route.headerParams, route.cookieParams, in, route.path, route.queryParams)
+
+        val request = route.inputSchema match
+            case Present(schema) =>
+                val json = schema.asInstanceOf[Schema[Any]].encode(in)
+                HttpRequest.initBytes(route.method, fullPath, json.getBytes("UTF-8"), headers, "application/json")
+            case Absent =>
+                HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
+
+        send(request).map { response =>
+            if response.status.isError then
+                val body = response.bodyText
+                val errOpt = route.errorSchemas.collectFirst {
+                    case (status, schema, _) if response.status == status =>
+                        try Some(schema.asInstanceOf[Schema[Any]].decode(body))
+                        catch case _: Exception => None
+                }.flatten
+                errOpt match
+                    case Some(err) => Abort.fail(err.asInstanceOf[Err])
+                    case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: ${response.status}"))
+            else
+                route.outputSchema match
+                    case Present(schema) => schema.asInstanceOf[Schema[Out]].decode(response.bodyText)
+                    case Absent          => ().asInstanceOf[Out]
+        }
+    end call
+
     // --- Context management ---
 
     def let[A, S](client: HttpClient)(v: A < S)(using Frame): A < S =
@@ -298,8 +332,8 @@ object HttpClient:
 
     // --- Private implementation ---
 
-    private[kyo] inline def DefaultHttpPort  = 80
-    private[kyo] inline def DefaultHttpsPort = 443
+    private[kyo] inline def DefaultHttpPort  = HttpRequest.DefaultHttpPort
+    private[kyo] inline def DefaultHttpsPort = HttpRequest.DefaultHttpsPort
 
     /** Build a URL from host/port/ssl/path components. */
     private[kyo] def buildUrl(host: String, port: Int, ssl: Boolean, path: String): String =
@@ -457,5 +491,69 @@ object HttpClient:
                     finalResp
         }
     end sendWithPolicies
+
+    // --- Route call helpers ---
+
+    private def buildRoutePath(path: HttpPath[Any], in: Any): String =
+        path match
+            case s: String                    => s
+            case segment: HttpPath.Segment[?] => buildUrlFromSegment(segment, in, 0)._1
+
+    private def buildUrlFromSegment(segment: HttpPath.Segment[?], in: Any, idx: Int): (String, Int) =
+        segment match
+            case HttpPath.Segment.Literal(value) =>
+                (value, idx)
+            case HttpPath.Segment.Capture(name, _) =>
+                val value = extractInputAt(in, idx)
+                (s"/$value", idx + 1)
+            case HttpPath.Segment.Concat(left, right) =>
+                val (leftStr, nextIdx)  = buildUrlFromSegment(left.asInstanceOf[HttpPath.Segment[?]], in, idx)
+                val (rightStr, lastIdx) = buildUrlFromSegment(right.asInstanceOf[HttpPath.Segment[?]], in, nextIdx)
+                (leftStr + rightStr, lastIdx)
+
+    private def extractInputAt(in: Any, idx: Int): Any =
+        in match
+            case tuple: Tuple => tuple.productElement(idx)
+            case other => if idx == 0 then other else throw new IllegalStateException(s"Cannot extract input at index $idx from $other")
+
+    private def buildRouteHeaders(
+        headerParams: Seq[HttpRoute.HeaderParam],
+        cookieParams: Seq[HttpRoute.CookieParam],
+        in: Any,
+        path: HttpPath[Any],
+        queryParams: Seq[HttpRoute.QueryParam[?]]
+    ): Seq[(String, String)] =
+        if headerParams.isEmpty then Seq.empty
+        else
+            val pathCaptureCount = countPathCaptures(path)
+            val queryParamCount  = queryParams.size
+            val offset           = pathCaptureCount + queryParamCount
+            headerParams.zipWithIndex.map { case (param, i) =>
+                val value = extractInputAt(in, offset + i)
+                (param.name, value.toString)
+            }
+
+    private def buildRouteQueryString(queryParams: Seq[HttpRoute.QueryParam[?]], in: Any, path: HttpPath[Any]): String =
+        if queryParams.isEmpty then ""
+        else
+            val pathCaptureCount = countPathCaptures(path)
+            val pairs = queryParams.zipWithIndex.map { case (param, i) =>
+                val value = extractInputAt(in, pathCaptureCount + i)
+                s"${param.name}=${java.net.URLEncoder.encode(value.toString, "UTF-8")}"
+            }
+            pairs.mkString("&")
+
+    private def countPathCaptures(path: HttpPath[Any]): Int =
+        path match
+            case _: String                    => 0
+            case segment: HttpPath.Segment[?] => countSegmentCaptures(segment)
+
+    private def countSegmentCaptures(segment: HttpPath.Segment[?]): Int =
+        segment match
+            case HttpPath.Segment.Literal(_)    => 0
+            case HttpPath.Segment.Capture(_, _) => 1
+            case HttpPath.Segment.Concat(left, right) =>
+                countSegmentCaptures(left.asInstanceOf[HttpPath.Segment[?]]) +
+                    countSegmentCaptures(right.asInstanceOf[HttpPath.Segment[?]])
 
 end HttpClient

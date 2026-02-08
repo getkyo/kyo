@@ -620,7 +620,7 @@ class HttpRouteTest extends Test:
             val handler = route.handle(id => User(id, s"User$id"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    route.call(42)
+                    HttpClient.call(route, 42)
                 }.map { user =>
                     assert(user == User(42, "User42"))
                 }
@@ -632,7 +632,7 @@ class HttpRouteTest extends Test:
             val handler = route.handle(_ => Seq(User(1, "Alice"), User(2, "Bob")))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    route.call(())
+                    HttpClient.call(route, ())
                 }.map { users =>
                     assert(users.size == 2)
                     assert(users.head == User(1, "Alice"))
@@ -650,7 +650,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    Abort.run[NotFoundError](route.call(999))
+                    Abort.run[NotFoundError](HttpClient.call(route, 999))
                 }.map { result =>
                     assert(result.isFailure)
                 }

@@ -71,7 +71,16 @@ object NettyBackend extends Backend:
         end new
     end connectionFactory
 
-    def server(config: HttpServer.Config, handler: Backend.ServerHandler)(using Frame): Backend.Server < Async =
+    def server(
+        port: Int,
+        host: String,
+        maxContentLength: Int,
+        backlog: Int,
+        keepAlive: Boolean,
+        tcpFastOpen: Boolean,
+        flushConsolidationLimit: Int,
+        handler: Backend.ServerHandler
+    )(using Frame): Backend.Server < Async =
         Sync.defer {
             val bossGroup   = new MultiThreadIoEventLoopGroup(1, NettyTransport.ioHandlerFactory)
             val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
@@ -85,22 +94,22 @@ object NettyBackend extends Backend:
                         override def initChannel(ch: SocketChannel): Unit =
                             val pipeline = ch.pipeline()
                             discard(pipeline.addLast(new FlushConsolidationHandler(
-                                config.flushConsolidationLimit,
+                                flushConsolidationLimit,
                                 true
                             )))
                             discard(pipeline.addLast(new HttpServerCodec()))
                             discard(pipeline.addLast(new HttpServerHandler(
                                 handler,
-                                config.maxContentLength
+                                maxContentLength
                             ))))
-                    .option(ChannelOption.SO_BACKLOG, Integer.valueOf(config.backlog))
-                    .childOption(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.valueOf(config.keepAlive))
+                    .option(ChannelOption.SO_BACKLOG, Integer.valueOf(backlog))
+                    .childOption(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.valueOf(keepAlive))
                     .childOption(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
             }
-            if config.tcpFastOpen then
-                NettyTransport.applyTcpFastOpen(bootstrap, config.backlog)
+            if tcpFastOpen then
+                NettyTransport.applyTcpFastOpen(bootstrap, backlog)
 
-            val bindFuture = bootstrap.bind(config.host, config.port)
+            val bindFuture = bootstrap.bind(host, port)
 
             NettyUtil.continue(bindFuture) { channel =>
                 val address = channel.localAddress().asInstanceOf[InetSocketAddress]

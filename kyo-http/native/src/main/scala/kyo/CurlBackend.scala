@@ -22,7 +22,16 @@ object CurlBackend extends Backend:
         end new
     end connectionFactory
 
-    def server(config: HttpServer.Config, handler: Backend.ServerHandler)(using Frame): Backend.Server < Async =
+    def server(
+        port: Int,
+        host: String,
+        maxContentLength: Int,
+        backlog: Int,
+        keepAlive: Boolean,
+        tcpFastOpen: Boolean,
+        flushConsolidationLimit: Int,
+        handler: Backend.ServerHandler
+    )(using Frame): Backend.Server < Async =
         throw new UnsupportedOperationException("HTTP server is not supported on Scala Native platform")
 
 end CurlBackend
