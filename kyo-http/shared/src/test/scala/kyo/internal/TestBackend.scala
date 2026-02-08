@@ -7,7 +7,7 @@ import kyo.*
 /** In-memory Backend for cross-platform tests. Routes client requests directly through stored server handlers without TCP. */
 object TestBackend extends Backend:
 
-    private case class ServerEntry(handler: Backend.ServerHandler, maxContentLength: Int)
+    private case class ServerEntry(handler: Backend.ServerHandler, maxContentLength: Int, closed: AtomicBoolean.Unsafe)
 
     private val nextPort = new AtomicInteger(50000)
     private val servers  = new ConcurrentHashMap[Int, ServerEntry]()
@@ -21,7 +21,7 @@ object TestBackend extends Backend:
                     case null =>
                         Abort.fail(HttpError.ConnectionFailed(host, port, new RuntimeException(s"No test server on port $port")))
                     case entry =>
-                        new TestConnection(entry.handler, entry.maxContentLength)
+                        new TestConnection(entry.handler, entry.maxContentLength, entry.closed)
 
             def close(gracePeriod: Duration)(using Frame): Unit < Async = ()
         end new
@@ -37,22 +37,28 @@ object TestBackend extends Backend:
         flushConsolidationLimit: Int,
         handler: Backend.ServerHandler
     )(using Frame): Backend.Server < Async =
-        val assignedPort = if serverPort == 0 then nextPort.getAndIncrement() else serverPort
-        servers.put(assignedPort, ServerEntry(handler, maxContentLength))
-        new Backend.Server:
-            def port: Int    = assignedPort
-            def host: String = serverHost
-            def close(gracePeriod: Duration)(using Frame): Unit < Async =
-                servers.remove(assignedPort)
-                ()
-            def await(using Frame): Unit < Async =
-                Async.sleep(Duration.Infinity)
-        end new
+        Sync.Unsafe {
+            val assignedPort = if serverPort == 0 then nextPort.getAndIncrement() else serverPort
+            val closed       = AtomicBoolean.Unsafe.init(false)
+            servers.put(assignedPort, ServerEntry(handler, maxContentLength, closed))
+            new Backend.Server:
+                def port: Int    = assignedPort
+                def host: String = serverHost
+                def close(gracePeriod: Duration)(using Frame): Unit < Async =
+                    Sync.Unsafe {
+                        closed.set(true)
+                        discard(servers.remove(assignedPort))
+                    }
+                def await(using Frame): Unit < Async =
+                    Async.sleep(Duration.Infinity)
+            end new
+        }
     end server
 
 end TestBackend
 
-private class TestConnection(handler: Backend.ServerHandler, maxContentLength: Int) extends Backend.Connection:
+private class TestConnection(handler: Backend.ServerHandler, maxContentLength: Int, closed: AtomicBoolean.Unsafe)
+    extends Backend.Connection:
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         if request.body.span.size > maxContentLength then
@@ -132,11 +138,11 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
         end match
     end stream
 
-    def isAlive: Boolean = true
+    def isAlive(using AllowUnsafe): Boolean = !closed.get()
 
     def close(using Frame): Unit < Async = ()
 
-    private[kyo] def closeAbruptly(): Unit = ()
+    private[kyo] def closeAbruptly()(using AllowUnsafe): Unit = ()
 
     private def extractPath(url: String): String =
         // URL may be just a path like "/foo" or a full URL like "http://localhost:50000/foo"

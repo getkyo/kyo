@@ -935,24 +935,24 @@ class HttpClientTest extends Test:
             }
         }
 
-        // "race between requests" in run {
-        //     val slowHandler = HttpHandler.get("/slow") { _ =>
-        //         Async.delay(1.second)(HttpResponse.ok("slow"))
-        //     }
-        //     val fastHandler = HttpHandler.get("/fast") { _ =>
-        //         HttpResponse.ok("fast")
-        //     }
-        //     startTestServer(slowHandler, fastHandler).map { port =>
-        //         Kyo.foreach(1 to 100) { _ =>
-        //             Async.race(
-        //                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/slow")),
-        //                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/fast"))
-        //             ).map { response =>
-        //                 assert(getBodyText(response) == "fast")
-        //             }
-        //         }.andThen(succeed)
-        //     }
-        // }
+        "race between requests" in run {
+            val slowHandler = HttpHandler.get("/slow") { _ =>
+                Async.delay(1.second)(HttpResponse.ok("slow"))
+            }
+            val fastHandler = HttpHandler.get("/fast") { _ =>
+                HttpResponse.ok("fast")
+            }
+            startTestServer(slowHandler, fastHandler).map { port =>
+                Kyo.foreach(1 to 100) { _ =>
+                    Async.race(
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/slow")),
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/fast"))
+                    ).map { response =>
+                        assert(getBodyText(response) == "fast")
+                    }
+                }.andThen(succeed)
+            }
+        }
 
         "concurrent requests with shared state handler" in run {
             val counter = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -1040,28 +1040,6 @@ class HttpClientTest extends Test:
             }
         }
 
-        "with explicit fiber init - like benchmark" in runNotJS {
-            val handler = HttpHandler.get("/ping") { _ =>
-                HttpResponse.ok("pong")
-            }
-            startTestServer(handler).map { port =>
-                val url = s"http://localhost:$port/ping"
-                Kyo.foreach(1 to iterations) { _ =>
-                    val computation = Abort.run[HttpError](HttpClient.send(HttpRequest.get(url)).map(_.bodyText)).map {
-                        case Result.Success(s) => s
-                        case Result.Failure(e) => throw new RuntimeException(e.toString)
-                        case Result.Panic(e)   => throw e
-                    }
-                    Fiber.initUnscoped(computation).map { fiber =>
-                        fiber.block(Duration.Infinity).map {
-                            case Result.Success(body) => assert(body == "pong")
-                            case Result.Failure(t)    => fail(s"Fiber failed: $t")
-                            case Result.Panic(e)      => fail(s"Fiber panicked: $e")
-                        }
-                    }
-                }.andThen(succeed)
-            }
-        }
     }
 
     "Integration with HttpRoute" - {

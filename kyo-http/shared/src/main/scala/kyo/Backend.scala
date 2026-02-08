@@ -65,13 +65,13 @@ object Backend:
         def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError])
 
         /** Whether the underlying transport connection is still alive. */
-        def isAlive: Boolean
+        def isAlive(using AllowUnsafe): Boolean
 
         /** Graceful close. */
         def close(using Frame): Unit < Async
 
         /** Synchronous fire-and-forget close for pool cleanup. */
-        private[kyo] def closeAbruptly(): Unit
+        private[kyo] def closeAbruptly()(using AllowUnsafe): Unit
     end Connection
 
     /** Running HTTP server instance. */

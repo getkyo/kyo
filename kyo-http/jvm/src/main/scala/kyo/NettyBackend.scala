@@ -45,18 +45,19 @@ object NettyBackend extends Backend:
                 val connectFuture = b.connect()
                 Sync.Unsafe {
                     val p = Promise.Unsafe.init[Backend.Connection, Abort[HttpError]]()
-                    connectFuture.addListener((future: ChannelFuture) =>
-                        discard {
-                            if future.isSuccess then
-                                p.complete(Result.succeed(
-                                    new NettyConnection(future.channel(), host, port, maxResponseSizeBytes)
-                                ))
-                            else
-                                p.complete(Result.fail(
-                                    HttpError.fromThrowable(future.cause(), host, port)
-                                ))
-                        }
-                    )
+                    connectFuture.addListener { (future: ChannelFuture) =>
+                        import AllowUnsafe.embrace.danger
+                        if future.isSuccess then
+                            val closed = AtomicBoolean.Unsafe.init(false).safe
+                            discard(p.complete(Result.succeed(
+                                new NettyConnection(future.channel(), host, port, maxResponseSizeBytes, closed)
+                            )))
+                        else
+                            discard(p.complete(Result.fail(
+                                HttpError.fromThrowable(future.cause(), host, port)
+                            )))
+                        end if
+                    }
                     // Bridge Kyo fiber interruption to Netty: if the fiber is cancelled,
                     // attempt to cancel the in-flight connect. Best-effort — no-op if
                     // the connection already completed.

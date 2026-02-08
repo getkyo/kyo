@@ -19,7 +19,8 @@ final private[kyo] class NettyConnection(
     channel: NettyChannel,
     host: String,
     port: Int,
-    maxResponseSizeBytes: Int
+    maxResponseSizeBytes: Int,
+    closed: AtomicBoolean
 ) extends Backend.Connection:
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
@@ -127,11 +128,15 @@ final private[kyo] class NettyConnection(
         }
     end stream
 
-    def isAlive: Boolean = channel.isActive()
+    def isAlive(using AllowUnsafe): Boolean = !closed.unsafe.get() && channel.isActive()
 
     // Connection close is instant (TCP FIN/RST) — no grace period needed
-    def close(using Frame): Unit < Async = NettyUtil.await(channel.close())
+    def close(using Frame): Unit < Async =
+        closed.set(true)
+            .andThen(NettyUtil.await(channel.close()))
 
-    private[kyo] def closeAbruptly(): Unit = discard(channel.close())
+    private[kyo] def closeAbruptly()(using AllowUnsafe): Unit =
+        closed.unsafe.set(true)
+        discard(channel.close())
 
 end NettyConnection

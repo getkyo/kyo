@@ -1,6 +1,5 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kyo.internal.BufferedTransferState
 import kyo.internal.CurlBindings
@@ -25,7 +24,7 @@ final private[kyo] class CurlConnection(
     import AllowUnsafe.embrace.danger
     import CurlBindings.*
 
-    private val alive = new AtomicBoolean(true)
+    private val alive = AtomicBoolean.Unsafe.init(true)
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         Zone {
@@ -66,11 +65,11 @@ final private[kyo] class CurlConnection(
         }
     end stream
 
-    def isAlive: Boolean = alive.get()
+    def isAlive(using AllowUnsafe): Boolean = alive.get()
 
-    def close(using Frame): Unit < Async = Sync.defer { alive.set(false) }
+    def close(using Frame): Unit < Async = Sync.Unsafe { alive.set(false) }
 
-    private[kyo] def closeAbruptly(): Unit = alive.set(false)
+    private[kyo] def closeAbruptly()(using AllowUnsafe): Unit = alive.set(false)
 
     private def configureHandle(handle: CURL, request: HttpRequest[?], transferId: Long, state: TransferState)(using Zone): Unit =
         // URL
