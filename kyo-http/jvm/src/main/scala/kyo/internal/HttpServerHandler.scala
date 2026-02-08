@@ -274,10 +274,11 @@ final private[kyo] class HttpServerHandler(
                                 HttpVersion.HTTP_1_1,
                                 HttpResponseStatus.valueOf(response.status.code)
                             )
-                            nettyResponse.headers().set("Transfer-Encoding", "chunked")
                             response.resolvedHeaders.foreach { (k, v) =>
                                 discard(nettyResponse.headers().set(k, v))
                             }
+                            if !nettyResponse.headers().contains("Content-Length") then
+                                discard(nettyResponse.headers().set("Transfer-Encoding", "chunked"))
                             discard(ctx.writeAndFlush(nettyResponse))
 
                             Abort.run[Throwable](Abort.catching[Throwable] {

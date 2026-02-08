@@ -215,6 +215,47 @@ object HttpHandler:
         end new
     end streamingBody
 
+    // --- Streaming multipart ---
+
+    /** Creates a handler that receives a streaming multipart request.
+      *
+      * The handler receives path captures and a `Stream[HttpRequest.Part, Async]` that yields individual multipart parts as they are parsed
+      * from the streaming request body, without buffering the entire body first.
+      */
+    @nowarn("msg=anonymous")
+    inline def streamingMultipart[A, S](
+        method: Method,
+        path: HttpPath[A]
+    )(inline f: HttpPath.Inputs[A, Stream[HttpRequest.Part, Async]] => kyo.HttpResponse[?] < (Async & S))(using
+        Frame
+    ): HttpHandler[S] =
+        new HttpHandler[S]:
+            val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
+            override private[kyo] def streamingRequest: Boolean = true
+            private[kyo] def apply(request: HttpRequest[?]): kyo.HttpResponse[?] < (Async & S) =
+                val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], request.path)
+                val boundary = request.contentType match
+                    case Present(ct) => extractBoundary(ct)
+                    case Absent      => Absent
+                boundary match
+                    case Present(b) =>
+                        val streamReq = request.asInstanceOf[HttpRequest[HttpBody.Streamed]]
+                        val decoder   = new internal.MultipartStreamDecoder(b)
+                        val partStream: Stream[HttpRequest.Part, Async] =
+                            streamReq.bodyStream.mapChunkPure[Span[Byte], HttpRequest.Part] { chunk =>
+                                val result = Seq.newBuilder[HttpRequest.Part]
+                                chunk.foreach(bytes => result ++= decoder.decode(bytes))
+                                result.result()
+                            }
+                        val fullInput = combineInputs(pathInput, partStream)
+                        f(fullInput.asInstanceOf[HttpPath.Inputs[A, Stream[HttpRequest.Part, Async]]])
+                    case Absent =>
+                        kyo.HttpResponse.badRequest("Missing or invalid multipart boundary")
+                end match
+            end apply
+        end new
+    end streamingMultipart
+
     // --- SSE streaming ---
 
     inline def streamSse[A, V: Schema: Tag, S](
@@ -392,5 +433,21 @@ object HttpHandler:
                 val (leftVal, remaining)   = extractFromSegment(left.asInstanceOf[HttpPath.Segment[?]], parts)
                 val (rightVal, remaining2) = extractFromSegment(right.asInstanceOf[HttpPath.Segment[?]], remaining)
                 (combineInputs(leftVal, rightVal), remaining2)
+
+    private def extractBoundary(contentType: String): Maybe[String] =
+        val boundaryPrefix = "boundary="
+        val idx            = contentType.indexOf(boundaryPrefix)
+        if idx < 0 then Absent
+        else
+            val start = idx + boundaryPrefix.length
+            val value = contentType.substring(start).trim
+            if value.length >= 2 && value.charAt(0) == '"' && value.charAt(value.length - 1) == '"' then
+                Present(value.substring(1, value.length - 1))
+            else
+                val semiIdx = value.indexOf(';')
+                Present(if semiIdx >= 0 then value.substring(0, semiIdx).trim else value)
+            end if
+        end if
+    end extractBoundary
 
 end HttpHandler

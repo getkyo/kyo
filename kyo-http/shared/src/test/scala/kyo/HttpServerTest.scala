@@ -929,6 +929,87 @@ class HttpServerTest extends Test:
                 }
             }
         }
+
+        "Content-Length via stream factory" in run {
+            val data  = "Hello, Content-Length!"
+            val bytes = data.getBytes("UTF-8")
+            val handler = HttpHandler.get("/cl") { _ =>
+                val s = Stream.init(Seq(Span.fromUnsafe(bytes)))
+                HttpResponse.stream(s, bytes.length.toLong, Status.OK)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/cl").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, data)
+                    assertHeader(response, "Content-Length", bytes.length.toString)
+                }
+            }
+        }
+
+        "Content-Length multi-chunk stream" in run {
+            val chunks   = Seq("chunk1-", "chunk2-", "chunk3")
+            val totalLen = chunks.map(_.getBytes("UTF-8").length).sum
+            val handler = HttpHandler.get("/cl-multi") { _ =>
+                val s = Stream.init(chunks.map(c => Span.fromUnsafe(c.getBytes("UTF-8"))))
+                HttpResponse.stream(s, totalLen.toLong, Status.OK)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/cl-multi").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "chunk1-chunk2-chunk3")
+                    assertHeader(response, "Content-Length", totalLen.toString)
+                }
+            }
+        }
+
+        "no Content-Length uses chunked (backward compat)" in run {
+            val handler = HttpHandler.get("/chunked") { _ =>
+                val s = Stream.init(Seq(Span.fromUnsafe("chunked".getBytes("UTF-8"))))
+                HttpResponse.stream(s)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/chunked").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "chunked")
+                }
+            }
+        }
+
+        "Content-Length via addHeader" in run {
+            val data  = "manual-header"
+            val bytes = data.getBytes("UTF-8")
+            val handler = HttpHandler.get("/cl-manual") { _ =>
+                val s = Stream.init(Seq(Span.fromUnsafe(bytes)))
+                HttpResponse.stream(s).addHeader("Content-Length", bytes.length.toString)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/cl-manual").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, data)
+                    assertHeader(response, "Content-Length", bytes.length.toString)
+                }
+            }
+        }
+
+        "zero Content-Length empty stream" in run {
+            val handler = HttpHandler.get("/cl-zero") { _ =>
+                val s = Stream.empty[Span[Byte]]
+                HttpResponse.stream(s, 0L, Status.OK)
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/cl-zero").map { response =>
+                    assertStatus(response, Status.OK)
+                    assert(response.bodyText.isEmpty)
+                    assertHeader(response, "Content-Length", "0")
+                }
+            }
+        }
+
+        "negative contentLength rejected" in {
+            assertThrows[IllegalArgumentException] {
+                HttpResponse.stream(Stream.empty[Span[Byte]], -1L, Status.OK)
+            }
+        }
     }
 
     "Client streaming" - {

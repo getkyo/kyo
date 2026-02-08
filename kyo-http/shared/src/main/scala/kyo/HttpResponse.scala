@@ -261,6 +261,19 @@ object HttpResponse:
     def stream(s: Stream[Span[Byte], Async], status: Status = Status.OK): HttpResponse[HttpBody.Streamed] =
         new HttpResponse(status, HttpHeaders.empty, Seq.empty, HttpBody.stream(s))
 
+    /** Creates a streaming response with a known Content-Length. The stream must produce exactly `contentLength` bytes total. When
+      * Content-Length is set, the response is sent without chunked transfer encoding.
+      */
+    def stream(s: Stream[Span[Byte], Async], contentLength: Long, status: Status): HttpResponse[HttpBody.Streamed] =
+        require(contentLength >= 0, s"contentLength must be non-negative: $contentLength")
+        new HttpResponse(
+            status,
+            HttpHeaders.empty.add("Content-Length", contentLength.toString),
+            Seq.empty,
+            HttpBody.stream(s)
+        )
+    end stream
+
     /** Creates a streaming SSE response. Serializes events using Schema, sets appropriate SSE headers. */
     def streamSse[V: Schema: Tag](events: Stream[HttpEvent[V], Async], status: Status = Status.OK)(using
         Frame,
