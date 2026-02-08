@@ -286,7 +286,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                 val status  = HttpResponse.Status(bs.statusCode)
                 val headers = parseHeaders(bs.responseHeaders.toString)
                 val body    = bs.responseBody.toByteArray
-                val resp    = HttpResponse.initBytes(status, headers, new String(body, "UTF-8"))
+                val resp    = HttpResponse.initBytes(status, headers, Span.fromUnsafe(body))
                 discard(bs.promise.complete(Result.succeed(resp)))
 
             case ss: StreamingTransferState =>

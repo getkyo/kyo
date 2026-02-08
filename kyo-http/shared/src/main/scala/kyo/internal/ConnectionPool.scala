@@ -19,19 +19,15 @@ final private[kyo] class ConnectionPool(
     private val pools = new java.util.concurrent.ConcurrentHashMap[PoolKey, HostPool]()
 
     /** Acquire a connection to the given host, reusing an idle one if available. */
-    def acquire(host: String, port: Int, ssl: Boolean, connectTimeout: Maybe[Duration])(using
+    def acquire(key: PoolKey, connectTimeout: Maybe[Duration])(using
         Frame
     ): Backend.Connection < (Async & Abort[HttpError]) =
-        // PoolKey is a small, short-lived allocation — acceptable trade-off for a clean API
-        // that avoids leaking internal details to callers.
-        val key      = PoolKey(host, port, ssl)
         val hostPool = pools.computeIfAbsent(key, _ => HostPool.init(maxConnectionsPerHost))
-        hostPool.acquire(factory, host, port, ssl, connectTimeout, connectionAcquireTimeout)
+        hostPool.acquire(factory, key.host, key.port, key.ssl, connectTimeout, connectionAcquireTimeout)
     end acquire
 
     /** Release a connection back to the pool. Synchronous — suitable for ensure blocks. */
-    def release(host: String, port: Int, ssl: Boolean, conn: Backend.Connection)(using AllowUnsafe, Frame): Unit =
-        val key      = PoolKey(host, port, ssl)
+    def release(key: PoolKey, conn: Backend.Connection)(using AllowUnsafe, Frame): Unit =
         val hostPool = pools.get(key)
         if hostPool != null then hostPool.release(conn)
         else conn.closeAbruptly()
@@ -56,7 +52,7 @@ end ConnectionPool
 
 private[kyo] object ConnectionPool:
 
-    private case class PoolKey(host: String, port: Int, ssl: Boolean)
+    private[kyo] case class PoolKey(host: String, port: Int, ssl: Boolean)
 
     /** Per-host pool managing idle connections with bounded capacity. */
     final private class HostPool(

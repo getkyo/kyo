@@ -175,10 +175,14 @@ object HttpResponse:
     def apply[A: Schema](status: Status, body: A): HttpResponse[HttpBody.Bytes] =
         initJson(status, body)
 
+    def apply(status: Status, body: Span[Byte]): HttpResponse[HttpBody.Bytes] =
+        new HttpResponse(status, HttpHeaders.empty, Seq.empty, HttpBody(body.toArrayUnsafe))
+
     // --- 2xx Success ---
 
     def ok: HttpResponse[HttpBody.Bytes]                     = apply(Status.OK)
     def ok(body: String): HttpResponse[HttpBody.Bytes]       = apply(Status.OK, body)
+    def ok(body: Span[Byte]): HttpResponse[HttpBody.Bytes]   = apply(Status.OK, body)
     def ok[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.OK, body)
 
     def json(body: String): HttpResponse[HttpBody.Bytes]                 = initText(Status.OK, body, "application/json")
@@ -442,6 +446,14 @@ object HttpResponse:
     ): HttpResponse[HttpBody.Bytes] =
         val bytes = body.getBytes(StandardCharsets.UTF_8)
         new HttpResponse(status, headers, Seq.empty, HttpBody(bytes))
+    end initBytes
+
+    private[kyo] def initBytes(
+        status: Status,
+        headers: HttpHeaders,
+        body: Span[Byte]
+    ): HttpResponse[HttpBody.Bytes] =
+        new HttpResponse(status, headers, Seq.empty, HttpBody(body.toArrayUnsafe))
     end initBytes
 
     private[kyo] def initStreaming(

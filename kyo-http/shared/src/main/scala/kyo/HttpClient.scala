@@ -61,17 +61,22 @@ final class HttpClient private (
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpFilter.use { filter =>
             HttpClient.configLocal.use { config =>
-                filter(
-                    request,
-                    filteredRequest =>
-                        val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
-                        HttpClient.sendWithPolicies(
-                            pool,
-                            effectiveUrl,
-                            filteredRequest.asInstanceOf[HttpRequest[HttpBody.Bytes]],
-                            config
-                        )
-                ).map(_.ensureBytes) // Filter can short-circuit with any response type
+                if filter eq HttpFilter.noop then
+                    // Fast path — no filter, avoid closure allocation
+                    val effectiveUrl = HttpClient.buildEffectiveUrl(config, request)
+                    HttpClient.sendWithPolicies(pool, effectiveUrl, request, config)
+                else
+                    filter(
+                        request,
+                        filteredRequest =>
+                            val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
+                            HttpClient.sendWithPolicies(
+                                pool,
+                                effectiveUrl,
+                                filteredRequest.asInstanceOf[HttpRequest[HttpBody.Bytes]],
+                                config
+                            )
+                    ).map(_.ensureBytes) // Filter can short-circuit with any response type
             }
         }
 
@@ -81,23 +86,27 @@ final class HttpClient private (
     def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
         HttpFilter.use { filter =>
             HttpClient.configLocal.use { config =>
-                filter(
-                    request,
-                    filteredRequest =>
-                        val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
-                        val parsed       = HttpClient.parseUrl(effectiveUrl)
-                        // Direct connection — bypasses sendWithPolicies, so no redirect/retry/timeout
-                        pool.connectDirect(parsed.host, parsed.port, parsed.ssl, config.connectTimeout).map { conn =>
-                            Scope.ensure(conn.close).andThen(conn.stream(filteredRequest.asInstanceOf[HttpRequest[?]]))
+                def doStream(req: HttpRequest[?]) =
+                    val effectiveUrl = HttpClient.buildEffectiveUrl(config, req)
+                    // Direct connection — bypasses sendWithPolicies, so no redirect/retry/timeout
+                    HttpClient.parseUrl(effectiveUrl) { (host, port, ssl, _, _) =>
+                        pool.connectDirect(host, port, ssl, config.connectTimeout).map { conn =>
+                            Scope.ensure(conn.close).andThen(conn.stream(req))
                         }
-                ).map { response =>
-                    // A filter can short-circuit with a cached/mocked buffered response.
-                    // Wrap the bytes as a single-chunk stream so the streaming contract holds.
-                    response.body.use(
-                        b => response.withBody(HttpBody.stream(Stream.init(Chunk(b.span)))),
-                        s => response.withBody(s)
-                    )
-                }
+                    }
+                end doStream
+                if filter eq HttpFilter.noop then
+                    doStream(request)
+                else
+                    filter(request, doStream).map { response =>
+                        // A filter can short-circuit with a cached/mocked buffered response.
+                        // Wrap the bytes as a single-chunk stream so the streaming contract holds.
+                        response.body.use(
+                            b => response.withBody(HttpBody.stream(Stream.init(Chunk(b.span)))),
+                            s => response.withBody(s)
+                        )
+                    }
+                end if
             }
         }
 
@@ -456,10 +465,10 @@ object HttpClient:
                 if host.isEmpty then path
                 else buildUrl(host, port, port == DefaultHttpsPort, path)
 
-    /** Parse a URL into (host, port, ssl, rawPath, rawQuery) components using manual string parsing. */
-    private[kyo] case class ParsedUrl(host: String, port: Int, ssl: Boolean, rawPath: String, rawQuery: Maybe[String])
-
-    private[kyo] def parseUrl(url: String): ParsedUrl =
+    /** Parse a URL into (host, port, ssl, rawPath, rawQuery) components without allocating intermediate objects. */
+    private[kyo] inline def parseUrl[A](url: String)(
+        inline f: (String, Int, Boolean, String, Maybe[String]) => A
+    ): A =
         UrlParser.parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
             val ssl           = scheme.contains("https")
             val effectivePort = if port < 0 then (if ssl then DefaultHttpsPort else DefaultHttpPort) else port
@@ -467,7 +476,7 @@ object HttpClient:
             val rawHost = host.getOrElse("") match
                 case h if h.startsWith("[") && h.endsWith("]") => h.substring(1, h.length - 1)
                 case h                                         => h
-            ParsedUrl(rawHost, effectivePort, ssl, rawPath, rawQuery)
+            f(rawHost, effectivePort, ssl, rawPath, rawQuery)
         }
 
     // Pipeline: 1. send via pool → 2. apply timeout → 3. follow redirects → 4. retry on retriable responses
@@ -484,24 +493,22 @@ object HttpClient:
 
         // 1. Send request via pool
         val doSend: HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
-            val parsed = parseUrl(url)
-            // Build path+query from parsed components (no duplicate URI allocation)
-            val pathAndQuery = parsed.rawQuery match
-                case Present(q) => s"${parsed.rawPath}?$q"
-                case Absent     => parsed.rawPath
-            val reqWithPath = request.withUrl(pathAndQuery)
-            pool.acquire(parsed.host, parsed.port, parsed.ssl, config.connectTimeout).map { conn =>
-                @volatile var completed = false
-                Sync.ensure {
-                    import AllowUnsafe.embrace.danger
-                    // If request was interrupted mid-flight, close the connection so
-                    // the server sees the disconnect. Otherwise return to pool.
-                    if !completed then conn.closeAbruptly()
-                    pool.release(parsed.host, parsed.port, parsed.ssl, conn)
-                } {
-                    conn.send(reqWithPath).map { resp =>
-                        completed = true
-                        resp
+            parseUrl(url) { (host, port, ssl, rawPath, rawQuery) =>
+                val key         = ConnectionPool.PoolKey(host, port, ssl)
+                val reqWithPath = request.withParsedUrl(rawPath, rawQuery)
+                pool.acquire(key, config.connectTimeout).map { conn =>
+                    @volatile var completed = false
+                    Sync.ensure {
+                        import AllowUnsafe.embrace.danger
+                        // If request was interrupted mid-flight, close the connection so
+                        // the server sees the disconnect. Otherwise return to pool.
+                        if !completed then conn.closeAbruptly()
+                        pool.release(key, conn)
+                    } {
+                        conn.send(reqWithPath).map { resp =>
+                            completed = true
+                            resp
+                        }
                     }
                 }
             }
@@ -519,7 +526,7 @@ object HttpClient:
                 case Absent => doSend
 
         withTimeout.map { resp =>
-            // 3. Handle redirects
+            // 3. Handle redirects — redirected requests bypass retry (they restart the pipeline)
             if config.followRedirects && resp.status.isRedirect then
                 if redirectCount >= config.maxRedirects then
                     Abort.fail(HttpError.TooManyRedirects(redirectCount))
@@ -544,30 +551,28 @@ object HttpClient:
                         case Absent =>
                             resp
             else
-                resp
-        }.map { finalResp =>
-            // 4. Handle retry based on response
-            currentSchedule match
-                case Present(schedule) if config.retryOn(finalResp) =>
-                    Clock.now.map { now =>
-                        schedule.next(now) match
-                            case Present((delay, nextSchedule)) =>
-                                Async.delay(delay) {
-                                    sendWithPolicies(
-                                        pool,
-                                        url,
-                                        request,
-                                        config,
-                                        0, // Reset redirect count for retry
-                                        Present(nextSchedule),
-                                        attemptCount + 1
-                                    )
-                                }
-                            case Absent =>
-                                Abort.fail(HttpError.RetriesExhausted(attemptCount, finalResp.status, finalResp.bodyText))
-                    }
-                case _ =>
-                    finalResp
+                // 4. Handle retry based on response (only for non-redirect responses)
+                currentSchedule match
+                    case Present(schedule) if config.retryOn(resp) =>
+                        Clock.now.map { now =>
+                            schedule.next(now) match
+                                case Present((delay, nextSchedule)) =>
+                                    Async.delay(delay) {
+                                        sendWithPolicies(
+                                            pool,
+                                            url,
+                                            request,
+                                            config,
+                                            0, // Reset redirect count for retry
+                                            Present(nextSchedule),
+                                            attemptCount + 1
+                                        )
+                                    }
+                                case Absent =>
+                                    Abort.fail(HttpError.RetriesExhausted(attemptCount, resp.status, resp.bodyText))
+                        }
+                    case _ =>
+                        resp
         }
     end sendWithPolicies
 

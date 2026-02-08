@@ -266,6 +266,10 @@ final class HttpRequest[+B <: HttpBody] private (
             new HttpRequest(method, p, q, _headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
         }
 
+    /** Update the URL from pre-parsed path and query components. Avoids re-parsing. */
+    private[kyo] def withParsedUrl(rawPath: String, rawQuery: Maybe[String]): HttpRequest[B] =
+        new HttpRequest(method, rawPath, rawQuery, _headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+
 end HttpRequest
 
 object HttpRequest:

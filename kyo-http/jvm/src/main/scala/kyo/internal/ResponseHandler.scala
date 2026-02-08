@@ -2,7 +2,6 @@ package kyo.internal
 
 import io.netty.channel.{Channel as NettyChannel, *}
 import io.netty.handler.codec.http.FullHttpResponse
-import java.nio.charset.StandardCharsets
 import kyo.*
 import scala.annotation.tailrec
 
@@ -34,7 +33,7 @@ final private[kyo] class ResponseHandler(
         fillHeaders(0)
 
         val headers  = HttpHeaders.fromFlatArrayNoCopy(arr)
-        val response = HttpResponse.initBytes(status, headers, new String(body, StandardCharsets.UTF_8))
+        val response = HttpResponse.initBytes(status, headers, Span.fromUnsafe(body))
         discard(promise.complete(Result.succeed(response)))
     end channelRead0
 
