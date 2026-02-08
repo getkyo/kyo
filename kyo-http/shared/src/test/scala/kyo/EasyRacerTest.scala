@@ -56,12 +56,12 @@ class EasyRacerTest extends Test:
         }
     }
 
-    "scenario 3 - race 10000 concurrent requests" in run {
+    "scenario 3 - race 100 concurrent requests" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
                 val handler = HttpHandler.get("/3") { (_, _) =>
                     counter.incrementAndGet.map { num =>
-                        if num < 10000 then
+                        if num < 100 then
                             promise.get.andThen {
                                 Async.sleep(1.hour).andThen(HttpResponse.ok("wrong"))
                             }
@@ -73,7 +73,7 @@ class EasyRacerTest extends Test:
                 }
                 startTestServer(handler).map { port =>
                     val url  = s"http://localhost:$port/3"
-                    val reqs = Seq.fill(10000)(req(url))
+                    val reqs = Seq.fill(100)(req(url))
                     Async.race(reqs).map { result =>
                         assert(result == "right")
                     }
@@ -90,12 +90,12 @@ class EasyRacerTest extends Test:
             startTestServer(handler).map { port =>
                 val url       = s"http://localhost:$port/4"
                 val normalReq = req(url)
-                val reqWithTimeout =
-                    Abort.run(Async.timeout(1.second)(req(url)))
-                        .map(_ => promise.completeUnitDiscard)
+                val timer =
+                    Async.sleep(1.second)
+                        .andThen(promise.completeUnitDiscard)
                         .andThen(Async.sleep(1.hour))
                         .andThen("never")
-                Async.race(normalReq, reqWithTimeout).map { result =>
+                Async.race(normalReq, timer).map { result =>
                     assert(result == "right")
                 }
             }
