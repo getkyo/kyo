@@ -32,7 +32,7 @@ class HttpClientContentionBench
 
     lazy val kyoClient =
         import kyo.*
-        PlatformBackend.default
+        HttpPlatformBackend.default
 
     val kyoUrl =
         import sttp.client3.*

@@ -1,6 +1,6 @@
 package kyo
 
 /** JS platform default backend using the Fetch API. */
-object PlatformBackend:
+object HttpPlatformBackend:
     val default: Backend = FetchBackend
-end PlatformBackend
+end HttpPlatformBackend

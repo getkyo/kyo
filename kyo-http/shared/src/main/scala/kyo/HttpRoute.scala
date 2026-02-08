@@ -16,7 +16,7 @@ case class HttpRoute[In, Out, Err](
     cookieParams: Seq[HttpRoute.CookieParam] = Seq.empty,
     inputSchema: Maybe[Schema[?]] = Absent,
     outputSchema: Maybe[Schema[?]] = Absent,
-    errorSchemas: Seq[(Status, Schema[?])] = Seq.empty,
+    errorSchemas: Seq[(Status, Schema[?], ConcreteTag[Any])] = Seq.empty,
     description: Maybe[String] = Absent,
     operationId: Maybe[String] = Absent,
     isDeprecated: Boolean = false,
@@ -110,8 +110,8 @@ case class HttpRoute[In, Out, Err](
 
     // --- Errors ---
 
-    def error[E: Schema](status: Status): HttpRoute[In, Out, Err | E] =
-        copy(errorSchemas = errorSchemas :+ (status -> Schema[E]))
+    def error[E: Schema](status: Status)(using tag: ConcreteTag[E]): HttpRoute[In, Out, Err | E] =
+        copy(errorSchemas = errorSchemas :+ (status, Schema[E], tag.asInstanceOf[ConcreteTag[Any]]))
             .asInstanceOf[HttpRoute[In, Out, Err | E]]
 
     // --- Documentation ---
@@ -165,7 +165,7 @@ case class HttpRoute[In, Out, Err](
             if response.status.isError then
                 val body = response.bodyText
                 val errOpt = errorSchemas.collectFirst {
-                    case (status, schema) if response.status == status =>
+                    case (status, schema, _) if response.status == status =>
                         try Some(schema.asInstanceOf[Schema[Any]].decode(body))
                         catch case _: Exception => None
                 }.flatten

@@ -41,7 +41,7 @@ object HttpServer:
         init(Config.default)(handlers*)
 
     def init(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
-        init(config, PlatformBackend.default)(handlers*)
+        init(config, HttpPlatformBackend.default)(handlers*)
 
     def init(config: Config, backend: Backend)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
         // Capture filter from Local to apply per-request
@@ -397,16 +397,21 @@ object HttpHandler:
     // --- Private implementation ---
 
     // Try to encode an error using registered error schemas and return appropriate HTTP response
-    private def findErrorResponse(err: Any, errorSchemas: Seq[(HttpResponse.Status, Schema[?])]): Option[kyo.HttpResponse[HttpBody.Bytes]] =
-        @tailrec def loop(remaining: Seq[(HttpResponse.Status, Schema[?])]): Option[kyo.HttpResponse[HttpBody.Bytes]] =
+    private def findErrorResponse(
+        err: Any,
+        errorSchemas: Seq[(HttpResponse.Status, Schema[?], ConcreteTag[Any])]
+    ): Option[kyo.HttpResponse[HttpBody.Bytes]] =
+        @tailrec def loop(remaining: Seq[(HttpResponse.Status, Schema[?], ConcreteTag[Any])]): Option[kyo.HttpResponse[HttpBody.Bytes]] =
             remaining match
                 case Seq() => None
-                case (status, schema) +: tail =>
-                    try
-                        val json = schema.asInstanceOf[Schema[Any]].encode(err)
-                        Some(kyo.HttpResponse(status, json).addHeader("Content-Type", "application/json"))
-                    catch
-                        case _: Throwable => loop(tail)
+                case (status, schema, tag) +: tail =>
+                    if tag.accepts(err) then
+                        try
+                            val json = schema.asInstanceOf[Schema[Any]].encode(err)
+                            Some(kyo.HttpResponse(status, json).addHeader("Content-Type", "application/json"))
+                        catch
+                            case _: Throwable => loop(tail)
+                    else loop(tail)
         loop(errorSchemas)
     end findErrorResponse
 

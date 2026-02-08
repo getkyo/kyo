@@ -176,7 +176,7 @@ private[kyo] object OpenApiGenerator:
             case Absent =>
                 Response(description = "Success", content = None)
 
-        val errorResponses = route.errorSchemas.map { case (status, schema) =>
+        val errorResponses = route.errorSchemas.map { case (status, schema, _) =>
             status.code.toString -> Response(
                 description = "Error",
                 content = Some(Map("application/json" -> MediaType(schema = schemaToOpenApi(schema))))

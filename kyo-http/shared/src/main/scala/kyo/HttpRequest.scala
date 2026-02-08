@@ -534,7 +534,7 @@ object HttpRequest:
     end parseQueryParamAll
 
     private def decodeUrl(s: String): String =
-        java.net.URLDecoder.decode(s, StandardCharsets.UTF_8)
+        java.net.URLDecoder.decode(s, StandardCharsets.UTF_8.name())
 
     // --- Multipart parsing (pure Scala, no Netty) ---
 

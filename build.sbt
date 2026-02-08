@@ -174,7 +174,8 @@ lazy val kyoNative = project
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-sttp`.native,
-        `kyo-actor`.native
+        `kyo-actor`.native,
+        `kyo-http`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -533,7 +534,7 @@ lazy val `kyo-tapir` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-http` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
@@ -555,6 +556,12 @@ lazy val `kyo-http` =
         .jsSettings(
             `js-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0"
+        )
+        .nativeSettings(
+            `native-settings`,
+            nativeConfig ~= { c =>
+                c.withLinkingOptions(c.linkingOptions ++ Seq("-lcurl"))
+            }
         )
 
 lazy val `kyo-caliban` =
