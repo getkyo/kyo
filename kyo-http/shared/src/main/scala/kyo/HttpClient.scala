@@ -5,6 +5,7 @@ import kyo.internal.ConnectionPool
 import kyo.internal.NdjsonDecoder
 import kyo.internal.SseDecoder
 import kyo.internal.UrlParser
+import scala.annotation.targetName
 
 final class HttpClient private (
     private val pool: ConnectionPool,
@@ -105,7 +106,7 @@ final class HttpClient private (
       *
       * Runs `connections` concurrent HEAD requests in a loop for up to `duration`. Invalid parameters are clamped to safe defaults.
       */
-    def warmup(url: String, connections: Int = 1, duration: Duration = 10.seconds)(using Frame): Unit < Async =
+    def warmupUrl(url: String, duration: Duration, connections: Int = 1)(using Frame): Unit < Async =
         val c = Math.max(1, connections)
         val d = if duration > Duration.Zero then duration else 10.seconds
         val warnConns: Unit < Sync =
@@ -116,7 +117,7 @@ final class HttpClient private (
             else ()
         warnConns.andThen(warnDur).andThen {
             Abort.run[kyo.Timeout](Async.timeout(d)(
-                Async.fill(c)(
+                Async.fill(c, c)(
                     Loop(()) { _ =>
                         Abort.run[HttpError](send(HttpRequest.head(url)))
                             .andThen(Loop.continue(()))
@@ -124,12 +125,11 @@ final class HttpClient private (
                 ).unit
             )).unit
         }
-    end warmup
+    end warmupUrl
 
     /** Pre-establishes connections to multiple URLs. */
-    /** Pre-establishes connections to multiple URLs. */
-    def warmup(urls: Seq[String])(using Frame): Unit < Async =
-        Async.foreach(urls)(url => warmup(url)).unit
+    def warmupUrls(urls: Seq[String], duration: Duration, connections: Int = 1)(using Frame): Unit < Async =
+        Async.foreach(urls, urls.size)(url => warmupUrl(url, duration, connections)).unit
 
     def closeNow(using Frame): Unit < Async =
         close(Duration.Zero)

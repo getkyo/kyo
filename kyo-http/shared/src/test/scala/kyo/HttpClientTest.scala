@@ -1240,7 +1240,7 @@ class HttpClientTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.init(maxConnectionsPerHost = Present(5), backend = PlatformTestBackend.backend).map { client =>
-                    client.warmup(s"http://localhost:$port", 3).andThen {
+                    client.warmupUrl(s"http://localhost:$port", 1.second).andThen {
                         Async.fill(3, 3) {
                             client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                         }.map { responses =>
@@ -1257,10 +1257,13 @@ class HttpClientTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
-                    client.warmup(Seq(
-                        s"http://localhost:$port/ping",
-                        s"http://localhost:$port/ping"
-                    )).andThen {
+                    client.warmupUrls(
+                        Seq(
+                            s"http://localhost:$port/ping",
+                            s"http://localhost:$port/ping"
+                        ),
+                        1.second
+                    ).andThen {
                         client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
                             assertStatus(response, Status.OK)
                         }
