@@ -70,8 +70,8 @@ class HttpClientTest extends Test:
 
             "retryWhen with predicate" in {
                 val config = HttpClient.Config.default.retryWhen(_.status.isServerError)
-                // Custom predicate set
-                succeed
+                assert(config.retryOn(HttpResponse(Status.InternalServerError)) == true)
+                assert(config.retryOn(HttpResponse(Status.OK)) == false)
             }
 
             "chaining" in {
@@ -111,14 +111,24 @@ class HttpClientTest extends Test:
     "HttpClient.init" - {
 
         "with all defaults" in run {
-            HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
-                succeed
+            val handler = HttpHandler.health("/ping")
+            startTestServer(handler).map { port =>
+                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
+                    client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
+                        assertStatus(response, Status.OK)
+                    }
+                }
             }
         }
 
         "with pool settings" in run {
-            HttpClient.init(maxConnectionsPerHost = Present(10), backend = PlatformTestBackend.backend).map { client =>
-                succeed
+            val handler = HttpHandler.health("/ping")
+            startTestServer(handler).map { port =>
+                HttpClient.init(maxConnectionsPerHost = Present(10), backend = PlatformTestBackend.backend).map { client =>
+                    client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
+                        assertStatus(response, Status.OK)
+                    }
+                }
             }
         }
     }
@@ -274,8 +284,8 @@ class HttpClientTest extends Test:
                     HttpResponse.noContent
                 }
                 startTestServer(handler).map { port =>
-                    HttpClient.delete[Unit](s"http://localhost:$port/users/1").map { _ =>
-                        succeed
+                    testDelete(port, "/users/1").map { response =>
+                        assertStatus(response, Status.NoContent)
                     }
                 }
             }
@@ -401,11 +411,18 @@ class HttpClientTest extends Test:
             }
 
             "restores after scope" in run {
-                HttpClient.withConfig(_.timeout(1.seconds)) {
-                    succeed
-                }.andThen {
-                    // Original timeout restored
-                    succeed
+                val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("ok") }
+                startTestServer(handler).map { port =>
+                    HttpClient.withConfig(_.timeout(1.seconds)) {
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
+                            assertStatus(response, Status.OK)
+                        }
+                    }.andThen {
+                        // After scope, config should be restored - request should still work
+                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
+                            assertStatus(response, Status.OK)
+                        }
+                    }
                 }
             }
         }
@@ -1163,7 +1180,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1178,7 +1195,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1194,7 +1211,7 @@ class HttpClientTest extends Test:
                     }.map { responses =>
                         assert(responses.size == 4)
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1212,7 +1229,7 @@ class HttpClientTest extends Test:
                     )
                     Async.collectAll(requests).map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1229,7 +1246,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/test")).map { r2 =>
                             assertStatus(r2, Status.OK)
                         }
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1246,7 +1263,7 @@ class HttpClientTest extends Test:
                         }.map { responses =>
                             assert(responses.forall(_.status == HttpResponse.Status.OK))
                         }
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1267,7 +1284,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
                             assertStatus(response, Status.OK)
                         }
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1290,7 +1307,7 @@ class HttpClientTest extends Test:
                         }.map { responses =>
                             assert(responses.forall(_.status == HttpResponse.Status.OK))
                         }
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1306,7 +1323,7 @@ class HttpClientTest extends Test:
                     }.map { responses =>
                         assert(responses.size == 20)
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(succeed)
+                    }
                 }
             }
         }
@@ -1324,7 +1341,7 @@ class HttpClientTest extends Test:
                     }.map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
                         assert(requestCount.get() == 10)
-                    }.andThen(succeed)
+                    }
                 }
             }
         }

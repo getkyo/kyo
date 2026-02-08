@@ -135,38 +135,63 @@ class HttpRouteTest extends Test:
 
         "parsing failures" - {
             "int capture with non-numeric value" in run {
-                val route = HttpRoute.get("users" / HttpPath.int("id")).output[User]
-                // When matching "/users/abc", should fail to parse
-                // This would be tested during route matching
-                succeed
+                val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
+                val handler = route.handle(id => User(id, s"User$id"))
+                startTestServer(handler).map { port =>
+                    testGet(port, "/users/abc").map { response =>
+                        assert(response.status != Status.OK, s"Expected non-OK status for invalid int, got ${response.status}")
+                    }
+                }
             }
 
             "int capture with overflow" in run {
-                val route = HttpRoute.get("users" / HttpPath.int("id")).output[User]
-                // When matching "/users/99999999999999999999", should fail
-                succeed
+                val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
+                val handler = route.handle(id => User(id, s"User$id"))
+                startTestServer(handler).map { port =>
+                    testGet(port, "/users/99999999999999999999").map { response =>
+                        assert(response.status != Status.OK, s"Expected non-OK status for int overflow, got ${response.status}")
+                    }
+                }
             }
 
             "long capture with non-numeric value" in run {
-                val route = HttpRoute.get("items" / HttpPath.long("id")).output[User]
-                succeed
+                val route   = HttpRoute.get("items" / HttpPath.long("id")).output[User]
+                val handler = route.handle(id => User(id.toInt, s"Item$id"))
+                startTestServer(handler).map { port =>
+                    testGet(port, "/items/abc").map { response =>
+                        assert(response.status != Status.OK, s"Expected non-OK status for invalid long, got ${response.status}")
+                    }
+                }
             }
 
             "long capture with overflow" in run {
-                val route = HttpRoute.get("items" / HttpPath.long("id")).output[User]
-                succeed
+                val route   = HttpRoute.get("items" / HttpPath.long("id")).output[User]
+                val handler = route.handle(id => User(id.toInt, s"Item$id"))
+                startTestServer(handler).map { port =>
+                    testGet(port, "/items/999999999999999999999999999999").map { response =>
+                        assert(response.status != Status.OK, s"Expected non-OK status for long overflow, got ${response.status}")
+                    }
+                }
             }
 
             "uuid capture with invalid format" in run {
-                val route = HttpRoute.get("items" / HttpPath.uuid("id")).output[User]
-                // When matching "/items/not-a-uuid", should fail
-                succeed
+                val route   = HttpRoute.get("items" / HttpPath.uuid("id")).output[User]
+                val handler = route.handle(id => User(1, id.toString))
+                startTestServer(handler).map { port =>
+                    testGet(port, "/items/not-a-uuid").map { response =>
+                        assert(response.status != Status.OK, s"Expected non-OK status for invalid uuid, got ${response.status}")
+                    }
+                }
             }
 
             "boolean capture with invalid value" in run {
-                val route = HttpRoute.get("flags" / HttpPath.boolean("active")).output[User]
-                // When matching "/flags/maybe", should fail (only true/false valid)
-                succeed
+                val route   = HttpRoute.get("flags" / HttpPath.boolean("active")).output[User]
+                val handler = route.handle(active => User(if active then 1 else 0, active.toString))
+                startTestServer(handler).map { port =>
+                    testGet(port, "/flags/maybe").map { response =>
+                        assert(response.status != Status.OK, s"Expected non-OK status for invalid boolean, got ${response.status}")
+                    }
+                }
             }
         }
 
@@ -250,50 +275,50 @@ class HttpRouteTest extends Test:
         "HTTP methods" - {
             "get" in {
                 val r: HttpRoute[Unit, Unit, Nothing] = HttpRoute.get("users")
-                succeed
+                assert(r.method == Method.GET)
             }
 
             "post" in {
                 val r: HttpRoute[Unit, Unit, Nothing] = HttpRoute.post("users")
-                succeed
+                assert(r.method == Method.POST)
             }
 
             "put" in {
                 val r: HttpRoute[Unit, Unit, Nothing] = HttpRoute.put("users")
-                succeed
+                assert(r.method == Method.PUT)
             }
 
             "patch" in {
                 val r: HttpRoute[Unit, Unit, Nothing] = HttpRoute.patch("users")
-                succeed
+                assert(r.method == Method.PATCH)
             }
 
             "delete" in {
                 val r: HttpRoute[Unit, Unit, Nothing] = HttpRoute.delete("users")
-                succeed
+                assert(r.method == Method.DELETE)
             }
 
             "head" in {
                 val r: HttpRoute[Unit, Unit, Nothing] = HttpRoute.head("users")
-                succeed
+                assert(r.method == Method.HEAD)
             }
 
             "options" in {
                 val r: HttpRoute[Unit, Unit, Nothing] = HttpRoute.options("users")
-                succeed
+                assert(r.method == Method.OPTIONS)
             }
         }
 
         "with path captures" - {
             "single capture" in {
                 val r: HttpRoute[Int, Unit, Nothing] = HttpRoute.get("users" / HttpPath.int("id"))
-                succeed
+                assert(r.method == Method.GET)
             }
 
             "multiple captures" in {
                 val r: HttpRoute[(Int, Int), Unit, Nothing] =
                     HttpRoute.get("users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId"))
-                succeed
+                assert(r.method == Method.GET)
             }
         }
     }
@@ -301,17 +326,20 @@ class HttpRouteTest extends Test:
     "Query parameters" - {
         "required" in {
             val r: HttpRoute[Int, Unit, Nothing] = HttpRoute.get("users").query[Int]("limit")
-            succeed
+            assert(r.queryParams.size == 1)
+            assert(r.queryParams.head.name == "limit")
         }
 
         "with default" in {
             val r: HttpRoute[Int, Unit, Nothing] = HttpRoute.get("users").query[Int]("limit", 20)
-            succeed
+            assert(r.queryParams.size == 1)
+            assert(r.queryParams.head.name == "limit")
         }
 
         "optional via Maybe" in {
             val r: HttpRoute[Maybe[String], Unit, Nothing] = HttpRoute.get("users").query[Maybe[String]]("search")
-            succeed
+            assert(r.queryParams.size == 1)
+            assert(r.queryParams.head.name == "search")
         }
 
         "multiple" in {
@@ -319,14 +347,16 @@ class HttpRouteTest extends Test:
                 HttpRoute.get("users")
                     .query[Int]("limit")
                     .query[Int]("offset", 0)
-            succeed
+            assert(r.queryParams.size == 2)
+            assert(r.queryParams.map(_.name) == Seq("limit", "offset"))
         }
 
         "combined with path capture" in {
             val r: HttpRoute[(Int, String), Unit, Nothing] =
                 HttpRoute.get("users" / HttpPath.int("id"))
                     .query[String]("fields")
-            succeed
+            assert(r.queryParams.size == 1)
+            assert(r.queryParams.head.name == "fields")
         }
 
         "edge cases" - {
@@ -337,29 +367,36 @@ class HttpRouteTest extends Test:
             }
 
             "query with empty value" in {
-                // Empty string value should be valid
                 val r = HttpRoute.get("users").query[String]("filter", "")
-                succeed
+                assert(r.queryParams.size == 1)
+                assert(r.queryParams.head.name == "filter")
             }
 
             "duplicate query parameter names" in {
-                // Same param name twice - allowed but second shadows first
                 val r = HttpRoute.get("users")
                     .query[Int]("page")
                     .query[Int]("page", 1)
-                succeed
+                assert(r.queryParams.size == 2)
             }
 
             "query value parsing failure" in run {
-                // This would fail at runtime when ?limit=abc is passed to a Int query
-                val r = HttpRoute.get("users").query[Int]("limit")
-                succeed
+                val route   = HttpRoute.get("users").query[Int]("limit").output[Seq[User]]
+                val handler = route.handle { limit => Seq(User(1, s"limit=$limit")) }
+                startTestServer(handler).map { port =>
+                    testGet(port, "/users?limit=abc").map { response =>
+                        assert(response.status != Status.OK, s"Expected non-OK status for invalid query int, got ${response.status}")
+                    }
+                }
             }
 
             "URL-encoded query value" in run {
-                // Query values should be URL-decoded
-                val r = HttpRoute.get("users").query[String]("search")
-                succeed
+                val route   = HttpRoute.get("users").query[String]("search").output[Seq[User]]
+                val handler = route.handle { search => Seq(User(1, search)) }
+                startTestServer(handler).map { port =>
+                    testGetAs[Seq[User]](port, "/users?search=hello%20world").map { users =>
+                        assert(users.head.name == "hello world")
+                    }
+                }
             }
         }
     }
@@ -367,12 +404,14 @@ class HttpRouteTest extends Test:
     "Headers" - {
         "required" in {
             val r: HttpRoute[String, Unit, Nothing] = HttpRoute.get("users").header("X-Request-Id")
-            succeed
+            assert(r.headerParams.size == 1)
+            assert(r.headerParams.head.name == "X-Request-Id")
         }
 
         "with default" in {
             val r: HttpRoute[String, Unit, Nothing] = HttpRoute.get("users").header("Accept", "application/json")
-            succeed
+            assert(r.headerParams.size == 1)
+            assert(r.headerParams.head.name == "Accept")
         }
 
         "multiple" in {
@@ -380,7 +419,8 @@ class HttpRouteTest extends Test:
                 HttpRoute.get("users")
                     .header("X-Request-Id")
                     .header("X-Trace-Id")
-            succeed
+            assert(r.headerParams.size == 2)
+            assert(r.headerParams.map(_.name) == Seq("X-Request-Id", "X-Trace-Id"))
         }
 
         "empty header name throws" in {
@@ -393,12 +433,14 @@ class HttpRouteTest extends Test:
     "Cookies" - {
         "required" in {
             val r: HttpRoute[String, Unit, Nothing] = HttpRoute.get("dashboard").cookie("session")
-            succeed
+            assert(r.cookieParams.size == 1)
+            assert(r.cookieParams.head.name == "session")
         }
 
         "with default" in {
             val r: HttpRoute[String, Unit, Nothing] = HttpRoute.get("dashboard").cookie("theme", "light")
-            succeed
+            assert(r.cookieParams.size == 1)
+            assert(r.cookieParams.head.name == "theme")
         }
 
         "empty cookie name throws" in {
@@ -411,24 +453,28 @@ class HttpRouteTest extends Test:
     "Authentication" - {
         "bearer token" in {
             val r: HttpRoute[String, Unit, Nothing] = HttpRoute.get("users").authBearer
-            succeed
+            assert(r.headerParams.size == 1)
+            assert(r.headerParams.head.name == "Authorization")
         }
 
         "basic auth" in {
             val r: HttpRoute[(String, String), Unit, Nothing] = HttpRoute.get("users").authBasic
-            succeed
+            assert(r.headerParams.size == 1)
+            assert(r.headerParams.head.name == "Authorization")
         }
 
         "API key" in {
             val r: HttpRoute[String, Unit, Nothing] = HttpRoute.get("users").authApiKey("X-API-Key")
-            succeed
+            assert(r.headerParams.size == 1)
+            assert(r.headerParams.head.name == "X-API-Key")
         }
 
         "combined with path" in {
             val r: HttpRoute[(Int, String), Unit, Nothing] =
                 HttpRoute.get("users" / HttpPath.int("id"))
                     .authBearer
-            succeed
+            assert(r.headerParams.size == 1)
+            assert(r.headerParams.head.name == "Authorization")
         }
 
         "empty API key header name throws" in {
@@ -441,22 +487,22 @@ class HttpRouteTest extends Test:
     "Request body" - {
         "JSON input" in {
             val r: HttpRoute[CreateUser, Unit, Nothing] = HttpRoute.post("users").input[CreateUser]
-            succeed
+            assert(r.inputSchema.isDefined)
         }
 
         "text input" in {
             val r: HttpRoute[String, Unit, Nothing] = HttpRoute.post("echo").inputText
-            succeed
+            assert(r.inputSchema.isDefined)
         }
 
         "form input" in {
             val r: HttpRoute[CreateUser, Unit, Nothing] = HttpRoute.post("login").inputForm[CreateUser]
-            succeed
+            assert(r.inputSchema.isDefined)
         }
 
         "multipart input" in {
             val r: HttpRoute[Seq[Part], Unit, Nothing] = HttpRoute.post("upload").inputMultipart
-            succeed
+            assert(r.method == Method.POST)
         }
 
         "combined with path and query" in {
@@ -464,24 +510,26 @@ class HttpRouteTest extends Test:
                 HttpRoute.put("users" / HttpPath.int("id"))
                     .query[String]("reason")
                     .input[CreateUser]
-            succeed
+            assert(r.inputSchema.isDefined)
+            assert(r.queryParams.size == 1)
         }
     }
 
     "Response body" - {
         "JSON output" in {
             val r: HttpRoute[Unit, Seq[User], Nothing] = HttpRoute.get("users").output[Seq[User]]
-            succeed
+            assert(r.outputSchema.isDefined)
         }
 
         "JSON output with status" in {
             val r: HttpRoute[Unit, User, Nothing] = HttpRoute.post("users").output[User](Status.Created)
-            succeed
+            assert(r.outputSchema.isDefined)
+            assert(r.outputStatus == Status.Created)
         }
 
         "text output" in {
             val r: HttpRoute[Unit, String, Nothing] = HttpRoute.get("health").outputText
-            succeed
+            assert(r.outputSchema.isDefined)
         }
 
     }
@@ -492,7 +540,8 @@ class HttpRouteTest extends Test:
                 HttpRoute.get("users" / HttpPath.int("id"))
                     .output[User]
                     .error[NotFoundError](Status.NotFound)
-            succeed
+            assert(r.errorSchemas.size == 1)
+            assert(r.errorSchemas.head._1 == Status.NotFound)
         }
 
         "multiple error types" in {
@@ -502,49 +551,51 @@ class HttpRouteTest extends Test:
                     .output[User]
                     .error[NotFoundError](Status.NotFound)
                     .error[ValidationError](Status.BadRequest)
-            succeed
+            assert(r.errorSchemas.size == 2)
+            assert(r.errorSchemas.map(_._1) == Seq(Status.NotFound, Status.BadRequest))
         }
     }
 
     "Documentation" - {
         "withTag" in {
             val r = HttpRoute.get("users").tag("Users")
-            succeed
+            assert(r.tag == Present("Users"))
         }
 
         "withSummary" in {
             val r = HttpRoute.get("users").summary("List all users")
-            succeed
+            assert(r.summary == Present("List all users"))
         }
 
         "withDescription" in {
             val r = HttpRoute.get("users").description("Returns a paginated list")
-            succeed
+            assert(r.description == Present("Returns a paginated list"))
         }
 
         "withOperationId" in {
             val r = HttpRoute.get("users").operationId("listUsers")
-            succeed
+            assert(r.operationId == Present("listUsers"))
         }
 
         "deprecated" in {
             val r = HttpRoute.get("users/old").deprecated
-            succeed
+            assert(r.isDeprecated)
         }
 
         "externalDocs with url" in {
             val r = HttpRoute.get("users").externalDocs("https://docs.example.com")
-            succeed
+            assert(r.externalDocsUrl == Present("https://docs.example.com"))
         }
 
         "externalDocs with url and description" in {
             val r = HttpRoute.get("users").externalDocs("https://docs.example.com", "API Docs")
-            succeed
+            assert(r.externalDocsUrl == Present("https://docs.example.com"))
+            assert(r.externalDocsDesc == Present("API Docs"))
         }
 
         "security" in {
             val r = HttpRoute.get("users").security("bearerAuth")
-            succeed
+            assert(r.securityScheme == Present("bearerAuth"))
         }
 
         "chaining all documentation" in {
@@ -555,7 +606,11 @@ class HttpRouteTest extends Test:
                 .description("Returns paginated list of users")
                 .operationId("listUsers")
                 .security("bearerAuth")
-            succeed
+            assert(r.tag == Present("Users"))
+            assert(r.summary == Present("List users"))
+            assert(r.description == Present("Returns paginated list of users"))
+            assert(r.operationId == Present("listUsers"))
+            assert(r.securityScheme == Present("bearerAuth"))
         }
     }
 
@@ -604,15 +659,19 @@ class HttpRouteTest extends Test:
     }
 
     "Handler creation" - {
-        "from route" in {
+        "from route" in run {
             val route = HttpRoute.get("users" / HttpPath.int("id")).output[User]
             val handler: HttpHandler[Any] = route.handle { id =>
                 User(id, "test")
             }
-            succeed
+            startTestServer(handler).map { port =>
+                testGetAs[User](port, "/users/7").map { user =>
+                    assert(user == User(7, "test"))
+                }
+            }
         }
 
-        "with multiple inputs" in {
+        "with multiple inputs" in run {
             val route = HttpRoute.put("users" / HttpPath.int("id"))
                 .query[Boolean]("notify", false)
                 .input[CreateUser]
@@ -620,7 +679,14 @@ class HttpRouteTest extends Test:
             val handler: HttpHandler[Any] = route.handle { case (id, notify, user) =>
                 User(id, user.name)
             }
-            succeed
+            startTestServer(handler).map { port =>
+                HttpClient.send(
+                    HttpRequest.put(s"http://localhost:$port/users/5?notify=true", CreateUser("Alice", "a@b.com"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "Alice")
+                }
+            }
         }
 
         "with effects" in {
@@ -628,7 +694,7 @@ class HttpRouteTest extends Test:
             val handler: HttpHandler[Env[String]] = route.handle { _ =>
                 Env.get[String].map(prefix => Seq(User(1, s"$prefix-Alice")))
             }
-            succeed
+            assert(handler.route eq route)
         }
     }
 
@@ -737,7 +803,15 @@ class HttpRouteTest extends Test:
                     .error[NotFoundError](Status.NotFound)
                     .tag("Users")
             end UserRoutes
-            succeed
+            assert(UserRoutes.list.method == Method.GET)
+            assert(UserRoutes.list.queryParams.size == 2)
+            assert(UserRoutes.get.errorSchemas.size == 1)
+            assert(UserRoutes.create.method == Method.POST)
+            assert(UserRoutes.create.outputStatus == Status.Created)
+            assert(UserRoutes.create.inputSchema.isDefined)
+            assert(UserRoutes.update.method == Method.PUT)
+            assert(UserRoutes.update.errorSchemas.size == 2)
+            assert(UserRoutes.delete.method == Method.DELETE)
         }
     }
 

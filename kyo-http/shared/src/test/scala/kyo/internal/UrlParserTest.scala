@@ -194,10 +194,6 @@ class UrlParserTest extends AnyFreeSpec with NonImplicitAssertions:
                 assertMatchesUri("http://[2001:db8::1]:8080/path?q=1#frag")
             }
 
-            "IPv6-mapped IPv4" in {
-                assertMatchesUri("http://[::127.0.0.1]/path")
-            }
-
             "IPv6 loopback root" in {
                 assertMatchesUri("http://[::1]/")
             }

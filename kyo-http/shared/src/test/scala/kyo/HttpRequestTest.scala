@@ -474,12 +474,10 @@ class HttpRequestTest extends Test:
 
         "pathParam" - {
             "returns Present for existing param" in {
-                // Path params are typically extracted by route matching
-                // This tests the request's ability to access them
+                // Path params are set by route matching during server processing
+                // Before routing, pathParam returns Absent
                 val request = HttpRequest.get("http://example.com/users/123")
-                // Assuming route matching sets pathParam "id" -> "123"
-                // This will be set by the server during routing
-                succeed
+                assert(request.pathParam("id") == Absent)
             }
 
             "returns Absent for missing param" in {
@@ -585,8 +583,7 @@ class HttpRequestTest extends Test:
 
         "internationalized domain name" in {
             val request = HttpRequest.get("http://例え.jp/path")
-            // May be punycode encoded or preserved
-            succeed
+            assert(request.path == "/path")
         }
 
         "URL-encoded path segments" in {
@@ -606,8 +603,8 @@ class HttpRequestTest extends Test:
 
         "query with no value (flag)" in {
             val request = HttpRequest.get("http://example.com?flag")
-            // Flag-style params may be Present("") or Absent depending on implementation
-            succeed
+            // Flag-style params: present in URL so should not be Absent
+            assert(request.query("flag") == Present("") || request.query("flag") == Present("flag"))
         }
 
         "multiple query params same name" in {

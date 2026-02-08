@@ -16,7 +16,6 @@ class OpenApiTest extends Test:
                 assert(spec.openapi == "3.0.0")
                 assert(spec.paths.contains("/users"))
                 assert(spec.paths("/users").get.isDefined)
-                succeed
             }
 
             "generates spec from multiple routes" in {
@@ -29,7 +28,6 @@ class OpenApiTest extends Test:
                 assert(spec.paths("/users").get.isDefined)
                 assert(spec.paths("/users").post.isDefined)
                 assert(spec.paths("/users").delete.isDefined)
-                succeed
             }
 
             "uses custom config" in {
@@ -44,7 +42,6 @@ class OpenApiTest extends Test:
                 assert(spec.info.title == "My API")
                 assert(spec.info.version == "2.0.0")
                 assert(spec.info.description == Some("A test API"))
-                succeed
             }
 
             "includes route metadata" in {
@@ -58,7 +55,6 @@ class OpenApiTest extends Test:
 
                 assert(op.tags == Some(List("users")))
                 assert(op.summary == Some("Get all users"))
-                succeed
             }
 
             "includes path parameters" in {
@@ -70,7 +66,6 @@ class OpenApiTest extends Test:
 
                 assert(op.parameters.isDefined)
                 assert(op.parameters.get.exists(p => p.name == "id" && p.in == "path"))
-                succeed
             }
 
             "includes query parameters" in {
@@ -82,7 +77,6 @@ class OpenApiTest extends Test:
                 val op   = spec.paths("/users").get.get
 
                 assert(op.parameters.get.exists(p => p.name == "limit" && p.in == "query"))
-                succeed
             }
         }
 
@@ -117,7 +111,6 @@ class OpenApiTest extends Test:
 
                 assert(json.contains("\"openapi\":\"3.0.0\""))
                 assert(json.contains("\"/users\""))
-                succeed
             }
         }
 
@@ -129,7 +122,6 @@ class OpenApiTest extends Test:
                 assert(config.title == "API")
                 assert(config.version == "1.0.0")
                 assert(config.description == Absent)
-                succeed
             }
         }
 

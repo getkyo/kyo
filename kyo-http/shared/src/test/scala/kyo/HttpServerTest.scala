@@ -116,25 +116,37 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/health") { (_, _) =>
                 HttpResponse.ok("healthy")
             }
-            // Use port 0 to avoid conflicts in parallel test runs
-            val server = HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler)
-            server.map(s => succeed)
+            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+                assert(server.port > 0)
+                testGet(server.port, "/health").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "healthy")
+                }
+            }
         }
 
         "with config and handlers" in run {
-            val config  = HttpServer.Config(port = 0) // Random available port
-            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
-            val server  = HttpServer.init(config, PlatformTestBackend.backend)(handler)
-            server.map(s => succeed)
+            val config  = HttpServer.Config(port = 0)
+            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
+            HttpServer.init(config, PlatformTestBackend.backend)(handler).map { server =>
+                assert(server.port > 0)
+                testGet(server.port, "/health").map { response =>
+                    assertStatus(response, Status.OK)
+                }
+            }
         }
 
         "with named parameters" in run {
-            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
-            val server = HttpServer.init(
+            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
+            HttpServer.init(
                 HttpServer.Config(port = 0, host = "localhost", maxContentLength = 1024 * 1024, idleTimeout = 30.seconds),
                 PlatformTestBackend.backend
-            )(handler)
-            server.map(s => succeed)
+            )(handler).map { server =>
+                assert(server.port > 0)
+                testGet(server.port, "/health").map { response =>
+                    assertStatus(response, Status.OK)
+                }
+            }
         }
 
         "with empty handlers" in run {
@@ -181,20 +193,27 @@ class HttpServerTest extends Test:
         }
 
         "stop" in run {
-            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
+            val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("ok") }
             HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
-                server.stopNow
-                succeed
+                val port = server.port
+                assert(port > 0)
+                testGet(port, "/health").map { response =>
+                    assertStatus(response, Status.OK)
+                }.andThen {
+                    server.stopNow.andThen {
+                        Abort.run(testGet(port, "/health")).map { result =>
+                            assert(result.isFailure)
+                        }
+                    }
+                }
             }
         }
 
         "await" in run {
             val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
             HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
-                // await would block until server stops
-                // For testing, we just verify it's callable
-                server.stopNow
-                succeed
+                assert(server.port > 0)
+                server.stopNow.andThen(succeed)
             }
         }
 
@@ -205,10 +224,9 @@ class HttpServerTest extends Test:
                 val spec = server.openApi("Test API", "1.0.0")
                 assert(spec.info.title == "Test API")
                 assert(spec.info.version == "1.0.0")
-                // Also test the JSON generation
                 val json = server.openApi("Test API").toJson
                 assert(json.contains("Test API"))
-                succeed
+                assert(json.contains("Users"))
             }
         }
     }
@@ -222,13 +240,17 @@ class HttpServerTest extends Test:
                 assert(handler.route eq route)
             }
 
-            "handler with path capture" in {
+            "handler with path capture" in run {
                 val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
                 val handler = HttpHandler.init(route) { id => User(id, "User") }
-                succeed
+                startTestServer(handler).map { port =>
+                    testGetAs[User](port, "/users/42").map { user =>
+                        assert(user == User(42, "User"))
+                    }
+                }
             }
 
-            "handler with multiple inputs" in {
+            "handler with multiple inputs" in run {
                 val route = HttpRoute.get("users")
                     .query[Int]("limit", 20)
                     .query[Int]("offset", 0)
@@ -236,30 +258,45 @@ class HttpServerTest extends Test:
                 val handler = HttpHandler.init(route) { case (limit, offset) =>
                     Seq.fill(limit)(User(1, "User")).drop(offset)
                 }
-                succeed
+                startTestServer(handler).map { port =>
+                    testGetAs[Seq[User]](port, "/users?limit=3&offset=1").map { users =>
+                        assert(users.size == 2)
+                    }
+                }
             }
 
-            "handler with path + query params" in {
+            "handler with path + query params" in run {
                 val route = HttpRoute.get("users" / HttpPath.int("id"))
                     .query[String]("fields")
                     .output[User]
                 val handler = HttpHandler.init(route) { case (id, fields) =>
                     User(id, s"fields=$fields")
                 }
-                succeed
+                startTestServer(handler).map { port =>
+                    testGetAs[User](port, "/users/42?fields=name").map { user =>
+                        assert(user == User(42, "fields=name"))
+                    }
+                }
             }
 
-            "handler with path + header" in {
+            "handler with path + header" in run {
                 val route = HttpRoute.get("users" / HttpPath.int("id"))
                     .header("X-Request-Id")
                     .output[User]
                 val handler = HttpHandler.init(route) { case (id, requestId) =>
                     User(id, s"requestId=$requestId")
                 }
-                succeed
+                startTestServer(handler).map { port =>
+                    HttpClient.send(
+                        HttpRequest.get(s"http://localhost:$port/users/42", Seq("X-Request-Id" -> "req-123"))
+                    ).map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyContains(response, "requestId=req-123")
+                    }
+                }
             }
 
-            "handler with path + query + header" in {
+            "handler with path + query + header" in run {
                 val route = HttpRoute.get("users" / HttpPath.int("id"))
                     .query[Int]("limit")
                     .header("Authorization")
@@ -267,10 +304,18 @@ class HttpServerTest extends Test:
                 val handler = HttpHandler.init(route) { case (id, limit, auth) =>
                     User(id, s"limit=$limit,auth=$auth")
                 }
-                succeed
+                startTestServer(handler).map { port =>
+                    HttpClient.send(
+                        HttpRequest.get(s"http://localhost:$port/users/42?limit=10", Seq("Authorization" -> "Bearer token"))
+                    ).map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyContains(response, "limit=10")
+                        assertBodyContains(response, "auth=Bearer token")
+                    }
+                }
             }
 
-            "handler with multiple path params + query + header" in {
+            "handler with multiple path params + query + header" in run {
                 val route = HttpRoute.get("orgs" / HttpPath.string("org") / "users" / HttpPath.int("id"))
                     .query[Boolean]("verbose", false)
                     .header("Accept")
@@ -278,49 +323,86 @@ class HttpServerTest extends Test:
                 val handler = HttpHandler.init(route) { case (org, id, verbose, accept) =>
                     User(id, s"org=$org,verbose=$verbose,accept=$accept")
                 }
-                succeed
+                startTestServer(handler).map { port =>
+                    HttpClient.send(
+                        HttpRequest.get(
+                            s"http://localhost:$port/orgs/acme/users/42?verbose=true",
+                            Seq("Accept" -> "application/json")
+                        )
+                    ).map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyContains(response, "org=acme")
+                        assertBodyContains(response, "verbose=true")
+                        assertBodyContains(response, "accept=application/json")
+                    }
+                }
             }
 
-            "handler with async effect" in {
+            "handler with async effect" in run {
                 val route   = HttpRoute.get("users").output[Seq[User]]
                 val handler = HttpHandler.init(route) { _ => Async.delay(10.millis)(Seq(User(1, "Alice"))) }
-                succeed
+                startTestServer(handler).map { port =>
+                    testGetAs[Seq[User]](port, "/users").map { users =>
+                        assert(users == Seq(User(1, "Alice")))
+                    }
+                }
             }
 
             "handler with custom effect" in {
                 val route   = HttpRoute.get("users").output[Seq[User]]
                 val handler = HttpHandler.init(route) { _ => Env.get[String].map(prefix => Seq(User(1, prefix))) }
-                succeed
+                assert(handler.route eq route)
             }
         }
 
         "raw handler" - {
-            "with method and path" in {
+            "with method and path" in run {
                 val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("healthy") }
-                succeed
+                startTestServer(handler).map { port =>
+                    testGet(port, "/health").map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyText(response, "healthy")
+                    }
+                }
             }
 
-            "accessing request properties" in {
+            "accessing request properties" in run {
                 val handler = HttpHandler.post("/echo") { (_, request) =>
                     val body = request.bodyText
                     val ua   = request.header("User-Agent").getOrElse("unknown")
                     HttpResponse.ok(s"Received: $body from $ua")
                 }
-                succeed
+                startTestServer(handler).map { port =>
+                    HttpClient.send(
+                        HttpRequest.postText(s"http://localhost:$port/echo", "test-body")
+                    ).map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyContains(response, "Received: test-body")
+                    }
+                }
             }
 
-            "with async response" in {
+            "with async response" in run {
                 val handler = HttpHandler.get("/delayed") { (_, _) =>
                     Async.delay(100.millis)(HttpResponse.ok("done"))
                 }
-                succeed
+                startTestServer(handler).map { port =>
+                    testGet(port, "/delayed").map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyText(response, "done")
+                    }
+                }
             }
         }
 
-        "handler apply method" in {
-            val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok }
-            // Handler has an apply method that takes HttpRequest
-            succeed
+        "handler apply method" in run {
+            val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("applied") }
+            startTestServer(handler).map { port =>
+                testGet(port, "/test").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "applied")
+                }
+            }
         }
     }
 

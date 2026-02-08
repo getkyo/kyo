@@ -46,8 +46,12 @@ class HttpErrorJvmTest extends Test:
             val cause  = new ConnectException(null)
             val result = HttpError.fromThrowable(cause, "host", 80)
             result match
-                case _: HttpError.ConnectionFailed => succeed
-                case other                         => fail(s"Expected ConnectionFailed but got $other")
+                case e: HttpError.ConnectionFailed =>
+                    assert(e.host == "host")
+                    assert(e.port == 80)
+                    assert(e.cause eq cause)
+                case other => fail(s"Expected ConnectionFailed but got $other")
+            end match
         }
     }
 
