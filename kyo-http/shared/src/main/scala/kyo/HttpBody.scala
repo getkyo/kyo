@@ -7,7 +7,12 @@ import java.nio.charset.StandardCharsets
   * HttpBody is either `Bytes` (fully buffered in memory) or `Streamed` (lazy byte stream). This sealed hierarchy enables compile-time
   * safety: body accessors like `bodyText` and `bodyAs` are only available on `HttpResponse[HttpBody.Bytes]` via extension methods.
   */
-sealed abstract class HttpBody
+sealed abstract class HttpBody:
+    def use[A](ifBytes: HttpBody.Bytes => A, ifStreamed: HttpBody.Streamed => A): A =
+        this match
+            case b: HttpBody.Bytes    => ifBytes(b)
+            case s: HttpBody.Streamed => ifStreamed(s)
+end HttpBody
 
 object HttpBody:
 
@@ -18,7 +23,6 @@ object HttpBody:
     def apply(text: String): Bytes = new Bytes(text.getBytes(StandardCharsets.UTF_8))
 
     def stream(s: Stream[Span[Byte], Async]): Streamed = new Streamed(s)
-
     final class Bytes private[kyo] (private val _data: Array[Byte]) extends HttpBody:
         def data: Array[Byte] = _data
         def text: String =

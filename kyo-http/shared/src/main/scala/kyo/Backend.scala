@@ -37,6 +37,10 @@ object Backend:
 
         /** Shut down transport resources (event loops, thread pools). */
         def close(gracePeriod: Duration)(using Frame): Unit < Async
+
+        def close(using Frame): Unit < Async = close(30.seconds)
+
+        def closeNow(using Frame): Unit < Async = close(Duration.Zero)
     end ConnectionFactory
 
     /** A single transport connection. Handles one request at a time. */
@@ -63,10 +67,18 @@ object Backend:
         def port: Int
         def host: String
         def stop(gracePeriod: Duration)(using Frame): Unit < Async
+        def stop(using Frame): Unit < Async    = stop(30.seconds)
+        def stopNow(using Frame): Unit < Async = stop(Duration.Zero)
         def await(using Frame): Unit < Async
     end Server
 
-    /** Handler interface that backends call to dispatch requests. Built by shared HttpServer code from Router + Filter. */
+    /** Handler interface that backends call to dispatch requests.
+      *
+      * This indirection decouples backends from the routing/filter stack. Backends only need to parse HTTP on the wire and call these
+      * methods — they don't import or depend on HttpServer, HttpRouter, or HttpFilter. The shared HttpServer.init builds a ServerHandler
+      * that wires together the router, filter chain, and cookie config, then passes it to Backend.server(). This keeps each backend focused
+      * on transport.
+      */
     abstract class ServerHandler:
 
         /** Fast-path rejection check (404, 405) before reading the body. Returns Absent if the route exists. */

@@ -4,6 +4,8 @@ import org.scalajs.dom
 import org.scalajs.dom.Headers as FetchHeaders
 import org.scalajs.dom.RequestInit
 import org.scalajs.dom.Response
+import org.scalajs.macrotaskexecutor.MacrotaskExecutor
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.scalajs.js
@@ -37,13 +39,14 @@ object FetchBackend extends Backend:
 
 end FetchBackend
 
-private[kyo] class FetchConnection(
+final private[kyo] class FetchConnection(
     host: String,
     port: Int,
     ssl: Boolean
 ) extends Backend.Connection:
 
-    private given ExecutionContext = ExecutionContext.global
+    // MacrotaskExecutor avoids microtask starvation and aligns with kyo-scheduler's JS usage
+    private given ExecutionContext = MacrotaskExecutor
 
     // Fetch is stateless — no persistent connection
     def isAlive: Boolean = false
@@ -60,11 +63,9 @@ private[kyo] class FetchConnection(
                     resp
                 }
             }
-        Abort.run[Throwable](Async.fromFuture(future)).map {
-            case Result.Success(v) => v
-            case Result.Failure(e) => Abort.fail(HttpError.fromThrowable(e, host, port))
-            case Result.Panic(e)   => throw e
-        }
+        Abort.recover[Throwable](e =>
+            Abort.fail(HttpError.fromThrowable(e, host, port))
+        )(Async.fromFuture(future))
     end send
 
     def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
@@ -103,11 +104,7 @@ private[kyo] class FetchConnection(
     private[kyo] def closeAbruptly(): Unit = ()
 
     private def buildFetchRequest(request: HttpRequest[?]): (String, RequestInit) =
-        val scheme = if ssl then "https" else "http"
-        val portStr =
-            if (ssl && port == 443) || (!ssl && port == 80) then ""
-            else s":$port"
-        val url = s"$scheme://$host$portStr${request.url}"
+        val url = HttpClient.buildUrl(host, port, ssl, request.url)
 
         val init    = new RequestInit {}
         val headers = new FetchHeaders()
@@ -120,11 +117,10 @@ private[kyo] class FetchConnection(
         init.method = request.method.name.asInstanceOf[dom.HttpMethod]
         init.headers = headers
 
-        request.body match
-            case b: HttpBody.Bytes if !b.isEmpty =>
-                init.body = js.typedarray.byteArray2Int8Array(b.data)
-            case _ => ()
-        end match
+        request.body.use(
+            b => if !b.isEmpty then init.body = js.typedarray.byteArray2Int8Array(b.data),
+            _ => ()
+        )
 
         (url, init)
     end buildFetchRequest
@@ -132,12 +128,12 @@ private[kyo] class FetchConnection(
     private def extractHeaders(fetchHeaders: FetchHeaders): Seq[(String, String)] =
         val result   = Seq.newBuilder[(String, String)]
         val iterator = fetchHeaders.jsIterator
-        var next     = iterator.next()
-        while !next.done do
-            val pair = next.value
-            result += ((pair(0), pair(1)))
-            next = iterator.next()
-        end while
+        @tailrec def loop(next: js.Iterator.Entry[js.Array[String]]): Unit =
+            if !next.done then
+                val pair = next.value
+                result += ((pair(0), pair(1)))
+                loop(iterator.next())
+        loop(iterator.next())
         result.result()
     end extractHeaders
 

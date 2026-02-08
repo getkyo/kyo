@@ -1,13 +1,14 @@
 package kyo.internal
 
 import kyo.*
+import scala.annotation.tailrec
 
 /** Stateful SSE (Server-Sent Events) decoder for streaming byte chunks.
   *
   * Accumulates text across chunk boundaries and parses complete SSE events (delimited by blank lines). Each call to `decode` may return
   * zero or more events depending on how much data has arrived.
   */
-final class SseDecoder[V](schema: Schema[V]):
+final private[kyo] class SseDecoder[V](schema: Schema[V]):
     private val utf8   = Utf8StreamDecoder()
     private var buffer = ""
 
@@ -17,13 +18,16 @@ final class SseDecoder[V](schema: Schema[V]):
         val events = Seq.newBuilder[ServerSentEvent[V]]
 
         // Split on double-newline (SSE event boundary)
-        var idx = buffer.indexOf("\n\n")
-        while idx >= 0 do
-            val block = buffer.substring(0, idx)
-            buffer = buffer.substring(idx + 2)
-            parseEvent(block).foreach(events += _)
-            idx = buffer.indexOf("\n\n")
-        end while
+        @tailrec def loop(): Unit =
+            val idx = buffer.indexOf("\n\n")
+            if idx >= 0 then
+                val block = buffer.substring(0, idx)
+                buffer = buffer.substring(idx + 2)
+                parseEvent(block).foreach(events += _)
+                loop()
+            end if
+        end loop
+        loop()
 
         events.result()
     end decode
@@ -47,11 +51,7 @@ final class SseDecoder[V](schema: Schema[V]):
         }
 
         val data = dataLines.result()
-        if data.nonEmpty then
-            Present(ServerSentEvent(schema.decode(data.mkString("\n")), event, id, retry))
-        else
-            Absent
-        end if
+        Maybe.when(data.nonEmpty)(ServerSentEvent(schema.decode(data.mkString("\n")), event, id, retry))
     end parseEvent
 
 end SseDecoder

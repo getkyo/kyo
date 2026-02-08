@@ -8,7 +8,7 @@ import scala.annotation.tailrec
   * Manages per-host pools of idle connections with bounded capacity, health checks, and acquire timeouts. Generalizes the same logic as the
   * old NettyChannelPool but is backend-agnostic.
   */
-private[kyo] class ConnectionPool(
+final private[kyo] class ConnectionPool(
     factory: Backend.ConnectionFactory,
     maxConnectionsPerHost: Maybe[Int],
     connectionAcquireTimeout: Duration
@@ -22,13 +22,15 @@ private[kyo] class ConnectionPool(
     def acquire(host: String, port: Int, ssl: Boolean, connectTimeout: Maybe[Duration])(using
         Frame
     ): Backend.Connection < (Async & Abort[HttpError]) =
+        // PoolKey is a small, short-lived allocation — acceptable trade-off for a clean API
+        // that avoids leaking internal details to callers.
         val key      = PoolKey(host, port, ssl)
         val hostPool = pools.computeIfAbsent(key, _ => HostPool.init(maxConnectionsPerHost))
         hostPool.acquire(factory, host, port, ssl, connectTimeout, connectionAcquireTimeout)
     end acquire
 
     /** Release a connection back to the pool. Synchronous — suitable for ensure blocks. */
-    def release(host: String, port: Int, ssl: Boolean, conn: Backend.Connection)(using AllowUnsafe): Unit =
+    def release(host: String, port: Int, ssl: Boolean, conn: Backend.Connection)(using AllowUnsafe, Frame): Unit =
         val key      = PoolKey(host, port, ssl)
         val hostPool = pools.get(key)
         if hostPool != null then hostPool.release(conn)
@@ -57,7 +59,7 @@ private[kyo] object ConnectionPool:
     private case class PoolKey(host: String, port: Int, ssl: Boolean)
 
     /** Per-host pool managing idle connections with bounded capacity. */
-    private class HostPool(
+    final private class HostPool(
         idleChannels: Channel.Unsafe[Backend.Connection],
         totalCount: AtomicInt.Unsafe,
         maxConnections: Int
@@ -82,60 +84,47 @@ private[kyo] object ConnectionPool:
                             }
                         else
                             // Pool is full — wait for a released connection with timeout
-                            Abort.run[kyo.Timeout](
-                                Async.timeout(acquireTimeout)(waitForActive(factory, host, port, ssl, connectTimeout))
-                            ).map {
-                                case Result.Success(conn) => conn
-                                case Result.Failure(_) =>
-                                    Abort.fail(HttpError.ConnectionFailed(
-                                        host,
-                                        port,
-                                        new RuntimeException(s"Timed out acquiring connection ($acquireTimeout)")
-                                    ))
-                                case Result.Panic(e) => throw e
-                            }
+                            Abort.recover[kyo.Timeout](_ =>
+                                Abort.fail(HttpError.ConnectionFailed(
+                                    host,
+                                    port,
+                                    new RuntimeException(s"Timed out acquiring connection ($acquireTimeout)")
+                                ))
+                            )(Async.timeout(acquireTimeout)(waitForActive(factory, host, port, ssl, connectTimeout)))
             }
         end acquire
 
-        def release(conn: Backend.Connection)(using AllowUnsafe): Unit =
-            given Frame = Frame.internal
+        def release(conn: Backend.Connection)(using AllowUnsafe, Frame): Unit =
             if conn.isAlive then
                 idleChannels.offer(conn) match
                     case Result.Success(true) => ()
-                    case _ =>
-                        discard(totalCount.decrementAndGet())
-                        conn.closeAbruptly()
-            else
-                discard(totalCount.decrementAndGet())
-                conn.closeAbruptly()
-            end if
+                    case _                    => discardConnection(conn)
+            else discardConnection(conn)
         end release
 
-        def close()(using AllowUnsafe): Unit =
-            given Frame = Frame.internal
+        def close()(using AllowUnsafe, Frame): Unit =
             idleChannels.close() match
                 case Present(remaining) =>
-                    remaining.foreach { conn =>
-                        discard(totalCount.decrementAndGet())
-                        conn.closeAbruptly()
-                    }
+                    remaining.foreach(discardConnection)
                 case Absent => ()
             end match
         end close
 
         @tailrec
-        private def pollActive()(using AllowUnsafe): Maybe[Backend.Connection] =
-            given Frame = Frame.internal
+        private def pollActive()(using AllowUnsafe, Frame): Maybe[Backend.Connection] =
             idleChannels.poll() match
                 case Result.Success(Present(conn)) =>
                     if conn.isAlive then Present(conn)
                     else
-                        discard(totalCount.decrementAndGet())
-                        conn.closeAbruptly()
+                        discardConnection(conn)
                         pollActive()
                 case _ => Absent
             end match
         end pollActive
+
+        private def discardConnection(conn: Backend.Connection)(using AllowUnsafe): Unit =
+            discard(totalCount.decrementAndGet())
+            conn.closeAbruptly()
 
         private def tryIncrementCount()(using AllowUnsafe): Boolean =
             @tailrec def loop(): Boolean =
@@ -159,8 +148,7 @@ private[kyo] object ConnectionPool:
                     if conn.isAlive then conn
                     else
                         Sync.Unsafe {
-                            discard(totalCount.decrementAndGet())
-                            conn.closeAbruptly()
+                            discardConnection(conn)
                         }.andThen(acquire(factory, host, port, ssl, connectTimeout, Duration.Infinity))
                 case Result.Failure(_) =>
                     Abort.fail(HttpError.ConnectionFailed(
@@ -178,8 +166,7 @@ private[kyo] object ConnectionPool:
     private object HostPool:
         private inline def DefaultIdleCapacity = 256
 
-        def init(maxConnections: Maybe[Int])(using AllowUnsafe): HostPool =
-            given Frame      = Frame.internal
+        def init(maxConnections: Maybe[Int])(using AllowUnsafe, Frame): HostPool =
             val capacity     = maxConnections.getOrElse(DefaultIdleCapacity)
             val idleChannels = Channel.Unsafe.init[Backend.Connection](capacity)
             val totalCount   = AtomicInt.Unsafe.init(0)

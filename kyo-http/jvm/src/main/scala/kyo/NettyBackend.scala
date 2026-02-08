@@ -8,6 +8,7 @@ import io.netty.handler.codec.http.HttpClientCodec
 import io.netty.handler.codec.http.HttpServerCodec
 import io.netty.handler.flush.FlushConsolidationHandler
 import io.netty.handler.ssl.SslContextBuilder
+import io.netty.util.concurrent.DefaultThreadFactory
 import java.net.InetSocketAddress
 import java.util.concurrent.TimeUnit
 import kyo.internal.HttpServerHandler
@@ -18,9 +19,9 @@ import kyo.internal.NettyUtil
 object NettyBackend extends Backend:
 
     def connectionFactory(maxResponseSizeBytes: Int, daemon: Boolean)(using AllowUnsafe): Backend.ConnectionFactory =
-        val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
-        if daemon then discard(workerGroup.asInstanceOf[{ def setDaemon(b: Boolean): Unit }])
-        val sslContext = SslContextBuilder.forClient().build()
+        val threadFactory = new DefaultThreadFactory("kyo-http", daemon)
+        val workerGroup   = new MultiThreadIoEventLoopGroup(threadFactory, NettyTransport.ioHandlerFactory)
+        val sslContext    = SslContextBuilder.forClient().build()
         val bootstrap = new Bootstrap()
             .group(workerGroup)
             .channel(NettyTransport.socketChannelClass)
@@ -42,25 +43,25 @@ object NettyBackend extends Backend:
                     discard(b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Integer.valueOf(timeout.toMillis.toInt)))
                 }
                 val connectFuture = b.connect()
-                // Convert connection failures to Abort[HttpError] instead of Panic
-                Promise.initWith[Backend.Connection, Abort[HttpError] & Async] { p =>
-                    p.onComplete(_ => Sync.defer(discard(connectFuture.cancel(true)))).andThen {
-                        connectFuture.addListener((future: ChannelFuture) =>
-                            discard {
-                                import AllowUnsafe.embrace.danger
-                                if future.isSuccess then
-                                    p.unsafe.complete(Result.succeed(
-                                        new NettyConnection(future.channel(), host, port, maxResponseSizeBytes)
-                                    ))
-                                else
-                                    p.unsafe.complete(Result.fail(
-                                        HttpError.fromThrowable(future.cause(), host, port)
-                                    ))
-                                end if
-                            }
-                        )
-                        p.get
-                    }
+                Sync.Unsafe {
+                    val p = Promise.Unsafe.init[Backend.Connection, Abort[HttpError]]()
+                    connectFuture.addListener((future: ChannelFuture) =>
+                        discard {
+                            if future.isSuccess then
+                                p.complete(Result.succeed(
+                                    new NettyConnection(future.channel(), host, port, maxResponseSizeBytes)
+                                ))
+                            else
+                                p.complete(Result.fail(
+                                    HttpError.fromThrowable(future.cause(), host, port)
+                                ))
+                        }
+                    )
+                    // Bridge Kyo fiber interruption to Netty: if the fiber is cancelled,
+                    // attempt to cancel the in-flight connect. Best-effort — no-op if
+                    // the connection already completed.
+                    p.onComplete(_ => discard(connectFuture.cancel(true)))
+                    p.safe.get
                 }
             end connect
 

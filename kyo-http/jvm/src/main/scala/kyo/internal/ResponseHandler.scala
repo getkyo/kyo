@@ -7,7 +7,7 @@ import kyo.*
 import scala.annotation.tailrec
 
 /** Response handler — completes the promise with the parsed response, doesn't manage pool. */
-private[kyo] class ResponseHandler(
+final private[kyo] class ResponseHandler(
     promise: Promise.Unsafe[HttpResponse[HttpBody.Bytes], Abort[HttpError]],
     channel: NettyChannel,
     host: String,

@@ -187,9 +187,7 @@ final class HttpRequest[+B <: HttpBody] private (
 
     /** Returns the body as a byte stream. Works for both buffered and streaming requests. */
     def bodyStreamUniversal(using Frame): Stream[Span[Byte], Async] =
-        body match
-            case b: HttpBody.Bytes    => Stream.init(Chunk(b.span))
-            case s: HttpBody.Streamed => s.stream
+        body.use(b => Stream.init(Chunk(b.span)), _.stream)
 
     // --- Builder methods (return new immutable instance, preserve body type) ---
 

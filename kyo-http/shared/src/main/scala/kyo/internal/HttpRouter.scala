@@ -19,7 +19,7 @@ import scala.annotation.tailrec
   *   - Literal segments have priority over captures
   *   - Method-based dispatch at leaf nodes
   */
-final class HttpRouter private (
+final private[kyo] class HttpRouter private (
     private val nodes: Array[HttpRouter.Node],
     private val handlers: Array[HttpHandler[Any]]
 ):
@@ -112,7 +112,7 @@ final class HttpRouter private (
 
 end HttpRouter
 
-object HttpRouter:
+private[kyo] object HttpRouter:
 
     /** Error types for route lookup */
     enum FindError derives CanEqual:

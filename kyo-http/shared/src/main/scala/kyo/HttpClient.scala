@@ -42,13 +42,12 @@ final class HttpClient private (
                             Scope.ensure(conn.close).andThen(conn.stream(filteredRequest.asInstanceOf[HttpRequest[?]]))
                         }
                 ).map { response =>
-                    response.body match
-                        case _: HttpBody.Streamed =>
-                            response.asInstanceOf[HttpResponse[HttpBody.Streamed]]
-                        case b: HttpBody.Bytes =>
-                            // A filter can short-circuit with a cached/mocked buffered response.
-                            // Wrap the bytes as a single-chunk stream so the streaming contract holds.
-                            response.withBody(HttpBody.stream(Stream.init(Chunk(b.span))))
+                    // A filter can short-circuit with a cached/mocked buffered response.
+                    // Wrap the bytes as a single-chunk stream so the streaming contract holds.
+                    response.body.use(
+                        b => response.withBody(HttpBody.stream(Stream.init(Chunk(b.span)))),
+                        s => response.withBody(s)
+                    )
                 }
             }
         }
@@ -101,15 +100,35 @@ final class HttpClient private (
             }
         }
 
-    /** Pre-establishes connections to reduce first-request latency. */
-    def warmup(url: String, connections: Int = 1)(using Frame): Unit < Async =
-        require(connections > 0, s"connections must be positive: $connections")
-        Async.fill(connections)(Abort.run[HttpError](send(HttpRequest.head(url)))).unit
+    /** Pre-establishes connections to reduce first-request latency.
+      *
+      * Runs `connections` concurrent HEAD requests in a loop for up to `duration`. Invalid parameters are clamped to safe defaults.
+      */
+    def warmup(url: String, connections: Int = 1, duration: Duration = 10.seconds)(using Frame): Unit < Async =
+        val c = Math.max(1, connections)
+        val d = if duration > Duration.Zero then duration else 10.seconds
+        val warnConns: Unit < Sync =
+            if c != connections then Log.warn(s"warmup: connections clamped from $connections to $c")
+            else ()
+        val warnDur: Unit < Sync =
+            if d != duration then Log.warn(s"warmup: duration clamped from $duration to $d")
+            else ()
+        warnConns.andThen(warnDur).andThen {
+            Abort.run[kyo.Timeout](Async.timeout(d)(
+                Async.fill(c)(
+                    Loop(()) { _ =>
+                        Abort.run[HttpError](send(HttpRequest.head(url)))
+                            .andThen(Loop.continue(()))
+                    }
+                ).unit
+            )).unit
+        }
     end warmup
 
     /** Pre-establishes connections to multiple URLs. */
+    /** Pre-establishes connections to multiple URLs. */
     def warmup(urls: Seq[String])(using Frame): Unit < Async =
-        Async.foreach(urls)(url => warmup(url, 1)).unit
+        Async.foreach(urls)(url => warmup(url)).unit
 
     def closeNow(using Frame): Unit < Async =
         close(Duration.Zero)
@@ -263,8 +282,16 @@ object HttpClient:
 
     // --- Private implementation ---
 
-    private[kyo] inline def DefaultHttpPort                  = 80
-    private[kyo] inline def DefaultHttpsPort                 = 443
+    private[kyo] inline def DefaultHttpPort  = 80
+    private[kyo] inline def DefaultHttpsPort = 443
+
+    /** Build a URL from host/port/ssl/path components. */
+    private[kyo] def buildUrl(host: String, port: Int, ssl: Boolean, path: String): String =
+        val scheme      = if ssl then "https" else "http"
+        val defaultPort = if ssl then DefaultHttpsPort else DefaultHttpPort
+        val portStr     = if port == defaultPort then "" else s":$port"
+        s"$scheme://$host$portStr$path"
+    end buildUrl
     private[kyo] inline def DefaultMaxConnectionsPerHost     = Maybe(100)
     private[kyo] inline def DefaultConnectionAcquireTimeout  = 30.seconds
     private[kyo] inline def DefaultMaxResponseSizeBytes: Int = 1048576
@@ -298,10 +325,7 @@ object HttpClient:
                 val port = request.port
                 val path = request.url
                 if host.isEmpty then path
-                else if port == DefaultHttpPort then s"http://$host$path"
-                else if port == DefaultHttpsPort then s"https://$host$path"
-                else s"http://$host:$port$path"
-                end if
+                else buildUrl(host, port, port == DefaultHttpsPort, path)
 
     /** Parse a URL into (host, port, ssl) components. */
     private[kyo] case class ParsedUrl(host: String, port: Int, ssl: Boolean)

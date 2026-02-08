@@ -15,7 +15,7 @@ import scala.annotation.tailrec
   * sequences are split across chunk boundaries. When a chunk ends with an incomplete sequence (e.g., the first byte of a 3-byte character),
   * we must buffer those bytes and prepend them to the next chunk. Netty provides no equivalent utility for this use case.
   */
-final class Utf8StreamDecoder private (
+final private[kyo] class Utf8StreamDecoder private (
     private val decoder: CharsetDecoder,
     private var leftover: Array[Byte]
 ):
@@ -83,7 +83,7 @@ final class Utf8StreamDecoder private (
 
 end Utf8StreamDecoder
 
-object Utf8StreamDecoder:
+private[kyo] object Utf8StreamDecoder:
     def apply(): Utf8StreamDecoder =
         val decoder = StandardCharsets.UTF_8.newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)

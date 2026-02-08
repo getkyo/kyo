@@ -56,9 +56,7 @@ final class HttpResponse[+B <: HttpBody] private (
 
     /** Returns the body as a byte stream. Works for both buffered and streaming responses. */
     def bodyStream(using Frame): Stream[Span[Byte], Async] =
-        body match
-            case b: HttpBody.Bytes    => Stream.init(Chunk(b.span))
-            case s: HttpBody.Streamed => s.stream
+        body.use(b => Stream.init(Chunk(b.span)), _.stream)
 
     // --- Builders (preserve body type) ---
 
@@ -115,10 +113,9 @@ final class HttpResponse[+B <: HttpBody] private (
 
     /** Materializes a streaming body into bytes, or returns self if already bytes. */
     private[kyo] def ensureBytes(using Frame): HttpResponse[HttpBody.Bytes] < Async =
-        body match
-            case _: HttpBody.Bytes =>
-                this.asInstanceOf[HttpResponse[HttpBody.Bytes]]
-            case s: HttpBody.Streamed =>
+        body.use(
+            b => withBody(b),
+            s =>
                 s.stream.run.map { chunks =>
                     val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
                     val arr       = new Array[Byte](totalSize)
@@ -130,6 +127,7 @@ final class HttpResponse[+B <: HttpBody] private (
                     }
                     withBody(HttpBody(arr))
                 }
+        )
 
 end HttpResponse
 

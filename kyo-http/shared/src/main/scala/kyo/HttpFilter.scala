@@ -219,11 +219,10 @@ object HttpFilter:
                     Frame
                 ): HttpResponse[?] < (Async & S) =
                     next(request).map { response =>
-                        response.body match
-                            case b: HttpBody.Bytes =>
-                                response.addHeader("ETag", computeETag(b.data))
-                            case _: HttpBody.Streamed =>
-                                response // Skip ETag for streaming responses
+                        response.body.use(
+                            b => response.addHeader("ETag", computeETag(b.data)),
+                            _ => response // Skip ETag for streaming responses
+                        )
                     }
 
         /** Handles conditional requests (If-None-Match) returning 304 when content unchanged (only for buffered responses). */
@@ -233,8 +232,8 @@ object HttpFilter:
                     Frame
                 ): HttpResponse[?] < (Async & S) =
                     next(req).map { response =>
-                        response.body match
-                            case b: HttpBody.Bytes =>
+                        response.body.use(
+                            b =>
                                 val etagValue = computeETag(b.data)
                                 req.header("If-None-Match") match
                                     case Present(clientEtag) if clientEtag == etagValue =>
@@ -242,8 +241,9 @@ object HttpFilter:
                                     case _ =>
                                         response.addHeader("ETag", etagValue)
                                 end match
-                            case _: HttpBody.Streamed =>
-                                response // Skip conditional check for streaming responses
+                            ,
+                            _ => response // Skip conditional check for streaming responses
+                        )
                     }
 
         /** Adds common security headers to responses. */

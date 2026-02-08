@@ -74,10 +74,8 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                 val result =
                     if handler.isStreaming(request.method, path) then
                         // For streaming request handlers, pass the request as-is
-                        request.body match
-                            case _: HttpBody.Streamed =>
-                                handler.handleStreaming(request.asInstanceOf[HttpRequest[HttpBody.Streamed]]).map(ensureStreamed)
-                            case b: HttpBody.Bytes =>
+                        request.body.use(
+                            b =>
                                 // Wrap buffered body as a stream for the handler
                                 val streamReq = HttpRequest.fromRawStreaming(
                                     request.method,
@@ -86,12 +84,16 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                                     Stream.init(Chunk(b.span))
                                 )
                                 handler.handleStreaming(streamReq).map(ensureStreamed)
+                            ,
+                            _ =>
+                                handler.handleStreaming(request.asInstanceOf[HttpRequest[HttpBody.Streamed]]).map(ensureStreamed)
+                        )
                     else
                         // Non-streaming handler: materialize request body to bytes, then handle
-                        request.body match
-                            case b: HttpBody.Bytes =>
-                                handler.handle(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]).map(ensureStreamed)
-                            case s: HttpBody.Streamed =>
+                        request.body.use(
+                            _ =>
+                                handler.handle(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]).map(ensureStreamed),
+                            s =>
                                 s.stream.run.map { chunks =>
                                     val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
                                     val arr       = new Array[Byte](totalSize)
@@ -104,6 +106,7 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                                     val bytesReq = HttpRequest.fromRawHeaders(request.method, request.url, request.headers, arr)
                                     handler.handle(bytesReq).map(ensureStreamed)
                                 }
+                        )
                 Abort.run[Nothing](result).map {
                     case Result.Success(resp) =>
                         // Match Netty behavior: error statuses abort with StatusError for streaming
@@ -143,10 +146,9 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
     end extractPath
 
     private def ensureBytes(response: HttpResponse[?])(using Frame): HttpResponse[HttpBody.Bytes] < Async =
-        response.body match
-            case _: HttpBody.Bytes =>
-                response.asInstanceOf[HttpResponse[HttpBody.Bytes]]
-            case s: HttpBody.Streamed =>
+        response.body.use(
+            b => response.withBody(b),
+            s =>
                 s.stream.run.map { chunks =>
                     val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
                     val arr       = new Array[Byte](totalSize)
@@ -158,12 +160,12 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                     }
                     response.withBody(HttpBody(arr))
                 }
+        )
 
     private def ensureStreamed(response: HttpResponse[?])(using Frame): HttpResponse[HttpBody.Streamed] =
-        response.body match
-            case s: HttpBody.Streamed =>
-                response.asInstanceOf[HttpResponse[HttpBody.Streamed]]
-            case b: HttpBody.Bytes =>
-                response.withBody(HttpBody.stream(Stream.init(Chunk(b.span))))
+        response.body.use(
+            b => response.withBody(HttpBody.stream(Stream.init(Chunk(b.span)))),
+            s => response.withBody(s)
+        )
 
 end TestConnection

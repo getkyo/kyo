@@ -27,7 +27,7 @@ import scala.compiletime.uninitialized
   * State machine: IDLE -> (receive HttpRequest) -> route lookup -> BUFFERING (accumulate body, invoke handler on LastHttpContent) STREAMING
   * (deliver chunks to Channel.Unsafe, invoke handler immediately) DISCARDING (consume body, send error response on LastHttpContent)
   */
-private[kyo] class HttpServerHandler(
+final private[kyo] class HttpServerHandler(
     handler: Backend.ServerHandler,
     maxContentLength: Int
 )(using Frame) extends ChannelInboundHandlerAdapter:
@@ -260,15 +260,15 @@ private[kyo] class HttpServerHandler(
 
         val fiber = Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped {
-                val respEffect: kyo.HttpResponse[?] < Async = request.body match
-                    case _: HttpBody.Bytes    => handler.handle(request.asInstanceOf[kyo.HttpRequest[HttpBody.Bytes]])
-                    case _: HttpBody.Streamed => handler.handleStreaming(request.asInstanceOf[kyo.HttpRequest[HttpBody.Streamed]])
+                val respEffect: kyo.HttpResponse[?] < Async = request.body.use(
+                    _ => handler.handle(request.asInstanceOf[kyo.HttpRequest[HttpBody.Bytes]]),
+                    _ => handler.handleStreaming(request.asInstanceOf[kyo.HttpRequest[HttpBody.Streamed]])
+                )
 
                 respEffect.map { response =>
-                    response.body match
-                        case _: HttpBody.Bytes =>
-                            response.asInstanceOf[kyo.HttpResponse[HttpBody.Bytes]]: kyo.HttpResponse[?]
-                        case streamed: HttpBody.Streamed =>
+                    response.body.use(
+                        _ => response: kyo.HttpResponse[?],
+                        streamed =>
                             val nettyResponse = new DefaultHttpResponse(
                                 HttpVersion.HTTP_1_1,
                                 HttpResponseStatus.valueOf(response.status.code)
@@ -297,7 +297,7 @@ private[kyo] class HttpServerHandler(
                                     if ctx.channel().isActive then discard(ctx.close())
                                     response
                             }
-                    end match
+                    )
                 }
             }
         )
@@ -312,12 +312,10 @@ private[kyo] class HttpServerHandler(
             result match
                 case Result.Success(r) =>
                     val response = r.asInstanceOf[kyo.HttpResponse[?]]
-                    response.body match
-                        case _: HttpBody.Bytes =>
-                            sendBufferedResponse(ctx, response, keepAlive)
-                        case _: HttpBody.Streamed =>
-                            () // Streaming already handled inline
-                    end match
+                    response.body.use(
+                        _ => sendBufferedResponse(ctx, response, keepAlive),
+                        _ => () // Streaming already handled inline
+                    )
                 case Result.Failure(e) =>
                     if ctx.channel().isActive then
                         sendBufferedResponse(ctx, kyo.HttpResponse.serverError(e.toString), keepAlive)
@@ -332,9 +330,7 @@ private[kyo] class HttpServerHandler(
         response: kyo.HttpResponse[?],
         keepAlive: Boolean
     ): Unit =
-        val bodyData = response.body match
-            case b: HttpBody.Bytes => b.data
-            case _                 => Array.empty[Byte]
+        val bodyData  = response.body.use(_.data, _ => Array.empty[Byte])
         val status    = HttpResponseStatus.valueOf(response.status.code)
         val content   = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
         val nettyResp = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, content)
