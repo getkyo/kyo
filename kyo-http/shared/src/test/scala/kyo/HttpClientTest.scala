@@ -1438,9 +1438,9 @@ class HttpClientTest extends Test:
             "receives SSE events" in run {
                 val handler = HttpHandler.streamSse[Unit, Item, Any]("/events") { (_, _) =>
                     Stream.init(Seq(
-                        ServerSentEvent(Item("a")),
-                        ServerSentEvent(Item("b")),
-                        ServerSentEvent(Item("c"))
+                        HttpEvent(Item("a")),
+                        HttpEvent(Item("b")),
+                        HttpEvent(Item("c"))
                     ))
                 }
                 startTestServer(handler).map { port =>
@@ -1457,7 +1457,7 @@ class HttpClientTest extends Test:
 
             "empty stream" in run {
                 val handler = HttpHandler.streamSse[Unit, Item, Any]("/empty") { (_, _) =>
-                    Stream.empty[ServerSentEvent[Item]]
+                    Stream.empty[HttpEvent[Item]]
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.streamSse[Item](s"http://localhost:$port/empty").map { stream =>
@@ -1470,7 +1470,7 @@ class HttpClientTest extends Test:
 
             "with HttpRequest" in run {
                 val handler = HttpHandler.streamSse[Unit, Item, Any]("/events") { (_, _) =>
-                    Stream.init(Seq(ServerSentEvent(Item("x"))))
+                    Stream.init(Seq(HttpEvent(Item("x"))))
                 }
                 startTestServer(handler).map { port =>
                     val request = HttpRequest.get(s"http://localhost:$port/events")

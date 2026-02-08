@@ -63,19 +63,19 @@ final class HttpClient private (
     /** Streams Server-Sent Events from the given URL. */
     def streamSse[V: Schema: Tag](url: String)(using
         Frame,
-        Tag[Emit[Chunk[ServerSentEvent[V]]]]
-    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        Tag[Emit[Chunk[HttpEvent[V]]]]
+    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
         streamSse[V](HttpRequest.get(url))
 
     /** Streams Server-Sent Events from the given request. */
     def streamSse[V: Schema: Tag](request: HttpRequest[?])(using
         Frame,
-        Tag[Emit[Chunk[ServerSentEvent[V]]]]
-    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        Tag[Emit[Chunk[HttpEvent[V]]]]
+    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
         stream(request).map { response =>
             val decoder = new SseDecoder[V](Schema[V])
-            response.bodyStream.mapChunkPure[Span[Byte], ServerSentEvent[V]] { chunk =>
-                val result = Seq.newBuilder[ServerSentEvent[V]]
+            response.bodyStream.mapChunkPure[Span[Byte], HttpEvent[V]] { chunk =>
+                val result = Seq.newBuilder[HttpEvent[V]]
                 chunk.foreach(bytes => result ++= decoder.decode(bytes))
                 result.result()
             }
@@ -171,14 +171,14 @@ object HttpClient:
 
     def streamSse[V: Schema: Tag](url: String)(using
         Frame,
-        Tag[Emit[Chunk[ServerSentEvent[V]]]]
-    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        Tag[Emit[Chunk[HttpEvent[V]]]]
+    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
         clientLocal.use(_.streamSse[V](url))
 
     def streamSse[V: Schema: Tag](request: HttpRequest[?])(using
         Frame,
-        Tag[Emit[Chunk[ServerSentEvent[V]]]]
-    ): Stream[ServerSentEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
+        Tag[Emit[Chunk[HttpEvent[V]]]]
+    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
         clientLocal.use(_.streamSse[V](request))
 
     def streamNdjson[V: Schema: Tag](url: String)(using

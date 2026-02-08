@@ -72,11 +72,9 @@ object HttpHandler:
         new HttpHandler[S]:
             val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
             private[kyo] def apply(request: HttpRequest[?]): kyo.HttpResponse[?] < (Async & S) =
-                //
-                // Safe cast: server guarantees buffered body for non-streaming handlers
-                // Note: this overload only works correctly for HttpPath[Unit] (no captures).
-                // Paths with captures should use the typed route overload which calls extractPathParams.
-                f(().asInstanceOf[A], request.asInstanceOf[HttpRequest[HttpBody.Bytes]])
+                val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
+                val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
+                f(pathInput.asInstanceOf[A], req)
 
     def health(path: HttpPath[Unit] = "/health")(using Frame): HttpHandler[Any] =
         init(Method.GET, path)((_, _) => kyo.HttpResponse.ok("healthy"))
@@ -152,15 +150,16 @@ object HttpHandler:
     inline def streamSse[A, V: Schema: Tag, S](
         path: HttpPath[A]
     )(
-        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[ServerSentEvent[V], Async & S]
+        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[HttpEvent[V], Async & S]
     )(using Frame): HttpHandler[S] =
         streamSse(Method.GET, path)(f)
 
+    @nowarn("msg=anonymous")
     inline def streamSse[A, V: Schema: Tag, S](
         method: Method,
         path: HttpPath[A]
     )(
-        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[ServerSentEvent[V], Async & S]
+        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[HttpEvent[V], Async & S]
     )(using Frame): HttpHandler[S] =
         val schema = Schema[V]
         new HttpHandler[S]:
@@ -170,7 +169,7 @@ object HttpHandler:
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
                 val stream    = f(pathInput.asInstanceOf[A], req)
-                HttpResponse.streamSse(stream.asInstanceOf[Stream[ServerSentEvent[Any], Async]])(using schema.asInstanceOf[Schema[Any]])
+                HttpResponse.streamSse(stream.asInstanceOf[Stream[HttpEvent[Any], Async]])(using schema.asInstanceOf[Schema[Any]])
             end apply
         end new
     end streamSse
@@ -184,6 +183,7 @@ object HttpHandler:
     )(using Frame): HttpHandler[S] =
         streamNdjson(Method.GET, path)(f)
 
+    @nowarn("msg=anonymous")
     inline def streamNdjson[A, V: Schema: Tag, S](
         method: Method,
         path: HttpPath[A]

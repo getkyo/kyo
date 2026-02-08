@@ -661,9 +661,9 @@ class HttpServerTest extends Test:
         "SSE stream returns correct content-type and body" in run {
             val handler = HttpHandler.streamSse[Unit, Event, Any]("/events") { (_, _) =>
                 Stream.init(Seq(
-                    ServerSentEvent(Event(1)),
-                    ServerSentEvent(Event(2)),
-                    ServerSentEvent(Event(3))
+                    HttpEvent(Event(1)),
+                    HttpEvent(Event(2)),
+                    HttpEvent(Event(3))
                 ))
             }
             startTestServer(handler).map { port =>
@@ -681,8 +681,8 @@ class HttpServerTest extends Test:
         "SSE stream with event name and id" in run {
             val handler = HttpHandler.streamSse[Unit, String, Any]("/events") { (_, _) =>
                 Stream.init(Seq(
-                    ServerSentEvent("hello", event = Present("greeting"), id = Present("1")),
-                    ServerSentEvent("world", event = Present("greeting"), id = Present("2"))
+                    HttpEvent("hello", event = Present("greeting"), id = Present("1")),
+                    HttpEvent("world", event = Present("greeting"), id = Present("2"))
                 ))
             }
             startTestServer(handler).map { port =>
@@ -700,7 +700,7 @@ class HttpServerTest extends Test:
         "SSE stream with retry field" in run {
             val handler = HttpHandler.streamSse[Unit, String, Any]("/events") { (_, _) =>
                 Stream.init(Seq(
-                    ServerSentEvent("test", retry = Present(5000.millis))
+                    HttpEvent("test", retry = Present(5000.millis))
                 ))
             }
             startTestServer(handler).map { port =>
@@ -730,7 +730,7 @@ class HttpServerTest extends Test:
 
         "empty SSE stream" in run {
             val handler = HttpHandler.streamSse[Unit, String, Any]("/empty") { (_, _) =>
-                Stream.empty[ServerSentEvent[String]]
+                Stream.empty[HttpEvent[String]]
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/empty").map { response =>
@@ -754,7 +754,7 @@ class HttpServerTest extends Test:
 
         "SSE stream with path params" in run {
             val handler = HttpHandler.streamSse[Int, Event, Any]("events" / HttpPath.int("count")) { (count, _) =>
-                Stream.init((1 to count).map(i => ServerSentEvent(Event(i))))
+                Stream.init((1 to count).map(i => HttpEvent(Event(i))))
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/events/5").map { response =>
@@ -781,7 +781,7 @@ class HttpServerTest extends Test:
         "streaming coexists with default handlers" in run {
             val defaultHandler = HttpHandler.get("/hello") { (_, _) => HttpResponse.ok("world") }
             val sseHandler = HttpHandler.streamSse[Unit, Event, Any]("/events") { (_, _) =>
-                Stream.init(Seq(ServerSentEvent(Event(1))))
+                Stream.init(Seq(HttpEvent(Event(1))))
             }
             startTestServer(defaultHandler, sseHandler).map { port =>
                 testGet(port, "/hello").map { r1 =>
@@ -802,9 +802,9 @@ class HttpServerTest extends Test:
         "streamSse receives SSE events" in run {
             val handler = HttpHandler.streamSse[Unit, Item, Any]("/sse") { (_, _) =>
                 Stream.init(Seq(
-                    ServerSentEvent(Item("a")),
-                    ServerSentEvent(Item("b")),
-                    ServerSentEvent(Item("c"))
+                    HttpEvent(Item("a")),
+                    HttpEvent(Item("b")),
+                    HttpEvent(Item("c"))
                 ))
             }
             startTestServer(handler).map { port =>
@@ -822,8 +822,8 @@ class HttpServerTest extends Test:
         "streamSse receives event name and id" in run {
             val handler = HttpHandler.streamSse[Unit, String, Any]("/sse") { (_, _) =>
                 Stream.init(Seq(
-                    ServerSentEvent("hello", event = Present("greeting"), id = Present("1")),
-                    ServerSentEvent("world", event = Present("greeting"), id = Present("2"))
+                    HttpEvent("hello", event = Present("greeting"), id = Present("1")),
+                    HttpEvent("world", event = Present("greeting"), id = Present("2"))
                 ))
             }
             startTestServer(handler).map { port =>
@@ -858,7 +858,7 @@ class HttpServerTest extends Test:
 
         "streamSse with empty stream" in run {
             val handler = HttpHandler.streamSse[Unit, String, Any]("/empty") { (_, _) =>
-                Stream.empty[ServerSentEvent[String]]
+                Stream.empty[HttpEvent[String]]
             }
             startTestServer(handler).map { port =>
                 HttpClient.streamSse[String](s"http://localhost:$port/empty").map { stream =>

@@ -206,9 +206,9 @@ object HttpResponse:
     def stream(s: Stream[Span[Byte], Async], status: Status = Status.OK): HttpResponse[HttpBody.Streamed] =
         new HttpResponse(status, Seq.empty, Seq.empty, HttpBody.stream(s))
 
-    def streamSse[V: Schema: Tag](events: Stream[ServerSentEvent[V], Async], status: Status = Status.OK)(using
+    def streamSse[V: Schema: Tag](events: Stream[HttpEvent[V], Async], status: Status = Status.OK)(using
         Frame,
-        Tag[Emit[Chunk[ServerSentEvent[V]]]]
+        Tag[Emit[Chunk[HttpEvent[V]]]]
     ): HttpResponse[HttpBody.Streamed] =
         val schema = Schema[V]
         val byteStream = events.map { event =>

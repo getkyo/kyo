@@ -1,6 +1,6 @@
 package kyo
 
-case class ServerSentEvent[+A](
+case class HttpEvent[+A](
     data: A,
     event: Maybe[String] = Absent,
     id: Maybe[String] = Absent,

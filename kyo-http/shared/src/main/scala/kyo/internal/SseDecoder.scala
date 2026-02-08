@@ -13,9 +13,9 @@ final private[kyo] class SseDecoder[V](schema: Schema[V]):
     private var buffer = ""
 
     /** Decode a chunk of bytes, returning any complete SSE events found. */
-    def decode(bytes: Span[Byte]): Seq[ServerSentEvent[V]] =
+    def decode(bytes: Span[Byte]): Seq[HttpEvent[V]] =
         buffer += utf8.decode(Chunk.from(bytes.toArrayUnsafe))
-        val events = Seq.newBuilder[ServerSentEvent[V]]
+        val events = Seq.newBuilder[HttpEvent[V]]
 
         // Split on double-newline (SSE event boundary)
         @tailrec def loop(): Unit =
@@ -32,7 +32,7 @@ final private[kyo] class SseDecoder[V](schema: Schema[V]):
         events.result()
     end decode
 
-    private def parseEvent(block: String): Maybe[ServerSentEvent[V]] =
+    private def parseEvent(block: String): Maybe[HttpEvent[V]] =
         val dataLines              = Seq.newBuilder[String]
         var event: Maybe[String]   = Absent
         var id: Maybe[String]      = Absent
@@ -51,7 +51,7 @@ final private[kyo] class SseDecoder[V](schema: Schema[V]):
         }
 
         val data = dataLines.result()
-        Maybe.when(data.nonEmpty)(ServerSentEvent(schema.decode(data.mkString("\n")), event, id, retry))
+        Maybe.when(data.nonEmpty)(HttpEvent(schema.decode(data.mkString("\n")), event, id, retry))
     end parseEvent
 
 end SseDecoder
