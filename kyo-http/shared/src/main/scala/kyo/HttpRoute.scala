@@ -152,8 +152,8 @@ object HttpRoute:
     // --- Internal param types ---
 
     case class QueryParam[A](name: String, schema: Schema[A], default: Maybe[A])
-    case class HeaderParam(name: String, default: Maybe[String])
-    case class CookieParam(name: String, default: Maybe[String])
+    case class HeaderParam(name: String, default: Maybe[String]) derives CanEqual
+    case class CookieParam(name: String, default: Maybe[String]) derives CanEqual
 
     // --- Route factory methods ---
 

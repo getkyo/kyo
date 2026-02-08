@@ -7,7 +7,7 @@ case class HttpOpenApi(
     info: HttpOpenApi.Info,
     paths: Map[String, HttpOpenApi.PathItem],
     components: Option[HttpOpenApi.Components]
-) derives Schema:
+) derives Schema, CanEqual:
     def toJson: String = Schema[HttpOpenApi].encode(this)
 end HttpOpenApi
 
@@ -20,7 +20,7 @@ object HttpOpenApi:
         title: String,
         version: String,
         description: Option[String]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class PathItem(
         get: Option[Operation],
@@ -30,7 +30,7 @@ object HttpOpenApi:
         patch: Option[Operation],
         head: Option[Operation],
         options: Option[Operation]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class Operation(
         tags: Option[List[String]],
@@ -42,7 +42,7 @@ object HttpOpenApi:
         requestBody: Option[RequestBody],
         responses: Map[String, Response],
         security: Option[List[Map[String, List[String]]]]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class Parameter(
         name: String,
@@ -50,22 +50,22 @@ object HttpOpenApi:
         required: Option[Boolean],
         schema: SchemaObject,
         description: Option[String]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class RequestBody(
         required: Option[Boolean],
         content: Map[String, MediaType],
         description: Option[String]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class Response(
         description: String,
         content: Option[Map[String, MediaType]]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class MediaType(
         schema: SchemaObject
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class SchemaObject(
         `type`: Option[String],
@@ -77,7 +77,7 @@ object HttpOpenApi:
         oneOf: Option[List[SchemaObject]],
         `enum`: Option[List[String]],
         `$ref`: Option[String]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     object SchemaObject:
         def string: SchemaObject  = SchemaObject(Some("string"), None, None, None, None, None, None, None, None)
@@ -93,7 +93,7 @@ object HttpOpenApi:
     case class Components(
         schemas: Option[Map[String, SchemaObject]],
         securitySchemes: Option[Map[String, SecurityScheme]]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     case class SecurityScheme(
         `type`: String,
@@ -101,7 +101,7 @@ object HttpOpenApi:
         bearerFormat: Option[String],
         name: Option[String],
         in: Option[String]
-    ) derives Schema
+    ) derives Schema, CanEqual
 
     // --- Configuration ---
 
@@ -109,7 +109,7 @@ object HttpOpenApi:
         title: String = "API",
         version: String = "1.0.0",
         description: Maybe[String] = Absent
-    )
+    ) derives CanEqual
 
     object Config:
         val default: Config = Config()

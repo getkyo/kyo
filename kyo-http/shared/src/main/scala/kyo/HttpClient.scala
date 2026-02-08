@@ -244,13 +244,22 @@ object HttpClient:
         daemon: Boolean = false,
         backend: Backend = HttpPlatformBackend.default
     )(using Frame): HttpClient < (Sync & Scope) =
+        initWith(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)(identity)
+
+    def initWith[B, S](
+        maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
+        connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
+        maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
+        daemon: Boolean = false,
+        backend: Backend = HttpPlatformBackend.default
+    )(f: HttpClient => B < S)(using Frame): B < (S & Sync & Scope) =
         Scope.acquireRelease(initUnscoped(
             maxConnectionsPerHost,
             connectionAcquireTimeout,
             maxResponseSizeBytes,
             daemon,
             backend
-        ))(_.closeNow)
+        ))(_.closeNow).map(f)
 
     def initUnscoped(
         maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
@@ -259,10 +268,19 @@ object HttpClient:
         daemon: Boolean = false,
         backend: Backend = HttpPlatformBackend.default
     )(using Frame): HttpClient < Sync =
+        initUnscopedWith(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)(identity)
+
+    def initUnscopedWith[B, S](
+        maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
+        connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
+        maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
+        daemon: Boolean = false,
+        backend: Backend = HttpPlatformBackend.default
+    )(f: HttpClient => B < S)(using Frame): B < (S & Sync) =
         Sync.Unsafe {
             Unsafe.init(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)
-        }
-    end initUnscoped
+        }.map(f)
+    end initUnscopedWith
 
     object Unsafe:
         /** Low-level client initialization requiring AllowUnsafe. */

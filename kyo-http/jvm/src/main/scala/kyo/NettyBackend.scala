@@ -116,14 +116,14 @@ object NettyBackend extends Backend:
                 new Backend.Server:
                     def port: Int    = address.getPort
                     def host: String = address.getHostString
-                    def stop(gracePeriod: Duration)(using Frame): Unit < Async =
+                    def close(gracePeriod: Duration)(using Frame): Unit < Async =
                         val graceMs = gracePeriod.toMillis
                         NettyUtil.continue(channel.close()) { _ =>
                             NettyUtil.continue(bossGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)) { _ =>
                                 NettyUtil.await(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS))
                             }
                         }
-                    end stop
+                    end close
                     def await(using Frame): Unit < Async =
                         NettyUtil.await(channel.closeFuture())
                 end new

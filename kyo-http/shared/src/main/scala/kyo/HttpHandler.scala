@@ -75,6 +75,7 @@ object HttpHandler:
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
                 f(pathInput.asInstanceOf[A], req)
+            end apply
 
     def health(path: HttpPath[Unit] = "/health")(using Frame): HttpHandler[Any] =
         init(Method.GET, path)((_, _) => kyo.HttpResponse.ok("healthy"))

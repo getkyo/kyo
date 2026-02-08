@@ -446,6 +446,15 @@ object HttpRequest:
         loop(headers)
     end findHeader
 
+    /** Finds the last header with the given lowercase name, without allocating a reversed copy. */
+    private[kyo] def findLastHeader(headers: Seq[(String, String)], lowerName: String): Maybe[String] =
+        var result: Maybe[String] = Absent
+        headers.foreach { case (n, v) =>
+            if n.toLowerCase == lowerName then result = Present(v)
+        }
+        result
+    end findLastHeader
+
     private def withHostHeader(host: Maybe[String], port: Int, headers: Seq[(String, String)]): Seq[(String, String)] =
         host match
             case Present(h) if !headers.exists(_._1.equalsIgnoreCase("Host")) =>
@@ -712,7 +721,7 @@ object HttpRequest:
 
     // --- Auxiliary types ---
 
-    case class Cookie(name: String, value: String):
+    case class Cookie(name: String, value: String) derives CanEqual:
         def toResponse: HttpResponse.Cookie = HttpResponse.Cookie(name, value)
     end Cookie
 
@@ -721,7 +730,7 @@ object HttpRequest:
         filename: Maybe[String],
         contentType: Maybe[String],
         content: Array[Byte]
-    ):
+    ) derives CanEqual:
         require(name.nonEmpty, "Part name cannot be empty")
     end Part
 

@@ -16,8 +16,7 @@ final class HttpResponse[+B <: HttpBody] private (
     // --- Header accessors ---
 
     def header(name: String): Maybe[String] =
-        // reverse to get last value for duplicates
-        HttpRequest.findHeader(_headers.reverse, name.toLowerCase)
+        HttpRequest.findLastHeader(_headers, name.toLowerCase)
 
     def headers: Seq[(String, String)] = _headers
 
@@ -81,8 +80,8 @@ final class HttpResponse[+B <: HttpBody] private (
         val quotedEtag = if value.startsWith("\"") then value else s""""$value""""
         addHeader("ETag", quotedEtag)
 
-    def lastModified(time: java.time.Instant): HttpResponse[B] =
-        addHeader("Last-Modified", HttpResponse.httpDateFormatter.format(time))
+    def lastModified(time: Instant): HttpResponse[B] =
+        addHeader("Last-Modified", HttpResponse.httpDateFormatter.format(time.toJava))
 
     def cacheControl(directive: String): HttpResponse[B] =
         addHeader("Cache-Control", directive)
@@ -346,7 +345,7 @@ object HttpResponse:
         secure: Boolean = false,
         httpOnly: Boolean = false,
         sameSite: Maybe[Cookie.SameSite] = Absent
-    ):
+    ) derives CanEqual:
         require(name.nonEmpty, "Cookie name cannot be empty")
 
         def maxAge(d: Duration): Cookie          = copy(maxAge = Present(d))

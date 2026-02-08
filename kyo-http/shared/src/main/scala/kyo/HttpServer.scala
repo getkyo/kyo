@@ -9,14 +9,14 @@ final class HttpServer private (
     def port: Int    = backendServer.port
     def host: String = backendServer.host
 
-    def stopNow(using Frame): Unit < Async =
-        stop(Duration.Zero)
+    def closeNow(using Frame): Unit < Async =
+        close(Duration.Zero)
 
-    def stop(using Frame): Unit < Async =
-        stop(30.seconds)
+    def close(using Frame): Unit < Async =
+        close(30.seconds)
 
-    def stop(gracePeriod: Duration)(using Frame): Unit < Async =
-        backendServer.stop(gracePeriod)
+    def close(gracePeriod: Duration)(using Frame): Unit < Async =
+        backendServer.close(gracePeriod)
 
     def await(using Frame): Unit < Async =
         backendServer.await
@@ -40,7 +40,7 @@ object HttpServer:
         init(config, HttpPlatformBackend.default)(handlers*)
 
     def init(config: Config, backend: Backend)(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
-        Scope.acquireRelease(initUnscoped(config, backend)(handlers*))(_.stopNow)
+        Scope.acquireRelease(initUnscoped(config, backend)(handlers*))(_.closeNow)
 
     def init(
         port: Int = Config.default.port,
@@ -49,6 +49,17 @@ object HttpServer:
         idleTimeout: Duration = Config.default.idleTimeout
     )(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         init(Config(port, host, maxContentLength, idleTimeout))(handlers*)
+
+    def initWith[B, S](handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async & Scope) =
+        init(handlers*).map(f)
+
+    def initWith[B, S](config: Config)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async & Scope) =
+        init(config)(handlers*).map(f)
+
+    def initWith[B, S](config: Config, backend: Backend)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using
+        Frame
+    ): B < (S & Async & Scope) =
+        init(config, backend)(handlers*).map(f)
 
     def initUnscoped(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         initUnscoped(Config.default)(handlers*)
@@ -102,6 +113,17 @@ object HttpServer:
     )(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         initUnscoped(Config(port, host, maxContentLength, idleTimeout))(handlers*)
 
+    def initUnscopedWith[B, S](handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async) =
+        initUnscoped(handlers*).map(f)
+
+    def initUnscopedWith[B, S](config: Config)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async) =
+        initUnscoped(config)(handlers*).map(f)
+
+    def initUnscopedWith[B, S](config: Config, backend: Backend)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using
+        Frame
+    ): B < (S & Async) =
+        initUnscoped(config, backend)(handlers*).map(f)
+
     // --- Config ---
 
     case class Config(
@@ -115,7 +137,7 @@ object HttpServer:
         tcpFastOpen: Boolean = false,
         flushConsolidationLimit: Int = 256,
         openApi: Maybe[Config.OpenApiEndpoint] = Absent
-    ):
+    ) derives CanEqual:
         require(port >= 0 && port <= 65535, s"Port must be between 0 and 65535: $port")
         require(host.nonEmpty, "Host cannot be empty")
         require(maxContentLength > 0, s"maxContentLength must be positive: $maxContentLength")
@@ -144,7 +166,7 @@ object HttpServer:
             title: String = "API",
             version: String = "1.0.0",
             description: Maybe[String] = Absent
-        )
+        ) derives CanEqual
     end Config
 
     // --- Private: build a Backend.ServerHandler from handlers + filter ---

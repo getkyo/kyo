@@ -200,7 +200,7 @@ class HttpServerTest extends Test:
                 testGet(port, "/health").map { response =>
                     assertStatus(response, Status.OK)
                 }.andThen {
-                    server.stopNow.andThen {
+                    server.closeNow.andThen {
                         Abort.run(testGet(port, "/health")).map { result =>
                             assert(result.isFailure)
                         }
@@ -213,7 +213,7 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
             HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
                 assert(server.port > 0)
-                server.stopNow.andThen(succeed)
+                server.closeNow.andThen(succeed)
             }
         }
 

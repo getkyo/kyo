@@ -5,4 +5,4 @@ case class HttpEvent[+A](
     event: Maybe[String] = Absent,
     id: Maybe[String] = Absent,
     retry: Maybe[Duration] = Absent
-)
+) derives CanEqual

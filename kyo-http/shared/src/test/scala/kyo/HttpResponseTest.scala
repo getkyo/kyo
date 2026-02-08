@@ -734,7 +734,7 @@ class HttpResponseTest extends Test:
             }
 
             "withLastModified" in {
-                val instant  = java.time.Instant.parse("2024-01-15T10:30:00Z")
+                val instant  = Instant.fromJava(java.time.Instant.parse("2024-01-15T10:30:00Z"))
                 val response = HttpResponse.ok.lastModified(instant)
                 assert(response.header("Last-Modified").isDefined)
             }

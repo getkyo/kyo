@@ -42,7 +42,7 @@ object TestBackend extends Backend:
         new Backend.Server:
             def port: Int    = assignedPort
             def host: String = serverHost
-            def stop(gracePeriod: Duration)(using Frame): Unit < Async =
+            def close(gracePeriod: Duration)(using Frame): Unit < Async =
                 servers.remove(assignedPort)
                 ()
             def await(using Frame): Unit < Async =
