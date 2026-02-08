@@ -1,7 +1,7 @@
 package kyo
 
-import java.net.URI
 import java.nio.charset.StandardCharsets
+import kyo.internal.UrlParser
 import scala.annotation.tailrec
 
 /** Immutable HTTP request with builder API.
@@ -12,7 +12,8 @@ import scala.annotation.tailrec
   */
 final class HttpRequest[+B <: HttpBody] private (
     val method: HttpRequest.Method,
-    private val _originalUrl: URI,
+    private val _rawPath: String,
+    private val _rawQuery: Maybe[String],
     private val _headers: Seq[(String, String)],
     val body: B,
     private val _contentType: Maybe[String],
@@ -26,31 +27,28 @@ final class HttpRequest[+B <: HttpBody] private (
 
     /** Returns the request URI (path and query string, without scheme/host). */
     def url: String =
-        val rawPath  = _originalUrl.getRawPath
-        val rawQuery = _originalUrl.getRawQuery
-        val pathPart = if rawPath == null || rawPath.isEmpty then "/" else rawPath
-        if rawQuery == null then pathPart else s"$pathPart?$rawQuery"
+        _rawQuery match
+            case Present(q) => s"$_rawPath?$q"
+            case Absent     => _rawPath
     end url
 
     /** Returns just the path without query string. */
-    def path: String =
-        val rawPath = _originalUrl.getRawPath
-        if rawPath == null || rawPath.isEmpty then "/"
-        else rawPath
-    end path
+    def path: String = _rawPath
 
     /** Returns the full URL including scheme and host. */
     def fullUrl: String =
-        val urlStr = _originalUrl.toString
-        // If original URL has scheme, return as-is; otherwise construct from Host header
-        if _originalUrl.getScheme != null then urlStr
-        else
-            header("Host") match
-                case Absent => urlStr
-                case Present(hostHeader) =>
-                    val scheme = _scheme.getOrElse("http")
-                    s"$scheme://$hostHeader$urlStr"
-        end if
+        val pathAndQuery = url
+        _scheme match
+            case Present(s) =>
+                header("Host") match
+                    case Present(hostHeader) => s"$s://$hostHeader$pathAndQuery"
+                    case Absent              => pathAndQuery
+            case Absent =>
+                header("Host") match
+                    case Absent => pathAndQuery
+                    case Present(hostHeader) =>
+                        s"http://$hostHeader$pathAndQuery"
+        end match
     end fullUrl
 
     def host: String =
@@ -123,15 +121,15 @@ final class HttpRequest[+B <: HttpBody] private (
     // --- Query parameter accessors ---
 
     def query(name: String): Maybe[String] =
-        val queryString = _originalUrl.getRawQuery
-        if queryString == null then Absent
-        else parseQueryParam(queryString, name)
+        _rawQuery match
+            case Absent     => Absent
+            case Present(q) => parseQueryParam(q, name)
     end query
 
     def queryAll(name: String): Seq[String] =
-        val queryString = _originalUrl.getRawQuery
-        if queryString == null then Seq.empty
-        else parseQueryParamAll(queryString, name)
+        _rawQuery match
+            case Absent     => Seq.empty
+            case Present(q) => parseQueryParamAll(q, name)
     end queryAll
 
     // --- Path parameter accessors ---
@@ -192,25 +190,47 @@ final class HttpRequest[+B <: HttpBody] private (
     // --- Builder methods (return new immutable instance, preserve body type) ---
 
     def addHeader(name: String, value: String): HttpRequest[B] =
-        new HttpRequest(method, _originalUrl, _headers :+ (name -> value), body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+        new HttpRequest(
+            method,
+            _rawPath,
+            _rawQuery,
+            _headers :+ (name -> value),
+            body,
+            _contentType,
+            _scheme,
+            _pathParams,
+            _strictCookieParsing
+        )
 
     def addHeaders(headers: (String, String)*): HttpRequest[B] =
-        new HttpRequest(method, _originalUrl, _headers ++ headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+        new HttpRequest(method, _rawPath, _rawQuery, _headers ++ headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
 
     // --- Internal: for server to set path params after routing ---
 
     private[kyo] def withPathParam(name: String, value: String): HttpRequest[B] =
-        new HttpRequest(method, _originalUrl, _headers, body, _contentType, _scheme, _pathParams + (name -> value), _strictCookieParsing)
+        new HttpRequest(
+            method,
+            _rawPath,
+            _rawQuery,
+            _headers,
+            body,
+            _contentType,
+            _scheme,
+            _pathParams + (name -> value),
+            _strictCookieParsing
+        )
 
     private[kyo] def withPathParams(params: Map[String, String]): HttpRequest[B] =
-        new HttpRequest(method, _originalUrl, _headers, body, _contentType, _scheme, _pathParams ++ params, _strictCookieParsing)
+        new HttpRequest(method, _rawPath, _rawQuery, _headers, body, _contentType, _scheme, _pathParams ++ params, _strictCookieParsing)
 
     private[kyo] def withStrictCookieParsing(strict: Boolean): HttpRequest[B] =
-        new HttpRequest(method, _originalUrl, _headers, body, _contentType, _scheme, _pathParams, strict)
+        new HttpRequest(method, _rawPath, _rawQuery, _headers, body, _contentType, _scheme, _pathParams, strict)
 
-    /** Update the URL (path) for redirect following. */
+    /** Update the URL (path+query) for redirect following. */
     private[kyo] def withUrl(url: String): HttpRequest[B] =
-        new HttpRequest(method, new URI(url), _headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+        UrlParser.splitPathQuery(url) { (p, q) =>
+            new HttpRequest(method, p, q, _headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+        }
 
 end HttpRequest
 
@@ -275,19 +295,19 @@ object HttpRequest:
         contentType: Maybe[String] = Absent
     ): HttpRequest[HttpBody.Streamed] =
         require(url.nonEmpty, "URL cannot be empty")
-        val uri    = new URI(url)
-        val scheme = if uri.getScheme == null then Absent else Present(uri.getScheme)
-
-        new HttpRequest(
-            method = method,
-            _originalUrl = uri,
-            _headers = withHostHeader(uri, headers),
-            body = HttpBody.stream(body),
-            _contentType = contentType,
-            _scheme = scheme,
-            _pathParams = Map.empty,
-            _strictCookieParsing = false
-        )
+        UrlParser.parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
+            new HttpRequest(
+                method = method,
+                _rawPath = rawPath,
+                _rawQuery = rawQuery,
+                _headers = withHostHeader(host, port, headers),
+                body = HttpBody.stream(body),
+                _contentType = contentType,
+                _scheme = scheme,
+                _pathParams = Map.empty,
+                _strictCookieParsing = false
+            )
+        }
     end stream
 
     // --- Generic factory methods ---
@@ -335,17 +355,19 @@ object HttpRequest:
         bodyData: Array[Byte],
         contentType: Maybe[String]
     ): HttpRequest[HttpBody.Bytes] =
-        val parsedUri = new URI(uri)
-        new HttpRequest(
-            method = method,
-            _originalUrl = parsedUri,
-            _headers = headers,
-            body = HttpBody(bodyData),
-            _contentType = contentType,
-            _scheme = Absent,
-            _pathParams = Map.empty,
-            _strictCookieParsing = false
-        )
+        UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
+            new HttpRequest(
+                method = method,
+                _rawPath = rawPath,
+                _rawQuery = rawQuery,
+                _headers = headers,
+                body = HttpBody(bodyData),
+                _contentType = contentType,
+                _scheme = Absent,
+                _pathParams = Map.empty,
+                _strictCookieParsing = false
+            )
+        }
     end fromRaw
 
     /** Create a buffered request from raw headers and body. Used by backend server implementations. */
@@ -355,18 +377,20 @@ object HttpRequest:
         headers: Seq[(String, String)],
         bodyData: Array[Byte]
     ): HttpRequest[HttpBody.Bytes] =
-        val parsedUri   = new URI(uri)
-        val contentType = findHeader(headers, "content-type")
-        new HttpRequest(
-            method = method,
-            _originalUrl = parsedUri,
-            _headers = headers,
-            body = HttpBody(bodyData),
-            _contentType = contentType,
-            _scheme = Absent,
-            _pathParams = Map.empty,
-            _strictCookieParsing = false
-        )
+        UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
+            val contentType = findHeader(headers, "content-type")
+            new HttpRequest(
+                method = method,
+                _rawPath = rawPath,
+                _rawQuery = rawQuery,
+                _headers = headers,
+                body = HttpBody(bodyData),
+                _contentType = contentType,
+                _scheme = Absent,
+                _pathParams = Map.empty,
+                _strictCookieParsing = false
+            )
+        }
     end fromRawHeaders
 
     /** Create a streaming request from raw headers with a body stream. Used by backend server implementations. */
@@ -376,18 +400,20 @@ object HttpRequest:
         headers: Seq[(String, String)],
         bodyStream: Stream[Span[Byte], Async]
     ): HttpRequest[HttpBody.Streamed] =
-        val parsedUri   = new URI(uri)
-        val contentType = findHeader(headers, "content-type")
-        new HttpRequest(
-            method = method,
-            _originalUrl = parsedUri,
-            _headers = headers,
-            body = HttpBody.stream(bodyStream),
-            _contentType = contentType,
-            _scheme = Absent,
-            _pathParams = Map.empty,
-            _strictCookieParsing = false
-        )
+        UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
+            val contentType = findHeader(headers, "content-type")
+            new HttpRequest(
+                method = method,
+                _rawPath = rawPath,
+                _rawQuery = rawQuery,
+                _headers = headers,
+                body = HttpBody.stream(bodyStream),
+                _contentType = contentType,
+                _scheme = Absent,
+                _pathParams = Map.empty,
+                _strictCookieParsing = false
+            )
+        }
     end fromRawStreaming
 
     // --- Private: core create method ---
@@ -400,19 +426,20 @@ object HttpRequest:
         contentType: Maybe[String]
     ): HttpRequest[HttpBody.Bytes] =
         require(url.nonEmpty, "URL cannot be empty")
-        val uri    = new URI(url)
-        val scheme = if uri.getScheme == null then Absent else Present(uri.getScheme)
-
-        new HttpRequest(
-            method = method,
-            _originalUrl = uri,
-            _headers = withHostHeader(uri, headers),
-            body = HttpBody(bodyData),
-            _contentType = contentType,
-            _scheme = scheme,
-            _pathParams = Map.empty,
-            _strictCookieParsing = false
-        )
+        require(!url.exists(c => c == ' ' || c == '\t' || c == '\n' || c == '\r'), s"URL contains whitespace: $url")
+        UrlParser.parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
+            new HttpRequest(
+                method = method,
+                _rawPath = rawPath,
+                _rawQuery = rawQuery,
+                _headers = withHostHeader(host, port, headers),
+                body = HttpBody(bodyData),
+                _contentType = contentType,
+                _scheme = scheme,
+                _pathParams = Map.empty,
+                _strictCookieParsing = false
+            )
+        }
     end create
 
     // --- Private helpers ---
@@ -426,18 +453,18 @@ object HttpRequest:
         loop(headers)
     end findHeader
 
-    private def withHostHeader(uri: URI, headers: Seq[(String, String)]): Seq[(String, String)] =
-        val uriHost = uri.getHost
-        if uriHost != null && !headers.exists(_._1.equalsIgnoreCase("Host")) then
-            val port = uri.getPort
-            val hostValue =
-                if port > 0 && port != HttpClient.DefaultHttpPort && port != HttpClient.DefaultHttpsPort then
-                    s"$uriHost:$port"
-                else
-                    uriHost
-            headers :+ ("Host" -> hostValue)
-        else headers
-        end if
+    private def withHostHeader(host: Maybe[String], port: Int, headers: Seq[(String, String)]): Seq[(String, String)] =
+        host match
+            case Present(h) if !headers.exists(_._1.equalsIgnoreCase("Host")) =>
+                // Wrap IPv6 addresses in brackets for Host header (if not already wrapped)
+                val hostPart = if h.startsWith("[") then h else if h.contains(':') then s"[$h]" else h
+                val hostValue =
+                    if port > 0 && port != HttpClient.DefaultHttpPort && port != HttpClient.DefaultHttpsPort then
+                        s"$hostPart:$port"
+                    else
+                        hostPart
+                headers :+ ("Host" -> hostValue)
+            case _ => headers
     end withHostHeader
 
     // --- Cookie parsing (pure Scala, no Netty) ---

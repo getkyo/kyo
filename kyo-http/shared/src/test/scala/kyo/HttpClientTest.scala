@@ -174,13 +174,13 @@ class HttpClientTest extends Test:
 
         "close" - {
             "closes connection" in run {
-                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
+                HttpClient.initUnscoped(backend = PlatformTestBackend.backend).map { client =>
                     client.closeNow.map(_ => succeed)
                 }
             }
 
             "idempotent" in run {
-                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
+                HttpClient.initUnscoped(backend = PlatformTestBackend.backend).map { client =>
                     client.closeNow.andThen(client.closeNow).map(_ => succeed)
                 }
             }
@@ -909,9 +909,7 @@ class HttpClientTest extends Test:
                 Kyo.foreach(1 to iterations) { _ =>
                     Async.fill(3, 3) {
                         HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
-                            client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
-                                client.closeNow.andThen(response)
-                            }
+                            client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                         }
                     }.map { responses =>
                         assert(responses.forall(_.status == Status.OK))
@@ -1165,7 +1163,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1180,7 +1178,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1196,7 +1194,7 @@ class HttpClientTest extends Test:
                     }.map { responses =>
                         assert(responses.size == 4)
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1214,7 +1212,7 @@ class HttpClientTest extends Test:
                     )
                     Async.collectAll(requests).map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1231,7 +1229,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/test")).map { r2 =>
                             assertStatus(r2, Status.OK)
                         }
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1248,7 +1246,7 @@ class HttpClientTest extends Test:
                         }.map { responses =>
                             assert(responses.forall(_.status == HttpResponse.Status.OK))
                         }
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1266,7 +1264,7 @@ class HttpClientTest extends Test:
                         client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
                             assertStatus(response, Status.OK)
                         }
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1289,7 +1287,7 @@ class HttpClientTest extends Test:
                         }.map { responses =>
                             assert(responses.forall(_.status == HttpResponse.Status.OK))
                         }
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1305,7 +1303,7 @@ class HttpClientTest extends Test:
                     }.map { responses =>
                         assert(responses.size == 20)
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }
@@ -1323,7 +1321,7 @@ class HttpClientTest extends Test:
                     }.map { responses =>
                         assert(responses.forall(_.status == HttpResponse.Status.OK))
                         assert(requestCount.get() == 10)
-                    }.andThen(client.closeNow).andThen(succeed)
+                    }.andThen(succeed)
                 }
             }
         }

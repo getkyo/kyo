@@ -140,10 +140,8 @@ class HttpServerTest extends Test:
         "with empty handlers" in run {
             // Server with no handlers should return 404 for all requests
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)().map { server =>
-                Scope.ensure(server.stopNow).andThen {
-                    testGet(server.port, "/anything").map { response =>
-                        assertStatus(response, Status.NotFound)
-                    }
+                testGet(server.port, "/anything").map { response =>
+                    assertStatus(response, Status.NotFound)
                 }
             }
         }
@@ -152,17 +150,15 @@ class HttpServerTest extends Test:
             val health = HttpHandler.get("/health") { (_, _) => HttpResponse.ok("healthy") }
             val status = HttpHandler.get("/status") { (_, _) => HttpResponse.ok("running") }
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(health, status).map { server =>
-                Scope.ensure(server.stopNow).andThen {
-                    for
-                        r1 <- testGet(server.port, "/health")
-                        r2 <- testGet(server.port, "/status")
-                    yield
-                        assertStatus(r1, Status.OK)
-                        assertBodyText(r1, "healthy")
-                        assertStatus(r2, Status.OK)
-                        assertBodyText(r2, "running")
-                    end for
-                }
+                for
+                    r1 <- testGet(server.port, "/health")
+                    r2 <- testGet(server.port, "/status")
+                yield
+                    assertStatus(r1, Status.OK)
+                    assertBodyText(r1, "healthy")
+                    assertStatus(r2, Status.OK)
+                    assertBodyText(r2, "running")
+                end for
             }
         }
     }
@@ -186,7 +182,7 @@ class HttpServerTest extends Test:
 
         "stop" in run {
             val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
-            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
                 server.stopNow
                 succeed
             }
@@ -194,7 +190,7 @@ class HttpServerTest extends Test:
 
         "await" in run {
             val handler = HttpHandler.get("/health") { (_, _) => HttpResponse.ok }
-            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
                 // await would block until server stops
                 // For testing, we just verify it's callable
                 server.stopNow
@@ -206,15 +202,13 @@ class HttpServerTest extends Test:
             val route   = HttpRoute.get("users").output[Seq[User]].tag("Users")
             val handler = route.handle(_ => Seq(User(1, "Alice")))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
-                Scope.ensure(server.stopNow).andThen {
-                    val spec = server.openApi("Test API", "1.0.0")
-                    assert(spec.info.title == "Test API")
-                    assert(spec.info.version == "1.0.0")
-                    // Also test the JSON generation
-                    val json = server.openApi("Test API").toJson
-                    assert(json.contains("Test API"))
-                    succeed
-                }
+                val spec = server.openApi("Test API", "1.0.0")
+                assert(spec.info.title == "Test API")
+                assert(spec.info.version == "1.0.0")
+                // Also test the JSON generation
+                val json = server.openApi("Test API").toJson
+                assert(json.contains("Test API"))
+                succeed
             }
         }
     }
@@ -976,14 +970,12 @@ class HttpServerTest extends Test:
             }
             // Server with small maxContentLength
             HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 100), PlatformTestBackend.backend)(handler).map { server =>
-                Scope.ensure(server.stopNow).andThen {
-                    // Send a request larger than maxContentLength
-                    val largeBody = "x" * 200
-                    HttpClient.send(
-                        HttpRequest.post(s"http://localhost:${server.port}/upload", largeBody)
-                    ).map { response =>
-                        assertStatus(response, Status.PayloadTooLarge)
-                    }
+                // Send a request larger than maxContentLength
+                val largeBody = "x" * 200
+                HttpClient.send(
+                    HttpRequest.post(s"http://localhost:${server.port}/upload", largeBody)
+                ).map { response =>
+                    assertStatus(response, Status.PayloadTooLarge)
                 }
             }
         }

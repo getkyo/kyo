@@ -4,6 +4,7 @@ import java.net.URI
 import kyo.internal.ConnectionPool
 import kyo.internal.NdjsonDecoder
 import kyo.internal.SseDecoder
+import kyo.internal.UrlParser
 
 final class HttpClient private (
     private val pool: ConnectionPool,
@@ -208,11 +209,26 @@ object HttpClient:
         maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
         daemon: Boolean = false,
         backend: Backend = HttpPlatformBackend.default
+    )(using Frame): HttpClient < (Sync & Scope) =
+        Scope.acquireRelease(initUnscoped(
+            maxConnectionsPerHost,
+            connectionAcquireTimeout,
+            maxResponseSizeBytes,
+            daemon,
+            backend
+        ))(_.closeNow)
+
+    def initUnscoped(
+        maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
+        connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
+        maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
+        daemon: Boolean = false,
+        backend: Backend = HttpPlatformBackend.default
     )(using Frame): HttpClient < Sync =
         Sync.Unsafe {
             Unsafe.init(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)
         }
-    end init
+    end initUnscoped
 
     object Unsafe:
         /** Low-level client initialization requiring AllowUnsafe. */
@@ -327,19 +343,19 @@ object HttpClient:
                 if host.isEmpty then path
                 else buildUrl(host, port, port == DefaultHttpsPort, path)
 
-    /** Parse a URL into (host, port, ssl) components. */
-    private[kyo] case class ParsedUrl(host: String, port: Int, ssl: Boolean)
+    /** Parse a URL into (host, port, ssl, rawPath, rawQuery) components using manual string parsing. */
+    private[kyo] case class ParsedUrl(host: String, port: Int, ssl: Boolean, rawPath: String, rawQuery: Maybe[String])
 
     private[kyo] def parseUrl(url: String): ParsedUrl =
-        val uri  = new URI(url)
-        val ssl  = uri.getScheme == "https"
-        val host = uri.getHost
-        val port =
-            if uri.getPort > 0 then uri.getPort
-            else if ssl then DefaultHttpsPort
-            else DefaultHttpPort
-        ParsedUrl(host, port, ssl)
-    end parseUrl
+        UrlParser.parseUrlParts(url) { (scheme, host, port, rawPath, rawQuery) =>
+            val ssl           = scheme.contains("https")
+            val effectivePort = if port < 0 then (if ssl then DefaultHttpsPort else DefaultHttpPort) else port
+            // Strip IPv6 brackets for networking (InetAddress expects raw IP)
+            val rawHost = host.getOrElse("") match
+                case h if h.startsWith("[") && h.endsWith("]") => h.substring(1, h.length - 1)
+                case h                                         => h
+            ParsedUrl(rawHost, effectivePort, ssl, rawPath, rawQuery)
+        }
 
     /** Shared redirect/retry/timeout logic — delegates raw I/O to ConnectionPool. */
     private def sendWithPolicies(
@@ -356,11 +372,11 @@ object HttpClient:
         // 1. Send request via pool
         val doSend: HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
             val parsed = parseUrl(url)
-            // Extract path+query from URL for the HTTP request line
-            val uri          = new URI(url)
-            val rawPath      = if uri.getRawPath != null && uri.getRawPath.nonEmpty then uri.getRawPath else "/"
-            val pathAndQuery = if uri.getRawQuery != null then s"$rawPath?${uri.getRawQuery}" else rawPath
-            val reqWithPath  = request.withUrl(pathAndQuery)
+            // Build path+query from parsed components (no duplicate URI allocation)
+            val pathAndQuery = parsed.rawQuery match
+                case Present(q) => s"${parsed.rawPath}?$q"
+                case Absent     => parsed.rawPath
+            val reqWithPath = request.withUrl(pathAndQuery)
             pool.acquire(parsed.host, parsed.port, parsed.ssl, config.connectTimeout).map { conn =>
                 @volatile var completed = false
                 Sync.ensure {
@@ -401,6 +417,7 @@ object HttpClient:
                                 if location.startsWith("http://") || location.startsWith("https://") then
                                     location
                                 else
+                                    // Rare path: relative redirect — use URI.resolve()
                                     new URI(url).resolve(location).toString
                             sendWithPolicies(
                                 pool,

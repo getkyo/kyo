@@ -31,9 +31,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       *   the actual bound port
       */
     def startTestServer(handlers: HttpHandler[Any]*)(using Frame): Int < (Async & Scope) =
-        HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handlers*).map { server =>
-            Scope.ensure(server.stopNow).andThen(server.port)
-        }
+        HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handlers*).map(_.port)
 
     /** Runs a test with a server, ensuring cleanup.
       * @param handlers

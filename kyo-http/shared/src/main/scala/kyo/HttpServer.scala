@@ -37,13 +37,30 @@ object HttpServer:
 
     // --- Factory methods ---
 
-    def init(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+    def init(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
         init(Config.default)(handlers*)
 
-    def init(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+    def init(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
         init(config, HttpPlatformBackend.default)(handlers*)
 
-    def init(config: Config, backend: Backend)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+    def init(config: Config, backend: Backend)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
+        Scope.acquireRelease(initUnscoped(config, backend)(handlers*))(_.stopNow)
+
+    def init(
+        port: Int = Config.default.port,
+        host: String = Config.default.host,
+        maxContentLength: Int = Config.default.maxContentLength,
+        idleTimeout: Duration = Config.default.idleTimeout
+    )(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
+        init(Config(port, host, maxContentLength, idleTimeout))(handlers*)
+
+    def initUnscoped(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+        initUnscoped(Config.default)(handlers*)
+
+    def initUnscoped(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+        initUnscoped(config, HttpPlatformBackend.default)(handlers*)
+
+    def initUnscoped(config: Config, backend: Backend)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
         // Capture filter from Local to apply per-request
         HttpFilter.use { filter =>
             // Add OpenAPI handler if configured
@@ -68,15 +85,15 @@ object HttpServer:
                 new HttpServer(srv, allHandlers)
             }
         }
-    end init
+    end initUnscoped
 
-    def init(
+    def initUnscoped(
         port: Int = Config.default.port,
         host: String = Config.default.host,
         maxContentLength: Int = Config.default.maxContentLength,
         idleTimeout: Duration = Config.default.idleTimeout
     )(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
-        init(Config(port, host, maxContentLength, idleTimeout))(handlers*)
+        initUnscoped(Config(port, host, maxContentLength, idleTimeout))(handlers*)
 
     // --- Config ---
 
