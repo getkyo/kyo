@@ -3,7 +3,6 @@ package kyo
 import java.nio.charset.StandardCharsets
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import scala.annotation.tailrec
 
 final class HttpResponse[+B <: HttpBody] private (
     val status: HttpResponse.Status,
@@ -17,15 +16,8 @@ final class HttpResponse[+B <: HttpBody] private (
     // --- Header accessors ---
 
     def header(name: String): Maybe[String] =
-        val lowerName = name.toLowerCase
-        // Seq is correct: HTTP headers can have duplicates and order matters
-        @tailrec def loop(remaining: Seq[(String, String)]): Maybe[String] =
-            remaining match
-                case Seq()                                         => Absent
-                case Seq((n, v), _*) if n.toLowerCase == lowerName => Present(v)
-                case Seq(_, tail*)                                 => loop(tail)
-        loop(_headers.reverse) // reverse to get last value for duplicates
-    end header
+        // reverse to get last value for duplicates
+        HttpRequest.findHeader(_headers.reverse, name.toLowerCase)
 
     def headers: Seq[(String, String)] = _headers
 

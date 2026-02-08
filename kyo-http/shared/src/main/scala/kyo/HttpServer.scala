@@ -37,13 +37,13 @@ object HttpServer:
 
     // --- Factory methods ---
 
-    def init(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         init(Config.default)(handlers*)
 
-    def init(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(config: Config)(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         init(config, HttpPlatformBackend.default)(handlers*)
 
-    def init(config: Config, backend: Backend)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(config: Config, backend: Backend)(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         Scope.acquireRelease(initUnscoped(config, backend)(handlers*))(_.stopNow)
 
     def init(
@@ -51,16 +51,18 @@ object HttpServer:
         host: String = Config.default.host,
         maxContentLength: Int = Config.default.maxContentLength,
         idleTimeout: Duration = Config.default.idleTimeout
-    )(handlers: HttpHandler[Any]*)(using Frame): HttpServer < (Async & Scope) =
+    )(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         init(Config(port, host, maxContentLength, idleTimeout))(handlers*)
 
-    def initUnscoped(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+    def initUnscoped(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         initUnscoped(Config.default)(handlers*)
 
-    def initUnscoped(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+    def initUnscoped(config: Config)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         initUnscoped(config, HttpPlatformBackend.default)(handlers*)
 
-    def initUnscoped(config: Config, backend: Backend)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+    def initUnscoped(config: Config, backend: Backend)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
+        // Safe cast: S is phantom (erased at runtime), server only calls handler.apply internally
+        val h = handlers.asInstanceOf[Seq[HttpHandler[Any]]]
         // Capture filter from Local to apply per-request
         HttpFilter.use { filter =>
             // Add OpenAPI handler if configured
@@ -68,14 +70,14 @@ object HttpServer:
                 case Present(openApiConfig) =>
                     val spec = HttpOpenApi.fromHandlers(
                         HttpOpenApi.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
-                    )(handlers*)
+                    )(h*)
                     val json = spec.toJson
                     val openApiHandler = HttpHandler.get(openApiConfig.path) { (_, _) =>
                         HttpResponse.ok(json).addHeader("Content-Type", "application/json")
                     }
-                    handlers :+ openApiHandler
+                    h :+ openApiHandler
                 case Absent =>
-                    handlers
+                    h
 
             // Build the shared ServerHandler from router + filter
             val serverHandler = HttpServer.buildServerHandler(allHandlers, config, filter)
@@ -92,7 +94,7 @@ object HttpServer:
         host: String = Config.default.host,
         maxContentLength: Int = Config.default.maxContentLength,
         idleTimeout: Duration = Config.default.idleTimeout
-    )(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+    )(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         initUnscoped(Config(port, host, maxContentLength, idleTimeout))(handlers*)
 
     // --- Config ---
@@ -151,18 +153,19 @@ object HttpServer:
 
         new Backend.ServerHandler:
 
+            private def errorResponse(error: HttpRouter.FindError): HttpResponse[HttpBody.Bytes] =
+                error match
+                    case HttpRouter.FindError.MethodNotAllowed(allowed) =>
+                        val allowHeader = allowed.map(_.name).mkString(", ")
+                        HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
+                    case HttpRouter.FindError.NotFound =>
+                        HttpResponse.notFound
+
             def reject(method: HttpRequest.Method, path: String): Maybe[HttpResponse[HttpBody.Bytes]] =
                 router.find(method, path) match
                     case Result.Success(_) => Absent
-                    case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
-                        val allowHeader = allowed.map(_.name).mkString(", ")
-                        Present(
-                            HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
-                        )
-                    case Result.Failure(HttpRouter.FindError.NotFound) =>
-                        Present(HttpResponse.notFound)
-                    case Result.Panic(e) =>
-                        Present(HttpResponse.serverError(e.getMessage))
+                    case Result.Failure(e) => Present(errorResponse(e))
+                    case Result.Panic(e)   => Present(HttpResponse.serverError(e.getMessage))
 
             def isStreaming(method: HttpRequest.Method, path: String): Boolean =
                 router.find(method, path) match
@@ -170,35 +173,21 @@ object HttpServer:
                     case _                       => false
 
             def handle(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[?] < Async =
-                val pathEnd = request.url.indexOf('?')
-                val path    = if pathEnd >= 0 then request.url.substring(0, pathEnd) else request.url
-                router.find(request.method, path) match
+                router.find(request.method, request.path) match
                     case Result.Success(handler) =>
                         val req = if config.strictCookieParsing then request.withStrictCookieParsing(true) else request
                         filter(req, handler.apply)
-                    case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
-                        val allowHeader = allowed.map(_.name).mkString(", ")
-                        HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
-                    case Result.Failure(HttpRouter.FindError.NotFound) =>
-                        HttpResponse.notFound
-                    case Result.Panic(e) =>
-                        HttpResponse.serverError(e.getMessage)
+                    case Result.Failure(e) => errorResponse(e)
+                    case Result.Panic(e)   => HttpResponse.serverError(e.getMessage)
                 end match
             end handle
 
             def handleStreaming(request: HttpRequest[HttpBody.Streamed])(using Frame): HttpResponse[?] < Async =
-                val pathEnd = request.url.indexOf('?')
-                val path    = if pathEnd >= 0 then request.url.substring(0, pathEnd) else request.url
-                router.find(request.method, path) match
+                router.find(request.method, request.path) match
                     case Result.Success(handler) =>
                         filter(request, handler.apply)
-                    case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
-                        val allowHeader = allowed.map(_.name).mkString(", ")
-                        HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
-                    case Result.Failure(HttpRouter.FindError.NotFound) =>
-                        HttpResponse.notFound
-                    case Result.Panic(e) =>
-                        HttpResponse.serverError(e.getMessage)
+                    case Result.Failure(e) => errorResponse(e)
+                    case Result.Panic(e)   => HttpResponse.serverError(e.getMessage)
                 end match
             end handleStreaming
         end new
@@ -521,15 +510,6 @@ object HttpHandler:
             case HttpPath.Segment.Concat(left, right) =>
                 val (leftVal, remaining)   = extractFromSegment(left.asInstanceOf[HttpPath.Segment[?]], parts)
                 val (rightVal, remaining2) = extractFromSegment(right.asInstanceOf[HttpPath.Segment[?]], remaining)
-                val combined =
-                    if leftVal.isInstanceOf[Unit] then rightVal
-                    else if rightVal.isInstanceOf[Unit] then leftVal
-                    else
-                        (leftVal, rightVal) match
-                            case (v1: Tuple, v2: Tuple) => Tuple.fromArray((v1.toArray ++ v2.toArray))
-                            case (v1: Tuple, v2)        => Tuple.fromArray(v1.toArray :+ v2)
-                            case (v1, v2: Tuple)        => Tuple.fromArray(v1 +: v2.toArray)
-                            case (v1, v2)               => (v1, v2)
-                (combined, remaining2)
+                (combineInputs(leftVal, rightVal), remaining2)
 
 end HttpHandler

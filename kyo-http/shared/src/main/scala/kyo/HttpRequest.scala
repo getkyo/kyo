@@ -87,14 +87,7 @@ final class HttpRequest[+B <: HttpBody] private (
         header("Content-Type").orElse(_contentType)
 
     def header(name: String): Maybe[String] =
-        val lowerName = name.toLowerCase
-        @tailrec def loop(remaining: Seq[(String, String)]): Maybe[String] =
-            remaining match
-                case Seq()                                         => Absent
-                case Seq((n, v), _*) if n.toLowerCase == lowerName => Present(v)
-                case Seq(_, tail*)                                 => loop(tail)
-        loop(_headers)
-    end header
+        HttpRequest.findHeader(_headers, name.toLowerCase)
 
     /** Returns all headers (excluding internal X-Kyo-* headers). */
     def headers: Seq[(String, String)] = _headers
@@ -444,7 +437,7 @@ object HttpRequest:
 
     // --- Private helpers ---
 
-    private def findHeader(headers: Seq[(String, String)], lowerName: String): Maybe[String] =
+    private[kyo] def findHeader(headers: Seq[(String, String)], lowerName: String): Maybe[String] =
         @tailrec def loop(remaining: Seq[(String, String)]): Maybe[String] =
             remaining match
                 case Seq()                                         => Absent
