@@ -7,7 +7,7 @@ import scala.annotation.tailrec
 /** Captured response headers from a streaming response. */
 private[kyo] case class StreamingHeaders(
     status: HttpResponse.Status,
-    headers: Seq[(String, String)]
+    headers: HttpHeaders
 )
 
 /** Streaming response handler — splits headers from body chunks (no HttpObjectAggregator). */
@@ -29,18 +29,19 @@ final private[kyo] class ResponseStreamingHandler(
                 ))
                 discard(byteChannel.closeAwaitEmpty())
             else
-                // Extract response headers
+                // Extract response headers into flat interleaved array
                 val nettyHeaders = response.headers()
                 val headerCount  = nettyHeaders.size()
-                val headers      = new Array[(String, String)](headerCount)
+                val arr          = new Array[String](headerCount * 2)
                 val iter         = nettyHeaders.iteratorAsString()
                 @tailrec def fillHeaders(i: Int): Unit =
                     if i < headerCount && iter.hasNext then
                         val entry = iter.next()
-                        headers(i) = (entry.getKey, entry.getValue)
+                        arr(i * 2) = entry.getKey
+                        arr(i * 2 + 1) = entry.getValue
                         fillHeaders(i + 1)
                 fillHeaders(0)
-                discard(headerPromise.complete(Result.succeed(StreamingHeaders(status, headers.toSeq))))
+                discard(headerPromise.complete(Result.succeed(StreamingHeaders(status, HttpHeaders.fromFlatArrayNoCopy(arr)))))
             end if
         end if
         // Body chunks are forwarded to byteChannel for the streaming consumer

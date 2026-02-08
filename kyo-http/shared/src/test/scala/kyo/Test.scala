@@ -75,10 +75,19 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     def echoHandler(using Frame): HttpHandler[Any] =
         HttpHandler.get("/*") { request =>
             val info = Map(
-                "method"  -> request.method.toString,
-                "path"    -> request.path,
-                "headers" -> request.headers.map((k, v) => s"$k: $v").mkString(", "),
-                "body"    -> request.bodyText
+                "method" -> request.method.toString,
+                "path"   -> request.path,
+                "headers" -> {
+                    val sb    = new StringBuilder
+                    var first = true
+                    request.headers.foreach { (k, v) =>
+                        if !first then sb.append(", ")
+                        sb.append(s"$k: $v")
+                        first = false
+                    }
+                    sb.toString
+                },
+                "body" -> request.bodyText
             )
             HttpResponse.ok(info.map((k, v) => s"$k=$v").mkString("\n"))
         }
@@ -89,10 +98,19 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
         Seq(GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS).map { method =>
             HttpHandler.init(method, "/*") { request =>
                 val info = Map(
-                    "method"  -> request.method.toString,
-                    "path"    -> request.path,
-                    "headers" -> request.headers.map((k, v) => s"$k: $v").mkString(", "),
-                    "body"    -> request.bodyText
+                    "method" -> request.method.toString,
+                    "path"   -> request.path,
+                    "headers" -> {
+                        val sb    = new StringBuilder
+                        var first = true
+                        request.headers.foreach { (k, v) =>
+                            if !first then sb.append(", ")
+                            sb.append(s"$k: $v")
+                            first = false
+                        }
+                        sb.toString
+                    },
+                    "body" -> request.bodyText
                 )
                 HttpResponse.ok(info.map((k, v) => s"$k=$v").mkString("\n"))
             }

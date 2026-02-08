@@ -95,14 +95,14 @@ class HttpRequestTest extends Test:
             "with headers" in {
                 val request = HttpRequest.get(
                     "http://example.com/users",
-                    Seq("Authorization" -> "Bearer token", "Accept" -> "application/json")
+                    HttpHeaders.empty.add("Authorization", "Bearer token").add("Accept", "application/json")
                 )
                 assert(request.header("Authorization") == Present("Bearer token"))
                 assert(request.header("Accept") == Present("application/json"))
             }
 
             "with empty headers" in {
-                val request = HttpRequest.get("http://example.com", Seq.empty)
+                val request = HttpRequest.get("http://example.com", HttpHeaders.empty)
                 assert(request.method == Method.GET)
             }
         }
@@ -110,7 +110,8 @@ class HttpRequestTest extends Test:
         "post" - {
             "with string body" in {
                 // Use initBytes for raw text body (post() JSON-encodes)
-                val request = HttpRequest.initBytes(Method.POST, "http://example.com/users", "raw body".getBytes, Seq.empty, "text/plain")
+                val request =
+                    HttpRequest.initBytes(Method.POST, "http://example.com/users", "raw body".getBytes, HttpHeaders.empty, "text/plain")
                 assert(request.method == Method.POST)
                 assert(request.bodyText == "raw body")
             }
@@ -125,7 +126,7 @@ class HttpRequestTest extends Test:
                 val request = HttpRequest.post(
                     "http://example.com/users",
                     User("Alice", "alice@example.com"),
-                    Seq("X-Request-Id" -> "123")
+                    HttpHeaders.empty.add("X-Request-Id", "123")
                 )
                 assert(request.header("X-Request-Id") == Present("123"))
             }
@@ -134,7 +135,8 @@ class HttpRequestTest extends Test:
         "put" - {
             "with string body" in {
                 // Use initBytes for raw text body (put() JSON-encodes)
-                val request = HttpRequest.initBytes(Method.PUT, "http://example.com/users/1", "updated".getBytes, Seq.empty, "text/plain")
+                val request =
+                    HttpRequest.initBytes(Method.PUT, "http://example.com/users/1", "updated".getBytes, HttpHeaders.empty, "text/plain")
                 assert(request.method == Method.PUT)
                 assert(request.bodyText == "updated")
             }
@@ -149,7 +151,7 @@ class HttpRequestTest extends Test:
                 val request = HttpRequest.put(
                     "http://example.com/users/1",
                     "body",
-                    Seq("If-Match" -> "etag123")
+                    HttpHeaders.empty.add("If-Match", "etag123")
                 )
                 assert(request.header("If-Match") == Present("etag123"))
             }
@@ -158,7 +160,8 @@ class HttpRequestTest extends Test:
         "patch" - {
             "with string body" in {
                 // Use initBytes for raw text body (patch() JSON-encodes)
-                val request = HttpRequest.initBytes(Method.PATCH, "http://example.com/users/1", "partial".getBytes, Seq.empty, "text/plain")
+                val request =
+                    HttpRequest.initBytes(Method.PATCH, "http://example.com/users/1", "partial".getBytes, HttpHeaders.empty, "text/plain")
                 assert(request.method == Method.PATCH)
                 assert(request.bodyText == "partial")
             }
@@ -172,7 +175,7 @@ class HttpRequestTest extends Test:
                 val request = HttpRequest.patch(
                     "http://example.com/users/1",
                     "body",
-                    Seq("Content-Type" -> "application/json-patch+json")
+                    HttpHeaders.empty.add("Content-Type", "application/json-patch+json")
                 )
                 assert(request.header("Content-Type") == Present("application/json-patch+json"))
             }
@@ -187,7 +190,7 @@ class HttpRequestTest extends Test:
             "with headers" in {
                 val request = HttpRequest.delete(
                     "http://example.com/users/1",
-                    Seq("Authorization" -> "Bearer token")
+                    HttpHeaders.empty.add("Authorization", "Bearer token")
                 )
                 assert(request.header("Authorization") == Present("Bearer token"))
             }
@@ -202,7 +205,7 @@ class HttpRequestTest extends Test:
             "with headers" in {
                 val request = HttpRequest.head(
                     "http://example.com/users",
-                    Seq("Accept" -> "application/json")
+                    HttpHeaders.empty.add("Accept", "application/json")
                 )
                 assert(request.header("Accept") == Present("application/json"))
             }
@@ -217,7 +220,7 @@ class HttpRequestTest extends Test:
             "with headers" in {
                 val request = HttpRequest.options(
                     "http://example.com/users",
-                    Seq("Origin" -> "http://localhost:3000")
+                    HttpHeaders.empty.add("Origin", "http://localhost:3000")
                 )
                 assert(request.header("Origin") == Present("http://localhost:3000"))
             }
@@ -323,7 +326,7 @@ class HttpRequestTest extends Test:
                 val request = HttpRequest.post(
                     "http://example.com",
                     "body",
-                    Seq("Content-Type" -> "application/json")
+                    HttpHeaders.empty.add("Content-Type", "application/json")
                 )
                 assert(request.contentType == Present("application/json"))
             }
@@ -337,7 +340,7 @@ class HttpRequestTest extends Test:
                 val request = HttpRequest.post(
                     "http://example.com",
                     "body",
-                    Seq("Content-Type" -> "text/plain; charset=utf-8")
+                    HttpHeaders.empty.add("Content-Type", "text/plain; charset=utf-8")
                 )
                 assert(request.contentType == Present("text/plain; charset=utf-8"))
             }
@@ -345,7 +348,7 @@ class HttpRequestTest extends Test:
 
         "header" - {
             "returns Present for existing header" in {
-                val request = HttpRequest.get("http://example.com", Seq("X-Custom" -> "value"))
+                val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("X-Custom", "value"))
                 assert(request.header("X-Custom") == Present("value"))
             }
 
@@ -355,7 +358,7 @@ class HttpRequestTest extends Test:
             }
 
             "is case-insensitive" in {
-                val request = HttpRequest.get("http://example.com", Seq("Content-Type" -> "text/plain"))
+                val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("Content-Type", "text/plain"))
                 assert(request.header("content-type") == Present("text/plain"))
                 assert(request.header("CONTENT-TYPE") == Present("text/plain"))
             }
@@ -365,32 +368,33 @@ class HttpRequestTest extends Test:
             "returns all headers" in {
                 val request = HttpRequest.get(
                     "http://example.com",
-                    Seq("X-One" -> "1", "X-Two" -> "2")
+                    HttpHeaders.empty.add("X-One", "1").add("X-Two", "2")
                 )
                 val headers = request.headers
-                assert(headers.contains(("X-One", "1")))
-                assert(headers.contains(("X-Two", "2")))
+                assert(headers.exists((k, v) => k == "X-One" && v == "1"))
+                assert(headers.exists((k, v) => k == "X-Two" && v == "2"))
             }
 
             "returns empty seq when no headers" in {
                 val request = HttpRequest.get("http://example.com")
                 // May contain default headers, but custom ones should be absent
-                assert(!request.headers.exists(_._1 == "X-Custom"))
+                assert(!request.headers.contains("X-Custom"))
             }
 
             "preserves duplicate header names" in {
                 val request = HttpRequest.get(
                     "http://example.com",
-                    Seq("Accept" -> "text/html", "Accept" -> "application/json")
+                    HttpHeaders.empty.add("Accept", "text/html").add("Accept", "application/json")
                 )
-                val acceptHeaders = request.headers.filter(_._1.equalsIgnoreCase("Accept"))
-                assert(acceptHeaders.size >= 2)
+                var count = 0
+                request.headers.foreach((k, _) => if k.equalsIgnoreCase("Accept") then count += 1)
+                assert(count >= 2)
             }
         }
 
         "cookie" - {
             "returns Present for existing cookie" in {
-                val request = HttpRequest.get("http://example.com", Seq("Cookie" -> "session=abc123"))
+                val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("Cookie", "session=abc123"))
                 val cookie  = request.cookie("session")
                 assert(cookie.isDefined)
                 assert(cookie.get.name == "session")
@@ -405,7 +409,7 @@ class HttpRequestTest extends Test:
 
         "cookies" - {
             "returns all cookies" in {
-                val request = HttpRequest.get("http://example.com", Seq("Cookie" -> "a=1; b=2"))
+                val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("Cookie", "a=1; b=2"))
                 val cookies = request.cookies
                 assert(cookies.exists(c => c.name == "a" && c.value == "1"))
                 assert(cookies.exists(c => c.name == "b" && c.value == "2"))
@@ -417,7 +421,7 @@ class HttpRequestTest extends Test:
             }
 
             "parses multiple cookies from header" in {
-                val request = HttpRequest.get("http://example.com", Seq("Cookie" -> "session=xyz; theme=dark; lang=en"))
+                val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("Cookie", "session=xyz; theme=dark; lang=en"))
                 assert(request.cookies.size == 3)
             }
         }
@@ -489,7 +493,8 @@ class HttpRequestTest extends Test:
         "bodyText" - {
             "returns body as string" in {
                 // Use initBytes for raw text body (post() JSON-encodes)
-                val request = HttpRequest.initBytes(Method.POST, "http://example.com", "hello world".getBytes, Seq.empty, "text/plain")
+                val request =
+                    HttpRequest.initBytes(Method.POST, "http://example.com", "hello world".getBytes, HttpHeaders.empty, "text/plain")
                 assert(request.bodyText == "hello world")
             }
 
@@ -501,7 +506,7 @@ class HttpRequestTest extends Test:
             "handles UTF-8 encoding" in {
                 // Use initBytes for raw text body (post() JSON-encodes)
                 val request =
-                    HttpRequest.initBytes(Method.POST, "http://example.com", "Hello 世界".getBytes("UTF-8"), Seq.empty, "text/plain")
+                    HttpRequest.initBytes(Method.POST, "http://example.com", "Hello 世界".getBytes("UTF-8"), HttpHeaders.empty, "text/plain")
                 assert(request.bodyText == "Hello 世界")
             }
         }
@@ -509,7 +514,7 @@ class HttpRequestTest extends Test:
         "bodyBytes" - {
             "returns raw bytes" in {
                 // Use initBytes for raw bytes (post() JSON-encodes)
-                val request = HttpRequest.initBytes(Method.POST, "http://example.com", "test".getBytes, Seq.empty, "text/plain")
+                val request = HttpRequest.initBytes(Method.POST, "http://example.com", "test".getBytes, HttpHeaders.empty, "text/plain")
                 assert(request.bodyBytes.toArray.sameElements("test".getBytes))
             }
 
@@ -521,7 +526,7 @@ class HttpRequestTest extends Test:
             "handles binary content" in {
                 // Use initBytes for raw binary body
                 val bytes   = Array[Byte](0, 1, 127, -128, -1)
-                val request = HttpRequest.initBytes(Method.POST, "http://example.com", bytes, Seq.empty, "application/octet-stream")
+                val request = HttpRequest.initBytes(Method.POST, "http://example.com", bytes, HttpHeaders.empty, "application/octet-stream")
                 assert(request.bodyBytes.size == 5)
             }
         }
@@ -625,7 +630,8 @@ class HttpRequestTest extends Test:
     "Encoding edge cases" - {
         "non-ASCII characters in body" in {
             // Use initBytes for raw text body (post() JSON-encodes)
-            val request = HttpRequest.initBytes(Method.POST, "http://example.com", "日本語 中文 한국어".getBytes("UTF-8"), Seq.empty, "text/plain")
+            val request =
+                HttpRequest.initBytes(Method.POST, "http://example.com", "日本語 中文 한국어".getBytes("UTF-8"), HttpHeaders.empty, "text/plain")
             assert(request.bodyText == "日本語 中文 한국어")
         }
 
@@ -633,7 +639,7 @@ class HttpRequestTest extends Test:
             val request = HttpRequest.post(
                 "http://example.com",
                 "body",
-                Seq("Content-Type" -> "text/plain; charset=iso-8859-1")
+                HttpHeaders.empty.add("Content-Type", "text/plain; charset=iso-8859-1")
             )
             assert(request.contentType.exists(_.contains("iso-8859-1")))
         }
@@ -641,14 +647,14 @@ class HttpRequestTest extends Test:
         "binary body preserved" in {
             // Use initBytes for raw binary body
             val bytes   = Array[Byte](0, 1, 2, 127, -128, -1)
-            val request = HttpRequest.initBytes(Method.POST, "http://example.com", bytes, Seq.empty, "application/octet-stream")
+            val request = HttpRequest.initBytes(Method.POST, "http://example.com", bytes, HttpHeaders.empty, "application/octet-stream")
             assert(request.bodyBytes.size == 6)
         }
 
         "null bytes in body" in {
             // Use initBytes for raw binary body
             val bytes   = Array[Byte](65, 0, 66, 0, 67)
-            val request = HttpRequest.initBytes(Method.POST, "http://example.com", bytes, Seq.empty, "application/octet-stream")
+            val request = HttpRequest.initBytes(Method.POST, "http://example.com", bytes, HttpHeaders.empty, "application/octet-stream")
             assert(request.bodyBytes.size == 5)
         }
     }
@@ -657,19 +663,19 @@ class HttpRequestTest extends Test:
         "large request body" in {
             // Use initBytes for raw text body (post() JSON-encodes)
             val largeBody = "x" * (1024 * 1024) // 1MB
-            val request   = HttpRequest.initBytes(Method.POST, "http://example.com", largeBody.getBytes, Seq.empty, "text/plain")
+            val request   = HttpRequest.initBytes(Method.POST, "http://example.com", largeBody.getBytes, HttpHeaders.empty, "text/plain")
             assert(request.bodyText.length == 1024 * 1024)
         }
 
         "many headers" in {
-            val headers = (1 to 100).map(i => s"X-Header-$i" -> s"value$i")
+            val headers = (1 to 100).foldLeft(HttpHeaders.empty)((h, i) => h.add(s"X-Header-$i", s"value$i"))
             val request = HttpRequest.get("http://example.com", headers)
             assert(request.headers.size >= 100)
         }
 
         "very long header value" in {
             val longValue = "x" * 8000
-            val request   = HttpRequest.get("http://example.com", Seq("X-Long" -> longValue))
+            val request   = HttpRequest.get("http://example.com", HttpHeaders.empty.add("X-Long", longValue))
             assert(request.header("X-Long") == Present(longValue))
         }
 
@@ -682,7 +688,7 @@ class HttpRequestTest extends Test:
 
         "many cookies" in {
             val cookies = (1 to 50).map(i => s"cookie$i=value$i").mkString("; ")
-            val request = HttpRequest.get("http://example.com", Seq("Cookie" -> cookies))
+            val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("Cookie", cookies))
             assert(request.cookies.size == 50)
         }
     }

@@ -601,16 +601,21 @@ object HttpClient:
         in: Any,
         path: HttpPath[Any],
         queryParams: Seq[HttpRoute.QueryParam[?]]
-    ): Seq[(String, String)] =
-        if headerParams.isEmpty then Seq.empty
+    ): HttpHeaders =
+        if headerParams.isEmpty then HttpHeaders.empty
         else
             val pathCaptureCount = countPathCaptures(path)
             val queryParamCount  = queryParams.size
             val offset           = pathCaptureCount + queryParamCount
-            headerParams.zipWithIndex.map { case (param, i) =>
+            var headers          = HttpHeaders.empty
+            var i                = 0
+            while i < headerParams.size do
+                val param = headerParams(i)
                 val value = extractInputAt(in, offset + i)
-                (param.name, value.toString)
-            }
+                headers = headers.add(param.name, value.toString)
+                i += 1
+            end while
+            headers
 
     private def buildRouteQueryString(queryParams: Seq[HttpRoute.QueryParam[?]], in: Any, path: HttpPath[Any]): String =
         if queryParams.isEmpty then ""

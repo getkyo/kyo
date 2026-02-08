@@ -333,7 +333,7 @@ class HttpClientTest extends Test:
                 startTestServer(handler).map { port =>
                     val request = HttpRequest.get(
                         s"http://localhost:$port/auth",
-                        Seq("Authorization" -> "Bearer token123")
+                        HttpHeaders.empty.add("Authorization", "Bearer token123")
                     )
                     HttpClient.send(request).map { response =>
                         assertStatus(response, Status.OK)
@@ -907,7 +907,10 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 Kyo.foreach(1 to iterations) { iter =>
                     val requests = (1 to 10).map { i =>
-                        HttpClient.send(HttpRequest.get(s"http://localhost:$port/echo", Seq("X-Request-Id" -> s"req-$iter-$i")))
+                        HttpClient.send(HttpRequest.get(
+                            s"http://localhost:$port/echo",
+                            HttpHeaders.empty.add("X-Request-Id", s"req-$iter-$i")
+                        ))
                     }
                     Async.collectAll(requests).map { responses =>
                         assert(responses.forall(_.status == Status.OK))
@@ -1400,7 +1403,7 @@ class HttpClientTest extends Test:
                         case Absent     => HttpResponse.ok("no-header")
                 }
                 startTestServer(handler).map { port =>
-                    val request = HttpRequest.get(s"http://localhost:$port/echo", Seq("X-Custom" -> "test-value"))
+                    val request = HttpRequest.get(s"http://localhost:$port/echo", HttpHeaders.empty.add("X-Custom", "test-value"))
                     HttpClient.stream(request).map { response =>
                         assert(response.status == Status.OK)
                         response.bodyStream.run.map { chunks =>

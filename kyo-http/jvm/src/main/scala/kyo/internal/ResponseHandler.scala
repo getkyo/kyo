@@ -19,27 +19,22 @@ final private[kyo] class ResponseHandler(
         val body   = new Array[Byte](msg.content().readableBytes())
         msg.content().readBytes(body)
 
-        // Two-pass: extract to array first (Netty iterator), then fold into immutable response
         val nettyHeaders = msg.headers()
         val headerCount  = nettyHeaders.size()
-        val headers      = new Array[(String, String)](headerCount)
+        val arr          = new Array[String](headerCount * 2)
         val iter         = nettyHeaders.iteratorAsString()
 
         @tailrec def fillHeaders(i: Int): Unit =
             if i < headerCount && iter.hasNext then
                 val entry = iter.next()
-                headers(i) = (entry.getKey, entry.getValue)
+                arr(i * 2) = entry.getKey
+                arr(i * 2 + 1) = entry.getValue
                 fillHeaders(i + 1)
 
         fillHeaders(0)
 
-        @tailrec def addHeaders(resp: HttpResponse[HttpBody.Bytes], i: Int): HttpResponse[HttpBody.Bytes] =
-            if i >= headerCount then resp
-            else
-                val (name, value) = headers(i)
-                addHeaders(resp.addHeader(name, value), i + 1)
-
-        val response = addHeaders(HttpResponse(status, new String(body, StandardCharsets.UTF_8)), 0)
+        val headers  = HttpHeaders.fromFlatArrayNoCopy(arr)
+        val response = HttpResponse.initBytes(status, headers, new String(body, StandardCharsets.UTF_8))
         discard(promise.complete(Result.succeed(response)))
     end channelRead0
 

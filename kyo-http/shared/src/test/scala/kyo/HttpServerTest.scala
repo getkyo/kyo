@@ -288,7 +288,7 @@ class HttpServerTest extends Test:
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.send(
-                        HttpRequest.get(s"http://localhost:$port/users/42", Seq("X-Request-Id" -> "req-123"))
+                        HttpRequest.get(s"http://localhost:$port/users/42", HttpHeaders.empty.add("X-Request-Id", "req-123"))
                     ).map { response =>
                         assertStatus(response, Status.OK)
                         assertBodyContains(response, "requestId=req-123")
@@ -306,7 +306,7 @@ class HttpServerTest extends Test:
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.send(
-                        HttpRequest.get(s"http://localhost:$port/users/42?limit=10", Seq("Authorization" -> "Bearer token"))
+                        HttpRequest.get(s"http://localhost:$port/users/42?limit=10", HttpHeaders.empty.add("Authorization", "Bearer token"))
                     ).map { response =>
                         assertStatus(response, Status.OK)
                         assertBodyContains(response, "limit=10")
@@ -327,7 +327,7 @@ class HttpServerTest extends Test:
                     HttpClient.send(
                         HttpRequest.get(
                             s"http://localhost:$port/orgs/acme/users/42?verbose=true",
-                            Seq("Accept" -> "application/json")
+                            HttpHeaders.empty.add("Accept", "application/json")
                         )
                     ).map { response =>
                         assertStatus(response, Status.OK)

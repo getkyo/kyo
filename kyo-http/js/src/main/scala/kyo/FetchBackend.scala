@@ -67,9 +67,7 @@ final private[kyo] class FetchConnection(
                 response.text().toFuture.map { bodyText =>
                     val status  = HttpResponse.Status(response.status)
                     val headers = extractHeaders(response.headers)
-                    var resp    = HttpResponse(status, bodyText)
-                    headers.foreach((k, v) => resp = resp.addHeader(k, v))
-                    resp
+                    HttpResponse.initBytes(status, headers, bodyText)
                 }
             }
         Abort.recover[Throwable](e =>
@@ -134,16 +132,16 @@ final private[kyo] class FetchConnection(
         (url, init)
     end buildFetchRequest
 
-    private def extractHeaders(fetchHeaders: FetchHeaders): Seq[(String, String)] =
-        val result   = Seq.newBuilder[(String, String)]
+    private def extractHeaders(fetchHeaders: FetchHeaders): HttpHeaders =
+        var headers  = HttpHeaders.empty
         val iterator = fetchHeaders.jsIterator
         @tailrec def loop(next: js.Iterator.Entry[js.Array[String]]): Unit =
             if !next.done then
                 val pair = next.value
-                result += ((pair(0), pair(1)))
+                headers = headers.add(pair(0), pair(1))
                 loop(iterator.next())
         loop(iterator.next())
-        result.result()
+        headers
     end extractHeaders
 
 end FetchConnection

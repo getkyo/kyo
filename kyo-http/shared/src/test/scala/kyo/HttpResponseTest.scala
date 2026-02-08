@@ -609,8 +609,8 @@ class HttpResponseTest extends Test:
                 .addHeader("X-One", "1")
                 .addHeader("X-Two", "2")
             val headers = response.headers
-            assert(headers.contains(("X-One", "1")))
-            assert(headers.contains(("X-Two", "2")))
+            assert(headers.exists((k, v) => k == "X-One" && v == "1"))
+            assert(headers.exists((k, v) => k == "X-Two" && v == "2"))
         }
 
         "cookie" in {
@@ -662,9 +662,7 @@ class HttpResponseTest extends Test:
 
             "withHeaders multiple" in {
                 val response = HttpResponse.ok.addHeaders(
-                    "X-One"   -> "1",
-                    "X-Two"   -> "2",
-                    "X-Three" -> "3"
+                    HttpHeaders.empty.add("X-One", "1").add("X-Two", "2").add("X-Three", "3")
                 )
                 assert(response.header("X-One") == Present("1"))
                 assert(response.header("X-Two") == Present("2"))
@@ -672,7 +670,7 @@ class HttpResponseTest extends Test:
             }
 
             "withHeaders empty" in {
-                val response = HttpResponse.ok.addHeaders()
+                val response = HttpResponse.ok.addHeaders(HttpHeaders.empty)
                 assert(response.status == Status.OK)
             }
         }

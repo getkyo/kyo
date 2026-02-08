@@ -32,7 +32,7 @@ class HttpRequestMultipartTest extends Test:
             val request = HttpRequest.multipart(
                 "http://example.com/upload",
                 parts,
-                Seq("Authorization" -> "Bearer token")
+                HttpHeaders.empty.add("Authorization", "Bearer token")
             )
             assert(request.header("Authorization") == Present("Bearer token"))
         }

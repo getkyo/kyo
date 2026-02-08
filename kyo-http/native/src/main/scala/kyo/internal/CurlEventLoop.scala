@@ -15,7 +15,7 @@ import scala.scalanative.unsigned.*
 /** Captured response headers from a streaming response. */
 private[kyo] case class StreamingHeaders(
     status: HttpResponse.Status,
-    headers: Seq[(String, String)]
+    headers: HttpHeaders
 )
 
 /** Transfer state for a single curl easy handle. */
@@ -286,8 +286,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                 val status  = HttpResponse.Status(bs.statusCode)
                 val headers = parseHeaders(bs.responseHeaders.toString)
                 val body    = bs.responseBody.toByteArray
-                var resp    = HttpResponse(status).withBody(HttpBody(body))
-                headers.foreach((k, v) => resp = resp.addHeader(k, v))
+                val resp    = HttpResponse.initBytes(status, headers, new String(body, "UTF-8"))
                 discard(bs.promise.complete(Result.succeed(resp)))
 
             case ss: StreamingTransferState =>
@@ -324,7 +323,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         CurlEventLoop.curlResultToError(code, host, port)
     end curlResultToError
 
-    private def parseHeaders(raw: String): Seq[(String, String)] =
+    private def parseHeaders(raw: String): HttpHeaders =
         RawHeaderParser.parseHeaders(raw)
 
     private def drainPipe(): Unit =

@@ -43,12 +43,12 @@ final private[kyo] class HttpServerHandler(
     private var state: Int = STATE_IDLE
 
     // BUFFERING state
-    private var pendingMethod: String                 = uninitialized
-    private var pendingUri: String                    = uninitialized
-    private var pendingHeaders: Seq[(String, String)] = uninitialized
-    private var pendingKeepAlive: Boolean             = true
-    private var bodyBuf: CompositeByteBuf             = uninitialized
-    private var bodySize: Int                         = 0
+    private var pendingMethod: String       = uninitialized
+    private var pendingUri: String          = uninitialized
+    private var pendingHeaders: HttpHeaders = uninitialized
+    private var pendingKeepAlive: Boolean   = true
+    private var bodyBuf: CompositeByteBuf   = uninitialized
+    private var bodySize: Int               = 0
 
     // STREAMING state
     private var streamingChannel: Channel.Unsafe[Maybe[Span[Byte]]] = uninitialized
@@ -357,7 +357,7 @@ final private[kyo] class HttpServerHandler(
         state = STATE_IDLE
         pendingMethod = null
         pendingUri = null
-        pendingHeaders = null
+        pendingHeaders = HttpHeaders.empty
         discardResponse = null
         if bodyBuf != null then
             bodyBuf.release()
@@ -392,18 +392,19 @@ final private[kyo] class HttpServerHandler(
         discard(ctx.writeAndFlush(nettyResp).addListener(ChannelFutureListener.CLOSE))
     end exceptionCaught
 
-    private def extractNettyHeaders(nettyReq: NettyHttpRequest): Seq[(String, String)] =
+    private def extractNettyHeaders(nettyReq: NettyHttpRequest): HttpHeaders =
         val nettyHeaders = nettyReq.headers()
         val headerCount  = nettyHeaders.size()
-        val result       = new Array[(String, String)](headerCount)
+        val arr          = new Array[String](headerCount * 2)
         val iter         = nettyHeaders.iteratorAsString()
         @tailrec def fill(i: Int): Unit =
             if i < headerCount && iter.hasNext then
                 val entry = iter.next()
-                result(i) = (entry.getKey, entry.getValue)
+                arr(i * 2) = entry.getKey
+                arr(i * 2 + 1) = entry.getValue
                 fill(i + 1)
         fill(0)
-        result.toSeq
+        HttpHeaders.fromFlatArrayNoCopy(arr)
     end extractNettyHeaders
 
 end HttpServerHandler

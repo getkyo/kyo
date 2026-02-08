@@ -40,7 +40,8 @@ class HttpBinLiveTest extends Test:
     // ========================================================================
 
     "POST - with JSON body" in run {
-        val request = HttpRequest.postText(s"$base/post", """{"title":"hello"}""", Seq("Content-Type" -> "application/json"))
+        val request =
+            HttpRequest.postText(s"$base/post", """{"title":"hello"}""", HttpHeaders.empty.add("Content-Type", "application/json"))
         HttpClient.send(request).map { response =>
             assert(response.status == Status.OK)
             assert(response.bodyText.contains("hello"))
@@ -48,7 +49,7 @@ class HttpBinLiveTest extends Test:
     }
 
     "PUT - with JSON body" in run {
-        val request = HttpRequest.putText(s"$base/put", """{"updated":true}""", Seq("Content-Type" -> "application/json"))
+        val request = HttpRequest.putText(s"$base/put", """{"updated":true}""", HttpHeaders.empty.add("Content-Type", "application/json"))
         HttpClient.send(request).map { response =>
             assert(response.status == Status.OK)
             assert(response.bodyText.contains("updated"))
@@ -68,7 +69,7 @@ class HttpBinLiveTest extends Test:
     "GET - custom headers echoed back" in run {
         val request = HttpRequest.get(
             s"$base/headers",
-            Seq("X-Custom-Header" -> "kyo-demo", "Accept" -> "application/json")
+            HttpHeaders.empty.add("X-Custom-Header", "kyo-demo").add("Accept", "application/json")
         )
         HttpClient.send(request).map { response =>
             assert(response.status == Status.OK)

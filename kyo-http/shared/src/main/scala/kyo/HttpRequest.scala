@@ -2,7 +2,6 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 import kyo.internal.UrlParser
-import scala.annotation.tailrec
 
 /** Immutable HTTP request used on both sides of the wire — client code builds and sends requests, server code receives and inspects them.
   *
@@ -46,7 +45,7 @@ final class HttpRequest[+B <: HttpBody] private (
     val method: HttpRequest.Method,
     private val _rawPath: String,
     private val _rawQuery: Maybe[String],
-    private val _headers: Seq[(String, String)],
+    private val _headers: HttpHeaders,
     val body: B,
     private val _contentType: Maybe[String],
     private val _scheme: Maybe[String],
@@ -119,10 +118,9 @@ final class HttpRequest[+B <: HttpBody] private (
         header("Content-Type").orElse(_contentType)
 
     def header(name: String): Maybe[String] =
-        HttpRequest.findHeader(_headers, name.toLowerCase)
+        _headers.get(name)
 
-    /** Returns all headers (excluding internal X-Kyo-* headers). */
-    def headers: Seq[(String, String)] = _headers
+    def headers: HttpHeaders = _headers
 
     // --- Cookie accessors ---
 
@@ -220,7 +218,7 @@ final class HttpRequest[+B <: HttpBody] private (
             method,
             _rawPath,
             _rawQuery,
-            _headers :+ (name -> value),
+            _headers.add(name, value),
             body,
             _contentType,
             _scheme,
@@ -228,8 +226,18 @@ final class HttpRequest[+B <: HttpBody] private (
             _strictCookieParsing
         )
 
-    def addHeaders(headers: (String, String)*): HttpRequest[B] =
-        new HttpRequest(method, _rawPath, _rawQuery, _headers ++ headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
+    def addHeaders(headers: HttpHeaders): HttpRequest[B] =
+        new HttpRequest(
+            method,
+            _rawPath,
+            _rawQuery,
+            _headers.concat(headers),
+            body,
+            _contentType,
+            _scheme,
+            _pathParams,
+            _strictCookieParsing
+        )
 
     // --- Internal: for server to set path params after routing ---
 
@@ -264,47 +272,47 @@ object HttpRequest:
 
     // --- Factory methods for client-side requests ---
 
-    def get(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def get(url: String, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.GET, url, Array.empty, headers, Absent)
 
-    def post[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def post[A: Schema](url: String, body: A, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         val json = Schema[A].encode(body)
         create(Method.POST, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
 
-    def postText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def postText(url: String, body: String, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.POST, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("text/plain; charset=utf-8"))
 
-    def postForm(url: String, fields: Seq[(String, String)], headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def postForm(url: String, fields: Seq[(String, String)], headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         val body = fields.map { case (k, v) =>
             java.net.URLEncoder.encode(k, "UTF-8") + "=" + java.net.URLEncoder.encode(v, "UTF-8")
         }.mkString("&")
         create(Method.POST, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("application/x-www-form-urlencoded"))
     end postForm
 
-    def put[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def put[A: Schema](url: String, body: A, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         val json = Schema[A].encode(body)
         create(Method.PUT, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
 
-    def putText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def putText(url: String, body: String, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.PUT, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("text/plain; charset=utf-8"))
 
-    def patch[A: Schema](url: String, body: A, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def patch[A: Schema](url: String, body: A, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         val json = Schema[A].encode(body)
         create(Method.PATCH, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
 
-    def patchText(url: String, body: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def patchText(url: String, body: String, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.PATCH, url, body.getBytes(StandardCharsets.UTF_8), headers, Present("text/plain; charset=utf-8"))
 
-    def delete(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def delete(url: String, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.DELETE, url, Array.empty, headers, Absent)
 
-    def head(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def head(url: String, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.HEAD, url, Array.empty, headers, Absent)
 
-    def options(url: String, headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def options(url: String, headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         create(Method.OPTIONS, url, Array.empty, headers, Absent)
 
-    def multipart(url: String, parts: Seq[Part], headers: Seq[(String, String)] = Seq.empty): HttpRequest[HttpBody.Bytes] =
+    def multipart(url: String, parts: Seq[Part], headers: HttpHeaders = HttpHeaders.empty): HttpRequest[HttpBody.Bytes] =
         val boundary    = "----" + java.util.UUID.randomUUID().toString
         val contentType = s"multipart/form-data; boundary=$boundary"
         val body        = buildMultipartBody(parts, boundary)
@@ -317,7 +325,7 @@ object HttpRequest:
         method: Method,
         url: String,
         body: Stream[Span[Byte], Async],
-        headers: Seq[(String, String)] = Seq.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
         contentType: Maybe[String] = Absent
     ): HttpRequest[HttpBody.Streamed] =
         require(url.nonEmpty, "URL cannot be empty")
@@ -342,7 +350,7 @@ object HttpRequest:
         method: Method,
         url: String,
         body: A,
-        headers: Seq[(String, String)] = Seq.empty
+        headers: HttpHeaders = HttpHeaders.empty
     ): HttpRequest[HttpBody.Bytes] =
         val json = Schema[A].encode(body)
         create(method, url, json.getBytes(StandardCharsets.UTF_8), headers, Present("application/json"))
@@ -351,7 +359,7 @@ object HttpRequest:
     def init(
         method: Method,
         url: String,
-        headers: Seq[(String, String)]
+        headers: HttpHeaders
     ): HttpRequest[HttpBody.Bytes] =
         create(method, url, Array.empty, headers, Absent)
 
@@ -359,14 +367,14 @@ object HttpRequest:
         method: Method,
         url: String
     ): HttpRequest[HttpBody.Bytes] =
-        create(method, url, Array.empty, Seq.empty, Absent)
+        create(method, url, Array.empty, HttpHeaders.empty, Absent)
 
     /** Create a request with raw bytes body. */
     def initBytes(
         method: Method,
         url: String,
         body: Array[Byte],
-        headers: Seq[(String, String)],
+        headers: HttpHeaders,
         contentType: String
     ): HttpRequest[HttpBody.Bytes] =
         create(method, url, body, headers, if contentType.isEmpty then Absent else Present(contentType))
@@ -377,7 +385,7 @@ object HttpRequest:
     private[kyo] def fromRaw(
         method: Method,
         uri: String,
-        headers: Seq[(String, String)],
+        headers: HttpHeaders,
         bodyData: Array[Byte],
         contentType: Maybe[String]
     ): HttpRequest[HttpBody.Bytes] =
@@ -400,11 +408,11 @@ object HttpRequest:
     private[kyo] def fromRawHeaders(
         method: Method,
         uri: String,
-        headers: Seq[(String, String)],
+        headers: HttpHeaders,
         bodyData: Array[Byte]
     ): HttpRequest[HttpBody.Bytes] =
         UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
-            val contentType = findHeader(headers, "content-type")
+            val contentType = headers.get("content-type")
             new HttpRequest(
                 method = method,
                 _rawPath = rawPath,
@@ -423,11 +431,11 @@ object HttpRequest:
     private[kyo] def fromRawStreaming(
         method: Method,
         uri: String,
-        headers: Seq[(String, String)],
+        headers: HttpHeaders,
         bodyStream: Stream[Span[Byte], Async]
     ): HttpRequest[HttpBody.Streamed] =
         UrlParser.splitPathQuery(uri) { (rawPath, rawQuery) =>
-            val contentType = findHeader(headers, "content-type")
+            val contentType = headers.get("content-type")
             new HttpRequest(
                 method = method,
                 _rawPath = rawPath,
@@ -448,7 +456,7 @@ object HttpRequest:
         method: Method,
         url: String,
         bodyData: Array[Byte],
-        headers: Seq[(String, String)],
+        headers: HttpHeaders,
         contentType: Maybe[String]
     ): HttpRequest[HttpBody.Bytes] =
         require(url.nonEmpty, "URL cannot be empty")
@@ -470,27 +478,9 @@ object HttpRequest:
 
     // --- Private helpers ---
 
-    private[kyo] def findHeader(headers: Seq[(String, String)], lowerName: String): Maybe[String] =
-        @tailrec def loop(remaining: Seq[(String, String)]): Maybe[String] =
-            remaining match
-                case Seq()                                         => Absent
-                case Seq((n, v), _*) if n.toLowerCase == lowerName => Present(v)
-                case Seq(_, tail*)                                 => loop(tail)
-        loop(headers)
-    end findHeader
-
-    /** Finds the last header with the given lowercase name, without allocating a reversed copy. */
-    private[kyo] def findLastHeader(headers: Seq[(String, String)], lowerName: String): Maybe[String] =
-        var result: Maybe[String] = Absent
-        headers.foreach { case (n, v) =>
-            if n.toLowerCase == lowerName then result = Present(v)
-        }
-        result
-    end findLastHeader
-
-    private def withHostHeader(host: Maybe[String], port: Int, headers: Seq[(String, String)]): Seq[(String, String)] =
+    private def withHostHeader(host: Maybe[String], port: Int, headers: HttpHeaders): HttpHeaders =
         host match
-            case Present(h) if !headers.exists(_._1.equalsIgnoreCase("Host")) =>
+            case Present(h) if !headers.contains("Host") =>
                 // Wrap IPv6 addresses in brackets for Host header (if not already wrapped)
                 val hostPart = if h.startsWith("[") then h else if h.contains(':') then s"[$h]" else h
                 val hostValue =
@@ -498,7 +488,7 @@ object HttpRequest:
                         s"$hostPart:$port"
                     else
                         hostPart
-                headers :+ ("Host" -> hostValue)
+                headers.add("Host", hostValue)
             case _ => headers
     end withHostHeader
 

@@ -46,7 +46,7 @@ import java.time.format.DateTimeFormatter
   */
 final class HttpResponse[+B <: HttpBody] private (
     val status: HttpResponse.Status,
-    private val _headers: Seq[(String, String)],
+    private val _headers: HttpHeaders,
     private val _cookies: Seq[HttpResponse.Cookie],
     private val _body: B
 ):
@@ -56,9 +56,9 @@ final class HttpResponse[+B <: HttpBody] private (
     // --- Header accessors ---
 
     def header(name: String): Maybe[String] =
-        HttpRequest.findLastHeader(_headers, name.toLowerCase)
+        _headers.getLast(name)
 
-    def headers: Seq[(String, String)] = _headers
+    def headers: HttpHeaders = _headers
 
     def contentType: Maybe[String] = header("Content-Type")
 
@@ -93,14 +93,14 @@ final class HttpResponse[+B <: HttpBody] private (
 
     /** Replaces any existing header with the same name, then appends (set semantics, not append). */
     def addHeader(name: String, value: String): HttpResponse[B] =
-        // Filter out existing headers with same name, then append — gives set semantics
-        val lowerName  = name.toLowerCase
-        val newHeaders = _headers.filterNot(_._1.toLowerCase == lowerName) :+ (name -> value)
-        new HttpResponse(status, newHeaders, _cookies, body)
-    end addHeader
+        new HttpResponse(status, _headers.set(name, value), _cookies, body)
 
-    def addHeaders(headers: (String, String)*): HttpResponse[B] =
-        headers.foldLeft(this)((r, h) => r.addHeader(h._1, h._2))
+    def addHeaders(headers: HttpHeaders): HttpResponse[B] =
+        if headers.isEmpty then this
+        else
+            var h = _headers
+            headers.foreach((k, v) => h = h.set(k, v))
+            new HttpResponse(status, h, _cookies, body)
 
     def addCookie(cookie: Cookie): HttpResponse[B] =
         new HttpResponse(status, _headers, _cookies :+ cookie, body)
@@ -140,9 +140,9 @@ final class HttpResponse[+B <: HttpBody] private (
     /** Returns headers with Set-Cookie headers for all cookies (pure Scala encoding). Used by backend implementations to convert cookies to
       * wire format.
       */
-    private[kyo] def resolvedHeaders: Seq[(String, String)] =
+    private[kyo] def resolvedHeaders: HttpHeaders =
         if _cookies.isEmpty then _headers
-        else _headers ++ _cookies.map(c => "Set-Cookie" -> encodeCookie(c))
+        else _cookies.foldLeft(_headers)((h, c) => h.add("Set-Cookie", encodeCookie(c)))
 
     /** Materializes a streaming body into bytes, or returns self if already bytes. */
     private[kyo] def ensureBytes(using Frame): HttpResponse[HttpBody.Bytes] < Async =
@@ -169,7 +169,7 @@ object HttpResponse:
     // --- Factory methods (all return Bytes) ---
 
     def apply(status: Status, body: String = ""): HttpResponse[HttpBody.Bytes] =
-        if body.isEmpty then new HttpResponse(status, Seq.empty, Seq.empty, HttpBody.empty)
+        if body.isEmpty then new HttpResponse(status, HttpHeaders.empty, Seq.empty, HttpBody.empty)
         else initText(status, body, "text/plain")
 
     def apply[A: Schema](status: Status, body: A): HttpResponse[HttpBody.Bytes] =
@@ -198,7 +198,7 @@ object HttpResponse:
     def redirect(url: String): HttpResponse[HttpBody.Bytes] = redirect(url, Status.Found)
     def redirect(url: String, status: Status): HttpResponse[HttpBody.Bytes] =
         require(url.nonEmpty, "Redirect URL cannot be empty")
-        new HttpResponse(status, Seq("Location" -> url), Seq.empty, HttpBody.empty)
+        new HttpResponse(status, HttpHeaders.empty.add("Location", url), Seq.empty, HttpBody.empty)
 
     def movedPermanently(url: String): HttpResponse[HttpBody.Bytes] = redirect(url, Status.MovedPermanently)
     def notModified: HttpResponse[HttpBody.Bytes]                   = apply(Status.NotModified)
@@ -230,7 +230,12 @@ object HttpResponse:
 
     def tooManyRequests: HttpResponse[HttpBody.Bytes] = apply(Status.TooManyRequests)
     def tooManyRequests(retryAfter: Duration): HttpResponse[HttpBody.Bytes] =
-        new HttpResponse(Status.TooManyRequests, Seq("Retry-After" -> retryAfter.toSeconds.toString), Seq.empty, HttpBody.empty)
+        new HttpResponse(
+            Status.TooManyRequests,
+            HttpHeaders.empty.add("Retry-After", retryAfter.toSeconds.toString),
+            Seq.empty,
+            HttpBody.empty
+        )
 
     // --- 5xx Server Error ---
 
@@ -240,12 +245,17 @@ object HttpResponse:
 
     def serviceUnavailable: HttpResponse[HttpBody.Bytes] = apply(Status.ServiceUnavailable)
     def serviceUnavailable(retryAfter: Duration): HttpResponse[HttpBody.Bytes] =
-        new HttpResponse(Status.ServiceUnavailable, Seq("Retry-After" -> retryAfter.toSeconds.toString), Seq.empty, HttpBody.empty)
+        new HttpResponse(
+            Status.ServiceUnavailable,
+            HttpHeaders.empty.add("Retry-After", retryAfter.toSeconds.toString),
+            Seq.empty,
+            HttpBody.empty
+        )
 
     // --- Streaming factory methods ---
 
     def stream(s: Stream[Span[Byte], Async], status: Status = Status.OK): HttpResponse[HttpBody.Streamed] =
-        new HttpResponse(status, Seq.empty, Seq.empty, HttpBody.stream(s))
+        new HttpResponse(status, HttpHeaders.empty, Seq.empty, HttpBody.stream(s))
 
     /** Creates a streaming SSE response. Serializes events using Schema, sets appropriate SSE headers. */
     def streamSse[V: Schema: Tag](events: Stream[HttpEvent[V], Async], status: Status = Status.OK)(using
@@ -264,7 +274,7 @@ object HttpResponse:
         }
         new HttpResponse(
             status,
-            Seq("Content-Type" -> "text/event-stream", "Cache-Control" -> "no-cache", "Connection" -> "keep-alive"),
+            HttpHeaders.empty.add("Content-Type", "text/event-stream").add("Cache-Control", "no-cache").add("Connection", "keep-alive"),
             Seq.empty,
             HttpBody.stream(byteStream)
         )
@@ -281,7 +291,7 @@ object HttpResponse:
         }
         new HttpResponse(
             status,
-            Seq("Content-Type" -> "application/x-ndjson"),
+            HttpHeaders.empty.add("Content-Type", "application/x-ndjson"),
             Seq.empty,
             HttpBody.stream(byteStream)
         )
@@ -418,16 +428,25 @@ object HttpResponse:
 
     private def initText(status: Status, body: String, contentType: String): HttpResponse[HttpBody.Bytes] =
         val bytes   = body.getBytes(StandardCharsets.UTF_8)
-        val headers = Seq("Content-Type" -> contentType, "Content-Length" -> bytes.length.toString)
+        val headers = HttpHeaders.empty.add("Content-Type", contentType).add("Content-Length", bytes.length.toString)
         new HttpResponse(status, headers, Seq.empty, HttpBody(bytes))
     end initText
 
     private def initJson[A: Schema](status: Status, body: A): HttpResponse[HttpBody.Bytes] =
         initText(status, Schema[A].encode(body), "application/json")
 
+    private[kyo] def initBytes(
+        status: Status,
+        headers: HttpHeaders,
+        body: String
+    ): HttpResponse[HttpBody.Bytes] =
+        val bytes = body.getBytes(StandardCharsets.UTF_8)
+        new HttpResponse(status, headers, Seq.empty, HttpBody(bytes))
+    end initBytes
+
     private[kyo] def initStreaming(
         status: Status,
-        headers: Seq[(String, String)],
+        headers: HttpHeaders,
         stream: Stream[Span[Byte], Async]
     ): HttpResponse[HttpBody.Streamed] =
         new HttpResponse(status, headers, Seq.empty, HttpBody.stream(stream))
