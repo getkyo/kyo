@@ -1063,4 +1063,64 @@ class HttpServerTest extends Test:
         }
     }
 
+    "Async.timeout and Async.race with handlers" - {
+
+        "timeout catches slow handler" in run {
+            val handler = HttpHandler.get("/slow") { (_, _) =>
+                Async.sleep(1.hour).andThen(HttpResponse.ok("never"))
+            }
+            startTestServer(handler).map { port =>
+                Abort.run[Timeout](
+                    Async.timeout(1.second)(testGetAs[String](port, "/slow"))
+                ).map { result =>
+                    assert(result.isFailure)
+                }
+            }
+        }
+
+        "race two requests to blocking handler" in run {
+            AtomicInt.init.map { counter =>
+                Promise.init[Unit, Nothing].map { promise =>
+                    val handler = HttpHandler.get("/race") { (_, _) =>
+                        counter.incrementAndGet.map { num =>
+                            if num == 1 then
+                                promise.get.andThen(HttpResponse.ok("right"))
+                            else
+                                promise.completeUnitDiscard.andThen(
+                                    Async.sleep(1.hour).andThen(HttpResponse.ok("wrong"))
+                                )
+                        }
+                    }
+                    startTestServer(handler).map { port =>
+                        Async.race(
+                            testGetAs[String](port, "/race"),
+                            testGetAs[String](port, "/race")
+                        ).map { result =>
+                            assert(result == "right")
+                        }
+                    }
+                }
+            }
+        }
+
+        "timeout inside race with timer" in run {
+            Promise.init[Unit, Nothing].map { promise =>
+                val handler = HttpHandler.get("/tr") { (_, _) =>
+                    promise.get.andThen(HttpResponse.ok("right"))
+                }
+                startTestServer(handler).map { port =>
+                    val normalReq = testGetAs[String](port, "/tr")
+                    val timer =
+                        Async.sleep(1.second)
+                            .andThen(promise.completeUnitDiscard)
+                            .andThen(Async.sleep(1.hour))
+                            .andThen("never")
+                    Async.race(normalReq, timer).map { result =>
+                        assert(result == "right")
+                    }
+                }
+            }
+        }
+    }
+
 end HttpServerTest

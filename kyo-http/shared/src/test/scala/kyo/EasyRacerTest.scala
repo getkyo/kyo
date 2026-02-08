@@ -83,21 +83,18 @@ class EasyRacerTest extends Test:
     }
 
     "scenario 4 - race 2 concurrent requests, one with 1s timeout" in run {
-        Promise.init[Unit, Nothing].map { promise =>
-            val handler = HttpHandler.get("/4") { (_, _) =>
-                promise.get.andThen(HttpResponse.ok("right"))
-            }
-            startTestServer(handler).map { port =>
-                val url       = s"http://localhost:$port/4"
-                val normalReq = req(url)
-                val timer =
-                    Async.sleep(1.second)
-                        .andThen(promise.completeUnitDiscard)
-                        .andThen(Async.sleep(1.hour))
-                        .andThen("never")
-                Async.race(normalReq, timer).map { result =>
-                    assert(result == "right")
-                }
+        val handler = HttpHandler.get("/4") { (_, _) =>
+            Async.sleep(3.seconds).andThen(HttpResponse.ok("right"))
+        }
+        startTestServer(handler).map { port =>
+            val url       = s"http://localhost:$port/4"
+            val normalReq = req(url)
+            val reqWithTimeout =
+                Abort.run[Timeout](Async.timeout(1.second)(req(url)))
+                    .map(_ => Async.sleep(1.hour))
+                    .andThen("never")
+            Async.race(normalReq, reqWithTimeout).map { result =>
+                assert(result == "right")
             }
         }
     }
