@@ -22,6 +22,7 @@ final private[kyo] class Utf8StreamDecoder private (
     /** Decode a chunk of bytes, returning decoded string. Incomplete trailing bytes are buffered for the next chunk. */
     def decode(chunk: Chunk[Byte]): String =
         val bytes = chunk.toArray
+        // Prepend incomplete multi-byte sequence from previous chunk
         val input =
             if leftover.isEmpty then bytes
             else
@@ -39,7 +40,7 @@ final private[kyo] class Utf8StreamDecoder private (
             @tailrec def loop(): Unit =
                 val result = decoder.decode(inBuf, outBuf, false)
                 if result.isUnderflow then
-                    // Save any remaining bytes for next chunk
+                    // Underflow with remaining bytes means an incomplete multi-byte sequence at the end
                     if inBuf.hasRemaining then
                         leftover = new Array[Byte](inBuf.remaining)
                         discard(inBuf.get(leftover))

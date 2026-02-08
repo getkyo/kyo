@@ -111,11 +111,9 @@ object HttpServer:
         initUnscoped(config, HttpPlatformBackend.default)(handlers*)
 
     def initUnscoped(config: Config, backend: Backend)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
-        // Safe cast: S is phantom (erased at runtime), server only calls handler.apply internally
         val h = handlers.asInstanceOf[Seq[HttpHandler[Any]]]
-        // Captures filter from Local once at init time — frozen for the server's lifetime
+        // Filter chain is captured once here — not re-read per request
         HttpFilter.use { filter =>
-            // Add OpenAPI handler if configured
             val allHandlers = config.openApi match
                 case Present(openApiConfig) =>
                     val spec = HttpOpenApi.fromHandlers(
@@ -129,10 +127,9 @@ object HttpServer:
                 case Absent =>
                     h
 
-            // Build the shared ServerHandler from router + filter
+            // ServerHandler bridges the router + filter into the Backend's transport layer
             val serverHandler = HttpServer.buildServerHandler(allHandlers, config, filter)
 
-            // Delegate to backend
             backend.server(
                 config.port,
                 config.host,

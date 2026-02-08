@@ -247,6 +247,7 @@ object HttpClient:
       * via the route's output schema and typed errors via the route's error schemas.
       */
     def call[In, Out, Err](route: HttpRoute[In, Out, Err], in: In)(using Frame): Out < (Async & Abort[HttpError] & Abort[Err]) =
+        // Build URL from route path captures, query params, and headers
         val pathStr     = buildRoutePath(route.path, in)
         val queryString = buildRouteQueryString(route.queryParams, in, route.path)
         val fullPath    = if queryString.isEmpty then pathStr else s"$pathStr?$queryString"
@@ -259,6 +260,7 @@ object HttpClient:
             case Absent =>
                 HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
 
+        // On error status, try to decode typed error via route's error schemas before falling back
         send(request).map { response =>
             if response.status.isError then
                 val body = response.bodyText

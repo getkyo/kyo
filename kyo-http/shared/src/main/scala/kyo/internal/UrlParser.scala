@@ -21,10 +21,12 @@ private[kyo] object UrlParser:
     ): A =
         val schemeEnd = url.indexOf("://")
         if schemeEnd < 0 then
+            // Path-only URL (no scheme/host) — used for relative paths
             splitPathQuery(url) { (rawPath, rawQuery) =>
                 f(Absent, Absent, -1, rawPath, rawQuery)
             }
         else
+            // Full URL — extract scheme, authority (host:port), and remaining path+query
             val schemeName  = url.substring(0, schemeEnd)
             val afterScheme = schemeEnd + 3
             val slashIdx    = url.indexOf('/', afterScheme)
@@ -48,6 +50,7 @@ private[kyo] object UrlParser:
     end parseUrlParts
 
     /** Split a path-and-query string on '?' into (path, query), stripping fragments and scheme+authority if present. */
+    /** Split path?query, stripping scheme+authority if present and fragment per RFC 3986. */
     inline def splitPathQuery[A](url: String)(
         inline f: (String, Maybe[String]) => A
     ): A =
@@ -87,6 +90,7 @@ private[kyo] object UrlParser:
         val defaultPort =
             if scheme == "https" then DefaultHttpsPort
             else DefaultHttpPort
+        // Strip userinfo (user:pass@) but preserve IPv6 brackets
         val hostPort =
             if authority.startsWith("[") then authority
             else

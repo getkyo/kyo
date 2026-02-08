@@ -25,13 +25,11 @@ final private[kyo] class NettyConnection(
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         Sync.Unsafe {
-            // Build Netty request
             val nettyMethod = HttpMethod.valueOf(request.method.name)
             val bodyData    = request.body.data
             val content     = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
             val nettyReq    = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, nettyMethod, request.url, content)
 
-            // Set headers
             request.headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
             request.contentType.foreach(ct => discard(nettyReq.headers().set("Content-Type", ct)))
             if !nettyReq.headers().contains("Host") then
@@ -42,18 +40,17 @@ final private[kyo] class NettyConnection(
             if !nettyReq.headers().contains("Content-Length") then
                 discard(nettyReq.headers().setInt("Content-Length", content.readableBytes()))
 
-            // Ensure aggregator is in pipeline
+            // Aggregator collects HTTP chunks into a single FullHttpResponse
             val pipeline = channel.pipeline()
             if pipeline.get("aggregator") == null then
                 discard(pipeline.addLast("aggregator", new HttpObjectAggregator(maxResponseSizeBytes)))
 
-            // Remove old response handler if present (connection reuse via pool)
+            // Each send gets a fresh promise — replace handler for pooled connection reuse
             if pipeline.get("response") != null then
                 discard(pipeline.remove("response"))
             val promise = Promise.Unsafe.init[HttpResponse[HttpBody.Bytes], Abort[HttpError]]()
             discard(pipeline.addLast("response", new ResponseHandler(promise, channel, host, port)))
 
-            // Write request and await response
             discard(channel.writeAndFlush(nettyReq))
             promise.safe.get
         }
@@ -61,7 +58,7 @@ final private[kyo] class NettyConnection(
 
     def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
         Sync.Unsafe {
-            // Build Netty request
+            // Buffered body → FullHttpRequest; streaming body → headers-only HttpRequest
             val nettyMethod = HttpMethod.valueOf(request.method.name)
             val nettyReq = request.body.use(
                 b =>
@@ -71,7 +68,6 @@ final private[kyo] class NettyConnection(
                 _ => new DefaultHttpRequest(HttpVersion.HTTP_1_1, nettyMethod, request.url)
             )
 
-            // Set headers
             request.headers.foreach((k, v) => discard(nettyReq.headers().add(k, v)))
             request.contentType.foreach(ct => discard(nettyReq.headers().set("Content-Type", ct)))
             if !nettyReq.headers().contains("Host") then
@@ -88,22 +84,22 @@ final private[kyo] class NettyConnection(
                         discard(nettyReq.headers().set("Transfer-Encoding", "chunked"))
             )
 
-            // Remove aggregator if present (streaming doesn't use it)
+            // Streaming bypasses aggregation — we want individual chunks, not a single buffer
             val pipeline = channel.pipeline()
             if pipeline.get("aggregator") != null then
                 discard(pipeline.remove("aggregator"))
             if pipeline.get("response") != null then
                 discard(pipeline.remove("response"))
 
-            // Set up streaming handler
+            // Two promises: headerPromise completes when response headers arrive,
+            // byteChannel delivers body chunks as they arrive
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
             discard(pipeline.addLast("response", new ResponseStreamingHandler(headerPromise, byteChannel, host, port)))
 
-            // Write request headers
             discard(channel.writeAndFlush(nettyReq))
 
-            // Write streaming request body if present
+            // Stream request body chunks if present (for chunked uploads)
             val writeBody: Unit < Async = request.body.use(
                 _ => (),
                 streamed =>
@@ -117,7 +113,7 @@ final private[kyo] class NettyConnection(
             )
 
             writeBody.andThen {
-                // Await headers, return streaming response
+                // Response headers arrive independently of body — wait for them first
                 headerPromise.safe.get.map { sh =>
                     val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                         Abort.run[Closed](byteChannel.safe.stream().emit).unit

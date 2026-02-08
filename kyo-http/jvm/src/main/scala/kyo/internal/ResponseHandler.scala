@@ -19,6 +19,7 @@ final private[kyo] class ResponseHandler(
         val body   = new Array[Byte](msg.content().readableBytes())
         msg.content().readBytes(body)
 
+        // Two-pass: extract to array first (Netty iterator), then fold into immutable response
         val nettyHeaders = msg.headers()
         val headerCount  = nettyHeaders.size()
         val headers      = new Array[(String, String)](headerCount)

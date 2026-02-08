@@ -618,27 +618,25 @@ object HttpRequest:
         end if
     end extractBoundary
 
+    /** Parses multipart/form-data body. Format: --boundary\r\n headers \r\n\r\n content \r\n--boundary... --boundary-- */
     private def parseMultipart(data: Array[Byte], boundary: String): Span[Part] =
         val boundaryBytes = ("--" + boundary).getBytes(StandardCharsets.UTF_8)
         val crlfBytes     = "\r\n".getBytes(StandardCharsets.UTF_8)
         val result        = Seq.newBuilder[Part]
 
-        // Find first boundary
         var pos = indexOf(data, boundaryBytes, 0)
         if pos < 0 then return Span.empty[Part]
         pos += boundaryBytes.length
 
         while pos < data.length do
-            // Check for terminating boundary (--boundary--)
+            // "--" after boundary means end of multipart
             if pos + 2 <= data.length && data(pos) == '-' && data(pos + 1) == '-' then
-                // End of multipart
                 return toSpan(result.result())
 
-            // Skip CRLF after boundary
             if pos + 2 <= data.length && data(pos) == '\r' && data(pos + 1) == '\n' then
                 pos += 2
 
-            // Parse headers until empty line
+            // Each part has MIME-style headers terminated by \r\n\r\n
             var name: String                   = ""
             var filename: Maybe[String]        = Absent
             var partContentType: Maybe[String] = Absent
@@ -653,7 +651,6 @@ object HttpRequest:
                     val headerName  = line.substring(0, colonIdx).trim.toLowerCase
                     val headerValue = line.substring(colonIdx + 1).trim
                     if headerName == "content-disposition" then
-                        // Parse name and filename from Content-Disposition
                         extractDispositionParam(headerValue, "name").foreach(n => name = n)
                         filename = extractDispositionParam(headerValue, "filename")
                     else if headerName == "content-type" then
@@ -662,14 +659,13 @@ object HttpRequest:
                 end if
             }
 
-            pos = headerEnd + 4 // Skip \r\n\r\n
+            pos = headerEnd + 4
 
-            // Find next boundary
+            // Content runs from here to \r\n before the next boundary marker
             val nextBoundary = indexOf(data, boundaryBytes, pos)
             if nextBoundary < 0 then return toSpan(result.result())
 
-            // Content ends before \r\n--boundary
-            val contentEnd = nextBoundary - 2 // Subtract \r\n before boundary
+            val contentEnd = nextBoundary - 2
             val content =
                 if contentEnd > pos then
                     val arr = new Array[Byte](contentEnd - pos)

@@ -259,11 +259,11 @@ private[kyo] object HttpRouter:
         end allocHandlerIdx
     end SerializeState
 
-    /** Serialize mutable trie into flat arrays via DFS */
+    /** Serialize mutable trie into flat arrays via DFS (pre-order: allocate index, then recurse children). */
     private def serialize(node: MutableNode, state: SerializeState): Int =
         val nodeIdx = state.allocNodeIdx()
 
-        // Serialize children first to get their indices
+        // Literal children sorted for binary search during lookup
         val sortedLiteralKeys = node.literalChildren.keys.toArray.sorted
         val literalSegments   = new Array[String](sortedLiteralKeys.length)
         val literalIndices    = new Array[Int](sortedLiteralKeys.length)

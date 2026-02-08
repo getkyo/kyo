@@ -19,7 +19,7 @@ final private[kyo] class ResponseStreamingHandler(
 )(using Frame) extends ChannelInboundHandlerAdapter:
     override def channelRead(ctx: ChannelHandlerContext, msg: AnyRef): Unit =
         import AllowUnsafe.embrace.danger
-        // Handle response headers
+        // Netty delivers HttpResponse (headers) then HttpContent chunks — both arrive here
         if msg.isInstanceOf[io.netty.handler.codec.http.HttpResponse] then
             val response = msg.asInstanceOf[io.netty.handler.codec.http.HttpResponse]
             val status   = HttpResponse.Status(response.status().code())
@@ -43,7 +43,7 @@ final private[kyo] class ResponseStreamingHandler(
                 discard(headerPromise.complete(Result.succeed(StreamingHeaders(status, headers.toSeq))))
             end if
         end if
-        // Handle body content
+        // Body chunks are forwarded to byteChannel for the streaming consumer
         if msg.isInstanceOf[io.netty.handler.codec.http.HttpContent] then
             val content = msg.asInstanceOf[io.netty.handler.codec.http.HttpContent]
             val buf     = content.content()

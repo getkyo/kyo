@@ -72,34 +72,26 @@ object HttpHandler:
         new HttpHandler[S]:
             val route: HttpRoute[?, ?, ?] = r
             private[kyo] def apply(request: HttpRequest[?]): kyo.HttpResponse[?] < (Async & S) =
-                // Safe cast: server guarantees buffered body for non-streaming handlers
-                val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
-                val pathInput = extractPathParams(r.path, req.path)
-                // Extract query parameters
-                val queryInput = extractQueryParams(r.queryParams, req)
-                // Extract header parameters
+                val req         = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
+                val pathInput   = extractPathParams(r.path, req.path)
+                val queryInput  = extractQueryParams(r.queryParams, req)
                 val headerInput = extractHeaderParams(r.headerParams, req)
-                // Extract body if there's an input schema (cast justified: Schema[?] loses type info)
                 val bodyInput = r.inputSchema match
                     case Present(schema) =>
                         schema.asInstanceOf[Schema[Any]].decode(req.bodyText)
                     case Absent =>
                         ()
-                // Combine all inputs in order: path, query, headers, body
+                // Order must match route's In type: path → query → header → body
                 val fullInput = combineAllInputs(pathInput, queryInput, headerInput, bodyInput)
-                // Call the handler function (cast justified: In is computed via match types at compile time,
-                // but fullInput is built dynamically at runtime)
                 val computation = f(fullInput.asInstanceOf[In]).map { output =>
                     r.outputSchema match
                         case Present(s) =>
-                            // Cast justified: Schema[?] loses type info due to erasure
                             val json = s.asInstanceOf[Schema[Out]].encode(output)
                             kyo.HttpResponse.json(json)
                         case Absent =>
                             kyo.HttpResponse.ok
                 }
-                // Cast justified: Err is erased at runtime, so Abort.run needs Any as the type parameter.
-                // Abort.recover would also need the cast and doesn't handle Panic, so Abort.run is the right choice.
+                // Abort[Err] is caught and mapped to HTTP responses via route's error schemas
                 Abort.run[Any](computation.asInstanceOf[kyo.HttpResponse[?] < (Abort[Any] & Async & S)]).map {
                     case Result.Success(resp) => resp
                     case Result.Failure(err)  =>

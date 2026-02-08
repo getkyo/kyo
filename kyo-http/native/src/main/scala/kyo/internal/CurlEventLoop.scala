@@ -130,12 +130,13 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
 
     /** Shut down the event loop. */
     def shutdown(): Unit =
+        // Signal loop to stop and wake it up
         running = false
         wakeUp()
         thread.join(5000)
         discard(CurlEventLoop.loops.remove(loopId))
 
-        // Fail any remaining transfers
+        // Fail any remaining in-flight transfers
         val iter = transfers.entrySet().iterator()
         while iter.hasNext do
             val entry = iter.next()
@@ -144,6 +145,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             iter.remove()
         end while
 
+        // Clean up curl multi and self-pipe fds
         discard(curl_multi_cleanup(multi))
         discard(posix_close(pipeReadFd))
         discard(posix_close(pipeWriteFd))
@@ -163,23 +165,22 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             val maxPollFds     = 1024
             val fds            = stackalloc[PollFd](maxPollFds)
 
-            // Kick off the multi to get initial timer
             discard(curl_multi_socket_action(multi, CURL_SOCKET_TIMEOUT, 0, runningHandles))
 
             while running do
+                // New transfers arrive via requestQueue; add them to curl_multi before polling
                 drainRequestQueue()
+                // Streaming transfers may have been paused due to full channels — unpause if space freed
                 checkPausedTransfers()
 
-                // Build poll fd array: self-pipe + tracked sockets
+                // Build poll fd array: self-pipe (for wakeup) + tracked curl sockets
                 val numSockets = socketMap.size
                 val totalFds   = Math.min(numSockets + 1, maxPollFds)
 
-                // Self-pipe fd
                 fds(0)._1 = pipeReadFd
                 fds(0)._2 = POLLIN
                 fds(0)._3 = 0
 
-                // Socket fds
                 var idx = 1
                 socketMap.foreach { (fd, events) =>
                     fds(idx)._1 = fd
@@ -188,14 +189,13 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                     idx += 1
                 }
 
+                // Blocks until I/O ready or timeout — drives curl_multi_socket_action below
                 val pollResult = posix_poll(fds, totalFds.toCSize, timeoutMs)
 
                 if pollResult > 0 then
-                    // Check self-pipe
                     if (fds(0)._3 & POLLIN) != 0 then
                         drainPipe()
 
-                    // Check curl sockets
                     idx = 1
                     socketMap.foreach { (fd, _) =>
                         val revents = fds(idx)._3
@@ -208,7 +208,6 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                         idx += 1
                     }
                 else if pollResult == 0 then
-                    // Timeout
                     discard(curl_multi_socket_action(multi, CURL_SOCKET_TIMEOUT, 0, runningHandles))
                 end if
 
@@ -370,8 +369,8 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                     bs.responseBody.write(bytes)
                     size
 
+                // Headers are only available after the first body data arrives from curl
                 case ss: StreamingTransferState =>
-                    // Complete headers on first data chunk if not done
                     if !ss.headersCompleted then
                         val status  = HttpResponse.Status(ss.statusCode)
                         val headers = parseHeaders(ss.responseHeaders.toString)
@@ -385,13 +384,13 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                         bytes(i) = data(i)
                         i += 1
 
+                    // Pause curl if channel is full (backpressure)
                     ss.bodyChannel.offer(Span.fromUnsafe(bytes)) match
                         case Result.Success(true) => size
                         case Result.Success(false) =>
                             ss.isPaused = true
                             CURL_WRITEFUNC_PAUSE
                         case _ =>
-                            // Channel closed
                             size
                     end match
             end match
@@ -410,7 +409,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                 i += 1
             val line = new String(bytes, "UTF-8")
 
-            // Parse status line: "HTTP/x.x NNN ..."
+            // curl delivers status line ("HTTP/1.1 200 OK") and headers through the same callback
             if line.startsWith("HTTP/") then
                 val spaceIdx = line.indexOf(' ')
                 if spaceIdx > 0 then

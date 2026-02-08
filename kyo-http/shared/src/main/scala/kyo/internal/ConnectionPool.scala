@@ -74,16 +74,17 @@ private[kyo] object ConnectionPool:
             acquireTimeout: Duration
         )(using Frame): Backend.Connection < (Async & Abort[HttpError]) =
             Sync.Unsafe {
+                // First try to reuse an idle connection (fast path, no I/O)
                 pollActive() match
                     case Present(conn) => conn
-                    case Absent =>
+                    case Absent        =>
+                        // Under the per-host limit — open a new connection
                         if tryIncrementCount() then
                             factory.connect(host, port, ssl, connectTimeout).map { conn =>
-                                // If connect fails after increment, decrement on failure
                                 conn
                             }
                         else
-                            // Pool is full — wait for a released connection with timeout
+                            // At capacity — block until a connection is released or timeout
                             Abort.recover[kyo.Timeout](_ =>
                                 Abort.fail(HttpError.ConnectionFailed(
                                     host,
@@ -143,8 +144,10 @@ private[kyo] object ConnectionPool:
             ssl: Boolean,
             connectTimeout: Maybe[Duration]
         )(using Frame, AllowUnsafe): Backend.Connection < (Async & Abort[HttpError]) =
+            // Blocks until another fiber releases a connection back to idle
             Abort.run[Closed](idleChannels.safe.take).map {
                 case Result.Success(conn) =>
+                    // Connection may have gone stale while idle — discard and retry
                     if conn.isAlive then conn
                     else
                         Sync.Unsafe {

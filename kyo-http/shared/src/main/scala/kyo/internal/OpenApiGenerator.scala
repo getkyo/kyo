@@ -303,13 +303,15 @@ private[kyo] object OpenApiGenerator:
         end if
     end buildEnumSchema
 
+    /** Infers OpenAPI security scheme type from route metadata: no Authorization header → apiKey, "basic" in name → HTTP basic, else →
+      * bearer.
+      */
     private def collectSecuritySchemes(handlers: Seq[HttpHandler[Any]]): Map[String, SecurityScheme] =
         handlers.flatMap { handler =>
             handler.route.securityScheme.toOption.map { scheme =>
                 val hasAuthHeader = handler.route.headerParams.exists(_.name.equalsIgnoreCase("Authorization"))
                 val schemeObj =
                     if !hasAuthHeader then
-                        // API key style - look for non-Authorization header params added by authApiKey
                         val apiKeyHeader = handler.route.headerParams.lastOption.map(_.name).getOrElse("X-API-Key")
                         SecurityScheme(
                             `type` = "apiKey",

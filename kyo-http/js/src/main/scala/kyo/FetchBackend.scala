@@ -58,7 +58,7 @@ final private[kyo] class FetchConnection(
     private given ExecutionContext = MacrotaskExecutor
 
     // Fetch is stateless — no persistent connection
-    def isAlive: Boolean = false
+    def isAlive(using AllowUnsafe): Boolean = false
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         val (url, init) = buildFetchRequest(request)
@@ -110,7 +110,7 @@ final private[kyo] class FetchConnection(
 
     def close(using Frame): Unit < Async = ()
 
-    private[kyo] def closeAbruptly(): Unit = ()
+    private[kyo] def closeAbruptly()(using AllowUnsafe): Unit = ()
 
     private def buildFetchRequest(request: HttpRequest[?]): (String, RequestInit) =
         val url = HttpClient.buildUrl(host, port, ssl, request.url)

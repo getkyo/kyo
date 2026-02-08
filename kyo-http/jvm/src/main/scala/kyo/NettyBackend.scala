@@ -83,6 +83,7 @@ object NettyBackend extends Backend:
         handler: Backend.ServerHandler
     )(using Frame): Backend.Server < Async =
         Sync.defer {
+            // Boss group accepts connections (1 thread), worker group handles I/O
             val bossGroup   = new MultiThreadIoEventLoopGroup(1, NettyTransport.ioHandlerFactory)
             val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
 
@@ -91,6 +92,7 @@ object NettyBackend extends Backend:
                 bootstrap
                     .group(bossGroup, workerGroup)
                     .channel(NettyTransport.serverSocketChannelClass)
+                    // Pipeline per connection: flush consolidation → HTTP codec → our state-machine handler
                     .childHandler(new ChannelInitializer[SocketChannel]:
                         override def initChannel(ch: SocketChannel): Unit =
                             val pipeline = ch.pipeline()
@@ -117,6 +119,7 @@ object NettyBackend extends Backend:
                 new Backend.Server:
                     def port: Int    = address.getPort
                     def host: String = address.getHostString
+                    // Shutdown order: stop accepting → drain boss → drain workers
                     def close(gracePeriod: Duration)(using Frame): Unit < Async =
                         val graceMs = gracePeriod.toMillis
                         NettyUtil.continue(channel.close()) { _ =>
