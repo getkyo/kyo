@@ -1,13 +1,5 @@
 package kyo
 
-import io.netty.buffer.Unpooled
-import io.netty.handler.codec.http.DefaultFullHttpResponse
-import io.netty.handler.codec.http.FullHttpResponse
-import io.netty.handler.codec.http.HttpHeaderNames
-import io.netty.handler.codec.http.HttpResponseStatus
-import io.netty.handler.codec.http.HttpVersion
-import io.netty.handler.codec.http.cookie.DefaultCookie
-import io.netty.handler.codec.http.cookie.ServerCookieEncoder
 import java.nio.charset.StandardCharsets
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -114,49 +106,12 @@ final class HttpResponse[+B <: HttpBody] private (
 
     // --- Private / Internal ---
 
-    /** Converts to a Netty FullHttpResponse. Only valid for Bytes bodies. */
-    private[kyo] def toNetty: FullHttpResponse =
-        val bodyBytes = body match
-            case b: HttpBody.Bytes    => b.data
-            case _: HttpBody.Streamed => Array.empty[Byte]
-
-        val content =
-            if bodyBytes.isEmpty then Unpooled.EMPTY_BUFFER
-            else Unpooled.wrappedBuffer(bodyBytes)
-
-        val nettyResponse = new DefaultFullHttpResponse(
-            HttpVersion.HTTP_1_1,
-            HttpResponseStatus.valueOf(status),
-            content
-        )
-
-        _headers.foreach { case (name, value) =>
-            discard(nettyResponse.headers().set(name, value))
-        }
-
-        _cookies.foreach { cookie =>
-            val nettyCookie = new DefaultCookie(cookie.name, cookie.value)
-            cookie.maxAge.foreach(d => nettyCookie.setMaxAge(d.toSeconds))
-            cookie.domain.foreach(nettyCookie.setDomain)
-            cookie.path.foreach(nettyCookie.setPath)
-            nettyCookie.setSecure(cookie.secure)
-            nettyCookie.setHttpOnly(cookie.httpOnly)
-            cookie.sameSite.foreach { ss =>
-                import io.netty.handler.codec.http.cookie.CookieHeaderNames.SameSite as NettySameSite
-                val nettySameSite = ss match
-                    case Cookie.SameSite.Strict => NettySameSite.Strict
-                    case Cookie.SameSite.Lax    => NettySameSite.Lax
-                    case Cookie.SameSite.None   => NettySameSite.None
-                nettyCookie.setSameSite(nettySameSite)
-            }
-            discard(nettyResponse.headers().add(HttpHeaderNames.SET_COOKIE, ServerCookieEncoder.STRICT.encode(nettyCookie)))
-        }
-
-        if !nettyResponse.headers().contains(HttpHeaderNames.CONTENT_LENGTH) then
-            discard(nettyResponse.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes()))
-
-        nettyResponse
-    end toNetty
+    /** Returns headers with Set-Cookie headers for all cookies (pure Scala encoding). Used by backend implementations to convert cookies to
+      * wire format.
+      */
+    private[kyo] def resolvedHeaders: Seq[(String, String)] =
+        if _cookies.isEmpty then _headers
+        else _headers ++ _cookies.map(c => "Set-Cookie" -> encodeCookie(c))
 
     /** Materializes a streaming body into bytes, or returns self if already bytes. */
     private[kyo] def ensureBytes(using Frame): HttpResponse[HttpBody.Bytes] < Async =
@@ -437,5 +392,24 @@ object HttpResponse:
         stream: Stream[Span[Byte], Async]
     ): HttpResponse[HttpBody.Streamed] =
         new HttpResponse(status, headers, Seq.empty, HttpBody.stream(stream))
+
+    /** Encode a Set-Cookie header value from a Cookie (pure Scala, no Netty). */
+    private def encodeCookie(cookie: Cookie): String =
+        val sb = new StringBuilder
+        discard(sb.append(cookie.name).append('=').append(cookie.value))
+        cookie.maxAge.foreach(d => discard(sb.append("; Max-Age=").append(d.toSeconds)))
+        cookie.domain.foreach(d => discard(sb.append("; Domain=").append(d)))
+        cookie.path.foreach(p => discard(sb.append("; Path=").append(p)))
+        if cookie.secure then discard(sb.append("; Secure"))
+        if cookie.httpOnly then discard(sb.append("; HttpOnly"))
+        cookie.sameSite.foreach { ss =>
+            val value = ss match
+                case Cookie.SameSite.Strict => "Strict"
+                case Cookie.SameSite.Lax    => "Lax"
+                case Cookie.SameSite.None   => "None"
+            discard(sb.append("; SameSite=").append(value))
+        }
+        sb.toString
+    end encodeCookie
 
 end HttpResponse

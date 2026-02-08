@@ -1,8 +1,6 @@
 package kyo
 
-import java.net.ConnectException
 import java.util.concurrent.TimeoutException
-import javax.net.ssl.SSLException
 
 /** Error types for HTTP client operations. Extends KyoException for enhanced error reporting. */
 sealed abstract class HttpError(message: Text, cause: Text | Throwable = "")(using Frame)
@@ -48,12 +46,27 @@ object HttpError:
             val msg = e.getMessage
             if msg != null then msg else e.getClass.getName
         cause match
-            case e: ConnectException => ConnectionFailed(host, port, e)
-            case e: TimeoutException => Timeout(safeMessage(e))
-            case e: kyo.Timeout      => Timeout(safeMessage(e))
-            case e: SSLException     => SslError(safeMessage(e), e)
-            case e                   => InvalidResponse(safeMessage(e))
+            case e if isConnectException(e) => ConnectionFailed(host, port, e)
+            case e: TimeoutException        => Timeout(safeMessage(e))
+            case e: kyo.Timeout             => Timeout(safeMessage(e))
+            case e if isSslException(e)     => SslError(safeMessage(e), e)
+            case e                          => InvalidResponse(safeMessage(e))
         end match
     end fromThrowable
+
+    private def isConnectException(e: Throwable): Boolean =
+        hasClassInChain(e, "ConnectException")
+
+    private def isSslException(e: Throwable): Boolean =
+        hasClassInChain(e, "javax.net.ssl.")
+
+    /** Check if exception or its cause chain has a class whose simple name contains the target. */
+    private def hasClassInChain(e: Throwable, simpleName: String): Boolean =
+        var t: Throwable = e
+        while t != null do
+            if t.getClass.getName.contains(simpleName) then return true
+            t = t.getCause
+        false
+    end hasClassInChain
 
 end HttpError

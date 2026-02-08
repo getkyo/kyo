@@ -1,25 +1,13 @@
 package kyo
 
-import java.net.ConnectException
 import java.util.concurrent.TimeoutException
-import javax.net.ssl.SSLException
-import javax.net.ssl.SSLHandshakeException
 
 class HttpErrorTest extends Test:
 
-    "HttpError.fromThrowable" - {
+    // Tests requiring java.net.ConnectException or javax.net.ssl types
+    // are in jvm/.../HttpErrorJvmTest.scala
 
-        "classifies ConnectException as ConnectionFailed" in {
-            val cause  = new ConnectException("Connection refused")
-            val result = HttpError.fromThrowable(cause, "localhost", 8080)
-            result match
-                case e: HttpError.ConnectionFailed =>
-                    assert(e.host == "localhost")
-                    assert(e.port == 8080)
-                    assert(e.cause eq cause)
-                case other => fail(s"Expected ConnectionFailed but got $other")
-            end match
-        }
+    "HttpError.fromThrowable" - {
 
         "classifies TimeoutException as Timeout" in {
             val cause  = new TimeoutException("request timed out")
@@ -38,27 +26,6 @@ class HttpErrorTest extends Test:
                 case e: HttpError.Timeout =>
                     assert(e.message.contains("timed out"))
                 case other => fail(s"Expected Timeout but got $other")
-            end match
-        }
-
-        "classifies SSLException as SslError" in {
-            val cause  = new SSLException("SSL handshake failed")
-            val result = HttpError.fromThrowable(cause, "localhost", 443)
-            result match
-                case e: HttpError.SslError =>
-                    assert(e.message.contains("SSL handshake failed"))
-                    assert(e.cause eq cause)
-                case other => fail(s"Expected SslError but got $other")
-            end match
-        }
-
-        "classifies SSLHandshakeException as SslError" in {
-            val cause  = new SSLHandshakeException("certificate validation failed")
-            val result = HttpError.fromThrowable(cause, "api.example.com", 443)
-            result match
-                case e: HttpError.SslError =>
-                    assert(e.message.contains("certificate validation failed"))
-                case other => fail(s"Expected SslError but got $other")
             end match
         }
 
@@ -82,14 +49,6 @@ class HttpErrorTest extends Test:
             end match
         }
 
-        "handles null message in ConnectException" in {
-            val cause  = new ConnectException(null)
-            val result = HttpError.fromThrowable(cause, "host", 80)
-            result match
-                case _: HttpError.ConnectionFailed => succeed
-                case other                         => fail(s"Expected ConnectionFailed but got $other")
-        }
-
         "handles null message in TimeoutException" in {
             val cause  = new TimeoutException(null)
             val result = HttpError.fromThrowable(cause, "host", 80)
@@ -103,19 +62,13 @@ class HttpErrorTest extends Test:
 
     "HttpError case classes" - {
 
-        "ConnectionFailed message includes host and port" in {
-            val error = HttpError.ConnectionFailed("example.com", 9090, new ConnectException("refused"))
-            assert(error.getMessage.contains("example.com"))
-            assert(error.getMessage.contains("9090"))
-        }
-
         "Timeout message includes details" in {
             val error = HttpError.Timeout("after 30s")
             assert(error.getMessage.contains("after 30s"))
         }
 
         "SslError message includes details" in {
-            val cause = new SSLException("bad cert")
+            val cause = new Exception("bad cert")
             val error = HttpError.SslError("bad cert", cause)
             assert(error.getMessage.contains("SSL/TLS error"))
             assert(error.getMessage.contains("bad cert"))

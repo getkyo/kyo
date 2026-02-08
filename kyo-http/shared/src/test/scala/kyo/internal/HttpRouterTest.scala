@@ -1,6 +1,5 @@
 package kyo.internal
 
-import io.netty.handler.codec.http.HttpMethod as NettyMethod
 import kyo.*
 import kyo.HttpPath
 import kyo.HttpPath./
@@ -668,7 +667,7 @@ class HttpRouterTest extends Test:
             val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok }
             val router  = HttpRouter(Seq(handler))
             // XCUSTOM starts with 'X' which is not a known HTTP method first letter
-            val unknownMethod = Method.fromNetty(NettyMethod.valueOf("XCUSTOM"))
+            val unknownMethod = Method("XCUSTOM")
 
             assertThrows[IllegalArgumentException] {
                 router.find(unknownMethod, "/test")
@@ -679,7 +678,7 @@ class HttpRouterTest extends Test:
             val handler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok }
             val router  = HttpRouter(Seq(handler))
             // PROPFIND starts with P but has 8 chars (not 3, 4, or 5)
-            val unknownMethod = Method.fromNetty(NettyMethod.valueOf("PROPFIND"))
+            val unknownMethod = Method("PROPFIND")
 
             assertThrows[IllegalArgumentException] {
                 router.find(unknownMethod, "/test")

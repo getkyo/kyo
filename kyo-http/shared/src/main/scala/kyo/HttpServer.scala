@@ -1,29 +1,17 @@
 package kyo
 
-import io.netty.bootstrap.ServerBootstrap
-import io.netty.channel.{Channel as NettyChannel, *}
-import io.netty.channel.socket.SocketChannel
-import io.netty.handler.codec.http.HttpServerCodec
-import io.netty.handler.flush.FlushConsolidationHandler
-import java.net.InetSocketAddress
-import java.util.concurrent.TimeUnit
 import kyo.HttpRequest.Method
 import kyo.HttpResponse.Status
-import kyo.internal.HttpServerHandler
-import kyo.internal.NettyTransport
-import kyo.internal.NettyUtil
+import kyo.internal.HttpRouter
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
 final class HttpServer private (
-    private val channel: NettyChannel,
-    private val bossGroup: MultiThreadIoEventLoopGroup,
-    private val workerGroup: MultiThreadIoEventLoopGroup,
-    private val boundAddress: InetSocketAddress,
+    private val backendServer: Backend.Server,
     private val handlers: Seq[HttpHandler[Any]]
 ):
-    def port: Int    = boundAddress.getPort
-    def host: String = boundAddress.getHostString
+    def port: Int    = backendServer.port
+    def host: String = backendServer.host
 
     def stopNow(using Frame): Unit < Async =
         stop(Duration.Zero)
@@ -32,16 +20,10 @@ final class HttpServer private (
         stop(30.seconds)
 
     def stop(gracePeriod: Duration)(using Frame): Unit < Async =
-        val graceMs = gracePeriod.toMillis
-        NettyUtil.continue(channel.close()) { _ =>
-            NettyUtil.continue(bossGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)) { _ =>
-                NettyUtil.await(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS))
-            }
-        }
-    end stop
+        backendServer.stop(gracePeriod)
 
     def await(using Frame): Unit < Async =
-        NettyUtil.await(channel.closeFuture())
+        backendServer.await
 
     def openApi: HttpOpenApi =
         HttpOpenApi.fromHandlers(handlers*)
@@ -59,59 +41,31 @@ object HttpServer:
         init(Config.default)(handlers*)
 
     def init(config: Config)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
+        init(config, PlatformBackend.default)(handlers*)
+
+    def init(config: Config, backend: Backend)(handlers: HttpHandler[Any]*)(using Frame): HttpServer < Async =
         // Capture filter from Local to apply per-request
         HttpFilter.use { filter =>
-            Sync.defer {
-                // Add OpenAPI handler if configured
-                val allHandlers = config.openApi match
-                    case Present(openApiConfig) =>
-                        val spec = HttpOpenApi.fromHandlers(
-                            HttpOpenApi.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
-                        )(handlers*)
-                        val json = spec.toJson
-                        val openApiHandler = HttpHandler.get(openApiConfig.path) { (_, _) =>
-                            HttpResponse.ok(json).addHeader("Content-Type", "application/json")
-                        }
-                        handlers :+ openApiHandler
-                    case Absent =>
-                        handlers
+            // Add OpenAPI handler if configured
+            val allHandlers = config.openApi match
+                case Present(openApiConfig) =>
+                    val spec = HttpOpenApi.fromHandlers(
+                        HttpOpenApi.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
+                    )(handlers*)
+                    val json = spec.toJson
+                    val openApiHandler = HttpHandler.get(openApiConfig.path) { (_, _) =>
+                        HttpResponse.ok(json).addHeader("Content-Type", "application/json")
+                    }
+                    handlers :+ openApiHandler
+                case Absent =>
+                    handlers
 
-                val bossGroup   = new MultiThreadIoEventLoopGroup(1, NettyTransport.ioHandlerFactory)
-                val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
+            // Build the shared ServerHandler from router + filter
+            val serverHandler = HttpServer.buildServerHandler(allHandlers, config, filter)
 
-                val bootstrap = new ServerBootstrap()
-                discard {
-                    bootstrap
-                        .group(bossGroup, workerGroup)
-                        .channel(NettyTransport.serverSocketChannelClass)
-                        .childHandler(new ChannelInitializer[SocketChannel]:
-                            override def initChannel(ch: SocketChannel): Unit =
-                                val pipeline = ch.pipeline()
-                                discard(pipeline.addLast(new FlushConsolidationHandler(
-                                    config.flushConsolidationLimit,
-                                    true
-                                )))
-                                discard(pipeline.addLast(new HttpServerCodec()))
-                                discard(pipeline.addLast(new HttpServerHandler(
-                                    allHandlers,
-                                    config.maxContentLength,
-                                    config.strictCookieParsing,
-                                    filter
-                                ))))
-                        .option(ChannelOption.SO_BACKLOG, Integer.valueOf(config.backlog))
-                        .childOption(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.valueOf(config.keepAlive))
-                        .childOption(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
-                }
-                if config.tcpFastOpen then
-                    NettyTransport.applyTcpFastOpen(bootstrap, config.backlog)
-
-                val bindFuture = bootstrap.bind(config.host, config.port)
-
-                NettyUtil.continue(bindFuture) { channel =>
-                    // Safe cast: NioServerSocketChannel always returns InetSocketAddress
-                    val address = channel.localAddress().asInstanceOf[InetSocketAddress]
-                    new HttpServer(channel, bossGroup, workerGroup, address, allHandlers)
-                }
+            // Delegate to backend
+            backend.server(config, serverHandler).map { srv =>
+                new HttpServer(srv, allHandlers)
             }
         }
     end init
@@ -168,6 +122,70 @@ object HttpServer:
             description: Maybe[String] = Absent
         )
     end Config
+
+    // --- Private: build a Backend.ServerHandler from handlers + filter ---
+
+    private[kyo] def buildServerHandler(
+        handlers: Seq[HttpHandler[Any]],
+        config: Config,
+        filter: HttpFilter
+    )(using Frame): Backend.ServerHandler =
+        val router = HttpRouter(handlers)
+
+        new Backend.ServerHandler:
+
+            def reject(method: HttpRequest.Method, path: String): Maybe[HttpResponse[HttpBody.Bytes]] =
+                router.find(method, path) match
+                    case Result.Success(_) => Absent
+                    case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
+                        val allowHeader = allowed.map(_.name).mkString(", ")
+                        Present(
+                            HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
+                        )
+                    case Result.Failure(HttpRouter.FindError.NotFound) =>
+                        Present(HttpResponse.notFound)
+                    case Result.Panic(e) =>
+                        Present(HttpResponse.serverError(e.getMessage))
+
+            def isStreaming(method: HttpRequest.Method, path: String): Boolean =
+                router.find(method, path) match
+                    case Result.Success(handler) => handler.streamingRequest
+                    case _                       => false
+
+            def handle(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[?] < Async =
+                val pathEnd = request.url.indexOf('?')
+                val path    = if pathEnd >= 0 then request.url.substring(0, pathEnd) else request.url
+                router.find(request.method, path) match
+                    case Result.Success(handler) =>
+                        val req = if config.strictCookieParsing then request.withStrictCookieParsing(true) else request
+                        filter(req, handler.apply)
+                    case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
+                        val allowHeader = allowed.map(_.name).mkString(", ")
+                        HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
+                    case Result.Failure(HttpRouter.FindError.NotFound) =>
+                        HttpResponse.notFound
+                    case Result.Panic(e) =>
+                        HttpResponse.serverError(e.getMessage)
+                end match
+            end handle
+
+            def handleStreaming(request: HttpRequest[HttpBody.Streamed])(using Frame): HttpResponse[?] < Async =
+                val pathEnd = request.url.indexOf('?')
+                val path    = if pathEnd >= 0 then request.url.substring(0, pathEnd) else request.url
+                router.find(request.method, path) match
+                    case Result.Success(handler) =>
+                        filter(request, handler.apply)
+                    case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
+                        val allowHeader = allowed.map(_.name).mkString(", ")
+                        HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
+                    case Result.Failure(HttpRouter.FindError.NotFound) =>
+                        HttpResponse.notFound
+                    case Result.Panic(e) =>
+                        HttpResponse.serverError(e.getMessage)
+                end match
+            end handleStreaming
+        end new
+    end buildServerHandler
 
 end HttpServer
 
@@ -388,7 +406,7 @@ object HttpHandler:
                         val json = schema.asInstanceOf[Schema[Any]].encode(err)
                         Some(kyo.HttpResponse(status, json).addHeader("Content-Type", "application/json"))
                     catch
-                        case _: Exception => loop(tail)
+                        case _: Throwable => loop(tail)
         loop(errorSchemas)
     end findErrorResponse
 

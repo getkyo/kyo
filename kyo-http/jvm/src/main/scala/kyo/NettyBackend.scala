@@ -1,0 +1,124 @@
+package kyo
+
+import io.netty.bootstrap.Bootstrap
+import io.netty.bootstrap.ServerBootstrap
+import io.netty.channel.{Channel as NettyChannel, *}
+import io.netty.channel.socket.SocketChannel
+import io.netty.handler.codec.http.HttpClientCodec
+import io.netty.handler.codec.http.HttpServerCodec
+import io.netty.handler.flush.FlushConsolidationHandler
+import io.netty.handler.ssl.SslContextBuilder
+import java.net.InetSocketAddress
+import java.util.concurrent.TimeUnit
+import kyo.internal.HttpServerHandler
+import kyo.internal.NettyTransport
+import kyo.internal.NettyUtil
+
+/** JVM backend using Netty 4.2 for HTTP transport. */
+object NettyBackend extends Backend:
+
+    def connectionFactory(maxResponseSizeBytes: Int, daemon: Boolean)(using AllowUnsafe): Backend.ConnectionFactory =
+        val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
+        if daemon then discard(workerGroup.asInstanceOf[{ def setDaemon(b: Boolean): Unit }])
+        val sslContext = SslContextBuilder.forClient().build()
+        val bootstrap = new Bootstrap()
+            .group(workerGroup)
+            .channel(NettyTransport.socketChannelClass)
+
+        new Backend.ConnectionFactory:
+
+            def connect(host: String, port: Int, ssl: Boolean, connectTimeout: Maybe[Duration])(using
+                Frame
+            ): Backend.Connection < (Async & Abort[HttpError]) =
+                val b = bootstrap.clone()
+                    .remoteAddress(new InetSocketAddress(host, port))
+                    .handler(new ChannelInitializer[SocketChannel]:
+                        override def initChannel(ch: SocketChannel): Unit =
+                            val pipeline = ch.pipeline()
+                            if ssl then
+                                discard(pipeline.addLast("ssl", sslContext.newHandler(ch.alloc(), host, port)))
+                            discard(pipeline.addLast("codec", new HttpClientCodec())))
+                connectTimeout.foreach { timeout =>
+                    discard(b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Integer.valueOf(timeout.toMillis.toInt)))
+                }
+                val connectFuture = b.connect()
+                // Convert connection failures to Abort[HttpError] instead of Panic
+                Promise.initWith[Backend.Connection, Abort[HttpError] & Async] { p =>
+                    p.onComplete(_ => Sync.defer(discard(connectFuture.cancel(true)))).andThen {
+                        connectFuture.addListener((future: ChannelFuture) =>
+                            discard {
+                                import AllowUnsafe.embrace.danger
+                                if future.isSuccess then
+                                    p.unsafe.complete(Result.succeed(
+                                        new NettyConnection(future.channel(), host, port, maxResponseSizeBytes)
+                                    ))
+                                else
+                                    p.unsafe.complete(Result.fail(
+                                        HttpError.fromThrowable(future.cause(), host, port)
+                                    ))
+                                end if
+                            }
+                        )
+                        p.get
+                    }
+                }
+            end connect
+
+            def close(gracePeriod: Duration)(using Frame): Unit < Async =
+                val graceMs = gracePeriod.toMillis
+                NettyUtil.await(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS))
+        end new
+    end connectionFactory
+
+    def server(config: HttpServer.Config, handler: Backend.ServerHandler)(using Frame): Backend.Server < Async =
+        Sync.defer {
+            val bossGroup   = new MultiThreadIoEventLoopGroup(1, NettyTransport.ioHandlerFactory)
+            val workerGroup = new MultiThreadIoEventLoopGroup(NettyTransport.ioHandlerFactory)
+
+            val bootstrap = new ServerBootstrap()
+            discard {
+                bootstrap
+                    .group(bossGroup, workerGroup)
+                    .channel(NettyTransport.serverSocketChannelClass)
+                    .childHandler(new ChannelInitializer[SocketChannel]:
+                        override def initChannel(ch: SocketChannel): Unit =
+                            val pipeline = ch.pipeline()
+                            discard(pipeline.addLast(new FlushConsolidationHandler(
+                                config.flushConsolidationLimit,
+                                true
+                            )))
+                            discard(pipeline.addLast(new HttpServerCodec()))
+                            discard(pipeline.addLast(new HttpServerHandler(
+                                handler,
+                                config.maxContentLength
+                            ))))
+                    .option(ChannelOption.SO_BACKLOG, Integer.valueOf(config.backlog))
+                    .childOption(ChannelOption.SO_KEEPALIVE, java.lang.Boolean.valueOf(config.keepAlive))
+                    .childOption(ChannelOption.TCP_NODELAY, java.lang.Boolean.TRUE)
+            }
+            if config.tcpFastOpen then
+                NettyTransport.applyTcpFastOpen(bootstrap, config.backlog)
+
+            val bindFuture = bootstrap.bind(config.host, config.port)
+
+            NettyUtil.continue(bindFuture) { channel =>
+                val address = channel.localAddress().asInstanceOf[InetSocketAddress]
+                new Backend.Server:
+                    def port: Int    = address.getPort
+                    def host: String = address.getHostString
+                    def stop(gracePeriod: Duration)(using Frame): Unit < Async =
+                        val graceMs = gracePeriod.toMillis
+                        NettyUtil.continue(channel.close()) { _ =>
+                            NettyUtil.continue(bossGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS)) { _ =>
+                                NettyUtil.await(workerGroup.shutdownGracefully(graceMs, graceMs, TimeUnit.MILLISECONDS))
+                            }
+                        }
+                    end stop
+                    def await(using Frame): Unit < Async =
+                        NettyUtil.await(channel.closeFuture())
+                end new
+            }
+        }
+    end server
+
+end NettyBackend

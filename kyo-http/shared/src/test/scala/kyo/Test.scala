@@ -4,6 +4,7 @@ import kyo.internal.BaseKyoCoreTest
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 
 abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
 
@@ -13,6 +14,16 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
     override given executionContext: ExecutionContext = kyo.internal.Platform.executionContext
 
+    private lazy val testClient: HttpClient =
+        import AllowUnsafe.embrace.danger
+        HttpClient.Unsafe.init(backend = PlatformTestBackend.backend)
+
+    protected def useTestClient: Boolean = true
+
+    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
+        if useTestClient then super.run(HttpClient.let(testClient)(v))
+        else super.run(v)
+
     // Server lifecycle utilities
 
     /** Starts a test server on a random available port. The server is automatically stopped when the Scope closes.
@@ -20,7 +31,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       *   the actual bound port
       */
     def startTestServer(handlers: HttpHandler[Any]*)(using Frame): Int < (Async & Scope) =
-        HttpServer.init(HttpServer.Config(port = 0))(handlers*).map { server =>
+        HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handlers*).map { server =>
             Scope.ensure(server.stopNow).andThen(server.port)
         }
 

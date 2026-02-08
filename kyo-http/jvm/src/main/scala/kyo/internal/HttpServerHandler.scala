@@ -14,36 +14,27 @@ import io.netty.handler.codec.http.HttpResponseStatus
 import io.netty.handler.codec.http.HttpUtil
 import io.netty.handler.codec.http.HttpVersion
 import io.netty.handler.codec.http.LastHttpContent
+import java.nio.charset.StandardCharsets
 import kyo.*
+import scala.annotation.tailrec
 import scala.compiletime.uninitialized
 
 /** Two-phase HTTP request handler without HttpObjectAggregator.
   *
-  * Receives the message sequence: HttpRequest -> 0+ HttpContent -> LastHttpContent. Routes on the initial HttpRequest (headers only), then
-  * dispatches body handling based on whether the matched handler expects streaming or buffered input.
+  * Receives the message sequence: HttpRequest -> 0+ HttpContent -> LastHttpContent. Routes via Backend.ServerHandler.reject/isStreaming,
+  * then dispatches body handling based on whether the matched handler expects streaming or buffered input.
   *
-  * State machine: IDLE -> (receive HttpRequest) -> route lookup -> BUFFERING (accumulate body in CompositeByteBuf, invoke handler on
-  * LastHttpContent) STREAMING (deliver chunks to Channel.Unsafe, invoke handler immediately) DISCARDING (consume and release body chunks,
-  * send error response on LastHttpContent)
-  *
-  * Reference counting: ChannelInboundHandlerAdapter does NOT auto-release messages. Every message received in channelRead must be
-  * explicitly released via ReferenceCountUtil.release().
+  * State machine: IDLE -> (receive HttpRequest) -> route lookup -> BUFFERING (accumulate body, invoke handler on LastHttpContent) STREAMING
+  * (deliver chunks to Channel.Unsafe, invoke handler immediately) DISCARDING (consume body, send error response on LastHttpContent)
   */
 private[kyo] class HttpServerHandler(
-    handlers: Seq[HttpHandler[Any]],
-    maxContentLength: Int,
-    strictCookieParsing: Boolean,
-    filter: HttpFilter
+    handler: Backend.ServerHandler,
+    maxContentLength: Int
 )(using Frame) extends ChannelInboundHandlerAdapter:
 
     import io.netty.util.ReferenceCountUtil
 
-    // Build prefix tree router for O(path-segments) lookup
-    private val router = HttpRouter(handlers)
-
     // --- Per-connection state ---
-
-    // Discriminator for the current connection state
     private val STATE_IDLE       = 0
     private val STATE_BUFFERING  = 1
     private val STATE_STREAMING  = 2
@@ -52,13 +43,14 @@ private[kyo] class HttpServerHandler(
     private var state: Int = STATE_IDLE
 
     // BUFFERING state
-    private var pendingNettyRequest: NettyHttpRequest = uninitialized
-    private var pendingHandler: HttpHandler[Any]      = uninitialized
+    private var pendingMethod: String                 = uninitialized
+    private var pendingUri: String                    = uninitialized
+    private var pendingHeaders: Seq[(String, String)] = uninitialized
     private var pendingKeepAlive: Boolean             = true
     private var bodyBuf: CompositeByteBuf             = uninitialized
     private var bodySize: Int                         = 0
 
-    // STREAMING state — Absent sentinel signals end of body
+    // STREAMING state
     private var streamingChannel: Channel.Unsafe[Maybe[Span[Byte]]] = uninitialized
 
     // DISCARDING state
@@ -69,41 +61,30 @@ private[kyo] class HttpServerHandler(
             state match
                 case STATE_IDLE =>
                     msg match
-                        case nettyReq: NettyHttpRequest =>
-                            handleInitialRequest(ctx, nettyReq)
-                        case _ =>
-                            // Unexpected message in IDLE state (e.g. stale content), just release
-                            ()
-
+                        case nettyReq: NettyHttpRequest => handleInitialRequest(ctx, nettyReq)
+                        case _                          => ()
                 case STATE_BUFFERING =>
                     msg match
-                        case content: HttpContent =>
-                            handleBufferingContent(ctx, content)
-                        case _ => ()
-
+                        case content: HttpContent => handleBufferingContent(ctx, content)
+                        case _                    => ()
                 case STATE_STREAMING =>
                     msg match
-                        case content: HttpContent =>
-                            handleStreamingContent(ctx, content)
-                        case _ => ()
-
+                        case content: HttpContent => handleStreamingContent(ctx, content)
+                        case _                    => ()
                 case STATE_DISCARDING =>
                     msg match
-                        case content: HttpContent =>
-                            handleDiscardingContent(ctx, content)
-                        case _ => ()
-
+                        case content: HttpContent => handleDiscardingContent(ctx, content)
+                        case _                    => ()
                 case _ => ()
             end match
         finally
             discard(ReferenceCountUtil.release(msg))
     end channelRead
 
-    /** Handle the initial HttpRequest (headers only). Routes and transitions to the appropriate state. */
     private def handleInitialRequest(ctx: ChannelHandlerContext, nettyReq: NettyHttpRequest): Unit =
         import AllowUnsafe.embrace.danger
 
-        val method    = kyo.HttpRequest.Method.fromNetty(nettyReq.method())
+        val method    = kyo.HttpRequest.Method(nettyReq.method().name())
         val uri       = nettyReq.uri()
         val keepAlive = HttpUtil.isKeepAlive(nettyReq)
 
@@ -111,25 +92,31 @@ private[kyo] class HttpServerHandler(
         val pathEnd = uri.indexOf('?')
         val path    = if pathEnd >= 0 then uri.substring(0, pathEnd) else uri
 
-        router.find(method, path) match
-            case Result.Success(handler) =>
-                if handler.streamingRequest then
+        // Extract headers from Netty request
+        val headers = extractNettyHeaders(nettyReq)
+
+        handler.reject(method, path) match
+            case Present(errorResponse) =>
+                // Route rejected (404, 405)
+                discardResponse = errorResponse
+                pendingKeepAlive = keepAlive
+                if nettyReq.isInstanceOf[LastHttpContent] then
+                    sendBufferedResponse(ctx, errorResponse, keepAlive)
+                    resetState()
+                else
+                    state = STATE_DISCARDING
+                end if
+
+            case Absent =>
+                if handler.isStreaming(method, path) then
                     // --- STREAMING path ---
                     state = STATE_STREAMING
                     pendingKeepAlive = keepAlive
 
-                    // Send 100 Continue if client expects it
                     handleExpectContinue(ctx, nettyReq)
 
-                    // Create a Kyo channel for delivering body chunks.
-                    // Uses Maybe[Span[Byte]] with Absent as end-of-body sentinel
-                    // to avoid race conditions with closeAwaitEmpty + streamUntilClosed.
                     val byteChannel = Channel.Unsafe.init[Maybe[Span[Byte]]](32)
                     streamingChannel = byteChannel
-                    // Custom stream: takes from the sentinel channel one element at a time.
-                    // Cannot use streamUntilClosed() because its emitChunks has a
-                    // take+drainUpTo for-comprehension that loses data when the last
-                    // take triggers HalfOpen→FullyClosed transition.
                     val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
                         Abort.run[Closed] {
                             Loop(()) { _ =>
@@ -145,75 +132,29 @@ private[kyo] class HttpServerHandler(
                         }
                     }
 
-                    // Build streaming request from headers
-                    val request =
-                        val req = kyo.HttpRequest.fromNettyStreaming(nettyReq, bodyStream)
-                        if strictCookieParsing then req.withStrictCookieParsing(true) else req
+                    val request = kyo.HttpRequest.fromRawStreaming(method, uri, headers, bodyStream)
+                    invokeHandler(ctx, request, keepAlive)
 
-                    // Invoke handler immediately (body arrives via stream)
-                    invokeHandler(ctx, request, handler, keepAlive)
-
-                    // Handle case where this message is also content (e.g. non-chunked with body)
                     if nettyReq.isInstanceOf[HttpContent] then
-                        val content = nettyReq.asInstanceOf[HttpContent]
-                        deliverStreamingContent(ctx, content)
-                    end if
+                        deliverStreamingContent(ctx, nettyReq.asInstanceOf[HttpContent])
                 else
                     // --- BUFFERING path ---
                     state = STATE_BUFFERING
-                    pendingNettyRequest = nettyReq
-                    pendingHandler = handler
+                    pendingMethod = method.name
+                    pendingUri = uri
+                    pendingHeaders = headers
                     pendingKeepAlive = keepAlive
                     bodyBuf = ctx.alloc().compositeBuffer()
                     bodySize = 0
 
-                    // Send 100 Continue if client expects it
                     handleExpectContinue(ctx, nettyReq)
 
-                    // Handle case where this message is also content (e.g. non-chunked with body)
                     if nettyReq.isInstanceOf[HttpContent] then
-                        val content = nettyReq.asInstanceOf[HttpContent]
-                        handleBufferingContent(ctx, content)
-                    end if
-                end if
-
-            case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
-                // Consume body before sending error
-                val allowHeader = allowed.map(_.name).mkString(", ")
-                discardResponse =
-                    kyo.HttpResponse(kyo.HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
-                pendingKeepAlive = keepAlive
-                if nettyReq.isInstanceOf[LastHttpContent] then
-                    // No body to discard
-                    sendBufferedResponse(ctx, discardResponse, keepAlive)
-                    resetState()
-                else
-                    state = STATE_DISCARDING
-                end if
-
-            case Result.Failure(HttpRouter.FindError.NotFound) =>
-                discardResponse = kyo.HttpResponse.notFound
-                pendingKeepAlive = keepAlive
-                if nettyReq.isInstanceOf[LastHttpContent] then
-                    sendBufferedResponse(ctx, discardResponse, keepAlive)
-                    resetState()
-                else
-                    state = STATE_DISCARDING
-                end if
-
-            case Result.Panic(e) =>
-                discardResponse = kyo.HttpResponse.serverError(e.getMessage)
-                pendingKeepAlive = keepAlive
-                if nettyReq.isInstanceOf[LastHttpContent] then
-                    sendBufferedResponse(ctx, discardResponse, keepAlive)
-                    resetState()
-                else
-                    state = STATE_DISCARDING
+                        handleBufferingContent(ctx, nettyReq.asInstanceOf[HttpContent])
                 end if
         end match
     end handleInitialRequest
 
-    /** Accumulate body chunks in CompositeByteBuf. On LastHttpContent, build the request and invoke the handler. */
     private def handleBufferingContent(ctx: ChannelHandlerContext, content: HttpContent): Unit =
         import AllowUnsafe.embrace.danger
 
@@ -223,24 +164,20 @@ private[kyo] class HttpServerHandler(
         if chunkSize > 0 then
             bodySize += chunkSize
             if bodySize > maxContentLength then
-                // Oversized — release accumulated buffer and switch to DISCARDING with 413
                 if bodyBuf != null then
                     bodyBuf.release()
                     bodyBuf = null
                 discardResponse = kyo.HttpResponse(kyo.HttpResponse.Status.PayloadTooLarge)
                 state = STATE_DISCARDING
-                // If this is also the last content, send response immediately
                 if content.isInstanceOf[LastHttpContent] then
                     sendBufferedResponse(ctx, discardResponse, pendingKeepAlive)
                     resetState()
                 return
             end if
-            // Retain and add to composite (ownership transferred to composite)
             discard(bodyBuf.addComponent(true, buf.retain()))
         end if
 
         if content.isInstanceOf[LastHttpContent] then
-            // Body complete — build request and invoke handler
             val bodyData =
                 if bodyBuf.readableBytes() == 0 then Array.empty[Byte]
                 else
@@ -250,27 +187,19 @@ private[kyo] class HttpServerHandler(
             bodyBuf.release()
             bodyBuf = null
 
-            val request =
-                val req = kyo.HttpRequest.fromNettyHeaders(pendingNettyRequest, bodyData)
-                if strictCookieParsing then req.withStrictCookieParsing(true) else req
+            val method  = kyo.HttpRequest.Method(pendingMethod)
+            val request = kyo.HttpRequest.fromRawHeaders(method, pendingUri, pendingHeaders, bodyData)
 
-            val handler   = pendingHandler
             val keepAlive = pendingKeepAlive
             resetState()
 
-            invokeHandler(ctx, request, handler, keepAlive)
+            invokeHandler(ctx, request, keepAlive)
         end if
     end handleBufferingContent
 
-    /** Deliver body chunks to the streaming channel. */
     private def handleStreamingContent(ctx: ChannelHandlerContext, content: HttpContent): Unit =
         deliverStreamingContent(ctx, content)
 
-    /** Internal: deliver content bytes to the streaming channel, signal end with Absent sentinel.
-      *
-      * When the channel is full (consumer slower than producer), disables Netty auto-read to apply TCP backpressure, then uses putFiber to
-      * async-wait for space. Auto-read is re-enabled once the put completes.
-      */
     private def deliverStreamingContent(ctx: ChannelHandlerContext, content: HttpContent): Unit =
         import AllowUnsafe.embrace.danger
 
@@ -295,7 +224,6 @@ private[kyo] class HttpServerHandler(
 
         if content.isInstanceOf[LastHttpContent] then
             if streamingChannel != null then
-                // Signal end of body with Absent sentinel
                 discard(streamingChannel.offer(Absent))
                 streamingChannel = null
             end if
@@ -303,9 +231,7 @@ private[kyo] class HttpServerHandler(
         end if
     end deliverStreamingContent
 
-    /** Consume and release body chunks without processing. Send error response on LastHttpContent. */
     private def handleDiscardingContent(ctx: ChannelHandlerContext, content: HttpContent): Unit =
-        // Content is released in the finally block of channelRead
         if content.isInstanceOf[LastHttpContent] then
             val response  = discardResponse
             val keepAlive = pendingKeepAlive
@@ -314,7 +240,6 @@ private[kyo] class HttpServerHandler(
         end if
     end handleDiscardingContent
 
-    /** Send 100-Continue response if the client expects it. */
     private def handleExpectContinue(ctx: ChannelHandlerContext, nettyReq: NettyHttpRequest): Unit =
         if HttpUtil.is100ContinueExpected(nettyReq) then
             val continueResponse = new DefaultFullHttpResponse(
@@ -326,36 +251,34 @@ private[kyo] class HttpServerHandler(
         end if
     end handleExpectContinue
 
-    /** Invoke the handler (with filter) and send the response asynchronously. */
     private[kyo] def invokeHandler(
         ctx: ChannelHandlerContext,
         request: kyo.HttpRequest[?],
-        handler: HttpHandler[Any],
         keepAlive: Boolean
     ): Unit =
         import AllowUnsafe.embrace.danger
 
         val fiber = Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped {
-                filter(request, handler.apply).map { response =>
-                    // Dispatch based on response body type
+                val respEffect: kyo.HttpResponse[?] < Async = request.body match
+                    case _: HttpBody.Bytes    => handler.handle(request.asInstanceOf[kyo.HttpRequest[HttpBody.Bytes]])
+                    case _: HttpBody.Streamed => handler.handleStreaming(request.asInstanceOf[kyo.HttpRequest[HttpBody.Streamed]])
+
+                respEffect.map { response =>
                     response.body match
                         case _: HttpBody.Bytes =>
                             response.asInstanceOf[kyo.HttpResponse[HttpBody.Bytes]]: kyo.HttpResponse[?]
                         case streamed: HttpBody.Streamed =>
-                            // Write initial response headers (chunked transfer)
                             val nettyResponse = new DefaultHttpResponse(
                                 HttpVersion.HTTP_1_1,
                                 HttpResponseStatus.valueOf(response.status.code)
                             )
                             nettyResponse.headers().set("Transfer-Encoding", "chunked")
-                            // Copy headers from the response
-                            response.headers.foreach { (k, v) =>
+                            response.resolvedHeaders.foreach { (k, v) =>
                                 discard(nettyResponse.headers().set(k, v))
                             }
                             discard(ctx.writeAndFlush(nettyResponse))
 
-                            // Stream body chunks — errors after headers are caught here
                             Abort.run[Throwable](Abort.catching[Throwable] {
                                 streamed.stream.foreach { bytes =>
                                     NettyUtil.await(
@@ -364,15 +287,13 @@ private[kyo] class HttpServerHandler(
                                         ))
                                     )
                                 }.andThen {
-                                    // Terminal chunk signals end of stream
                                     NettyUtil.await(
                                         ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT)
                                     )
                                 }
                             }).map {
                                 case Result.Success(_) => response
-                                case _                 =>
-                                    // Stream error after headers — close connection
+                                case _ =>
                                     if ctx.channel().isActive then discard(ctx.close())
                                     response
                             }
@@ -381,14 +302,12 @@ private[kyo] class HttpServerHandler(
             }
         )
 
-        // Interrupt handler fiber if client disconnects
         discard {
             ctx.channel().closeFuture().addListener { (_: ChannelFuture) =>
                 discard(fiber.unsafe.interrupt(Result.Panic(new Exception("Client disconnected"))))
             }
         }
 
-        // Register callback to send response when complete
         fiber.unsafe.onComplete { result =>
             result match
                 case Result.Success(r) =>
@@ -397,8 +316,7 @@ private[kyo] class HttpServerHandler(
                         case _: HttpBody.Bytes =>
                             sendBufferedResponse(ctx, response, keepAlive)
                         case _: HttpBody.Streamed =>
-                            // Streaming already handled inline — connection header already set
-                            ()
+                            () // Streaming already handled inline
                     end match
                 case Result.Failure(e) =>
                     if ctx.channel().isActive then
@@ -409,32 +327,38 @@ private[kyo] class HttpServerHandler(
         }
     end invokeHandler
 
-    /** Send a fully-buffered response. Handles Content-Length and Connection headers. */
     private[kyo] def sendBufferedResponse(
         ctx: ChannelHandlerContext,
         response: kyo.HttpResponse[?],
         keepAlive: Boolean
     ): Unit =
-        val nettyResponse = response.toNetty
-        // Set Content-Length if not already set
-        if !nettyResponse.headers().contains(HttpHeaderNames.CONTENT_LENGTH) then
-            discard(nettyResponse.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, nettyResponse.content().readableBytes()))
+        val bodyData = response.body match
+            case b: HttpBody.Bytes => b.data
+            case _                 => Array.empty[Byte]
+        val status    = HttpResponseStatus.valueOf(response.status.code)
+        val content   = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
+        val nettyResp = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, content)
 
-        // Set Connection header based on client request
+        // Copy headers (including cookies via resolvedHeaders)
+        response.resolvedHeaders.foreach((k, v) => discard(nettyResp.headers().add(k, v)))
+
+        if !nettyResp.headers().contains(HttpHeaderNames.CONTENT_LENGTH) then
+            discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes()))
+
         if keepAlive then
-            discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
-            discard(ctx.writeAndFlush(nettyResponse))
+            discard(nettyResp.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
+            discard(ctx.writeAndFlush(nettyResp))
         else
-            discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
-            discard(ctx.writeAndFlush(nettyResponse).addListener(ChannelFutureListener.CLOSE))
+            discard(nettyResp.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
+            discard(ctx.writeAndFlush(nettyResp).addListener(ChannelFutureListener.CLOSE))
         end if
     end sendBufferedResponse
 
-    /** Reset per-request state back to IDLE. */
     private def resetState(): Unit =
         state = STATE_IDLE
-        pendingNettyRequest = null
-        pendingHandler = null
+        pendingMethod = null
+        pendingUri = null
+        pendingHeaders = null
         discardResponse = null
         if bodyBuf != null then
             bodyBuf.release()
@@ -444,13 +368,11 @@ private[kyo] class HttpServerHandler(
 
     override def channelInactive(ctx: ChannelHandlerContext): Unit =
         import AllowUnsafe.embrace.danger
-        // Signal end-of-body and close streaming channel if active
         if streamingChannel != null then
             discard(streamingChannel.offer(Absent))
             discard(streamingChannel.close())
             streamingChannel = null
         end if
-        // Clean up buffering state
         if bodyBuf != null then
             bodyBuf.release()
             bodyBuf = null
@@ -460,8 +382,29 @@ private[kyo] class HttpServerHandler(
 
     override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
         cause.printStackTrace()
-        val response = kyo.HttpResponse.serverError(cause.getMessage).toNetty
-        discard(ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE))
+        val body      = Option(cause.getMessage).getOrElse("Internal Server Error")
+        val bodyBytes = body.getBytes(StandardCharsets.UTF_8)
+        val nettyResp = new DefaultFullHttpResponse(
+            HttpVersion.HTTP_1_1,
+            HttpResponseStatus.INTERNAL_SERVER_ERROR,
+            Unpooled.wrappedBuffer(bodyBytes)
+        )
+        discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.length))
+        discard(ctx.writeAndFlush(nettyResp).addListener(ChannelFutureListener.CLOSE))
     end exceptionCaught
+
+    private def extractNettyHeaders(nettyReq: NettyHttpRequest): Seq[(String, String)] =
+        val nettyHeaders = nettyReq.headers()
+        val headerCount  = nettyHeaders.size()
+        val result       = new Array[(String, String)](headerCount)
+        val iter         = nettyHeaders.iteratorAsString()
+        @tailrec def fill(i: Int): Unit =
+            if i < headerCount && iter.hasNext then
+                val entry = iter.next()
+                result(i) = (entry.getKey, entry.getValue)
+                fill(i + 1)
+        fill(0)
+        result.toSeq
+    end extractNettyHeaders
 
 end HttpServerHandler

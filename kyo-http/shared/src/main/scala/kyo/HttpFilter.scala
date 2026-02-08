@@ -1,7 +1,7 @@
 package kyo
 
-import java.security.MessageDigest
 import kyo.HttpRequest.Method
+import scala.util.hashing.MurmurHash3
 
 /** HTTP filter for intercepting and transforming request/response flows.
   *
@@ -93,9 +93,9 @@ object HttpFilter:
                         }
                     }
 
-        /** Generates or propagates request ID header with UUID generator */
+        /** Generates or propagates request ID header with random ID generator */
         def requestId(using Frame): HttpFilter =
-            requestId("X-Request-ID", Sync.defer(java.util.UUID.randomUUID().toString))
+            requestId("X-Request-ID", Random.nextStringAlphanumeric(32))
 
         /** Generates or propagates request ID header */
         def requestId(
@@ -332,14 +332,10 @@ object HttpFilter:
     private[kyo] def get(using Frame): HttpFilter < Any =
         local.get
 
-    private val md5ThreadLocal = new ThreadLocal[MessageDigest]:
-        override def initialValue() = MessageDigest.getInstance("MD5")
-
     private def computeETag(bytes: Array[Byte]): String =
-        val md5 = md5ThreadLocal.get()
-        md5.reset()
-        val hash = md5.digest(bytes)
-        "\"" + hash.map("%02x".format(_)).mkString + "\""
+        val h1 = MurmurHash3.bytesHash(bytes, 0)
+        val h2 = MurmurHash3.bytesHash(bytes, h1)
+        s"\"${"%08x".format(h1)}${"%08x".format(h2)}\""
     end computeETag
 
     /** Logs requests with custom handler. Shared implementation for server and client. */

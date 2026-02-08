@@ -331,7 +331,7 @@ class HttpFilterTest extends Test:
         }
 
         "uses custom header name" in run {
-            HttpFilter.server.requestId("X-Correlation-ID", Sync.defer(java.util.UUID.randomUUID().toString)).enable {
+            HttpFilter.server.requestId("X-Correlation-ID", "test-correlation-id").enable {
                 for
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")

@@ -1,23 +1,12 @@
 package kyo
 
-import io.netty.buffer.Unpooled
-import io.netty.handler.codec.http.DefaultFullHttpRequest
-import io.netty.handler.codec.http.FullHttpRequest
-import io.netty.handler.codec.http.HttpHeaderNames
-import io.netty.handler.codec.http.HttpMethod as NettyMethod
-import io.netty.handler.codec.http.HttpVersion
-import io.netty.handler.codec.http.QueryStringDecoder
-import io.netty.handler.codec.http.cookie.ServerCookieDecoder
-import io.netty.handler.codec.http.multipart.*
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import scala.annotation.tailrec
-import scala.jdk.CollectionConverters.*
 
 /** Immutable HTTP request with builder API.
   *
-  * Requests are constructed via factory methods and can be modified using builder methods that return new instances. The underlying Netty
-  * request is created lazily when needed (e.g., when sending via HttpClient).
+  * Requests are constructed via factory methods and can be modified using builder methods that return new instances.
   *
   * The type parameter B tracks the body type: `HttpBody.Bytes` for fully-buffered bodies, `HttpBody.Streamed` for streaming bodies.
   */
@@ -129,43 +118,20 @@ final class HttpRequest[+B <: HttpBody] private (
         header("Cookie") match
             case Absent => Span.empty[Cookie]
             case Present(cookieHeader) =>
-                val decoder = if strict then ServerCookieDecoder.STRICT else ServerCookieDecoder.LAX
-                val decoded = decoder.decode(cookieHeader)
-                val arr     = new Array[Cookie](decoded.size())
-                val iter    = decoded.iterator()
-                @tailrec def loop(i: Int): Unit =
-                    if iter.hasNext then
-                        val c = iter.next()
-                        arr(i) = Cookie(c.name(), c.value())
-                        loop(i + 1)
-                loop(0)
-                Span.fromUnsafe(arr)
+                parseCookies(cookieHeader, strict)
 
     // --- Query parameter accessors ---
 
     def query(name: String): Maybe[String] =
         val queryString = _originalUrl.getRawQuery
         if queryString == null then Absent
-        else
-            val decoder = new QueryStringDecoder(queryString, false)
-            val params  = decoder.parameters()
-            if params.containsKey(name) then
-                val values = params.get(name)
-                if values.isEmpty then Absent else Present(values.get(0))
-            else Absent
-            end if
-        end if
+        else parseQueryParam(queryString, name)
     end query
 
     def queryAll(name: String): Seq[String] =
         val queryString = _originalUrl.getRawQuery
         if queryString == null then Seq.empty
-        else
-            val decoder = new QueryStringDecoder(queryString, false)
-            val params  = decoder.parameters()
-            if params.containsKey(name) then params.get(name).asScala.toSeq
-            else Seq.empty
-        end if
+        else parseQueryParamAll(queryString, name)
     end queryAll
 
     // --- Path parameter accessors ---
@@ -204,101 +170,17 @@ final class HttpRequest[+B <: HttpBody] private (
 
     /** Returns multipart parts from the request body. Only available for buffered requests. */
     def parts(using ev: B <:< HttpBody.Bytes): Span[HttpRequest.Part] =
-        val nettyReq = toNetty
-        val factory  = new DefaultHttpDataFactory(DefaultHttpDataFactory.MINSIZE)
-        val decoder  = new HttpPostRequestDecoder(factory, nettyReq)
-        try
-            @tailrec def loop(arr: Array[HttpRequest.Part], i: Int): (Array[HttpRequest.Part], Int) =
-                if !decoder.hasNext then (arr, i)
-                else
-                    val data = decoder.next()
-                    data match
-                        case fileUpload: FileUpload =>
-                            val newArr =
-                                if i == arr.length then
-                                    val expanded = new Array[HttpRequest.Part](arr.length * 2)
-                                    java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
-                                    expanded
-                                else arr
-                            newArr(i) = HttpRequest.Part(
-                                name = fileUpload.getName,
-                                filename = if fileUpload.getFilename.isEmpty then Absent else Present(fileUpload.getFilename),
-                                contentType =
-                                    if fileUpload.getContentType == null then Absent else Present(fileUpload.getContentType),
-                                content = fileUpload.get()
-                            )
-                            loop(newArr, i + 1)
-                        case attribute: Attribute =>
-                            val newArr =
-                                if i == arr.length then
-                                    val expanded = new Array[HttpRequest.Part](arr.length * 2)
-                                    java.lang.System.arraycopy(arr, 0, expanded, 0, arr.length)
-                                    expanded
-                                else arr
-                            newArr(i) = HttpRequest.Part(
-                                name = attribute.getName,
-                                filename = Absent,
-                                contentType = Absent,
-                                content = attribute.get()
-                            )
-                            loop(newArr, i + 1)
-                        case _ =>
-                            loop(arr, i)
-                    end match
-
-            val (arr, i) = loop(new Array[HttpRequest.Part](4), 0)
-            if i == 0 then Span.empty[HttpRequest.Part]
-            else if i == arr.length then Span.fromUnsafe(arr)
-            else
-                val result = new Array[HttpRequest.Part](i)
-                java.lang.System.arraycopy(arr, 0, result, 0, i)
-                Span.fromUnsafe(result)
-            end if
-        catch
-            case _: HttpPostRequestDecoder.EndOfDataDecoderException =>
+        contentType match
+            case Present(ct) if ct.startsWith("multipart/form-data") =>
+                // Extract boundary from content type
+                extractBoundary(ct) match
+                    case Present(boundary) =>
+                        parseMultipart(ev(body).data, boundary)
+                    case Absent =>
+                        Span.empty[HttpRequest.Part]
+            case _ =>
                 Span.empty[HttpRequest.Part]
-        finally
-            decoder.destroy()
-        end try
     end parts
-
-    /** Converts to a Netty FullHttpRequest. Only valid for buffered requests. */
-    private[kyo] def toNetty(using ev: B <:< HttpBody.Bytes): FullHttpRequest =
-        import HttpRequest.Method.toNetty
-        val uri      = new URI(fullUrl)
-        val rawPath  = uri.getRawPath
-        val rawQuery = uri.getRawQuery
-        val pathStr  = if rawPath == null || rawPath.isEmpty then "/" else rawPath
-        val pathAndQuery =
-            if rawQuery == null then pathStr
-            else pathStr + "?" + rawQuery
-
-        val bodyData   = ev(body).data
-        val content    = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
-        val nettyReq   = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, method.toNetty, pathAndQuery, content)
-        val nettyHdrs  = nettyReq.headers()
-        val headerSize = headers.size
-
-        // Add all user headers
-        @tailrec def addHeaders(i: Int): Unit =
-            if i < headerSize then
-                val (name, value) = headers(i)
-                discard(nettyHdrs.add(name, value))
-                addHeaders(i + 1)
-        addHeaders(0)
-
-        // Set Content-Type if body present and not already set
-        if bodyData.nonEmpty then
-            contentType.foreach { ct =>
-                if !nettyHdrs.contains(HttpHeaderNames.CONTENT_TYPE) then
-                    discard(nettyHdrs.set(HttpHeaderNames.CONTENT_TYPE, ct))
-            }
-            if !nettyHdrs.contains(HttpHeaderNames.CONTENT_LENGTH) then
-                discard(nettyHdrs.set(HttpHeaderNames.CONTENT_LENGTH, bodyData.length))
-        end if
-
-        nettyReq
-    end toNetty
 
     /** Returns the body as a byte stream. Only available for streaming requests. */
     def bodyStream(using ev: B <:< HttpBody.Streamed)(using Frame): Stream[Span[Byte], Async] = ev(body).stream
@@ -327,6 +209,10 @@ final class HttpRequest[+B <: HttpBody] private (
 
     private[kyo] def withStrictCookieParsing(strict: Boolean): HttpRequest[B] =
         new HttpRequest(method, _originalUrl, _headers, body, _contentType, _scheme, _pathParams, strict)
+
+    /** Update the URL (path) for redirect following. */
+    private[kyo] def withUrl(url: String): HttpRequest[B] =
+        new HttpRequest(method, new URI(url), _headers, body, _contentType, _scheme, _pathParams, _strictCookieParsing)
 
 end HttpRequest
 
@@ -441,119 +327,70 @@ object HttpRequest:
     ): HttpRequest[HttpBody.Bytes] =
         create(method, url, body, headers, if contentType.isEmpty then Absent else Present(contentType))
 
-    // --- Internal: create from Netty request (server-side incoming requests) ---
+    // --- Internal: create from raw data (backend-agnostic) ---
 
-    private[kyo] def fromNetty(nettyRequest: FullHttpRequest): HttpRequest[HttpBody.Bytes] =
-        val method = Method.fromNetty(nettyRequest.method())
-        val uri    = new URI(nettyRequest.uri())
-
-        // Extract headers
-        val nettyHeaders = nettyRequest.headers()
-        val headerCount  = nettyHeaders.size()
-        val headers      = new Array[(String, String)](headerCount)
-        val iter         = nettyHeaders.iteratorAsString()
-        @tailrec def fillHeaders(i: Int): Unit =
-            if i < headerCount && iter.hasNext then
-                val entry = iter.next()
-                headers(i) = (entry.getKey, entry.getValue)
-                fillHeaders(i + 1)
-        fillHeaders(0)
-
-        // Extract body
-        val content = nettyRequest.content()
-        val bodyData =
-            if content.readableBytes() == 0 then Array.empty[Byte]
-            else
-                val bytes = new Array[Byte](content.readableBytes())
-                content.getBytes(content.readerIndex(), bytes)
-                bytes
-
-        // Extract content type
-        val contentType =
-            val ct = nettyHeaders.get(HttpHeaderNames.CONTENT_TYPE)
-            if ct == null then Absent else Present(ct)
-
+    /** Create a buffered request from raw components. Used by backend implementations. */
+    private[kyo] def fromRaw(
+        method: Method,
+        uri: String,
+        headers: Seq[(String, String)],
+        bodyData: Array[Byte],
+        contentType: Maybe[String]
+    ): HttpRequest[HttpBody.Bytes] =
+        val parsedUri = new URI(uri)
         new HttpRequest(
             method = method,
-            _originalUrl = uri,
-            _headers = headers.toSeq,
+            _originalUrl = parsedUri,
+            _headers = headers,
             body = HttpBody(bodyData),
             _contentType = contentType,
             _scheme = Absent,
             _pathParams = Map.empty,
             _strictCookieParsing = false
         )
-    end fromNetty
+    end fromRaw
 
-    /** Create from Netty headers (without aggregator) with provided body bytes. */
-    private[kyo] def fromNettyHeaders(
-        nettyRequest: io.netty.handler.codec.http.HttpRequest,
+    /** Create a buffered request from raw headers and body. Used by backend server implementations. */
+    private[kyo] def fromRawHeaders(
+        method: Method,
+        uri: String,
+        headers: Seq[(String, String)],
         bodyData: Array[Byte]
     ): HttpRequest[HttpBody.Bytes] =
-        val method = Method.fromNetty(nettyRequest.method())
-        val uri    = new URI(nettyRequest.uri())
-
-        val nettyHeaders = nettyRequest.headers()
-        val headerCount  = nettyHeaders.size()
-        val headers      = new Array[(String, String)](headerCount)
-        val iter         = nettyHeaders.iteratorAsString()
-        @tailrec def fillHeaders(i: Int): Unit =
-            if i < headerCount && iter.hasNext then
-                val entry = iter.next()
-                headers(i) = (entry.getKey, entry.getValue)
-                fillHeaders(i + 1)
-        fillHeaders(0)
-
-        val contentType =
-            val ct = nettyHeaders.get(HttpHeaderNames.CONTENT_TYPE)
-            if ct == null then Absent else Present(ct)
-
+        val parsedUri   = new URI(uri)
+        val contentType = findHeader(headers, "content-type")
         new HttpRequest(
             method = method,
-            _originalUrl = uri,
-            _headers = headers.toSeq,
+            _originalUrl = parsedUri,
+            _headers = headers,
             body = HttpBody(bodyData),
             _contentType = contentType,
             _scheme = Absent,
             _pathParams = Map.empty,
             _strictCookieParsing = false
         )
-    end fromNettyHeaders
+    end fromRawHeaders
 
-    /** Create a streaming request from Netty headers with a body stream. */
-    private[kyo] def fromNettyStreaming(
-        nettyRequest: io.netty.handler.codec.http.HttpRequest,
+    /** Create a streaming request from raw headers with a body stream. Used by backend server implementations. */
+    private[kyo] def fromRawStreaming(
+        method: Method,
+        uri: String,
+        headers: Seq[(String, String)],
         bodyStream: Stream[Span[Byte], Async]
     ): HttpRequest[HttpBody.Streamed] =
-        val method = Method.fromNetty(nettyRequest.method())
-        val uri    = new URI(nettyRequest.uri())
-
-        val nettyHeaders = nettyRequest.headers()
-        val headerCount  = nettyHeaders.size()
-        val headers      = new Array[(String, String)](headerCount)
-        val iter         = nettyHeaders.iteratorAsString()
-        @tailrec def fillHeaders(i: Int): Unit =
-            if i < headerCount && iter.hasNext then
-                val entry = iter.next()
-                headers(i) = (entry.getKey, entry.getValue)
-                fillHeaders(i + 1)
-        fillHeaders(0)
-
-        val contentType =
-            val ct = nettyHeaders.get(HttpHeaderNames.CONTENT_TYPE)
-            if ct == null then Absent else Present(ct)
-
+        val parsedUri   = new URI(uri)
+        val contentType = findHeader(headers, "content-type")
         new HttpRequest(
             method = method,
-            _originalUrl = uri,
-            _headers = headers.toSeq,
+            _originalUrl = parsedUri,
+            _headers = headers,
             body = HttpBody.stream(bodyStream),
             _contentType = contentType,
             _scheme = Absent,
             _pathParams = Map.empty,
             _strictCookieParsing = false
         )
-    end fromNettyStreaming
+    end fromRawStreaming
 
     // --- Private: core create method ---
 
@@ -582,6 +419,15 @@ object HttpRequest:
 
     // --- Private helpers ---
 
+    private def findHeader(headers: Seq[(String, String)], lowerName: String): Maybe[String] =
+        @tailrec def loop(remaining: Seq[(String, String)]): Maybe[String] =
+            remaining match
+                case Seq()                                         => Absent
+                case Seq((n, v), _*) if n.toLowerCase == lowerName => Present(v)
+                case Seq(_, tail*)                                 => loop(tail)
+        loop(headers)
+    end findHeader
+
     private def withHostHeader(uri: URI, headers: Seq[(String, String)]): Seq[(String, String)] =
         val uriHost = uri.getHost
         if uriHost != null && !headers.exists(_._1.equalsIgnoreCase("Host")) then
@@ -596,28 +442,249 @@ object HttpRequest:
         end if
     end withHostHeader
 
+    // --- Cookie parsing (pure Scala, no Netty) ---
+
+    private def parseCookies(cookieHeader: String, strict: Boolean): Span[Cookie] =
+        val result = Seq.newBuilder[Cookie]
+        var pos    = 0
+        val len    = cookieHeader.length
+
+        while pos < len do
+            // Skip whitespace
+            while pos < len && (cookieHeader.charAt(pos) == ' ' || cookieHeader.charAt(pos) == '\t') do
+                pos += 1
+
+            if pos < len then
+                // Find '='
+                val eqIdx = cookieHeader.indexOf('=', pos)
+                if eqIdx < 0 then
+                    pos = len // malformed, skip rest
+                else
+                    val name = cookieHeader.substring(pos, eqIdx).trim
+                    pos = eqIdx + 1
+
+                    // Find end of value (';' or end of string)
+                    val semiIdx = cookieHeader.indexOf(';', pos)
+                    val endIdx  = if semiIdx < 0 then len else semiIdx
+                    val value   = cookieHeader.substring(pos, endIdx).trim
+                    pos = if semiIdx < 0 then len else semiIdx + 1
+
+                    if name.nonEmpty then
+                        // Strip quotes from value if present (LAX mode)
+                        val unquotedValue =
+                            if value.length >= 2 && value.charAt(0) == '"' && value.charAt(value.length - 1) == '"' then
+                                value.substring(1, value.length - 1)
+                            else
+                                value
+                        result += Cookie(name, unquotedValue)
+                    end if
+                end if
+            end if
+        end while
+
+        val arr = result.result()
+        if arr.isEmpty then Span.empty[Cookie]
+        else Span.fromUnsafe(arr.toArray)
+    end parseCookies
+
+    // --- Query string parsing (pure Scala, no Netty) ---
+
+    private def parseQueryParam(queryString: String, name: String): Maybe[String] =
+        var pos = 0
+        val len = queryString.length
+        while pos < len do
+            val ampIdx = queryString.indexOf('&', pos)
+            val end    = if ampIdx < 0 then len else ampIdx
+            val eqIdx  = queryString.indexOf('=', pos)
+
+            if eqIdx >= 0 && eqIdx < end then
+                val key = decodeUrl(queryString.substring(pos, eqIdx))
+                if key == name then
+                    return Present(decodeUrl(queryString.substring(eqIdx + 1, end)))
+            else
+                // Flag-style parameter (no =)
+                val key = decodeUrl(queryString.substring(pos, end))
+                if key == name then
+                    return Present("")
+            end if
+            pos = if ampIdx < 0 then len else ampIdx + 1
+        end while
+        Absent
+    end parseQueryParam
+
+    private def parseQueryParamAll(queryString: String, name: String): Seq[String] =
+        val result = Seq.newBuilder[String]
+        var pos    = 0
+        val len    = queryString.length
+        while pos < len do
+            val ampIdx = queryString.indexOf('&', pos)
+            val end    = if ampIdx < 0 then len else ampIdx
+            val eqIdx  = queryString.indexOf('=', pos)
+
+            if eqIdx >= 0 && eqIdx < end then
+                val key = decodeUrl(queryString.substring(pos, eqIdx))
+                if key == name then
+                    result += decodeUrl(queryString.substring(eqIdx + 1, end))
+            else
+                val key = decodeUrl(queryString.substring(pos, end))
+                if key == name then
+                    result += ""
+            end if
+            pos = if ampIdx < 0 then len else ampIdx + 1
+        end while
+        result.result()
+    end parseQueryParamAll
+
+    private def decodeUrl(s: String): String =
+        java.net.URLDecoder.decode(s, StandardCharsets.UTF_8)
+
+    // --- Multipart parsing (pure Scala, no Netty) ---
+
+    private def extractBoundary(contentType: String): Maybe[String] =
+        val boundaryPrefix = "boundary="
+        val idx            = contentType.indexOf(boundaryPrefix)
+        if idx < 0 then Absent
+        else
+            val start = idx + boundaryPrefix.length
+            val value = contentType.substring(start).trim
+            // Strip quotes if present
+            if value.length >= 2 && value.charAt(0) == '"' && value.charAt(value.length - 1) == '"' then
+                Present(value.substring(1, value.length - 1))
+            else
+                // Trim at semicolon if present
+                val semiIdx = value.indexOf(';')
+                Present(if semiIdx >= 0 then value.substring(0, semiIdx).trim else value)
+            end if
+        end if
+    end extractBoundary
+
+    private def parseMultipart(data: Array[Byte], boundary: String): Span[Part] =
+        val boundaryBytes = ("--" + boundary).getBytes(StandardCharsets.UTF_8)
+        val crlfBytes     = "\r\n".getBytes(StandardCharsets.UTF_8)
+        val result        = Seq.newBuilder[Part]
+
+        // Find first boundary
+        var pos = indexOf(data, boundaryBytes, 0)
+        if pos < 0 then return Span.empty[Part]
+        pos += boundaryBytes.length
+
+        while pos < data.length do
+            // Check for terminating boundary (--boundary--)
+            if pos + 2 <= data.length && data(pos) == '-' && data(pos + 1) == '-' then
+                // End of multipart
+                return toSpan(result.result())
+
+            // Skip CRLF after boundary
+            if pos + 2 <= data.length && data(pos) == '\r' && data(pos + 1) == '\n' then
+                pos += 2
+
+            // Parse headers until empty line
+            var name: String                   = ""
+            var filename: Maybe[String]        = Absent
+            var partContentType: Maybe[String] = Absent
+
+            var headerEnd = indexOf(data, "\r\n\r\n".getBytes(StandardCharsets.UTF_8), pos)
+            if headerEnd < 0 then return toSpan(result.result())
+
+            val headerSection = new String(data, pos, headerEnd - pos, StandardCharsets.UTF_8)
+            headerSection.split("\r\n").foreach { line =>
+                val colonIdx = line.indexOf(':')
+                if colonIdx > 0 then
+                    val headerName  = line.substring(0, colonIdx).trim.toLowerCase
+                    val headerValue = line.substring(colonIdx + 1).trim
+                    if headerName == "content-disposition" then
+                        // Parse name and filename from Content-Disposition
+                        extractDispositionParam(headerValue, "name").foreach(n => name = n)
+                        filename = extractDispositionParam(headerValue, "filename")
+                    else if headerName == "content-type" then
+                        partContentType = Present(headerValue)
+                    end if
+                end if
+            }
+
+            pos = headerEnd + 4 // Skip \r\n\r\n
+
+            // Find next boundary
+            val nextBoundary = indexOf(data, boundaryBytes, pos)
+            if nextBoundary < 0 then return toSpan(result.result())
+
+            // Content ends before \r\n--boundary
+            val contentEnd = nextBoundary - 2 // Subtract \r\n before boundary
+            val content =
+                if contentEnd > pos then
+                    val arr = new Array[Byte](contentEnd - pos)
+                    java.lang.System.arraycopy(data, pos, arr, 0, contentEnd - pos)
+                    arr
+                else
+                    Array.empty[Byte]
+
+            if name.nonEmpty then
+                result += Part(name, filename, partContentType, content)
+
+            pos = nextBoundary + boundaryBytes.length
+        end while
+
+        toSpan(result.result())
+    end parseMultipart
+
+    private def toSpan(parts: Seq[Part]): Span[Part] =
+        if parts.isEmpty then Span.empty[Part]
+        else Span.fromUnsafe(parts.toArray)
+
+    private def extractDispositionParam(disposition: String, param: String): Maybe[String] =
+        val search = param + "=\""
+        val idx    = disposition.indexOf(search)
+        if idx < 0 then Absent
+        else
+            val start  = idx + search.length
+            val endIdx = disposition.indexOf('"', start)
+            if endIdx < 0 then Absent
+            else Present(disposition.substring(start, endIdx))
+        end if
+    end extractDispositionParam
+
+    private def indexOf(data: Array[Byte], pattern: Array[Byte], from: Int): Int =
+        val dataLen    = data.length
+        val patternLen = pattern.length
+        if patternLen == 0 || from + patternLen > dataLen then return -1
+
+        var i = from
+        while i <= dataLen - patternLen do
+            var j     = 0
+            var found = true
+            while j < patternLen && found do
+                if data(i + j) != pattern(j) then
+                    found = false
+                j += 1
+            end while
+            if found then return i
+            i += 1
+        end while
+        -1
+    end indexOf
+
     // --- Method type ---
 
-    opaque type Method = NettyMethod
+    opaque type Method = String
 
     object Method:
         given CanEqual[Method, Method] = CanEqual.derived
 
-        val GET: Method     = NettyMethod.GET
-        val POST: Method    = NettyMethod.POST
-        val PUT: Method     = NettyMethod.PUT
-        val PATCH: Method   = NettyMethod.PATCH
-        val DELETE: Method  = NettyMethod.DELETE
-        val HEAD: Method    = NettyMethod.HEAD
-        val OPTIONS: Method = NettyMethod.OPTIONS
-        val TRACE: Method   = NettyMethod.TRACE
-        val CONNECT: Method = NettyMethod.CONNECT
+        val GET: Method     = "GET"
+        val POST: Method    = "POST"
+        val PUT: Method     = "PUT"
+        val PATCH: Method   = "PATCH"
+        val DELETE: Method  = "DELETE"
+        val HEAD: Method    = "HEAD"
+        val OPTIONS: Method = "OPTIONS"
+        val TRACE: Method   = "TRACE"
+        val CONNECT: Method = "CONNECT"
 
-        private[kyo] def fromNetty(m: NettyMethod): Method = m
+        /** Create a Method from a string name. */
+        private[kyo] def apply(name: String): Method = name
 
         extension (m: Method)
-            private[kyo] def toNetty: NettyMethod = m
-            def name: String                      = m.name()
+            def name: String = m
     end Method
 
     // --- Auxiliary types ---

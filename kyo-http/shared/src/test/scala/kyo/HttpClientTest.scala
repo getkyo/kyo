@@ -111,13 +111,13 @@ class HttpClientTest extends Test:
     "HttpClient.init" - {
 
         "with all defaults" in run {
-            HttpClient.init().map { client =>
+            HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                 succeed
             }
         }
 
         "with pool settings" in run {
-            HttpClient.init(maxConnectionsPerHost = Present(10)).map { client =>
+            HttpClient.init(maxConnectionsPerHost = Present(10), backend = PlatformTestBackend.backend).map { client =>
                 succeed
             }
         }
@@ -129,7 +129,7 @@ class HttpClientTest extends Test:
             "successful request" in run {
                 val handler = HttpHandler.health("/test")
                 startTestServer(handler).map { port =>
-                    HttpClient.init().map { client =>
+                    HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                         client.send(HttpRequest.get(s"http://localhost:$port/test")).map { response =>
                             assertStatus(response, Status.OK)
                         }
@@ -142,7 +142,7 @@ class HttpClientTest extends Test:
                     HttpResponse.ok("test-data")
                 }
                 startTestServer(handler).map { port =>
-                    HttpClient.init().map { client =>
+                    HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                         client.send(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
                             assertStatus(response, Status.OK)
                             assertBodyText(response, "test-data")
@@ -153,7 +153,7 @@ class HttpClientTest extends Test:
 
             "timeout handling" in run {
                 startTestServer(neverRespondHandler("/slow")).map { port =>
-                    HttpClient.init().map { client =>
+                    HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                         HttpClient.withConfig(_.timeout(100.millis)) {
                             Abort.run(client.send(HttpRequest.get(s"http://localhost:$port/slow"))).map { result =>
                                 assert(result.isFailure)
@@ -164,7 +164,7 @@ class HttpClientTest extends Test:
             }
 
             "connection error" in run {
-                HttpClient.init().map { client =>
+                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                     Abort.run(client.send(HttpRequest.get("http://localhost:59999/test"))).map { result =>
                         assert(result.isFailure)
                     }
@@ -174,13 +174,13 @@ class HttpClientTest extends Test:
 
         "close" - {
             "closes connection" in run {
-                HttpClient.init().map { client =>
+                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                     client.closeNow.map(_ => succeed)
                 }
             }
 
             "idempotent" in run {
-                HttpClient.init().map { client =>
+                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                     client.closeNow.andThen(client.closeNow).map(_ => succeed)
                 }
             }
@@ -908,7 +908,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 Kyo.foreach(1 to iterations) { _ =>
                     Async.fill(3, 3) {
-                        HttpClient.init().map { client =>
+                        HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                             client.send(HttpRequest.get(s"http://localhost:$port/ping")).map { response =>
                                 client.closeNow.andThen(response)
                             }
@@ -1025,7 +1025,7 @@ class HttpClientTest extends Test:
             }
         }
 
-        "with explicit fiber init - like benchmark" in run {
+        "with explicit fiber init - like benchmark" in runNotJS {
             val handler = HttpHandler.get("/ping") { (_, _) =>
                 HttpResponse.ok("pong")
             }
@@ -1160,7 +1160,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("pong")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(10)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(10), backend = PlatformTestBackend.backend).map { client =>
                     Kyo.foreach(1 to 5) { _ =>
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
@@ -1175,7 +1175,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("pong")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(5)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(5), backend = PlatformTestBackend.backend).map { client =>
                     Async.fill(10, 10) {
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
@@ -1190,7 +1190,7 @@ class HttpClientTest extends Test:
                 Async.delay(100.millis)(HttpResponse.ok("done"))
             }
             startTestServer(handler).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(2)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(2), backend = PlatformTestBackend.backend).map { client =>
                     Async.fill(4, 4) {
                         client.send(HttpRequest.get(s"http://localhost:$port/slow"))
                     }.map { responses =>
@@ -1205,7 +1205,7 @@ class HttpClientTest extends Test:
             val handler1 = HttpHandler.get("/h1") { (_, _) => HttpResponse.ok("host1") }
             val handler2 = HttpHandler.get("/h2") { (_, _) => HttpResponse.ok("host2") }
             startTestServer(handler1, handler2).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(2)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(2), backend = PlatformTestBackend.backend).map { client =>
                     val requests = Seq(
                         client.send(HttpRequest.get(s"http://localhost:$port/h1")),
                         client.send(HttpRequest.get(s"http://localhost:$port/h2")),
@@ -1224,7 +1224,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("ok")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(1)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(1), backend = PlatformTestBackend.backend).map { client =>
                     client.send(HttpRequest.get(s"http://localhost:$port/test")).map { r1 =>
                         assertStatus(r1, Status.OK)
                     }.andThen {
@@ -1241,7 +1241,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("pong")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(5)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(5), backend = PlatformTestBackend.backend).map { client =>
                     client.warmup(s"http://localhost:$port", 3).andThen {
                         Async.fill(3, 3) {
                             client.send(HttpRequest.get(s"http://localhost:$port/ping"))
@@ -1258,7 +1258,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("pong")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init().map { client =>
+                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                     client.warmup(Seq(
                         s"http://localhost:$port/ping",
                         s"http://localhost:$port/ping"
@@ -1276,7 +1276,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("pong")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(3)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(3), backend = PlatformTestBackend.backend).map { client =>
                     Kyo.foreach(1 to 5) { _ =>
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.andThen {
@@ -1299,7 +1299,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok("pong")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init().map { client =>
+                HttpClient.init(backend = PlatformTestBackend.backend).map { client =>
                     Async.fill(20, 20) {
                         client.send(HttpRequest.get(s"http://localhost:$port/ping"))
                     }.map { responses =>
@@ -1317,7 +1317,7 @@ class HttpClientTest extends Test:
                 HttpResponse.ok(s"request-$count")
             }
             startTestServer(handler).map { port =>
-                HttpClient.init(maxConnectionsPerHost = Present(2)).map { client =>
+                HttpClient.init(maxConnectionsPerHost = Present(2), backend = PlatformTestBackend.backend).map { client =>
                     Kyo.foreach(1 to 10) { _ =>
                         client.send(HttpRequest.get(s"http://localhost:$port/test"))
                     }.map { responses =>

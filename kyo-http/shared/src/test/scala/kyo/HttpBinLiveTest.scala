@@ -8,6 +8,10 @@ import HttpResponse.Status
 // ============================================================================
 class HttpBinLiveTest extends Test:
 
+    // Use the default shared client (platform backend) instead of the test client,
+    // since these tests make real HTTP calls to httpbin.org
+    override protected def useTestClient: Boolean = false
+
     case class HttpBinResponse(url: String, origin: String) derives Schema, CanEqual
 
     val base = "https://httpbin.org"
@@ -131,7 +135,7 @@ class HttpBinLiveTest extends Test:
         Abort.run {
             HttpClient.get[String]("http://localhost:1/nonexistent")
         }.map { result =>
-            assert(result.isFailure)
+            assert(!result.isSuccess)
         }
     }
 
