@@ -5,7 +5,7 @@ import HttpResponse.Status
 
 class HttpFilterTest extends Test:
 
-    val simpleHandler = HttpHandler.get("/test") { (_, _) => HttpResponse.ok("hello") }
+    val simpleHandler = HttpHandler.get("/test") { _ => HttpResponse.ok("hello") }
 
     "HttpFilter" - {
         "custom filter wraps computation" in run {
@@ -41,7 +41,7 @@ class HttpFilterTest extends Test:
 
         "init creates request-transforming filter" in run {
             var receivedHeader: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { (_, req) =>
+            val handler = HttpHandler.get("/test") { req =>
                 receivedHeader = req.header("X-Init-Test")
                 HttpResponse.ok
             }
@@ -65,7 +65,7 @@ class HttpFilterTest extends Test:
         }
 
         "handles preflight OPTIONS request" in run {
-            val optionsHandler = HttpHandler.options("/test") { (_, _) => HttpResponse.ok }
+            val optionsHandler = HttpHandler.options("/test") { _ => HttpResponse.ok }
             HttpFilter.server.cors().enable {
                 for
                     port <- startTestServer(simpleHandler, optionsHandler)
@@ -220,7 +220,7 @@ class HttpFilterTest extends Test:
 
         "auth failure short-circuits" in run {
             var handlerCalled = false
-            val handler = HttpHandler.get("/test") { (_, _) =>
+            val handler = HttpHandler.get("/test") { _ =>
                 handlerCalled = true
                 HttpResponse.ok
             }
@@ -238,7 +238,7 @@ class HttpFilterTest extends Test:
     "HttpFilter.client" - {
         "addHeader adds header to request" in run {
             var receivedHeader: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { (_, req) =>
+            val handler = HttpHandler.get("/test") { req =>
                 receivedHeader = req.header("X-Custom")
                 HttpResponse.ok
             }
@@ -252,7 +252,7 @@ class HttpFilterTest extends Test:
 
         "basicAuth adds Authorization header" in run {
             var receivedAuth: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { (_, req) =>
+            val handler = HttpHandler.get("/test") { req =>
                 receivedAuth = req.header("Authorization")
                 HttpResponse.ok
             }
@@ -268,7 +268,7 @@ class HttpFilterTest extends Test:
 
         "bearerAuth adds Bearer token" in run {
             var receivedAuth: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { (_, req) =>
+            val handler = HttpHandler.get("/test") { req =>
                 receivedAuth = req.header("Authorization")
                 HttpResponse.ok
             }

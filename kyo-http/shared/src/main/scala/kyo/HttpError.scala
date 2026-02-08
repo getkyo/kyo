@@ -2,7 +2,28 @@ package kyo
 
 import java.util.concurrent.TimeoutException
 
-/** Error types for HTTP client operations. Extends KyoException for enhanced error reporting. */
+/** Sealed error hierarchy representing failure modes in the HTTP client pipeline.
+  *
+  * Each variant captures a specific failure mode: connection failures, timeouts, SSL errors, redirect limits, invalid responses, HTTP
+  * status errors, parse errors, and retry exhaustion. All extend `KyoException` for zero-cost stack traces and `Frame`-based context. Used
+  * as the error type in `Abort[HttpError]` throughout the client API.
+  *
+  *   - `ConnectionFailed` — TCP/TLS connection to host failed
+  *   - `Timeout` — Request or connect timeout exceeded
+  *   - `SslError` — SSL/TLS handshake or certificate error
+  *   - `TooManyRedirects` — Exceeded configured redirect limit
+  *   - `InvalidResponse` — Unexpected or malformed response
+  *   - `StatusError` — Error status (4xx/5xx) from typed convenience methods (carries status + body)
+  *   - `ParseError` — Response body deserialization failed
+  *   - `RetriesExhausted` — Retry schedule exhausted while still getting retriable responses
+  *
+  * @see
+  *   [[kyo.HttpClient]]
+  * @see
+  *   [[kyo.KyoException]]
+  * @see
+  *   [[kyo.Abort]]
+  */
 sealed abstract class HttpError(message: Text, cause: Text | Throwable = "")(using Frame)
     extends KyoException(message, cause)
 

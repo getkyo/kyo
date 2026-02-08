@@ -2,12 +2,27 @@ package kyo
 
 import kyo.internal.OpenApiGenerator
 
+/** OpenAPI 3.0 specification generated from route and handler definitions.
+  *
+  * Produces a JSON-serializable OpenAPI spec from `HttpRoute` or `HttpHandler` metadata. Can be generated programmatically via
+  * `fromRoutes`/`fromHandlers`, served from a running `HttpServer` via `server.openApi`, or auto-served by configuring
+  * `HttpServer.Config.openApi`. The spec includes paths, parameters, request/response bodies, and error responses derived from route
+  * definitions.
+  *
+  * @see
+  *   [[kyo.HttpRoute]]
+  * @see
+  *   [[kyo.HttpHandler]]
+  * @see
+  *   [[kyo.HttpServer]]
+  */
 case class HttpOpenApi(
     openapi: String,
     info: HttpOpenApi.Info,
     paths: Map[String, HttpOpenApi.PathItem],
     components: Option[HttpOpenApi.Components]
 ) derives Schema, CanEqual:
+    /** Serializes the spec to a JSON string. */
     def toJson: String = Schema[HttpOpenApi].encode(this)
 end HttpOpenApi
 
@@ -119,6 +134,7 @@ object HttpOpenApi:
 
     val defaultPath = "/openapi.json"
 
+    /** Generates a spec from route definitions. */
     def fromRoutes(routes: HttpRoute[?, ?, ?]*): HttpOpenApi =
         fromRoutes(Config.default)(routes*)
 
@@ -126,12 +142,14 @@ object HttpOpenApi:
         val handlers = routes.map(routeToHandler)
         OpenApiGenerator.generate(handlers, config)
 
+    /** Generates a spec from handler definitions. */
     def fromHandlers(handlers: HttpHandler[Any]*): HttpOpenApi =
         fromHandlers(Config.default)(handlers*)
 
     def fromHandlers(config: Config)(handlers: HttpHandler[Any]*): HttpOpenApi =
         OpenApiGenerator.generate(handlers, config)
 
+    /** Creates an HttpHandler that serves the generated spec as JSON at the given path. */
     def handler(routes: HttpRoute[?, ?, ?]*)(using Frame): HttpHandler[Any] =
         handler(defaultPath, Config.default)(routes*)
 
@@ -141,7 +159,7 @@ object HttpOpenApi:
     def handler(path: String, config: Config)(routes: HttpRoute[?, ?, ?]*)(using Frame): HttpHandler[Any] =
         val spec = fromRoutes(config)(routes*)
         val json = spec.toJson
-        HttpHandler.get(path) { (_, _) =>
+        HttpHandler.get(path) { _ =>
             HttpResponse.ok(json).addHeader("Content-Type", "application/json")
         }
     end handler

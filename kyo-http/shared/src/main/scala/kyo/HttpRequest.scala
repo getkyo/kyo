@@ -4,11 +4,43 @@ import java.nio.charset.StandardCharsets
 import kyo.internal.UrlParser
 import scala.annotation.tailrec
 
-/** Immutable HTTP request with builder API.
+/** Immutable HTTP request used on both sides of the wire — client code builds and sends requests, server code receives and inspects them.
   *
-  * Requests are constructed via factory methods and can be modified using builder methods that return new instances.
+  * The type parameter `B` tracks the body type at compile time: `HttpBody.Bytes` for fully-buffered bodies, `HttpBody.Streamed` for
+  * streaming bodies. Body accessors like `bodyText`, `bodyAs`, and `bodyBytes` are only available when `B <:< HttpBody.Bytes`, enforced via
+  * implicit evidence. Requests are constructed via factory methods on the companion and modified using builder methods that return new
+  * immutable instances.
   *
-  * The type parameter B tracks the body type: `HttpBody.Bytes` for fully-buffered bodies, `HttpBody.Streamed` for streaming bodies.
+  * For server-side use, path parameters are populated by the router after matching and are accessible via `pathParam`/`pathParams`. Query
+  * parameters are parsed lazily from the raw query string. Cookies are parsed from the `Cookie` header with configurable strict/lax mode.
+  *
+  *   - Type-safe body access (`bodyText`, `bodyAs[A]`, `bodyBytes`, `bodyStream`) gated by compile-time evidence
+  *   - JSON, text, form-encoded, and multipart body factories
+  *   - Streaming request factory for chunked uploads
+  *   - Query parameter, path parameter, header, and cookie accessors
+  *   - Common header convenience accessors (`authorization`, `accept`, `userAgent`, etc.)
+  *   - Immutable builder pattern for headers
+  *
+  * IMPORTANT: `bodyAs[A]` on requests throws on decode failure (it's pure, no `Abort` effect). Compare with `HttpResponse.bodyAs[A]` which
+  * wraps failure in `Abort[HttpError]`.
+  *
+  * Note: `addHeader` appends to the header list (does NOT replace). Compare with `HttpResponse.addHeader` which replaces.
+  *
+  * Note: `header(name)` returns the first matching header. Compare with `HttpResponse.header(name)` which returns the last.
+  *
+  * Note: Header lookups are case-insensitive, following HTTP/1.1 spec.
+  *
+  * @tparam B
+  *   The body type, either `HttpBody.Bytes` or `HttpBody.Streamed`
+  *
+  * @see
+  *   [[kyo.HttpResponse]]
+  * @see
+  *   [[kyo.HttpBody]]
+  * @see
+  *   [[kyo.HttpHandler]]
+  * @see
+  *   [[kyo.Schema]]
   */
 final class HttpRequest[+B <: HttpBody] private (
     val method: HttpRequest.Method,
@@ -155,7 +187,7 @@ final class HttpRequest[+B <: HttpBody] private (
     /** Returns the request body as a Span[Byte]. Only available for buffered requests. */
     def bodyBytes(using ev: B <:< HttpBody.Bytes): Span[Byte] = ev(body).span
 
-    /** Parses the request body as type A. Only available for buffered requests. */
+    /** Parses the request body as type A via Schema. Throws on decode failure (no Abort effect). Only available for buffered requests. */
     def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes): A =
         Schema[A].decode(bodyText)
 
@@ -182,6 +214,7 @@ final class HttpRequest[+B <: HttpBody] private (
 
     // --- Builder methods (return new immutable instance, preserve body type) ---
 
+    /** Appends a header to the header list. Does NOT replace existing headers with the same name. */
     def addHeader(name: String, value: String): HttpRequest[B] =
         new HttpRequest(
             method,
@@ -697,6 +730,10 @@ object HttpRequest:
 
     // --- Method type ---
 
+    /** HTTP request method as a zero-cost opaque type over String.
+      *
+      * Standard method constants: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE, CONNECT.
+      */
     opaque type Method = String
 
     object Method:
@@ -721,10 +758,12 @@ object HttpRequest:
 
     // --- Auxiliary types ---
 
+    /** Parsed cookie from a request's `Cookie` header. Use `toResponse` to convert to an `HttpResponse.Cookie` for setting. */
     case class Cookie(name: String, value: String) derives CanEqual:
         def toResponse: HttpResponse.Cookie = HttpResponse.Cookie(name, value)
     end Cookie
 
+    /** A single part from a multipart form-data request body. */
     case class Part(
         name: String,
         filename: Maybe[String],

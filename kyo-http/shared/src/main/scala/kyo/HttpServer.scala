@@ -2,6 +2,45 @@ package kyo
 
 import kyo.internal.HttpRouter
 
+/** HTTP server for routing incoming requests to handlers with automatic path matching, filter chains, and OpenAPI generation.
+  *
+  * Server binds to a port, routes incoming requests to `HttpHandler` instances using prefix-trie matching, and applies the active
+  * `HttpFilter` chain. Routing handles method dispatch, path parameter extraction, and 404/405 responses automatically.
+  *
+  * Supports both buffered and streaming request bodies — handlers opt in to streaming via `HttpHandler.streamingBody`. The backend reads
+  * the full body only for non-streaming handlers, avoiding unnecessary buffering. OpenAPI spec generation is built in — call `openApi` on a
+  * running server or configure `Config.openApi` to auto-serve the spec at a path.
+  *
+  *   - Prefix-trie routing with path parameter extraction
+  *   - Automatic 404 (Not Found) and 405 (Method Not Allowed) responses
+  *   - Buffered and streaming request body support
+  *   - Built-in OpenAPI 3.0 spec generation from handler metadata
+  *   - Filter chain applied to every request
+  *   - Configurable backlog, keep-alive, TCP fast open, idle timeout
+  *
+  * IMPORTANT: The server runs in the background after `init`. Use `await` to keep the main fiber alive if there's nothing else to block on.
+  *
+  * IMPORTANT: The filter chain is captured from `Local` at init time, not re-read per request. Set filters (via `HttpFilter.enable`) before
+  * calling `HttpServer.init`.
+  *
+  * Note: The server reads the full request body before dispatching to non-streaming handlers. For large uploads, use
+  * `HttpHandler.streamingBody`.
+  *
+  * Note: `port = 0` binds to a random available port. Read the actual port from `server.port`.
+  *
+  * @see
+  *   [[kyo.HttpHandler]]
+  * @see
+  *   [[kyo.HttpFilter]]
+  * @see
+  *   [[kyo.HttpRoute]]
+  * @see
+  *   [[kyo.HttpServer.Config]]
+  * @see
+  *   [[kyo.HttpOpenApi]]
+  * @see
+  *   [[kyo.Backend]]
+  */
 final class HttpServer private (
     private val backendServer: Backend.Server,
     private val handlers: Seq[HttpHandler[Any]]
@@ -18,9 +57,11 @@ final class HttpServer private (
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
         backendServer.close(gracePeriod)
 
+    /** Suspends until the server shuts down. Use to keep the main fiber alive. */
     def await(using Frame): Unit < Async =
         backendServer.await
 
+    /** Generates an OpenAPI 3.0 spec from the server's registered handlers. */
     def openApi: HttpOpenApi =
         HttpOpenApi.fromHandlers(handlers*)
 
@@ -33,6 +74,7 @@ object HttpServer:
 
     // --- Factory methods ---
 
+    /** Scope-managed server lifecycle. Automatically shuts down on scope exit. */
     def init(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         init(Config.default)(handlers*)
 
@@ -61,6 +103,7 @@ object HttpServer:
     ): B < (S & Async & Scope) =
         init(config, backend)(handlers*).map(f)
 
+    /** No automatic shutdown. Caller must close explicitly. */
     def initUnscoped(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         initUnscoped(Config.default)(handlers*)
 
@@ -70,7 +113,7 @@ object HttpServer:
     def initUnscoped(config: Config, backend: Backend)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         // Safe cast: S is phantom (erased at runtime), server only calls handler.apply internally
         val h = handlers.asInstanceOf[Seq[HttpHandler[Any]]]
-        // Capture filter from Local to apply per-request
+        // Captures filter from Local once at init time — frozen for the server's lifetime
         HttpFilter.use { filter =>
             // Add OpenAPI handler if configured
             val allHandlers = config.openApi match
@@ -79,7 +122,7 @@ object HttpServer:
                         HttpOpenApi.Config(openApiConfig.title, openApiConfig.version, openApiConfig.description)
                     )(h*)
                     val json = spec.toJson
-                    val openApiHandler = HttpHandler.get(openApiConfig.path) { (_, _) =>
+                    val openApiHandler = HttpHandler.get(openApiConfig.path) { _ =>
                         HttpResponse.ok(json).addHeader("Content-Type", "application/json")
                     }
                     h :+ openApiHandler
@@ -126,6 +169,7 @@ object HttpServer:
 
     // --- Config ---
 
+    /** Server binding and transport configuration. */
     case class Config(
         port: Int = 8080,
         host: String = "0.0.0.0",

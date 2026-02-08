@@ -3,16 +3,19 @@ package kyo
 import kyo.HttpRequest.Method
 import scala.util.hashing.MurmurHash3
 
-/** HTTP filter for intercepting and transforming request/response flows.
+/** Composable interceptor for transforming HTTP request/response flows on both client and server.
   *
   * Filters wrap the `request → response` pipeline with full execution control: they can short-circuit, transform, retry, delay, or inspect
   * both buffered and streaming responses. Since `next` returns `HttpResponse[?]`, filters work uniformly regardless of whether the handler
   * produces a buffered or streaming response.
   *
-  * Filters can be composed with `andThen` and enabled for computations via `enable`. Both HttpServer and HttpClient read the current filter
-  * from a Local and apply it to requests.
+  * Filters compose with `andThen` (left-to-right: the leftmost filter runs first as the outermost wrapper) and are activated for a
+  * computation via `enable`. Filters work for both client and server because both share the same `request → response` pipeline shape. Both
+  * HttpServer and HttpClient read the current filter from a `Local` and apply it to every request.
   *
-  * Usage:
+  * Pre-built filters are organized into `HttpFilter.server` (CORS, auth, rate limiting, logging, security headers, ETag, conditional
+  * requests) and `HttpFilter.client` (auth headers, logging, custom headers).
+  *
   * {{{
   * // Server-side
   * HttpFilter.server.cors().andThen(HttpFilter.server.securityHeaders()).enable {
@@ -24,12 +27,27 @@ import scala.util.hashing.MurmurHash3
   *     HttpClient.send(request)
   * }
   * }}}
+  *
+  * IMPORTANT: `enable` composes onto the current filter stack (calls `andThen` on the existing filter), it does not replace. Nested
+  * `enable` calls stack.
+  *
+  * Note: Filters see `HttpResponse[?]` — they work uniformly for buffered and streaming responses, but can only inspect body content on
+  * buffered responses.
+  *
+  * @see
+  *   [[kyo.HttpClient]]
+  * @see
+  *   [[kyo.HttpServer]]
+  * @see
+  *   [[kyo.HttpFilter.server]]
+  * @see
+  *   [[kyo.HttpFilter.client]]
   */
 abstract class HttpFilter:
 
     def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame): HttpResponse[?] < (Async & S)
 
-    /** Compose this filter with another */
+    /** Composes this filter with another. This filter runs first (outermost). */
     final def andThen(other: HttpFilter): HttpFilter =
         val self = this
         new HttpFilter:
@@ -40,7 +58,7 @@ abstract class HttpFilter:
         end new
     end andThen
 
-    /** Enable this filter for the given computation */
+    /** Activates this filter for the given computation. Stacks with any already-active filter. */
     final def enable[A, S](v: => A < S)(using Frame): A < S =
         HttpFilter.let(this)(v)
 end HttpFilter
@@ -212,7 +230,7 @@ object HttpFilter:
             end new
         end bearerAuth
 
-        /** Adds ETag headers to responses based on MD5 hash of body (only for buffered responses). */
+        /** Adds ETag headers to responses based on MurmurHash3 of body. Only for buffered responses. */
         def etag: HttpFilter =
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
@@ -320,7 +338,7 @@ object HttpFilter:
 
     private val local: Local[HttpFilter] = Local.init(noop)
 
-    /** Run computation with filter added to the current filter stack */
+    // Composes filter onto the current stack — stacks, doesn't replace
     private[kyo] def let[A, S](filter: HttpFilter)(v: => A < S)(using Frame): A < S =
         local.update(_.andThen(filter))(v)
 

@@ -11,7 +11,7 @@ class EasyRacerTest extends Test:
     "scenario 1 - race 2 concurrent requests" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
-                val handler = HttpHandler.get("/1") { (_, _) =>
+                val handler = HttpHandler.get("/1") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num == 1 then
                             promise.get.andThen(HttpResponse.ok("right"))
@@ -34,7 +34,7 @@ class EasyRacerTest extends Test:
     "scenario 2 - race 2 concurrent requests, one connection error" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
-                val handler = HttpHandler.get("/2") { (_, _) =>
+                val handler = HttpHandler.get("/2") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num == 1 then
                             promise.get.andThen {
@@ -59,7 +59,7 @@ class EasyRacerTest extends Test:
     "scenario 3 - race 100 concurrent requests" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
-                val handler = HttpHandler.get("/3") { (_, _) =>
+                val handler = HttpHandler.get("/3") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num < 100 then
                             promise.get.andThen {
@@ -83,7 +83,7 @@ class EasyRacerTest extends Test:
     }
 
     "scenario 4 - race 2 concurrent requests, one with 1s timeout" in run {
-        val handler = HttpHandler.get("/4") { (_, _) =>
+        val handler = HttpHandler.get("/4") { _ =>
             Async.sleep(3.seconds).andThen(HttpResponse.ok("right"))
         }
         startTestServer(handler).map { port =>
@@ -102,7 +102,7 @@ class EasyRacerTest extends Test:
     "scenario 5 - race 2 concurrent requests, non-200 is loser" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
-                val handler = HttpHandler.get("/5") { (_, _) =>
+                val handler = HttpHandler.get("/5") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num == 1 then
                             promise.get.andThen(HttpResponse.serverError("wrong"))
@@ -125,7 +125,7 @@ class EasyRacerTest extends Test:
     "scenario 6 - race 3 concurrent requests, non-200 is loser" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
-                val handler = HttpHandler.get("/6") { (_, _) =>
+                val handler = HttpHandler.get("/6") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num == 1 then
                             promise.get.andThen(HttpResponse.serverError("wrong"))
@@ -152,7 +152,7 @@ class EasyRacerTest extends Test:
     "scenario 7 - hedging with delayed second request" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Instant, Nothing].map { promise =>
-                val handler = HttpHandler.get("/7") { (_, _) =>
+                val handler = HttpHandler.get("/7") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num == 1 then
                             Clock.now.map { firstTime =>
@@ -186,7 +186,7 @@ class EasyRacerTest extends Test:
     "scenario 8 - resource acquire/use/release with race" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Promise[String, Nothing], Nothing].map { promise =>
-                val handler = HttpHandler.get("/8") { (_, request) =>
+                val handler = HttpHandler.get("/8") { request =>
                     val hasOpen  = request.query("open")
                     val hasUse   = request.query("use")
                     val hasClose = request.query("close")
@@ -260,7 +260,7 @@ class EasyRacerTest extends Test:
                             }
                     }
 
-                val handler = HttpHandler.get("/9") { (_, _) =>
+                val handler = HttpHandler.get("/9") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num < 10 then
                             promise.get.map { ch =>
@@ -310,7 +310,7 @@ class EasyRacerTest extends Test:
     "scenario 11 - nested race (race of 2 vs single request)" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Unit, Nothing].map { promise =>
-                val handler = HttpHandler.get("/11") { (_, _) =>
+                val handler = HttpHandler.get("/11") { _ =>
                     counter.incrementAndGet.map { num =>
                         if num == 3 then
                             promise.completeUnitDiscard.andThen(HttpResponse.ok("right"))

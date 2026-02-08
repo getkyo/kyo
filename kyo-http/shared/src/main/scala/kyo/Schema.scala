@@ -2,7 +2,29 @@ package kyo
 
 import scala.deriving.Mirror
 
-/** Schema for JSON encoding/decoding. Wraps zio-schema internally but does not expose ZIO types. */
+/** JSON encoding/decoding type class that bridges typed Scala values and HTTP wire format.
+  *
+  * Schema is the mechanism that enables route-based handlers (auto-deserializing inputs, auto-serializing outputs) and typed client calls
+  * (auto-serializing requests, auto-deserializing responses). Wraps zio-schema internally without exposing ZIO types. Instances are derived
+  * automatically for case classes and sealed traits via `derives Schema`. Built-in instances cover primitives, collections (`Seq`, `List`,
+  * `Vector`, `Set`, `Map`), `Option`, `Either`, and `Maybe`.
+  *
+  * Note: `encode` can throw on encoding failure — it is not effect-tracked. `decode` throws `IllegalArgumentException` on failure. String
+  * decoding falls back to raw text if JSON parsing fails, supporting both JSON-encoded strings and plain text bodies. Unit decoding accepts
+  * empty bodies and JSON null.
+  *
+  * @tparam A
+  *   The type to encode/decode
+  *
+  * @see
+  *   [[kyo.HttpRoute.input]]
+  * @see
+  *   [[kyo.HttpRoute.output]]
+  * @see
+  *   [[kyo.HttpRequest.bodyAs]]
+  * @see
+  *   [[kyo.HttpResponse.bodyAs]]
+  */
 abstract class Schema[A]:
     private[kyo] def zpiSchema: zio.schema.Schema[A]
 

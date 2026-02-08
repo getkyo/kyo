@@ -73,7 +73,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     /** A handler that echoes request details back in the response. Response body contains: method, path, headers, and body.
       */
     def echoHandler(using Frame): HttpHandler[Any] =
-        HttpHandler.get("/*") { (_, request) =>
+        HttpHandler.get("/*") { request =>
             val info = Map(
                 "method"  -> request.method.toString,
                 "path"    -> request.path,
@@ -87,7 +87,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
     def echoHandlerAllMethods(using Frame): Seq[HttpHandler[Any]] =
         import HttpRequest.Method.*
         Seq(GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS).map { method =>
-            HttpHandler.init(method, "/*") { (_, request) =>
+            HttpHandler.init(method, "/*") { request =>
                 val info = Map(
                     "method"  -> request.method.toString,
                     "path"    -> request.path,
@@ -150,19 +150,19 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
     /** A handler that returns JSON data. */
     def jsonHandler[A: Schema](path: String, data: A)(using Frame): HttpHandler[Any] =
-        HttpHandler.get(path) { (_, _) =>
+        HttpHandler.get(path) { _ =>
             HttpResponse.ok(data)
         }
 
     /** A handler that delays before responding. */
     def delayedHandler(path: String, delay: Duration)(using Frame): HttpHandler[Any] =
-        HttpHandler.get(path) { (_, _) =>
+        HttpHandler.get(path) { _ =>
             Async.delay(delay)(HttpResponse.ok("delayed"))
         }
 
     /** A handler that never responds (blocks forever). Useful for timeout tests. */
     def neverRespondHandler(path: String)(using Frame): HttpHandler[Any] =
-        HttpHandler.get(path) { (_, _) =>
+        HttpHandler.get(path) { _ =>
             Latch.init(1).map { latch =>
                 latch.await.andThen(HttpResponse.ok("never"))
             }
@@ -170,7 +170,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
     /** A handler that throws an exception. */
     def errorHandler(path: String)(using Frame): HttpHandler[Any] =
-        HttpHandler.get(path) { (_, _) =>
+        HttpHandler.get(path) { _ =>
             throw new RuntimeException("test error")
         }
 

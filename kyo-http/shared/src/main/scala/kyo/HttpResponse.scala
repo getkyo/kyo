@@ -4,6 +4,46 @@ import java.nio.charset.StandardCharsets
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
+/** Immutable HTTP response used on both sides of the wire — server code builds and sends responses, client code receives and inspects them.
+  *
+  * Like `HttpRequest`, the type parameter `B` tracks the body type. Body accessors (`bodyText`, `bodyAs[A]`, `bodyBytes`) require
+  * `B <:< HttpBody.Bytes` evidence. `bodyStream` works for both body types by wrapping buffered content as a single-chunk stream.
+  *
+  * Responses are constructed via factory methods on the companion organized by status code category (2xx, 3xx, 4xx, 5xx). JSON responses
+  * auto-serialize via `Schema`. Streaming responses are built with `stream`, `streamSse`, and `streamNdjson`. Builder methods return new
+  * immutable instances. Cookie setting supports the full attribute set (SameSite, Secure, HttpOnly, MaxAge, Domain, Path).
+  *
+  *   - Status-named factory methods for common responses (`ok`, `notFound`, `badRequest`, `redirect`, etc.)
+  *   - JSON body serialization via `Schema`
+  *   - SSE and NDJSON streaming response factories
+  *   - Cookie setting with full attribute support
+  *   - Cache control, ETag, Content-Disposition, Content-Encoding, and Last-Modified builders
+  *
+  * IMPORTANT: `addHeader` replaces existing headers with the same name (filters out then appends). It has set semantics, not append
+  * semantics. Compare with `HttpRequest.addHeader` which appends without replacing.
+  *
+  * IMPORTANT: `bodyAs[A]` wraps decode failure in `Abort[HttpError.ParseError]`. Compare with `HttpRequest.bodyAs[A]` which throws
+  * directly.
+  *
+  * Note: `header(name)` returns the last matching header (consistent with replace semantics). Compare with `HttpRequest.header(name)` which
+  * returns the first.
+  *
+  * Note: Header lookups are case-insensitive, following HTTP/1.1 spec.
+  *
+  * @tparam B
+  *   The body type, either `HttpBody.Bytes` or `HttpBody.Streamed`
+  *
+  * @see
+  *   [[kyo.HttpRequest]]
+  * @see
+  *   [[kyo.HttpBody]]
+  * @see
+  *   [[kyo.HttpResponse.Status]]
+  * @see
+  *   [[kyo.HttpResponse.Cookie]]
+  * @see
+  *   [[kyo.Schema]]
+  */
 final class HttpResponse[+B <: HttpBody] private (
     val status: HttpResponse.Status,
     private val _headers: Seq[(String, String)],
@@ -42,7 +82,7 @@ final class HttpResponse[+B <: HttpBody] private (
     /** Returns the Content-Length of the response body. Only available for buffered responses. */
     def contentLength(using ev: B <:< HttpBody.Bytes): Long = ev(body).data.length.toLong
 
-    /** Parses the response body as type A. Only available for buffered responses. */
+    /** Parses the response body as type A via Schema. Fails with `Abort[HttpError.ParseError]` on decode failure. */
     def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes)(using Frame): A < Abort[HttpError] = ev(body).as[A]
 
     /** Returns the body as a byte stream. Works for both buffered and streaming responses. */
@@ -51,7 +91,9 @@ final class HttpResponse[+B <: HttpBody] private (
 
     // --- Builders (preserve body type) ---
 
+    /** Replaces any existing header with the same name, then appends (set semantics, not append). */
     def addHeader(name: String, value: String): HttpResponse[B] =
+        // Filter out existing headers with same name, then append — gives set semantics
         val lowerName  = name.toLowerCase
         val newHeaders = _headers.filterNot(_._1.toLowerCase == lowerName) :+ (name -> value)
         new HttpResponse(status, newHeaders, _cookies, body)
@@ -205,6 +247,7 @@ object HttpResponse:
     def stream(s: Stream[Span[Byte], Async], status: Status = Status.OK): HttpResponse[HttpBody.Streamed] =
         new HttpResponse(status, Seq.empty, Seq.empty, HttpBody.stream(s))
 
+    /** Creates a streaming SSE response. Serializes events using Schema, sets appropriate SSE headers. */
     def streamSse[V: Schema: Tag](events: Stream[HttpEvent[V], Async], status: Status = Status.OK)(using
         Frame,
         Tag[Emit[Chunk[HttpEvent[V]]]]
@@ -227,6 +270,7 @@ object HttpResponse:
         )
     end streamSse
 
+    /** Creates a streaming NDJSON response. One JSON line per stream element. */
     def streamNdjson[V: Schema: Tag](values: Stream[V, Async], status: Status = Status.OK)(using
         Frame,
         Tag[Emit[Chunk[V]]]
@@ -245,6 +289,11 @@ object HttpResponse:
 
     // --- Auxiliary types ---
 
+    /** HTTP response status code as a zero-cost opaque type over Int.
+      *
+      * Category predicates: `isSuccess` (2xx), `isRedirect` (3xx), `isClientError` (4xx), `isServerError` (5xx), `isError` (4xx/5xx).
+      * Comprehensive standard status constants grouped by category.
+      */
     opaque type Status <: Int = Int
 
     object Status:
@@ -336,6 +385,7 @@ object HttpResponse:
 
     end Status
 
+    /** Response cookie with attributes for Set-Cookie header serialization. Builder methods for each attribute. */
     case class Cookie(
         name: String,
         value: String,

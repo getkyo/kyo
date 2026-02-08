@@ -51,7 +51,7 @@ class CurlBackendTest extends AnyFreeSpec with NonImplicitAssertions:
 
         "server throws UnsupportedOperationException" in {
             assertThrows[UnsupportedOperationException] {
-                CurlBackend.server(HttpServer.Config.default, null)
+                CurlBackend.server(0, "0.0.0.0", 65536, 128, true, false, 0, null)
             }
         }
     }

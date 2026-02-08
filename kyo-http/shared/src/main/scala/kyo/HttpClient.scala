@@ -7,10 +7,57 @@ import kyo.internal.SseDecoder
 import kyo.internal.UrlParser
 import scala.annotation.targetName
 
+/** HTTP client for sending requests with connection pooling, automatic retries, and redirect following.
+  *
+  * Dual API: instance methods for per-client operations, companion methods delegate through a shared `Local`-backed client. Most code uses
+  * companion convenience methods; explicit `init` only when custom pool config is needed.
+  *
+  * Connection lifecycle: pooled connections for buffered `send`, non-pooled scoped connections for `stream`. Connections are pooled per
+  * (host, port, ssl) triple. Request pipeline: filters → base URL resolution → timeout → redirect following → retry with `Schedule`. Each
+  * concern is layered independently.
+  *
+  * Two API tiers on the companion: `send` returns the response regardless of status code, while typed convenience methods (`get`, `post`,
+  * `put`, `delete`) auto-deserialize via `Schema` and fail with `HttpError.StatusError` on error status (4xx/5xx).
+  *
+  *   - Buffered send with connection pooling and automatic keep-alive
+  *   - Streaming responses (SSE, NDJSON, raw byte streams)
+  *   - Automatic redirect following with configurable limit
+  *   - Retry with `Schedule`-based policies
+  *   - Per-request timeout and connect timeout support
+  *   - `Config` for base URL, timeout, redirect, and retry settings (request-level via `Local`)
+  *   - `warmupUrl`/`warmupUrls` for pre-establishing connections
+  *   - Route-based typed client via `call`
+  *
+  * IMPORTANT: `send` returns any response including errors. The typed convenience methods (`get`, `post`, etc.) fail with
+  * `HttpError.StatusError` on error status (4xx/5xx). 3xx responses (when redirects are disabled) pass through without error.
+  *
+  * IMPORTANT: `stream` bypasses the redirect/retry/timeout pipeline entirely. Streaming requests only get filters, base URL resolution, and
+  * connect timeout. They do NOT get redirect following, retry, or request timeout. The connection is non-pooled and scoped to the enclosing
+  * `Scope`.
+  *
+  * Note: `Config` is per-request (applied via `Local` with `withConfig`), not per-client. Pool-level settings (maxConnectionsPerHost, etc.)
+  * are set at `init` time.
+  *
+  * Note: The shared client uses daemon threads so the JVM can exit without explicit shutdown.
+  *
+  * @see
+  *   [[kyo.HttpRequest]]
+  * @see
+  *   [[kyo.HttpResponse]]
+  * @see
+  *   [[kyo.HttpFilter]]
+  * @see
+  *   [[kyo.HttpError]]
+  * @see
+  *   [[kyo.HttpServer]]
+  * @see
+  *   [[kyo.HttpClient.Config]]
+  */
 final class HttpClient private (
     private val pool: ConnectionPool,
     private val factory: Backend.ConnectionFactory
 ):
+    /** Sends a buffered request through the filter/redirect/retry pipeline. Returns the response regardless of status code. */
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpFilter.use { filter =>
             HttpClient.configLocal.use { config =>
@@ -28,9 +75,8 @@ final class HttpClient private (
             }
         }
 
-    /** Streams the response as an HttpResponse with a streaming body.
-      *
-      * Uses a non-pooled connection. The connection is closed when the enclosing Scope exits. Applies filters to the request/response.
+    /** Streams the response body. WARNING: bypasses redirect/retry/timeout — only filters, base URL, and connect timeout apply. Uses a
+      * non-pooled connection closed when the enclosing Scope exits.
       */
     def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
         HttpFilter.use { filter =>
@@ -40,6 +86,7 @@ final class HttpClient private (
                     filteredRequest =>
                         val effectiveUrl = HttpClient.buildEffectiveUrl(config, filteredRequest)
                         val parsed       = HttpClient.parseUrl(effectiveUrl)
+                        // Direct connection — bypasses sendWithPolicies, so no redirect/retry/timeout
                         pool.connectDirect(parsed.host, parsed.port, parsed.ssl, config.connectTimeout).map { conn =>
                             Scope.ensure(conn.close).andThen(conn.stream(filteredRequest.asInstanceOf[HttpRequest[?]]))
                         }
@@ -195,7 +242,10 @@ object HttpClient:
 
     // --- Route-based client ---
 
-    /** Invoke a typed route, sending a request built from the route definition and input. */
+    /** Client-side counterpart to `HttpRoute.handle`. Takes the route's flat `In` tuple and maps each element to wire format: path captures
+      * → URL segments, query params → query string, header params → HTTP headers, body input → JSON request body. Deserializes the response
+      * via the route's output schema and typed errors via the route's error schemas.
+      */
     def call[In, Out, Err](route: HttpRoute[In, Out, Err], in: In)(using Frame): Out < (Async & Abort[HttpError] & Abort[Err]) =
         val pathStr     = buildRoutePath(route.path, in)
         val queryString = buildRouteQueryString(route.queryParams, in, route.path)
@@ -229,14 +279,17 @@ object HttpClient:
 
     // --- Context management ---
 
+    /** Swaps the client instance for the given computation. */
     def let[A, S](client: HttpClient)(v: A < S)(using Frame): A < S =
         clientLocal.let(client)(v)
 
+    /** Applies a config transformation for the given computation (stacks with current config). */
     def withConfig[A, S](f: Config => Config)(v: A < S)(using Frame): A < S =
         configLocal.use(c => configLocal.let(f(c))(v))
 
     // --- Factory methods ---
 
+    /** Scope-managed client lifecycle. Automatically shuts down the connection pool on scope exit. */
     def init(
         maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
         connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
@@ -261,6 +314,7 @@ object HttpClient:
             backend
         ))(_.closeNow).map(f)
 
+    /** No automatic shutdown. Caller must close explicitly. */
     def initUnscoped(
         maxConnectionsPerHost: Maybe[Int] = DefaultMaxConnectionsPerHost,
         connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
@@ -302,6 +356,10 @@ object HttpClient:
 
     // --- Config ---
 
+    /** Per-request configuration for the HTTP client pipeline. Applied via `Local` with `withConfig`.
+      *
+      * Note: `retryOn` defaults to retrying on server errors (5xx). Override with `retryWhen` for custom logic.
+      */
     case class Config(
         baseUrl: Maybe[String] = Absent,
         timeout: Maybe[Duration] = Absent,
@@ -372,6 +430,7 @@ object HttpClient:
     private val clientLocal      = Local.init(sharedClient)
     private[kyo] val configLocal = Local.init(Config.default)
 
+    // Fails on 4xx/5xx (isError = status >= 400). 3xx responses pass through.
     private def checkStatusAndParse[A: Schema](response: HttpResponse[HttpBody.Bytes])(using Frame): A < Abort[HttpError] =
         if response.status.isError then
             Abort.fail(HttpError.StatusError(response.status, response.bodyText))
@@ -409,7 +468,7 @@ object HttpClient:
             ParsedUrl(rawHost, effectivePort, ssl, rawPath, rawQuery)
         }
 
-    /** Shared redirect/retry/timeout logic — delegates raw I/O to ConnectionPool. */
+    // Pipeline: 1. send via pool → 2. apply timeout → 3. follow redirects → 4. retry on retriable responses
     private def sendWithPolicies(
         pool: ConnectionPool,
         url: String,

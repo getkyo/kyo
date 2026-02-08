@@ -14,7 +14,7 @@ class OpenApiGeneratorTest extends Test:
     "OpenApiGenerator" - {
 
         "generates basic OpenAPI structure" in run {
-            val handler = HttpHandler.get("/health") { (_, _) =>
+            val handler = HttpHandler.get("/health") { _ =>
                 HttpResponse.ok("OK")
             }
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
@@ -27,7 +27,7 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "includes custom title and version" in run {
-            val handler = HttpHandler.get("/health") { (_, _) =>
+            val handler = HttpHandler.get("/health") { _ =>
                 HttpResponse.ok("OK")
             }
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
@@ -38,7 +38,7 @@ class OpenApiGeneratorTest extends Test:
         }
 
         "includes description" in run {
-            val handler = HttpHandler.get("/health") { (_, _) =>
+            val handler = HttpHandler.get("/health") { _ =>
                 HttpResponse.ok("OK")
             }
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>

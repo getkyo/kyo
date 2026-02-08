@@ -5,6 +5,52 @@ import kyo.HttpResponse.Status
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
+/** Server-side request handler that connects a route definition to application logic.
+  *
+  * Each handler declares a route (method + path + schemas) and a function that processes matched requests. The router dispatches to the
+  * matching handler based on method and path.
+  *
+  * Two handler styles:
+  *
+  * Route-based handlers via `HttpHandler.init(route)(f)` get auto-deserialized typed inputs and auto-serialized typed outputs with error
+  * mapping. The function `f: In => Out` receives the route's accumulated `In` type as a single flat argument — all path captures, query,
+  * header, and body params combined via `Inputs`.
+  *
+  * Low-level handlers via `HttpHandler.init(method, path)(f)` receive path captures and the raw `HttpRequest` flattened into a single
+  * function argument via the `Inputs` match type — the request is the last element. With no captures the function takes just the request;
+  * with one capture it takes `(capture, request)`; with multiple captures all values are flattened into a single tuple ending with the
+  * request.
+  *
+  *   - Route-based handlers with automatic JSON serialization/deserialization
+  *   - Low-level handlers with flattened path captures + request via `Inputs` match type
+  *   - Per-method convenience factories (`get`, `post`, `put`, `patch`, `delete`, `head`, `options`)
+  *   - Streaming request body support via `streamingBody`
+  *   - SSE and NDJSON streaming response handlers
+  *   - Typed error responses mapped by status code via route error schemas
+  *   - Health check and constant response helpers
+  *
+  * IMPORTANT: In route-based handlers, `Abort[Err]` is caught internally and mapped to HTTP error responses using the route's error
+  * schemas. Unmatched errors and `Panic` exceptions become 500 responses.
+  *
+  * IMPORTANT: Handler effects beyond `Async` (the `S` type parameter) must be handled inside the handler function itself — the server does
+  * not handle them.
+  *
+  * @tparam S
+  *   Additional effects required by the handler function beyond `Async`
+  *
+  * @see
+  *   [[kyo.HttpRoute]]
+  * @see
+  *   [[kyo.HttpRequest]]
+  * @see
+  *   [[kyo.HttpResponse]]
+  * @see
+  *   [[kyo.HttpServer]]
+  * @see
+  *   [[kyo.HttpPath]]
+  * @see
+  *   [[kyo.HttpFilter]]
+  */
 sealed abstract class HttpHandler[-S]:
     def route: HttpRoute[?, ?, ?]
     private[kyo] def streamingRequest: Boolean = false
@@ -13,11 +59,12 @@ end HttpHandler
 
 object HttpHandler:
 
-    // Note on asInstanceOf casts in this method:
-    // - Schema[Any] casts are justified due to type erasure (Schema[?] loses type info)
-    // - fullInput.asInstanceOf[In] bridges runtime-extracted values to compile-time types
-    //   (the route DSL builds In type via match types, but runtime extraction is dynamic)
-    // - Abort.run[Any] cast is needed because Err is erased at runtime
+    /** Creates a route-based handler. `f: In => Out` receives the route's accumulated `In` type as a flat argument — all path captures,
+      * query, header, and body params combined via `Inputs`. Output is serialized to JSON. Errors matching route error schemas get the
+      * corresponding status code; unmatched errors become 500.
+      */
+    // asInstanceOf casts: Schema[Any] due to type erasure, fullInput.asInstanceOf[In] bridges runtime-extracted values
+    // to compile-time types (route DSL builds In via match types, runtime extraction is dynamic), Abort.run[Any] because Err is erased
     @nowarn("msg=anonymous")
     inline def init[In, Out, Err, S](r: HttpRoute[In, Out, Err])(inline f: In => Out < (Abort[Err] & Async & S))(using
         frame: Frame
@@ -62,11 +109,15 @@ object HttpHandler:
                 }
             end apply
 
+    /** Creates a low-level handler. The function receives path captures and the request flattened into a single argument via
+      * `Inputs[A, HttpRequest]`. No captures → just the request; one capture → `(capture, request)`; multiple → flat tuple ending with
+      * request.
+      */
     @nowarn("msg=anonymous")
     inline def init[A, S](
         method: Method,
         path: HttpPath[A]
-    )(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
+    )(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S))(using
         Frame
     ): HttpHandler[S] =
         new HttpHandler[S]:
@@ -74,51 +125,66 @@ object HttpHandler:
             private[kyo] def apply(request: HttpRequest[?]): kyo.HttpResponse[?] < (Async & S) =
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
-                f(pathInput.asInstanceOf[A], req)
+                val fullInput = combineInputs(pathInput, req)
+                f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]]])
             end apply
 
+    /** Creates a GET handler that returns "healthy". */
     def health(path: HttpPath[Unit] = "/health")(using Frame): HttpHandler[Any] =
-        init(Method.GET, path)((_, _) => kyo.HttpResponse.ok("healthy"))
+        init(Method.GET, path)(_ => kyo.HttpResponse.ok("healthy"))
 
+    /** Creates a handler that always returns a fixed status or response, ignoring the request. */
     def const[A](method: Method, path: HttpPath[A], status: Status)(using Frame): HttpHandler[Any] =
-        init(method, path)((_, _) => kyo.HttpResponse(status))
+        new HttpHandler[Any]:
+            val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
+            private[kyo] def apply(request: HttpRequest[?]): kyo.HttpResponse[?] < Async =
+                kyo.HttpResponse(status)
 
     def const[A](method: Method, path: HttpPath[A], response: kyo.HttpResponse[?])(using Frame): HttpHandler[Any] =
-        init(method, path)((_, _) => response)
+        new HttpHandler[Any]:
+            val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
+            private[kyo] def apply(request: HttpRequest[?]): kyo.HttpResponse[?] < Async =
+                response
 
-    inline def get[A, S](path: HttpPath[A])(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
-        Frame
+    inline def get[A, S](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S))(
+        using Frame
     ): HttpHandler[S] =
         init(Method.GET, path)(f)
 
-    inline def post[A, S](path: HttpPath[A])(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
-        Frame
+    inline def post[
+        A,
+        S
+    ](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S))(
+        using Frame
     ): HttpHandler[S] =
         init(Method.POST, path)(f)
 
-    inline def put[A, S](path: HttpPath[A])(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
-        Frame
+    inline def put[A, S](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S))(
+        using Frame
     ): HttpHandler[S] =
         init(Method.PUT, path)(f)
 
-    inline def patch[A, S](path: HttpPath[A])(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
-        Frame
-    ): HttpHandler[S] =
+    inline def patch[A, S](path: HttpPath[A])(
+        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S)
+    )(using Frame): HttpHandler[S] =
         init(Method.PATCH, path)(f)
 
-    inline def delete[A, S](path: HttpPath[A])(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
-        Frame
-    ): HttpHandler[S] =
+    inline def delete[A, S](path: HttpPath[A])(
+        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S)
+    )(using Frame): HttpHandler[S] =
         init(Method.DELETE, path)(f)
 
-    inline def head[A, S](path: HttpPath[A])(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
-        Frame
+    inline def head[
+        A,
+        S
+    ](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S))(
+        using Frame
     ): HttpHandler[S] =
         init(Method.HEAD, path)(f)
 
-    inline def options[A, S](path: HttpPath[A])(inline f: (A, HttpRequest[HttpBody.Bytes]) => kyo.HttpResponse[?] < (Async & S))(using
-        Frame
-    ): HttpHandler[S] =
+    inline def options[A, S](path: HttpPath[A])(
+        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => kyo.HttpResponse[?] < (Async & S)
+    )(using Frame): HttpHandler[S] =
         init(Method.OPTIONS, path)(f)
 
     // --- Streaming request body ---
@@ -132,7 +198,7 @@ object HttpHandler:
     inline def streamingBody[A, S](
         method: Method,
         path: HttpPath[A]
-    )(inline f: (A, HttpRequest[HttpBody.Streamed]) => kyo.HttpResponse[?] < (Async & S))(using
+    )(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Streamed]] => kyo.HttpResponse[?] < (Async & S))(using
         Frame
     ): HttpHandler[S] =
         new HttpHandler[S]:
@@ -140,8 +206,8 @@ object HttpHandler:
             override private[kyo] def streamingRequest: Boolean = true
             private[kyo] def apply(request: HttpRequest[?]): kyo.HttpResponse[?] < (Async & S) =
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], request.path)
-                // Safe cast: server guarantees streaming body for streaming handlers
-                f(pathInput.asInstanceOf[A], request.asInstanceOf[HttpRequest[HttpBody.Streamed]])
+                val fullInput = combineInputs(pathInput, request.asInstanceOf[HttpRequest[HttpBody.Streamed]])
+                f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Streamed]]])
             end apply
         end new
     end streamingBody
@@ -151,7 +217,7 @@ object HttpHandler:
     inline def streamSse[A, V: Schema: Tag, S](
         path: HttpPath[A]
     )(
-        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[HttpEvent[V], Async & S]
+        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[HttpEvent[V], Async & S]
     )(using Frame): HttpHandler[S] =
         streamSse(Method.GET, path)(f)
 
@@ -160,16 +226,16 @@ object HttpHandler:
         method: Method,
         path: HttpPath[A]
     )(
-        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[HttpEvent[V], Async & S]
+        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[HttpEvent[V], Async & S]
     )(using Frame): HttpHandler[S] =
         val schema = Schema[V]
         new HttpHandler[S]:
             val route = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
             private[kyo] def apply(request: HttpRequest[?]) =
-                // Safe cast: server guarantees buffered body for non-streaming handlers
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
-                val stream    = f(pathInput.asInstanceOf[A], req)
+                val fullInput = combineInputs(pathInput, req)
+                val stream    = f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]]])
                 HttpResponse.streamSse(stream.asInstanceOf[Stream[HttpEvent[Any], Async]])(using schema.asInstanceOf[Schema[Any]])
             end apply
         end new
@@ -180,7 +246,7 @@ object HttpHandler:
     inline def streamNdjson[A, V: Schema: Tag, S](
         path: HttpPath[A]
     )(
-        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[V, Async & S]
+        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[V, Async & S]
     )(using Frame): HttpHandler[S] =
         streamNdjson(Method.GET, path)(f)
 
@@ -189,16 +255,16 @@ object HttpHandler:
         method: Method,
         path: HttpPath[A]
     )(
-        inline f: (A, HttpRequest[HttpBody.Bytes]) => Stream[V, Async & S]
+        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[V, Async & S]
     )(using Frame): HttpHandler[S] =
         val schema = Schema[V]
         new HttpHandler[S]:
             val route = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
             private[kyo] def apply(request: HttpRequest[?]) =
-                // Safe cast: server guarantees buffered body for non-streaming handlers
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
-                val stream    = f(pathInput.asInstanceOf[A], req)
+                val fullInput = combineInputs(pathInput, req)
+                val stream    = f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]]])
                 HttpResponse.streamNdjson(stream.asInstanceOf[Stream[Any, Async]])(using schema.asInstanceOf[Schema[Any]])
             end apply
         end new
@@ -246,6 +312,7 @@ object HttpHandler:
                 case (v1, v2: Tuple)        => Tuple.fromArray(v1 +: v2.toArray)
                 case (v1, v2)               => (v1, v2)
 
+    // Combines in declaration order: path → query → header → body (must match route's In type accumulation)
     private def combineAllInputs(pathInput: Any, queryInput: Any, headerInput: Any, bodyInput: Any): Any =
         val combined1 = combineInputs(pathInput, queryInput)
         val combined2 = combineInputs(combined1, headerInput)

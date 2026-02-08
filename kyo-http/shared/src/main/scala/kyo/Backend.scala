@@ -1,13 +1,19 @@
 package kyo
 
-/** Minimal backend abstraction for HTTP client and server I/O.
+/** Minimal transport abstraction for HTTP client and server I/O.
   *
-  * Backend implementations only handle raw transport: creating connections and binding servers. All protocol-level behavior (redirect
-  * following, retry, timeout, connection pooling, routing, filtering) lives in shared HttpClient/HttpServer code.
+  * Backend implementations handle only raw transport: creating connections and binding servers. All protocol-level behavior (redirect
+  * following, retry, timeout, connection pooling, routing, filtering) lives in shared `HttpClient`/`HttpServer` code. Users interact with
+  * `HttpClient` and `HttpServer` directly — Backend is an extension point for custom transport implementations.
   *
   * Platform-specific implementations:
   *   - JVM: NettyBackend (Netty 4.2 with epoll/kqueue)
   *   - JS: FetchBackend (browser/Node.js Fetch API)
+  *
+  * @see
+  *   [[kyo.HttpClient]]
+  * @see
+  *   [[kyo.HttpServer]]
   */
 abstract class Backend:
 
