@@ -1049,7 +1049,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "server receives multi-chunk streaming body" ignore run {
+        "server receives multi-chunk streaming body" in run {
             val handler = HttpHandler.streamingBody(Method.POST, "/upload") { request =>
                 request.bodyStream.run.map { chunks =>
                     val text = chunks.foldLeft("")((acc, span) =>
