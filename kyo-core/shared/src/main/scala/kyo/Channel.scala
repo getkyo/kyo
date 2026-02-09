@@ -267,10 +267,11 @@ object Channel:
                         case chunk if chunk.nonEmpty => Emit.value(chunk)
                         case _ =>
                             Channel.take(self).map { a =>
-                                Abort.run[Closed](Channel.drainUpTo(self)(maxChunkSize - 1)).map {
-                                    case Result.Success(ch)     => Emit.value(Chunk(a).concat(ch))
-                                    case error => Emit.value(Chunk(a)).andThen(Abort.error(error))
-                                }
+                                Channel.drainUpTo(self)(maxChunkSize - 1)
+                                    .map(ch => Emit.value(Chunk(a).concat(ch)))
+                                    .handle(
+                                        Abort.recover[Closed](e => Emit.value(Chunk(a)).andThen(Abort.fail(e)))
+                                    )
                             }
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
