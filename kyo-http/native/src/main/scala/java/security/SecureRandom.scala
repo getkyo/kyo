@@ -1,5 +1,6 @@
 package java.security
 
+import scala.annotation.tailrec
 import scala.scalanative.libc.stdio.FILE
 import scala.scalanative.libc.stdio.fclose
 import scala.scalanative.libc.stdio.fopen
@@ -21,13 +22,14 @@ class SecureRandom extends java.util.Random(0L):
                     val read = fread(buf, 1.toCSize, len.toCSize, fp)
                     if read != len.toCSize then
                         throw new RuntimeException("Failed to read from /dev/urandom")
-                    var i = 0
-                    while i < len do
-                        bytes(i) = buf(i)
-                        i += 1
+                    @tailrec def loop(i: Int): Unit =
+                        if i < len then
+                            bytes(i) = buf(i)
+                            loop(i + 1)
+                    loop(0)
                 }
             finally
-                val _ = fclose(fp)
+                val _ = fclose(fp) // can't use discard() — not in kyo package
             end try
         end if
     end nextBytes

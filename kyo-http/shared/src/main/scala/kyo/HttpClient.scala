@@ -357,6 +357,7 @@ object HttpClient:
         }.map(f)
     end initUnscopedWith
 
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         /** Low-level client initialization requiring AllowUnsafe. */
         def init(

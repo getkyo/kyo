@@ -144,6 +144,11 @@ final class HttpResponse[+B <: HttpBody] private (
         if _cookies.isEmpty then _headers
         else _cookies.foldLeft(_headers)((h, c) => h.add("Set-Cookie", encodeCookie(c)))
 
+    /** Returns a new response with cookies materialized as Set-Cookie headers. */
+    private[kyo] def materializeCookies: HttpResponse[B] =
+        if _cookies.isEmpty then this
+        else new HttpResponse(status, resolvedHeaders, Seq.empty, _body)
+
     /** Materializes a streaming body into bytes, or returns self if already bytes. */
     private[kyo] def ensureBytes(using Frame): HttpResponse[HttpBody.Bytes] < Async =
         body.use(

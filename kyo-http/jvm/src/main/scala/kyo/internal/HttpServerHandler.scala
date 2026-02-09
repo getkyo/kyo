@@ -390,7 +390,7 @@ final private[kyo] class HttpServerHandler(
 
     override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit =
         cause.printStackTrace()
-        val body      = Option(cause.getMessage).getOrElse("Internal Server Error")
+        val body      = Maybe(cause.getMessage).getOrElse("Internal Server Error")
         val bodyBytes = body.getBytes(StandardCharsets.UTF_8)
         val nettyResp = new DefaultFullHttpResponse(
             HttpVersion.HTTP_1_1,

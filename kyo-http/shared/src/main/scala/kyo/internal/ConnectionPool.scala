@@ -52,7 +52,7 @@ end ConnectionPool
 
 private[kyo] object ConnectionPool:
 
-    private[kyo] case class PoolKey(host: String, port: Int, ssl: Boolean)
+    private[kyo] case class PoolKey(host: String, port: Int, ssl: Boolean) derives CanEqual
 
     /** Per-host pool managing idle connections with bounded capacity. */
     final private class HostPool(

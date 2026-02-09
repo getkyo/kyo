@@ -68,11 +68,9 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
             handler.reject(request.method, path) match
                 case Present(response) => response
                 case Absent =>
-                    Abort.run[Nothing](handler.handle(request)).map {
-                        case Result.Success(resp) => ensureBytes(resp)
-                        case Result.Panic(e) => HttpResponse.serverError(if e.getMessage != null then e.getMessage else e.getClass.getName)
-                        case Result.Failure(_) => HttpResponse.serverError("unexpected failure")
-                    }
+                    handler.handle(request)
+                        .handle(Abort.recover[Nothing](_ => HttpResponse.serverError(""), e => HttpResponse.serverError(errorMessage(e))))
+                        .map(ensureBytes)
             end match
     end send
 
@@ -80,11 +78,7 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
         val path = extractPath(request.url)
         handler.reject(request.method, path) match
             case Present(response) =>
-                // Match Netty behavior: error statuses abort with StatusError for streaming
-                if response.status.isError then
-                    Abort.fail(HttpError.StatusError(response.status, response.body.span.toArrayUnsafe.map(_.toChar).mkString))
-                else
-                    response.withBody(HttpBody.stream(Stream.init(Chunk(response.body.span))))
+                ensureStreamed(response)
             case Absent =>
                 val result =
                     if handler.isStreaming(request.method, path) then
@@ -122,19 +116,11 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                                     handler.handle(bytesReq).map(ensureStreamed)
                                 }
                         )
-                Abort.run[Nothing](result).map {
-                    case Result.Success(resp) =>
-                        // Match Netty behavior: error statuses abort with StatusError for streaming
-                        if resp.status.isError then
-                            Abort.fail(HttpError.StatusError(resp.status, ""))
-                        else
-                            resp
-                    case Result.Panic(e) =>
-                        val msg = if e.getMessage != null then e.getMessage else e.getClass.getName
-                        ensureStreamed(HttpResponse.serverError(msg))
-                    case Result.Failure(_) =>
-                        ensureStreamed(HttpResponse.serverError("unexpected failure"))
-                }
+                result
+                    .handle(Abort.recover[Nothing](
+                        _ => ensureStreamed(HttpResponse.serverError("")),
+                        e => ensureStreamed(HttpResponse.serverError(errorMessage(e)))
+                    ))
         end match
     end stream
 
@@ -160,9 +146,15 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
         end if
     end extractPath
 
+    private def errorMessage(e: Throwable): String =
+        if e.getMessage != null then e.getMessage else e.getClass.getName
+
+    private def materialize[B <: HttpBody](response: HttpResponse[B]): HttpResponse[B] =
+        response.materializeCookies
+
     private def ensureBytes(response: HttpResponse[?])(using Frame): HttpResponse[HttpBody.Bytes] < Async =
         response.body.use(
-            b => response.withBody(b),
+            b => materialize(response.withBody(b)),
             s =>
                 s.stream.run.map { chunks =>
                     val totalSize = chunks.foldLeft(0)((acc, span) => acc + span.size)
@@ -173,14 +165,14 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                         java.lang.System.arraycopy(bytes, 0, arr, pos, bytes.length)
                         pos += bytes.length
                     }
-                    response.withBody(HttpBody(arr))
+                    materialize(response.withBody(HttpBody(arr)))
                 }
         )
 
     private def ensureStreamed(response: HttpResponse[?])(using Frame): HttpResponse[HttpBody.Streamed] =
         response.body.use(
-            b => response.withBody(HttpBody.stream(Stream.init(Chunk(b.span)))),
-            s => response.withBody(s)
+            b => materialize(response.withBody(HttpBody.stream(Stream.init(Chunk(b.span))))),
+            s => materialize(response.withBody(s))
         )
 
 end TestConnection

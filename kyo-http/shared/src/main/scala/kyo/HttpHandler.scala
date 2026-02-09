@@ -331,15 +331,15 @@ object HttpHandler:
     private def findErrorResponse(
         err: Any,
         errorSchemas: Seq[(HttpResponse.Status, Schema[?], ConcreteTag[Any])]
-    ): Option[HttpResponse[HttpBody.Bytes]] =
-        @tailrec def loop(remaining: Seq[(HttpResponse.Status, Schema[?], ConcreteTag[Any])]): Option[HttpResponse[HttpBody.Bytes]] =
+    ): Maybe[HttpResponse[HttpBody.Bytes]] =
+        @tailrec def loop(remaining: Seq[(HttpResponse.Status, Schema[?], ConcreteTag[Any])]): Maybe[HttpResponse[HttpBody.Bytes]] =
             remaining match
-                case Seq() => None
+                case Seq() => Absent
                 case (status, schema, tag) +: tail =>
                     if tag.accepts(err) then
                         try
                             val json = schema.asInstanceOf[Schema[Any]].encode(err)
-                            Some(HttpResponse(status, json).addHeader("Content-Type", "application/json"))
+                            Present(HttpResponse(status, json).addHeader("Content-Type", "application/json"))
                         catch
                             case _: Throwable => loop(tail)
                     else loop(tail)
