@@ -501,7 +501,8 @@ object HttpHandler:
                 val literalSize = HttpPath.countSegments(v)
                 ((), parts.drop(literalSize))
             case HttpPath.Segment.Capture(_, parse) =>
-                val decoded = java.net.URLDecoder.decode(parts.head, "UTF-8")
+                // Escape + before decoding: in URL paths, + is literal (only means space in form-encoded queries)
+                val decoded = java.net.URLDecoder.decode(parts.head.replace("+", "%2B"), "UTF-8")
                 val value   = parse(decoded)
                 (value, parts.tail)
             case HttpPath.Segment.Concat(left, right) =>

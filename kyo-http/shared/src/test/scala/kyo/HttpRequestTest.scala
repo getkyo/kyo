@@ -732,6 +732,47 @@ class HttpRequestTest extends Test:
             }
             assert(count == 2)
         }
+
+        "cookie with double-quoted value" in {
+            // RFC 6265 allows quoted cookie values
+            val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("Cookie", "session=\"abc123\""))
+            val cookie  = request.cookie("session")
+            assert(cookie.isDefined)
+        }
+
+        "query param with encoded slash preserved" in {
+            // %2F in query should stay encoded and decode to /
+            val request = HttpRequest.get("http://example.com?path=a%2Fb")
+            assert(request.query("path") == Present("a/b"))
+        }
+
+        "query param with bare key (no equals)" in {
+            val request = HttpRequest.get("http://example.com?flag&name=value")
+            assert(request.query("name") == Present("value"))
+        }
+
+        "empty query string (bare ?)" in {
+            val request = HttpRequest.get("http://example.com/path?")
+            assert(request.path == "/path")
+        }
+
+        "multiple cookies in single header" in {
+            val request = HttpRequest.get(
+                "http://example.com",
+                HttpHeaders.empty.add("Cookie", "a=1; b=2; c=3")
+            )
+            assert(request.cookies.size == 3)
+            assert(request.cookie("a").map(_.value) == Present("1"))
+            assert(request.cookie("c").map(_.value) == Present("3"))
+        }
+
+        "header value with leading/trailing spaces" in {
+            val request = HttpRequest.get(
+                "http://example.com",
+                HttpHeaders.empty.add("X-Custom", "  spaced  ")
+            )
+            assert(request.header("X-Custom").isDefined)
+        }
     }
 
 end HttpRequestTest

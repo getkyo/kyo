@@ -31,17 +31,21 @@ private[kyo] object UrlParser:
             val afterScheme = schemeEnd + 3
             val slashIdx    = url.indexOf('/', afterScheme)
             val qIdx        = url.indexOf('?', afterScheme)
+            val hashIdx     = url.indexOf('#', afterScheme)
+            // Authority ends at the first of /, ?, or # (whichever comes first)
             val authorityEnd =
-                if slashIdx < 0 && qIdx < 0 then url.length
-                else if slashIdx < 0 then qIdx
-                else if qIdx < 0 then slashIdx
-                else Math.min(slashIdx, qIdx)
+                var min = url.length
+                if slashIdx >= 0 && slashIdx < min then min = slashIdx
+                if qIdx >= 0 && qIdx < min then min = qIdx
+                if hashIdx >= 0 && hashIdx < min then min = hashIdx
+                min
+            end authorityEnd
             val authority = url.substring(afterScheme, authorityEnd)
             val remaining = if authorityEnd >= url.length then "/" else url.substring(authorityEnd)
             parseAuthority(authority, schemeName) { (host, port) =>
                 splitPathQuery(remaining) { (rawPath, rawQuery) =>
-                    val hashIdx   = rawPath.indexOf('#')
-                    val cleanPath = if hashIdx >= 0 then rawPath.substring(0, hashIdx) else rawPath
+                    val fragIdx   = rawPath.indexOf('#')
+                    val cleanPath = if fragIdx >= 0 then rawPath.substring(0, fragIdx) else rawPath
                     val finalPath = if cleanPath.isEmpty then "/" else cleanPath
                     f(Present(schemeName), Present(host), port, finalPath, rawQuery)
                 }
@@ -49,7 +53,6 @@ private[kyo] object UrlParser:
         end if
     end parseUrlParts
 
-    /** Split a path-and-query string on '?' into (path, query), stripping fragments and scheme+authority if present. */
     /** Split path?query, stripping scheme+authority if present and fragment per RFC 3986. */
     inline def splitPathQuery[A](url: String)(
         inline f: (String, Maybe[String]) => A

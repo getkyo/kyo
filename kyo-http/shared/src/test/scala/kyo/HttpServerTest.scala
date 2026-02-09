@@ -1704,6 +1704,159 @@ class HttpServerTest extends Test:
         }
     }
 
+    "Path encoding edge cases" - {
+
+        "encoded slash %2F in path capture" in run {
+            val handler = HttpHandler.get("files" / HttpPath.string("name")) { (name, _) =>
+                HttpResponse.ok(s"name=$name")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/files/a%2Fb").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "name=a/b")
+                }
+            }
+        }
+
+        "plus sign in path is literal (not space)" in run {
+            val handler = HttpHandler.get("items" / HttpPath.string("name")) { (name, _) =>
+                HttpResponse.ok(s"name=$name")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/items/a+b").map { response =>
+                    assertStatus(response, Status.OK)
+                    // In URL path, + is literal (only means space in query string form-encoded)
+                    assertBodyText(response, "name=a+b")
+                }
+            }
+        }
+
+        "percent-encoded non-ASCII in path capture" in run {
+            val handler = HttpHandler.get("items" / HttpPath.string("name")) { (name, _) =>
+                HttpResponse.ok(s"name=$name")
+            }
+            startTestServer(handler).map { port =>
+                // café in UTF-8 percent-encoded
+                testGet(port, "/items/caf%C3%A9").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "name=café")
+                }
+            }
+        }
+
+        "double-encoded percent in path" in run {
+            val handler = HttpHandler.get("items" / HttpPath.string("name")) { (name, _) =>
+                HttpResponse.ok(s"name=$name")
+            }
+            startTestServer(handler).map { port =>
+                // %2520 means literal %20 (the % is encoded as %25)
+                testGet(port, "/items/%2520").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "name=%20")
+                }
+            }
+        }
+
+        "multiple path captures with encoding" in run {
+            val handler = HttpHandler.get("orgs" / HttpPath.string("org") / "items" / HttpPath.string("item")) { (org, item, _) =>
+                HttpResponse.ok(s"org=$org,item=$item")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/orgs/my%20org/items/hello%20world").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "org=my org,item=hello world")
+                }
+            }
+        }
+    }
+
+    "Large response body" - {
+
+        "100KB response body" in run {
+            val largeBody = "x" * (100 * 1024)
+            val handler = HttpHandler.get("/large") { _ =>
+                HttpResponse.ok(largeBody)
+            }
+            HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 200 * 1024), PlatformTestBackend.backend)(handler).map {
+                server =>
+                    HttpClient.send(HttpRequest.get(s"http://localhost:${server.port}/large")).map { response =>
+                        assertStatus(response, Status.OK)
+                        assert(response.bodyText.length == 100 * 1024)
+                    }
+            }
+        }
+    }
+
+    "Handler error resilience" - {
+
+        "handler throwing returns 500 and doesn't crash server" in run {
+            val handler = HttpHandler.get("/crash") { _ =>
+                throw new RuntimeException("handler crash")
+            }
+            val health = HttpHandler.get("/health") { _ => HttpResponse.ok("ok") }
+            startTestServer(handler, health).map { port =>
+                testGet(port, "/crash").map { response =>
+                    assertStatus(response, Status.InternalServerError)
+                }.andThen {
+                    // Server should still be alive
+                    testGet(port, "/health").map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyText(response, "ok")
+                    }
+                }
+            }
+        }
+
+        "handler returning null body doesn't crash" in run {
+            val handler = HttpHandler.get("/null") { _ =>
+                HttpResponse.ok("")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/null").map { response =>
+                    assertStatus(response, Status.OK)
+                }
+            }
+        }
+    }
+
+    "Multiple handlers same path different methods" - {
+
+        "GET and POST on same path" in run {
+            val getHandler  = HttpHandler.get("/resource") { _ => HttpResponse.ok("get") }
+            val postHandler = HttpHandler.post("/resource") { _ => HttpResponse(Status.Created, "post") }
+            startTestServer(getHandler, postHandler).map { port =>
+                testGet(port, "/resource").map { r1 =>
+                    assertStatus(r1, Status.OK)
+                    assertBodyText(r1, "get")
+                }.andThen {
+                    HttpClient.send(HttpRequest.postText(s"http://localhost:$port/resource", "body")).map { r2 =>
+                        assertStatus(r2, Status.Created)
+                        assertBodyText(r2, "post")
+                    }
+                }
+            }
+        }
+
+        "GET, PUT, DELETE on same path" in run {
+            val getH    = HttpHandler.get("/item") { _ => HttpResponse.ok("get-item") }
+            val putH    = HttpHandler.put("/item") { _ => HttpResponse.ok("put-item") }
+            val deleteH = HttpHandler.delete("/item") { _ => HttpResponse.noContent }
+            startTestServer(getH, putH, deleteH).map { port =>
+                testGet(port, "/item").map { r1 =>
+                    assertBodyText(r1, "get-item")
+                }.andThen {
+                    HttpClient.send(HttpRequest.putText(s"http://localhost:$port/item", "body")).map { r2 =>
+                        assertBodyText(r2, "put-item")
+                    }
+                }.andThen {
+                    testDelete(port, "/item").map { r3 =>
+                        assertStatus(r3, Status.NoContent)
+                    }
+                }
+            }
+        }
+    }
+
     "Async.timeout and Async.race with handlers" - {
 
         "timeout catches slow handler" in run {

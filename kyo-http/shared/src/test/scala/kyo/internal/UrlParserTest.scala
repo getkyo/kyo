@@ -323,18 +323,38 @@ class UrlParserTest extends AnyFreeSpec with NonImplicitAssertions:
                 assertMatchesUri("http://example.com?&&")
             }
 
-            "fragment only (no path)" in pendingUntilFixed {
-                // Fragment on host-only URL: parser includes fragment in host
+            "fragment only (no path)" in {
                 UrlParser.parseUrlParts("http://example.com#frag") { (scheme, host, port, path, query) =>
                     assert(scheme == Present("http"))
                     assert(host == Present("example.com"))
                     assert(path == "/")
                     assert(query == Absent)
-                }: Unit
+                }
             }
 
             "path with dot segments" in {
                 assertMatchesUri("http://example.com/a/b/../c")
+            }
+
+            "URL with encoded backslash %5C" in {
+                assertMatchesUri("http://example.com/path%5Cfile")
+            }
+
+            "URL with encoded null %00" in {
+                assertMatchesUri("http://example.com/path%00file")
+            }
+
+            "host with trailing dot" in {
+                assertMatchesUri("http://example.com./path")
+            }
+
+            "URL with empty path segments" in {
+                assertMatchesUri("http://example.com/a//b///c")
+            }
+
+            "query with hash in value" in {
+                // ? after # is not a query separator
+                assertMatchesUri("http://example.com/path?q=a%23b")
             }
         }
     }

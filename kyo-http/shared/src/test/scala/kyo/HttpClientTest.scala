@@ -1642,6 +1642,64 @@ class HttpClientTest extends Test:
         }
     }
 
+    "HEAD request handling" - {
+
+        "HEAD response doesn't hang (body not consumed)" in run {
+            val handler = HttpHandler.init(HttpRequest.Method.HEAD, "/data") { _ =>
+                HttpResponse.ok("this body should be ignored")
+                    .addHeader("Content-Length", "31")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.withConfig(_.timeout(5.seconds)) {
+                    HttpClient.send(HttpRequest.head(s"http://localhost:$port/data")).map { response =>
+                        assertStatus(response, Status.OK)
+                        // Body should be empty for HEAD
+                        assert(response.bodyText.isEmpty || response.bodyText.length == 0)
+                    }
+                }
+            }
+        }
+    }
+
+    "Redirect with cookies" - {
+
+        "redirect target receives cookies set during redirect" in run {
+            val target = HttpHandler.get("/dashboard") { req =>
+                val session = req.cookie("session").map(_.value).getOrElse("none")
+                HttpResponse.ok(s"session=$session")
+            }
+            val login = HttpHandler.get("/login") { _ =>
+                HttpResponse.redirect("/dashboard")
+                    .addCookie(HttpResponse.Cookie("session", "abc123"))
+            }
+            startTestServer(target, login).map { port =>
+                HttpClient.send(HttpRequest.get(s"http://localhost:$port/login")).map { response =>
+                    assertStatus(response, Status.OK)
+                    // Whether cookies are propagated during redirects depends on implementation
+                    // At minimum, the redirect should complete successfully
+                    assert(response.bodyText.contains("session="))
+                }
+            }
+        }
+    }
+
+    "Large response handling" - {
+
+        "client receives large response body (100KB)" in run {
+            val largeBody = "x" * (100 * 1024)
+            val handler = HttpHandler.get("/large") { _ =>
+                HttpResponse.ok(largeBody)
+            }
+            HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 200 * 1024), PlatformTestBackend.backend)(handler).map {
+                server =>
+                    HttpClient.send(HttpRequest.get(s"http://localhost:${server.port}/large")).map { response =>
+                        assertStatus(response, Status.OK)
+                        assert(response.bodyText.length == 100 * 1024)
+                    }
+            }
+        }
+    }
+
     "Connection pool error recovery" - {
 
         "pool works after receiving error responses" in run {

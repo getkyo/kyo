@@ -854,6 +854,62 @@ class HttpResponseTest extends Test:
         }
     }
 
+    "Response Content-Type edge cases" - {
+
+        "noContent response has no content type" in {
+            val response = HttpResponse.noContent
+            assert(response.contentType == Absent)
+        }
+
+        "ok with text body has text/plain content type" in {
+            val response = HttpResponse.ok("hello")
+            assert(response.contentType == Present("text/plain"))
+        }
+
+        "ok with typed body has application/json content type" in {
+            val response = HttpResponse.ok(User(1, "Alice"))
+            assert(response.contentType == Present("application/json"))
+        }
+
+        "redirect has no content type" in {
+            val response = HttpResponse.redirect("/new")
+            assert(response.contentType == Absent)
+        }
+
+        "empty ok response" in {
+            val response = HttpResponse.ok
+            assert(response.contentLength == 0L)
+        }
+    }
+
+    "Cookie edge cases" - {
+
+        "cookie with equals in value" in {
+            val cookie = HttpResponse.Cookie("token", "abc=def=ghi")
+            assert(cookie.value == "abc=def=ghi")
+        }
+
+        "cookie with long value" in {
+            val longVal = "x" * 4096
+            val cookie  = HttpResponse.Cookie("big", longVal)
+            assert(cookie.value.length == 4096)
+        }
+
+        "overwriting cookie with same name" in {
+            val response = HttpResponse.ok
+                .addCookie(HttpResponse.Cookie("session", "old"))
+                .addCookie(HttpResponse.Cookie("session", "new"))
+            // Both cookies should be present (multiple Set-Cookie headers)
+            val cookies = response.cookies
+            assert(cookies.count(_.name == "session") == 2)
+        }
+
+        "delete cookie pattern (max-age=0)" in {
+            val cookie = HttpResponse.Cookie("session", "").maxAge(Duration.Zero)
+            assert(cookie.maxAge == Present(Duration.Zero))
+        }
+    }
+
     "Body edge cases" - {
         "empty body" in {
             val response = HttpResponse.ok("")
