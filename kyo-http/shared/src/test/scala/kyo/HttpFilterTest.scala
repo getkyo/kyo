@@ -93,6 +93,66 @@ class HttpFilterTest extends Test:
                 HttpFilter.server.cors(allowOrigin = "")
             }
         }
+
+        "allowCredentials adds credential header" in run {
+            val optionsHandler = HttpHandler.options("/test") { _ => HttpResponse.ok }
+            HttpFilter.server.cors(allowCredentials = true).enable {
+                for
+                    port     <- startTestServer(simpleHandler, optionsHandler)
+                    response <- testGet(port, "/test")
+                    preflight <- HttpClient.send(
+                        HttpRequest.options(s"http://localhost:$port/test")
+                    )
+                yield
+                    assertHeader(response, "Access-Control-Allow-Credentials", "true")
+                    assertHeader(preflight, "Access-Control-Allow-Credentials", "true")
+            }
+        }
+
+        "exposeHeaders adds expose header" in run {
+            HttpFilter.server.cors(exposeHeaders = Seq("X-Custom", "X-Other")).enable {
+                for
+                    port     <- startTestServer(simpleHandler)
+                    response <- testGet(port, "/test")
+                yield assertHeader(response, "Access-Control-Expose-Headers", "X-Custom, X-Other")
+            }
+        }
+
+        "allowHeaders adds header to preflight" in run {
+            val optionsHandler = HttpHandler.options("/test") { _ => HttpResponse.ok }
+            HttpFilter.server.cors(allowHeaders = Seq("Content-Type", "X-Api-Key")).enable {
+                for
+                    port <- startTestServer(simpleHandler, optionsHandler)
+                    preflight <- HttpClient.send(
+                        HttpRequest.options(s"http://localhost:$port/test")
+                    )
+                yield assertHeader(preflight, "Access-Control-Allow-Headers", "Content-Type, X-Api-Key")
+            }
+        }
+
+        "maxAge adds max-age to preflight" in run {
+            val optionsHandler = HttpHandler.options("/test") { _ => HttpResponse.ok }
+            HttpFilter.server.cors(maxAge = Present(3600.seconds)).enable {
+                for
+                    port <- startTestServer(simpleHandler, optionsHandler)
+                    preflight <- HttpClient.send(
+                        HttpRequest.options(s"http://localhost:$port/test")
+                    )
+                yield assertHeader(preflight, "Access-Control-Max-Age", "3600")
+            }
+        }
+
+        "custom allowMethods in preflight" in run {
+            val optionsHandler = HttpHandler.options("/test") { _ => HttpResponse.ok }
+            HttpFilter.server.cors(allowMethods = Seq(Method.GET, Method.POST)).enable {
+                for
+                    port <- startTestServer(simpleHandler, optionsHandler)
+                    preflight <- HttpClient.send(
+                        HttpRequest.options(s"http://localhost:$port/test")
+                    )
+                yield assertHeader(preflight, "Access-Control-Allow-Methods", "GET, POST")
+            }
+        }
     }
 
     "HttpFilter.server.basicAuth" - {
@@ -128,6 +188,28 @@ class HttpFilterTest extends Test:
                 yield assertStatus(response, Status.Unauthorized)
             }
         }
+
+        "malformed Base64 returns 401" in run {
+            HttpFilter.let(HttpFilter.server.basicAuth((_, _) => true)) {
+                for
+                    port <- startTestServer(simpleHandler)
+                    response <- HttpClient.send(
+                        HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Basic !!!notbase64!!!"))
+                    )
+                yield assertStatus(response, Status.Unauthorized)
+            }
+        }
+
+        "non-Basic auth scheme returns 401" in run {
+            HttpFilter.let(HttpFilter.server.basicAuth((_, _) => true)) {
+                for
+                    port <- startTestServer(simpleHandler)
+                    response <- HttpClient.send(
+                        HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("Authorization", "Bearer some-token"))
+                    )
+                yield assertStatus(response, Status.Unauthorized)
+            }
+        }
     }
 
     "HttpFilter.server.bearerAuth" - {
@@ -152,6 +234,15 @@ class HttpFilterTest extends Test:
                 yield assertStatus(response, Status.Unauthorized)
             }
         }
+
+        "missing Authorization header returns 401" in run {
+            HttpFilter.let(HttpFilter.server.bearerAuth(_ => true)) {
+                for
+                    port     <- startTestServer(simpleHandler)
+                    response <- testGet(port, "/test")
+                yield assertStatus(response, Status.Unauthorized)
+            }
+        }
     }
 
     "HttpFilter.server.etag" - {
@@ -161,6 +252,37 @@ class HttpFilterTest extends Test:
                     port     <- startTestServer(simpleHandler)
                     response <- testGet(port, "/test")
                 yield assertHasHeader(response, "ETag")
+            }
+        }
+
+        "consistent ETag for same content" in run {
+            HttpFilter.let(HttpFilter.server.etag) {
+                for
+                    port <- startTestServer(simpleHandler)
+                    r1   <- testGet(port, "/test")
+                    r2   <- testGet(port, "/test")
+                yield
+                    val etag1 = r1.header("ETag").getOrElse("")
+                    val etag2 = r2.header("ETag").getOrElse("")
+                    assert(etag1.nonEmpty)
+                    assert(etag1 == etag2)
+            }
+        }
+
+        "different ETag for different content" in run {
+            val handler1 = HttpHandler.get("/a") { _ => HttpResponse.ok("content-a") }
+            val handler2 = HttpHandler.get("/b") { _ => HttpResponse.ok("content-b") }
+            HttpFilter.let(HttpFilter.server.etag) {
+                for
+                    port <- startTestServer(handler1, handler2)
+                    r1   <- testGet(port, "/a")
+                    r2   <- testGet(port, "/b")
+                yield
+                    val etag1 = r1.header("ETag").getOrElse("")
+                    val etag2 = r2.header("ETag").getOrElse("")
+                    assert(etag1.nonEmpty)
+                    assert(etag2.nonEmpty)
+                    assert(etag1 != etag2)
             }
         }
     }
@@ -178,6 +300,30 @@ class HttpFilterTest extends Test:
                 yield assertStatus(r2, Status.NotModified)
             }
         }
+
+        "returns 200 with ETag when no If-None-Match" in run {
+            HttpFilter.let(HttpFilter.server.conditionalRequests) {
+                for
+                    port     <- startTestServer(simpleHandler)
+                    response <- testGet(port, "/test")
+                yield
+                    assertStatus(response, Status.OK)
+                    assertHasHeader(response, "ETag")
+            }
+        }
+
+        "returns 200 when ETag does not match" in run {
+            HttpFilter.let(HttpFilter.server.conditionalRequests) {
+                for
+                    port <- startTestServer(simpleHandler)
+                    response <- HttpClient.send(
+                        HttpRequest.get(s"http://localhost:$port/test", HttpHeaders.empty.add("If-None-Match", "\"nonexistent\""))
+                    )
+                yield
+                    assertStatus(response, Status.OK)
+                    assertHasHeader(response, "ETag")
+            }
+        }
     }
 
     "HttpFilter.server.securityHeaders()" - {
@@ -189,6 +335,7 @@ class HttpFilterTest extends Test:
                 yield
                     assertHeader(response, "X-Content-Type-Options", "nosniff")
                     assertHeader(response, "X-Frame-Options", "DENY")
+                    assertHeader(response, "Referrer-Policy", "strict-origin-when-cross-origin")
             }
         }
     }
@@ -214,6 +361,35 @@ class HttpFilterTest extends Test:
                     yield
                         assertHasHeader(response, "Access-Control-Allow-Origin")
                         assertHasHeader(response, "X-Frame-Options")
+                }
+            }
+        }
+
+        "enable composes onto existing filter, not replaces" in run {
+            var filterACalled = false
+            var filterBCalled = false
+            val filterA = new HttpFilter:
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
+                    Frame
+                ): HttpResponse[?] < (Async & S) =
+                    filterACalled = true
+                    next(request)
+                end apply
+            val filterB = new HttpFilter:
+                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
+                    Frame
+                ): HttpResponse[?] < (Async & S) =
+                    filterBCalled = true
+                    next(request)
+                end apply
+            HttpFilter.let(filterA) {
+                filterB.enable {
+                    for
+                        port <- startTestServer(simpleHandler)
+                        _    <- testGet(port, "/test")
+                    yield
+                        assert(filterACalled, "filter A should have been called")
+                        assert(filterBCalled, "filter B should have been called")
                 }
             }
         }
@@ -277,6 +453,20 @@ class HttpFilterTest extends Test:
                     port <- startTestServer(handler)
                     _    <- testGet(port, "/test")
                 yield assert(receivedAuth == Present("Bearer my-token"))
+            }
+        }
+
+        "customHeader adds header to request" in run {
+            var receivedHeader: Maybe[String] = Absent
+            val handler = HttpHandler.get("/test") { req =>
+                receivedHeader = req.header("X-Trace-Id")
+                HttpResponse.ok
+            }
+            HttpFilter.client.customHeader("X-Trace-Id", "abc-123").enable {
+                for
+                    port <- startTestServer(handler)
+                    _    <- testGet(port, "/test")
+                yield assert(receivedHeader == Present("abc-123"))
             }
         }
     }
@@ -361,6 +551,19 @@ class HttpFilterTest extends Test:
                     yield
                         assertStatus(response, Status.TooManyRequests)
                         assertHasHeader(response, "Retry-After")
+                }
+            }
+        }
+
+        "custom retryAfter value" in run {
+            Meter.initSemaphore(0).map { meter =>
+                HttpFilter.server.rateLimit(meter, retryAfter = 30).enable {
+                    for
+                        port     <- startTestServer(simpleHandler)
+                        response <- testGet(port, "/test")
+                    yield
+                        assertStatus(response, Status.TooManyRequests)
+                        assertHeader(response, "Retry-After", "30")
                 }
             }
         }

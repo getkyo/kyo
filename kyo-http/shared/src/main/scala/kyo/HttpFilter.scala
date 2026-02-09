@@ -201,14 +201,16 @@ object HttpFilter:
                 ): HttpResponse[?] < (Async & S) =
                     request.header("Authorization") match
                         case Present(auth) if auth.startsWith("Basic ") =>
-                            val decoded = new String(java.util.Base64.getDecoder.decode(auth.drop(6)), "UTF-8")
-                            decoded.split(":", 2) match
-                                case Array(username, password) =>
-                                    validate(username, password).map { valid =>
-                                        if valid then next(request) else unauthorized
-                                    }
-                                case _ => unauthorized: HttpResponse[HttpBody.Bytes]
-                            end match
+                            try
+                                val decoded = new String(java.util.Base64.getDecoder.decode(auth.drop(6)), "UTF-8")
+                                decoded.split(":", 2) match
+                                    case Array(username, password) =>
+                                        validate(username, password).map { valid =>
+                                            if valid then next(request) else unauthorized
+                                        }
+                                    case _ => unauthorized: HttpResponse[HttpBody.Bytes]
+                                end match
+                            catch case _: IllegalArgumentException => unauthorized: HttpResponse[HttpBody.Bytes]
                         case _ => unauthorized: HttpResponse[HttpBody.Bytes]
             end new
         end basicAuth
