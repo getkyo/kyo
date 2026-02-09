@@ -21,7 +21,7 @@ object TestBackend extends Backend:
                     case null =>
                         Abort.fail(HttpError.ConnectionFailed(host, port, new RuntimeException(s"No test server on port $port")))
                     case entry =>
-                        new TestConnection(entry.handler, entry.maxContentLength, entry.closed)
+                        new TestConnection(entry.handler, entry.maxContentLength, maxResponseSizeBytes, entry.closed)
 
             def close(gracePeriod: Duration)(using Frame): Unit < Async = ()
         end new
@@ -57,7 +57,7 @@ object TestBackend extends Backend:
 
 end TestBackend
 
-private class TestConnection(handler: Backend.ServerHandler, maxContentLength: Int, closed: AtomicBoolean.Unsafe)
+private class TestConnection(handler: Backend.ServerHandler, maxContentLength: Int, maxResponseSizeBytes: Int, closed: AtomicBoolean.Unsafe)
     extends Backend.Connection:
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
@@ -75,6 +75,13 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                             // Per RFC 9110, HEAD responses must not include a body
                             if request.method == HttpRequest.Method.HEAD then
                                 response.withBody(HttpBody.empty)
+                            else response
+                        }
+                        .map { response =>
+                            if response.body.data.length > maxResponseSizeBytes then
+                                Abort.fail[HttpError](HttpError.InvalidResponse(
+                                    s"Response body size ${response.body.data.length} exceeds limit $maxResponseSizeBytes"
+                                ))
                             else response
                         }
             end match

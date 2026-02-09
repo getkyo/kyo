@@ -640,6 +640,35 @@ class HttpClientTest extends Test:
             }
         }
 
+        "disabled preserves Location header" in run {
+            val redirect = HttpHandler.get("/redir") { _ => HttpResponse.redirect("/target") }
+            startTestServer(redirect).map { port =>
+                HttpClient.withConfig(_.followRedirects(false)) {
+                    HttpClient.send(HttpRequest.get(s"http://localhost:$port/redir"))
+                }.map { response =>
+                    assertStatus(response, Status.Found)
+                    assertHeader(response, "Location", "/target")
+                }
+            }
+        }
+
+        "disabled preserves Set-Cookie on redirect response" in run {
+            val redirect = HttpHandler.get("/login") { _ =>
+                HttpResponse.redirect("/dashboard")
+                    .addCookie(HttpResponse.Cookie("session", "abc123"))
+            }
+            startTestServer(redirect).map { port =>
+                HttpClient.withConfig(_.followRedirects(false)) {
+                    HttpClient.send(HttpRequest.get(s"http://localhost:$port/login"))
+                }.map { response =>
+                    assert(response.status.isRedirect)
+                    val setCookie = response.header("Set-Cookie")
+                    assert(setCookie.isDefined, "Expected Set-Cookie header on redirect response")
+                    assert(setCookie.exists(_.contains("session=abc123")))
+                }
+            }
+        }
+
         "handles redirect loop" in run {
             val redirect = HttpHandler.get("/loop") { _ => HttpResponse.redirect("/loop") }
             startTestServer(redirect).map { port =>
@@ -1696,6 +1725,123 @@ class HttpClientTest extends Test:
                         assertStatus(response, Status.OK)
                         assert(response.bodyText.length == 100 * 1024)
                     }
+            }
+        }
+    }
+
+    "Binary body handling" - {
+
+        "preserves non-UTF-8 binary bytes" in run {
+            val binaryData = Array[Byte](0, 1, 2, 127, -128, -1, 0x7f, 0x80.toByte, 0xff.toByte, 0xfe.toByte)
+            val handler = HttpHandler.get("/binary") { _ =>
+                HttpResponse.initBytes(
+                    Status.OK,
+                    HttpHeaders.empty.add("Content-Type", "application/octet-stream"),
+                    Span.fromUnsafe(binaryData)
+                )
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(HttpRequest.get(s"http://localhost:$port/binary")).map { response =>
+                    assertStatus(response, Status.OK)
+                    val received = response.body.data
+                    assert(
+                        received.toSeq == binaryData.toSeq,
+                        s"Binary body corrupted: expected ${binaryData.toSeq} but got ${received.toSeq}"
+                    )
+                }
+            }
+        }
+
+        "preserves high-byte binary content" in run {
+            // All byte values 0-255 to detect any encoding corruption
+            val allBytes = Array.tabulate[Byte](256)(_.toByte)
+            val handler = HttpHandler.get("/allbytes") { _ =>
+                HttpResponse.initBytes(
+                    Status.OK,
+                    HttpHeaders.empty.add("Content-Type", "application/octet-stream"),
+                    Span.fromUnsafe(allBytes)
+                )
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(HttpRequest.get(s"http://localhost:$port/allbytes")).map { response =>
+                    assertStatus(response, Status.OK)
+                    val received = response.body.data
+                    assert(received.length == 256, s"Expected 256 bytes but got ${received.length}")
+                    assert(received.toSeq == allBytes.toSeq, "Binary body corrupted: byte values not preserved through roundtrip")
+                }
+            }
+        }
+    }
+
+    "Response size limit" - {
+
+        "rejects response exceeding maxResponseSizeBytes" in run {
+            val bigBody = "x" * 2000
+            val handler = HttpHandler.get("/big") { _ =>
+                HttpResponse.ok(bigBody)
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.init(maxResponseSizeBytes = 100, backend = PlatformTestBackend.backend).map { client =>
+                    Abort.run(client.send(HttpRequest.get(s"http://localhost:$port/big"))).map { result =>
+                        assert(result.isFailure, "Expected failure for response exceeding maxResponseSizeBytes")
+                    }
+                }
+            }
+        }
+
+        "allows response within maxResponseSizeBytes" in run {
+            val smallBody = "x" * 50
+            val handler = HttpHandler.get("/small") { _ =>
+                HttpResponse.ok(smallBody)
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.init(maxResponseSizeBytes = 1000, backend = PlatformTestBackend.backend).map { client =>
+                    client.send(HttpRequest.get(s"http://localhost:$port/small")).map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyText(response, smallBody)
+                    }
+                }
+            }
+        }
+    }
+
+    "Streaming resource cleanup" - {
+
+        "abandoned stream does not block connection pool" in run {
+            val handler = HttpHandler.get("/data") { _ => HttpResponse.ok("streamed-body") }
+            startTestServer(handler).map { port =>
+                HttpClient.init(maxConnectionsPerHost = Present(1), backend = PlatformTestBackend.backend).map { client =>
+                    // Start and abandon a stream (scope closes, connection should be released)
+                    Scope.run {
+                        client.stream(HttpRequest.get(s"http://localhost:$port/data")).unit
+                    }.andThen {
+                        // Pool should still work with maxConnectionsPerHost=1
+                        client.send(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
+                            assertStatus(response, Status.OK)
+                        }
+                    }
+                }
+            }
+        }
+
+        "partially consumed stream does not block connection pool" in run {
+            val handler = HttpHandler.get("/data") { _ => HttpResponse.ok("streamed-body-content") }
+            startTestServer(handler).map { port =>
+                HttpClient.init(maxConnectionsPerHost = Present(1), backend = PlatformTestBackend.backend).map { client =>
+                    // Start stream, read partially, then exit scope
+                    Scope.run {
+                        client.stream(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
+                            assert(response.status == Status.OK)
+                            // Don't consume bodyStream — just check headers and exit
+                        }
+                    }.andThen {
+                        // Subsequent buffered request should work
+                        client.send(HttpRequest.get(s"http://localhost:$port/data")).map { response =>
+                            assertStatus(response, Status.OK)
+                            assertBodyContains(response, "streamed-body-content")
+                        }
+                    }
+                }
             }
         }
     }
