@@ -1644,17 +1644,17 @@ class HttpClientTest extends Test:
 
     "HEAD request handling" - {
 
-        "HEAD response doesn't hang (body not consumed)" in run {
-            val handler = HttpHandler.init(HttpRequest.Method.HEAD, "/data") { _ =>
-                HttpResponse.ok("this body should be ignored")
-                    .addHeader("Content-Length", "31")
+        "HEAD on GET route returns headers without body" in run {
+            val handler = HttpHandler.get("/data") { _ =>
+                HttpResponse.ok("some content here")
+                    .addHeader("X-Custom", "test-value")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.timeout(5.seconds)) {
                     HttpClient.send(HttpRequest.head(s"http://localhost:$port/data")).map { response =>
                         assertStatus(response, Status.OK)
-                        // Body should be empty for HEAD
-                        assert(response.bodyText.isEmpty || response.bodyText.length == 0)
+                        assert(response.header("X-Custom") == Maybe.Present("test-value"))
+                        assert(response.bodyText.isEmpty)
                     }
                 }
             }

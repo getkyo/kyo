@@ -103,6 +103,7 @@ private[kyo] object CurlBindings:
     inline val CURLOPT_COPYPOSTFIELDS      = 10165
     inline val CURLOPT_POSTFIELDSIZE_LARGE = 30120
     inline val CURLOPT_CONNECTTIMEOUT_MS   = 156
+    inline val CURLOPT_NOBODY              = 44
     inline val CURLOPT_NOSIGNAL            = 99
     inline val CURLOPT_FOLLOWLOCATION      = 52
 

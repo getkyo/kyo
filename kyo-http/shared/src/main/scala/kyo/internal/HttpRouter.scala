@@ -25,7 +25,10 @@ final private[kyo] class HttpRouter private (
 ):
     import HttpRouter.*
 
-    /** Find a handler matching the given method and path - zero allocation for success case */
+    /** Find a handler matching the given method and path - zero allocation for success case.
+      *
+      * Per RFC 9110 §9.3.2, HEAD is implicitly supported wherever GET is registered.
+      */
     def find(method: Method, path: String): Result[FindError, HttpHandler[Any]] =
         val methodIdx = HttpRouter.methodIndex(method)
         val nodeIdx   = findNodeIndex(path)
@@ -35,8 +38,15 @@ final private[kyo] class HttpRouter private (
             val node       = nodes(nodeIdx)
             val handlerIdx = node.handlerIndices(methodIdx)
             if handlerIdx >= 0 then Result.succeed(handlers(handlerIdx))
+            else if methodIdx == HeadMethodIdx then
+                // HEAD falls back to GET handler per RFC 9110 §9.3.2
+                val getHandlerIdx = node.handlerIndices(GetMethodIdx)
+                if getHandlerIdx >= 0 then Result.succeed(handlers(getHandlerIdx))
+                else if node.allowedMethods.nonEmpty then Result.fail(FindError.MethodNotAllowed(node.allowedMethods))
+                else NotFoundResult
             else if node.allowedMethods.nonEmpty then Result.fail(FindError.MethodNotAllowed(node.allowedMethods))
             else NotFoundResult
+            end if
         end if
     end find
 
@@ -124,7 +134,9 @@ private[kyo] object HttpRouter:
     private val NotFoundResult: Result[FindError, Nothing] = Result.fail(FindError.NotFound)
 
     /** Method indices for fixed-size array lookup (avoids Map) */
-    private val MethodCount = 9
+    private val MethodCount   = 9
+    private val GetMethodIdx  = 0
+    private val HeadMethodIdx = 5
 
     private def methodIndex(method: Method): Int =
         // Use first char + length as simple hash - all HTTP methods are unique this way

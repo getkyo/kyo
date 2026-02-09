@@ -71,6 +71,12 @@ private class TestConnection(handler: Backend.ServerHandler, maxContentLength: I
                     handler.handle(request)
                         .handle(Abort.recover[Nothing](_ => HttpResponse.serverError(""), e => HttpResponse.serverError(errorMessage(e))))
                         .map(ensureBytes)
+                        .map { response =>
+                            // Per RFC 9110, HEAD responses must not include a body
+                            if request.method == HttpRequest.Method.HEAD then
+                                response.withBody(HttpBody.empty)
+                            else response
+                        }
             end match
     end send
 

@@ -78,6 +78,8 @@ final private[kyo] class CurlConnection(
 
         // Method
         discard(curl_easy_setopt(handle, CURLOPT_CUSTOMREQUEST, toCString(request.method.name)))
+        if request.method == HttpRequest.Method.HEAD then
+            discard(curl_easy_setopt(handle, CURLOPT_NOBODY, 1L))
 
         // Disable signals (required for multi-threaded use)
         discard(curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L))
