@@ -732,6 +732,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC45",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.12.2",
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M44",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-server" % "1.0.0-M44",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M44",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.8.0",
             libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.7",

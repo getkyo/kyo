@@ -87,29 +87,11 @@ object HttpFilter:
     object server:
 
         /** Logs requests at info level with format: "METHOD /path -> STATUS (Xms)" */
-        def logging(using Frame): HttpFilter =
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    Clock.stopwatch.map { sw =>
-                        next(request).map { response =>
-                            sw.elapsed.map { dur =>
-                                Log.info(s"${request.method.name} ${request.path} -> ${response.status.code} (${dur.toMillis}ms)")
-                                    .andThen(response)
-                            }
-                        }
-                    }
+        def logging(using Frame): HttpFilter = timedLogging(_.path)
 
         /** Logs requests with custom handler */
         def logging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    Clock.stopwatch.map { sw =>
-                        next(request).map { response =>
-                            sw.elapsed.map { dur =>
-                                log(request, response, dur).andThen(response)
-                            }
-                        }
-                    }
+            timedLogging(log)
 
         /** Generates or propagates request ID header with random ID generator */
         def requestId(using Frame): HttpFilter =
@@ -127,14 +109,14 @@ object HttpFilter:
                         case Absent      => generate
                     getId.map { id =>
                         val reqWithId = request.addHeader(headerName, id)
-                        next(reqWithId).map(_.addHeader(headerName, id))
+                        next(reqWithId).map(_.setHeader(headerName, id))
                     }
                 end apply
 
         /** Rate limits requests using a Meter, returning 429 when limit exceeded */
         def rateLimit(meter: Meter, retryAfter: Int = 1): HttpFilter =
             val tooManyRequests = HttpResponse(HttpResponse.Status.TooManyRequests)
-                .addHeader("Retry-After", retryAfter.toString)
+                .setHeader("Retry-After", retryAfter.toString)
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
                     Abort.run(meter.tryRun(next(request))).map {
@@ -159,25 +141,25 @@ object HttpFilter:
             maxAge.foreach(d => require(d >= Duration.Zero, "CORS maxAge cannot be negative"))
 
             def addCorsHeaders(response: HttpResponse[?]): HttpResponse[?] =
-                var r = response.addHeader("Access-Control-Allow-Origin", allowOrigin)
+                var r = response.setHeader("Access-Control-Allow-Origin", allowOrigin)
                 if allowCredentials then
-                    r = r.addHeader("Access-Control-Allow-Credentials", "true")
+                    r = r.setHeader("Access-Control-Allow-Credentials", "true")
                 if exposeHeaders.nonEmpty then
-                    r = r.addHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", "))
+                    r = r.setHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", "))
                 r
             end addCorsHeaders
 
             def preflightResponse: HttpResponse[HttpBody.Bytes] =
                 var response = HttpResponse(HttpResponse.Status.NoContent)
-                    .addHeader("Access-Control-Allow-Origin", allowOrigin)
-                    .addHeader("Access-Control-Allow-Methods", allowMethods.map(_.name).mkString(", "))
+                    .setHeader("Access-Control-Allow-Origin", allowOrigin)
+                    .setHeader("Access-Control-Allow-Methods", allowMethods.map(_.name).mkString(", "))
                 if allowHeaders.nonEmpty then
-                    response = response.addHeader("Access-Control-Allow-Headers", allowHeaders.mkString(", "))
+                    response = response.setHeader("Access-Control-Allow-Headers", allowHeaders.mkString(", "))
                 if exposeHeaders.nonEmpty then
-                    response = response.addHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", "))
+                    response = response.setHeader("Access-Control-Expose-Headers", exposeHeaders.mkString(", "))
                 if allowCredentials then
-                    response = response.addHeader("Access-Control-Allow-Credentials", "true")
-                maxAge.foreach(d => response = response.addHeader("Access-Control-Max-Age", d.toSeconds.toString))
+                    response = response.setHeader("Access-Control-Allow-Credentials", "true")
+                maxAge.foreach(d => response = response.setHeader("Access-Control-Max-Age", d.toSeconds.toString))
                 response
             end preflightResponse
 
@@ -194,7 +176,7 @@ object HttpFilter:
 
         /** Validates HTTP Basic Authentication credentials. */
         def basicAuth(validate: (String, String) => Boolean < Async)(using Frame): HttpFilter =
-            val unauthorized = HttpResponse(HttpResponse.Status.Unauthorized).addHeader("WWW-Authenticate", "Basic")
+            val unauthorized = HttpResponse(HttpResponse.Status.Unauthorized).setHeader("WWW-Authenticate", "Basic")
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                     Frame
@@ -217,7 +199,7 @@ object HttpFilter:
 
         /** Validates HTTP Bearer token authentication. */
         def bearerAuth(validate: String => Boolean < Async)(using Frame): HttpFilter =
-            val unauthorized = HttpResponse(HttpResponse.Status.Unauthorized).addHeader("WWW-Authenticate", "Bearer")
+            val unauthorized = HttpResponse(HttpResponse.Status.Unauthorized).setHeader("WWW-Authenticate", "Bearer")
             new HttpFilter:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                     Frame
@@ -240,7 +222,7 @@ object HttpFilter:
                 ): HttpResponse[?] < (Async & S) =
                     next(request).map { response =>
                         response.body.use(
-                            b => response.addHeader("ETag", computeETag(b.data)),
+                            b => response.setHeader("ETag", computeETag(b.data)),
                             _ => response // Skip ETag for streaming responses
                         )
                     }
@@ -259,7 +241,7 @@ object HttpFilter:
                                     case Present(clientEtag) if clientEtag == etagValue =>
                                         HttpResponse(HttpResponse.Status.NotModified)
                                     case _ =>
-                                        response.addHeader("ETag", etagValue)
+                                        response.setHeader("ETag", etagValue)
                                 end match
                             ,
                             _ => response // Skip conditional check for streaming responses
@@ -277,11 +259,11 @@ object HttpFilter:
                 ): HttpResponse[?] < (Async & S) =
                     next(request).map { response =>
                         var r = response
-                            .addHeader("X-Content-Type-Options", "nosniff")
-                            .addHeader("X-Frame-Options", "DENY")
-                            .addHeader("Referrer-Policy", "strict-origin-when-cross-origin")
-                        hsts.foreach(d => r = r.addHeader("Strict-Transport-Security", s"max-age=${d.toSeconds}"))
-                        csp.foreach(v => r = r.addHeader("Content-Security-Policy", v))
+                            .setHeader("X-Content-Type-Options", "nosniff")
+                            .setHeader("X-Frame-Options", "DENY")
+                            .setHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+                        hsts.foreach(d => r = r.setHeader("Strict-Transport-Security", s"max-age=${d.toSeconds}"))
+                        csp.foreach(v => r = r.setHeader("Content-Security-Policy", v))
                         r
                     }
 
@@ -293,29 +275,11 @@ object HttpFilter:
     object client:
 
         /** Logs requests at info level with format: "METHOD url -> STATUS (Xms)" */
-        def logging(using Frame): HttpFilter =
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    Clock.stopwatch.map { sw =>
-                        next(request).map { response =>
-                            sw.elapsed.map { dur =>
-                                Log.info(s"${request.method.name} ${request.url} -> ${response.status.code} (${dur.toMillis}ms)")
-                                    .andThen(response)
-                            }
-                        }
-                    }
+        def logging(using Frame): HttpFilter = timedLogging(_.url)
 
         /** Logs requests with custom handler */
         def logging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
-            new HttpFilter:
-                def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
-                    Clock.stopwatch.map { sw =>
-                        next(request).map { response =>
-                            sw.elapsed.map { dur =>
-                                log(request, response, dur).andThen(response)
-                            }
-                        }
-                    }
+            timedLogging(log)
 
         /** Adds a header to outgoing requests. */
         def addHeader(name: String, value: String): HttpFilter =
@@ -329,10 +293,6 @@ object HttpFilter:
         /** Adds HTTP Bearer token header to outgoing requests. */
         def bearerAuth(token: String): HttpFilter =
             HttpFilter.request(_.addHeader("Authorization", s"Bearer $token"))
-
-        /** Adds a custom header to all outgoing requests. */
-        def customHeader(name: String, value: String): HttpFilter =
-            HttpFilter.request(_.addHeader(name, value))
 
     end client
 
@@ -364,6 +324,31 @@ object HttpFilter:
             def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
                 next(request).map { response =>
                     log(request, response).andThen(response)
+                }
+
+    /** Shared timed logging implementation. `formatUrl` extracts the URL portion for the log message. */
+    private def timedLogging(formatUrl: HttpRequest[?] => String)(using Frame): HttpFilter =
+        new HttpFilter:
+            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
+                Clock.stopwatch.map { sw =>
+                    next(request).map { response =>
+                        sw.elapsed.map { dur =>
+                            Log.info(s"${request.method.name} ${formatUrl(request)} -> ${response.status.code} (${dur.toMillis}ms)")
+                                .andThen(response)
+                        }
+                    }
+                }
+
+    /** Shared custom timed logging implementation. */
+    private def timedLogging(log: (HttpRequest[?], HttpResponse[?], Duration) => Unit < Sync): HttpFilter =
+        new HttpFilter:
+            def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using Frame) =
+                Clock.stopwatch.map { sw =>
+                    next(request).map { response =>
+                        sw.elapsed.map { dur =>
+                            log(request, response, dur).andThen(response)
+                        }
+                    }
                 }
 
 end HttpFilter

@@ -12,12 +12,6 @@ import scala.scalanative.runtime.toRawPtr
 import scala.scalanative.unsafe.*
 import scala.scalanative.unsigned.*
 
-/** Captured response headers from a streaming response. */
-private[kyo] case class StreamingHeaders(
-    status: HttpResponse.Status,
-    headers: HttpHeaders
-)
-
 /** Transfer state for a single curl easy handle. */
 sealed private[kyo] trait TransferState:
     def easyHandle: CurlBindings.CURL
@@ -360,12 +354,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             val intSize = size.toInt
             state match
                 case bs: BufferedTransferState =>
-                    val bytes = new Array[Byte](intSize)
-                    var i     = 0
-                    while i < intSize do
-                        bytes(i) = data(i)
-                        i += 1
-                    bs.responseBody.write(bytes)
+                    bs.responseBody.write(copyFromPointer(data, intSize))
                     size
 
                 // Headers are only available after the first body data arrives from curl
@@ -377,14 +366,8 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
                         discard(ss.headerPromise.complete(Result.succeed(StreamingHeaders(status, headers))))
                     end if
 
-                    val bytes = new Array[Byte](intSize)
-                    var i     = 0
-                    while i < intSize do
-                        bytes(i) = data(i)
-                        i += 1
-
                     // Pause curl if channel is full (backpressure)
-                    ss.bodyChannel.offer(Span.fromUnsafe(bytes)) match
+                    ss.bodyChannel.offer(Span.fromUnsafe(copyFromPointer(data, intSize))) match
                         case Result.Success(true) => size
                         case Result.Success(false) =>
                             ss.isPaused = true
@@ -401,12 +384,7 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
         if state == null then size
         else
             val intSize = size.toInt
-            val bytes   = new Array[Byte](intSize)
-            var i       = 0
-            while i < intSize do
-                bytes(i) = data(i)
-                i += 1
-            val line = new String(bytes, "UTF-8")
+            val line    = new String(copyFromPointer(data, intSize), "UTF-8")
 
             // curl delivers status line ("HTTP/1.1 200 OK") and headers through the same callback
             if line.startsWith("HTTP/") then
@@ -422,6 +400,16 @@ final private[kyo] class CurlEventLoop(daemon: Boolean):
             size
         end if
     end onHeader
+
+    /** Copy `size` bytes from a native pointer into a new Array[Byte]. */
+    private def copyFromPointer(data: Ptr[Byte], size: Int): Array[Byte] =
+        val bytes = new Array[Byte](size)
+        var i     = 0
+        while i < size do
+            bytes(i) = data(i)
+            i += 1
+        bytes
+    end copyFromPointer
 
 end CurlEventLoop
 

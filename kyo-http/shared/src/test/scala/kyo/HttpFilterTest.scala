@@ -30,7 +30,7 @@ class HttpFilterTest extends Test:
                 def apply[S](request: HttpRequest[?], next: HttpRequest[?] => HttpResponse[?] < (Async & S))(using
                     Frame
                 ): HttpResponse[?] < (Async & S) =
-                    next(request).map(_.addHeader("X-Custom", "value"))
+                    next(request).map(_.setHeader("X-Custom", "value"))
             HttpFilter.let(customFilter) {
                 for
                     port     <- startTestServer(simpleHandler)
@@ -462,7 +462,7 @@ class HttpFilterTest extends Test:
                 receivedHeader = req.header("X-Trace-Id")
                 HttpResponse.ok
             }
-            HttpFilter.client.customHeader("X-Trace-Id", "abc-123").enable {
+            HttpFilter.client.addHeader("X-Trace-Id", "abc-123").enable {
                 for
                     port <- startTestServer(handler)
                     _    <- testGet(port, "/test")

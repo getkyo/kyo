@@ -653,10 +653,10 @@ class HttpResponseTest extends Test:
                 assert(response.header("X-Test") == Present("value"))
             }
 
-            "withHeader overwrites existing" in {
+            "withHeader overwrites existing via setHeader" in {
                 val response = HttpResponse.ok
-                    .addHeader("X-Test", "old")
-                    .addHeader("X-Test", "new")
+                    .setHeader("X-Test", "old")
+                    .setHeader("X-Test", "new")
                 assert(response.header("X-Test") == Present("new"))
             }
 
@@ -800,12 +800,24 @@ class HttpResponseTest extends Test:
             assert(response.header("X-Time") == Present("12:30:00"))
         }
 
-        "duplicate header names" in {
+        "duplicate header names with addHeader (append)" in {
             val response = HttpResponse.ok
                 .addHeader("X-Multi", "first")
                 .addHeader("X-Multi", "second")
-            // Last value wins for single header access
+            // addHeader appends — both values present, last returned by header()
             assert(response.header("X-Multi") == Present("second"))
+        }
+
+        "setHeader replaces existing" in {
+            val response = HttpResponse.ok
+                .setHeader("X-Multi", "first")
+                .setHeader("X-Multi", "second")
+            assert(response.header("X-Multi") == Present("second"))
+            var count = 0
+            response.headers.foreach { (k, _) =>
+                if k.equalsIgnoreCase("X-Multi") then count += 1
+            }
+            assert(count == 1, s"Expected exactly 1 X-Multi header but got $count")
         }
 
         "case sensitivity of header names" in {
@@ -840,17 +852,17 @@ class HttpResponseTest extends Test:
             assert(response.cookie("c").map(_.value) == Present("3"))
         }
 
-        "addHeader replaces same-name header (set semantics)" in {
+        "addHeader appends same-name header (append semantics)" in {
             val response = HttpResponse.ok
                 .addHeader("X-Trace", "first")
                 .addHeader("X-Trace", "second")
-            // response addHeader has set semantics — replaces existing
+            // response addHeader now has append semantics (consistent with HttpRequest)
             assert(response.header("X-Trace") == Present("second"))
             var count = 0
             response.headers.foreach { (k, _) =>
                 if k.equalsIgnoreCase("X-Trace") then count += 1
             }
-            assert(count == 1, s"Expected exactly 1 X-Trace header but got $count")
+            assert(count == 2, s"Expected exactly 2 X-Trace headers but got $count")
         }
     }
 

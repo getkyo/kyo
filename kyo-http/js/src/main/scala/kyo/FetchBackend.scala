@@ -113,7 +113,8 @@ final private[kyo] class FetchConnection(
     private def buildFetchRequest(request: HttpRequest[?]): (String, RequestInit) =
         val url = HttpClient.buildUrl(host, port, ssl, request.url)
 
-        val init    = new RequestInit {}
+        val init = new RequestInit {}
+        init.redirect = dom.RequestRedirect.manual
         val headers = new FetchHeaders()
 
         request.headers.foreach { (k, v) =>

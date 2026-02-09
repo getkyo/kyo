@@ -3,7 +3,6 @@ package kyo.internal
 import io.netty.channel.{Channel as NettyChannel, *}
 import io.netty.handler.codec.http.FullHttpResponse
 import kyo.*
-import scala.annotation.tailrec
 
 /** Response handler — completes the promise with the parsed response, doesn't manage pool. */
 final private[kyo] class ResponseHandler(
@@ -18,21 +17,7 @@ final private[kyo] class ResponseHandler(
         val body   = new Array[Byte](msg.content().readableBytes())
         msg.content().readBytes(body)
 
-        val nettyHeaders = msg.headers()
-        val headerCount  = nettyHeaders.size()
-        val arr          = new Array[String](headerCount * 2)
-        val iter         = nettyHeaders.iteratorAsString()
-
-        @tailrec def fillHeaders(i: Int): Unit =
-            if i < headerCount && iter.hasNext then
-                val entry = iter.next()
-                arr(i * 2) = entry.getKey
-                arr(i * 2 + 1) = entry.getValue
-                fillHeaders(i + 1)
-
-        fillHeaders(0)
-
-        val headers  = HttpHeaders.fromFlatArrayNoCopy(arr)
+        val headers  = NettyHeaderUtil.extract(msg.headers())
         val response = HttpResponse.initBytes(status, headers, Span.fromUnsafe(body))
         discard(promise.complete(Result.succeed(response)))
     end channelRead0

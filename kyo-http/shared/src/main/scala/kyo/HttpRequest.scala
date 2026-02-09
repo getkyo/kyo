@@ -1,6 +1,7 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
+import kyo.internal.MultipartUtil
 import kyo.internal.UrlParser
 
 /** Immutable HTTP request used on both sides of the wire — client code builds and sends requests, server code receives and inspects them.
@@ -194,7 +195,7 @@ final class HttpRequest[+B <: HttpBody] private (
         contentType match
             case Present(ct) if ct.startsWith("multipart/form-data") =>
                 // Extract boundary from content type
-                extractBoundary(ct) match
+                MultipartUtil.extractBoundary(ct) match
                     case Present(boundary) =>
                         parseMultipart(ev(body).data, boundary)
                     case Absent =>
@@ -592,33 +593,13 @@ object HttpRequest:
     private def decodeUrl(s: String): String =
         java.net.URLDecoder.decode(s, StandardCharsets.UTF_8.name())
 
-    // --- Multipart parsing (pure Scala, no Netty) ---
-
-    private def extractBoundary(contentType: String): Maybe[String] =
-        val boundaryPrefix = "boundary="
-        val idx            = contentType.indexOf(boundaryPrefix)
-        if idx < 0 then Absent
-        else
-            val start = idx + boundaryPrefix.length
-            val value = contentType.substring(start).trim
-            // Strip quotes if present
-            if value.length >= 2 && value.charAt(0) == '"' && value.charAt(value.length - 1) == '"' then
-                Present(value.substring(1, value.length - 1))
-            else
-                // Trim at semicolon if present
-                val semiIdx = value.indexOf(';')
-                Present(if semiIdx >= 0 then value.substring(0, semiIdx).trim else value)
-            end if
-        end if
-    end extractBoundary
-
     /** Parses multipart/form-data body. Format: --boundary\r\n headers \r\n\r\n content \r\n--boundary... --boundary-- */
     private def parseMultipart(data: Array[Byte], boundary: String): Span[Part] =
         val boundaryBytes = ("--" + boundary).getBytes(StandardCharsets.UTF_8)
         val crlfBytes     = "\r\n".getBytes(StandardCharsets.UTF_8)
         val result        = Seq.newBuilder[Part]
 
-        var pos = indexOf(data, boundaryBytes, 0)
+        var pos = MultipartUtil.indexOf(data, boundaryBytes, 0)
         if pos < 0 then return Span.empty[Part]
         pos += boundaryBytes.length
 
@@ -635,7 +616,7 @@ object HttpRequest:
             var filename: Maybe[String]        = Absent
             var partContentType: Maybe[String] = Absent
 
-            var headerEnd = indexOf(data, "\r\n\r\n".getBytes(StandardCharsets.UTF_8), pos)
+            var headerEnd = MultipartUtil.indexOf(data, "\r\n\r\n".getBytes(StandardCharsets.UTF_8), pos)
             if headerEnd < 0 then return toSpan(result.result())
 
             val headerSection = new String(data, pos, headerEnd - pos, StandardCharsets.UTF_8)
@@ -645,8 +626,8 @@ object HttpRequest:
                     val headerName  = line.substring(0, colonIdx).trim.toLowerCase
                     val headerValue = line.substring(colonIdx + 1).trim
                     if headerName == "content-disposition" then
-                        extractDispositionParam(headerValue, "name").foreach(n => name = n)
-                        filename = extractDispositionParam(headerValue, "filename")
+                        MultipartUtil.extractDispositionParam(headerValue, "name").foreach(n => name = n)
+                        filename = MultipartUtil.extractDispositionParam(headerValue, "filename")
                     else if headerName == "content-type" then
                         partContentType = Present(headerValue)
                     end if
@@ -656,7 +637,7 @@ object HttpRequest:
             pos = headerEnd + 4
 
             // Content runs from here to \r\n before the next boundary marker
-            val nextBoundary = indexOf(data, boundaryBytes, pos)
+            val nextBoundary = MultipartUtil.indexOf(data, boundaryBytes, pos)
             if nextBoundary < 0 then return toSpan(result.result())
 
             val contentEnd = nextBoundary - 2
@@ -680,38 +661,6 @@ object HttpRequest:
     private def toSpan(parts: Seq[Part]): Span[Part] =
         if parts.isEmpty then Span.empty[Part]
         else Span.fromUnsafe(parts.toArray)
-
-    private def extractDispositionParam(disposition: String, param: String): Maybe[String] =
-        val search = param + "=\""
-        val idx    = disposition.indexOf(search)
-        if idx < 0 then Absent
-        else
-            val start  = idx + search.length
-            val endIdx = disposition.indexOf('"', start)
-            if endIdx < 0 then Absent
-            else Present(disposition.substring(start, endIdx))
-        end if
-    end extractDispositionParam
-
-    private def indexOf(data: Array[Byte], pattern: Array[Byte], from: Int): Int =
-        val dataLen    = data.length
-        val patternLen = pattern.length
-        if patternLen == 0 || from + patternLen > dataLen then return -1
-
-        var i = from
-        while i <= dataLen - patternLen do
-            var j     = 0
-            var found = true
-            while j < patternLen && found do
-                if data(i + j) != pattern(j) then
-                    found = false
-                j += 1
-            end while
-            if found then return i
-            i += 1
-        end while
-        -1
-    end indexOf
 
     // --- Constants ---
 

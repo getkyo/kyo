@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.*
-import scala.annotation.tailrec
 
 /** Stateful NDJSON (Newline-Delimited JSON) decoder for streaming byte chunks.
   *
@@ -9,27 +8,13 @@ import scala.annotation.tailrec
   * how much data has arrived.
   */
 final private[kyo] class NdjsonDecoder[V](schema: Schema[V]):
-    private val utf8   = Utf8StreamDecoder()
-    private var buffer = ""
+    private val lineDecoder = LineBufferedDecoder("\n")
 
     /** Decode a chunk of bytes, returning any complete NDJSON values found. */
     def decode(bytes: Span[Byte]): Seq[V] =
-        buffer += utf8.decode(Chunk.from(bytes.toArrayUnsafe))
-        val values = Seq.newBuilder[V]
-
-        @tailrec def loop(): Unit =
-            val idx = buffer.indexOf('\n')
-            if idx >= 0 then
-                val line = buffer.substring(0, idx).trim
-                buffer = buffer.substring(idx + 1)
-                if line.nonEmpty then
-                    values += schema.decode(line)
-                loop()
-            end if
-        end loop
-        loop()
-
-        values.result()
-    end decode
+        lineDecoder.extract(bytes).flatMap { line =>
+            val trimmed = line.trim
+            if trimmed.nonEmpty then Seq(schema.decode(trimmed)) else Seq.empty
+        }
 
 end NdjsonDecoder

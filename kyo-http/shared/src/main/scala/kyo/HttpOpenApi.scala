@@ -160,7 +160,7 @@ object HttpOpenApi:
         val spec = fromRoutes(config)(routes*)
         val json = spec.toJson
         HttpHandler.get(path) { _ =>
-            HttpResponse.ok(json).addHeader("Content-Type", "application/json")
+            HttpResponse.ok(json).setHeader("Content-Type", "application/json")
         }
     end handler
 

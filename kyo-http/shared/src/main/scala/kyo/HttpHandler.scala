@@ -2,6 +2,7 @@ package kyo
 
 import HttpResponse.Status
 import kyo.HttpRequest.Method
+import kyo.internal.MultipartUtil
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 
@@ -111,7 +112,7 @@ object HttpHandler:
                 catch
                     case _: MissingAuthException | _: InvalidAuthException =>
                         HttpResponse(HttpResponse.Status.Unauthorized)
-                            .addHeader("WWW-Authenticate", "Basic realm=\"Restricted\"")
+                            .setHeader("WWW-Authenticate", "Basic realm=\"Restricted\"")
                     case _: MissingParamException =>
                         HttpResponse(HttpResponse.Status.BadRequest)
             end apply
@@ -339,7 +340,7 @@ object HttpHandler:
                     if tag.accepts(err) then
                         try
                             val json = schema.asInstanceOf[Schema[Any]].encode(err)
-                            Present(HttpResponse(status, json).addHeader("Content-Type", "application/json"))
+                            Present(HttpResponse(status, json).setHeader("Content-Type", "application/json"))
                         catch
                             case _: Throwable => loop(tail)
                     else loop(tail)
@@ -510,20 +511,9 @@ object HttpHandler:
                 val (rightVal, remaining2) = extractFromSegment(right.asInstanceOf[HttpPath.Segment[?]], remaining)
                 (combineInputs(leftVal, rightVal), remaining2)
 
+    // Forwarding method — direct MultipartUtil reference in inline-expanded code
+    // causes ClassNotFoundException: kyo/internal at runtime
     private def extractBoundary(contentType: String): Maybe[String] =
-        val boundaryPrefix = "boundary="
-        val idx            = contentType.indexOf(boundaryPrefix)
-        if idx < 0 then Absent
-        else
-            val start = idx + boundaryPrefix.length
-            val value = contentType.substring(start).trim
-            if value.length >= 2 && value.charAt(0) == '"' && value.charAt(value.length - 1) == '"' then
-                Present(value.substring(1, value.length - 1))
-            else
-                val semiIdx = value.indexOf(';')
-                Present(if semiIdx >= 0 then value.substring(0, semiIdx).trim else value)
-            end if
-        end if
-    end extractBoundary
+        MultipartUtil.extractBoundary(contentType)
 
 end HttpHandler

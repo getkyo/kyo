@@ -89,7 +89,7 @@ final private[kyo] class HttpServerHandler(
         val keepAlive = HttpUtil.isKeepAlive(nettyReq)
         val pathEnd   = uri.indexOf('?')
         val path      = if pathEnd >= 0 then uri.substring(0, pathEnd) else uri
-        val headers   = extractNettyHeaders(nettyReq)
+        val headers   = NettyHeaderUtil.extract(nettyReq.headers())
 
         // Route lookup decides state: DISCARDING (404/405), STREAMING, or BUFFERING
         handler.reject(method, path) match
@@ -400,20 +400,5 @@ final private[kyo] class HttpServerHandler(
         discard(nettyResp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bodyBytes.length))
         discard(ctx.writeAndFlush(nettyResp).addListener(ChannelFutureListener.CLOSE))
     end exceptionCaught
-
-    private def extractNettyHeaders(nettyReq: NettyHttpRequest): HttpHeaders =
-        val nettyHeaders = nettyReq.headers()
-        val headerCount  = nettyHeaders.size()
-        val arr          = new Array[String](headerCount * 2)
-        val iter         = nettyHeaders.iteratorAsString()
-        @tailrec def fill(i: Int): Unit =
-            if i < headerCount && iter.hasNext then
-                val entry = iter.next()
-                arr(i * 2) = entry.getKey
-                arr(i * 2 + 1) = entry.getValue
-                fill(i + 1)
-        fill(0)
-        HttpHeaders.fromFlatArrayNoCopy(arr)
-    end extractNettyHeaders
 
 end HttpServerHandler

@@ -1005,7 +1005,7 @@ class HttpServerTest extends Test:
             val bytes = data.getBytes("UTF-8")
             val handler = HttpHandler.get("/cl-manual") { _ =>
                 val s = Stream.init(Seq(Span.fromUnsafe(bytes)))
-                HttpResponse.stream(s).addHeader("Content-Length", bytes.length.toString)
+                HttpResponse.stream(s).setHeader("Content-Length", bytes.length.toString)
             }
             startTestServer(handler).map { port =>
                 testGet(port, "/cl-manual").map { response =>
@@ -1670,7 +1670,7 @@ class HttpServerTest extends Test:
         "concurrent requests preserve per-request headers" in run {
             val handler = HttpHandler.get("/echo") { req =>
                 val reqId = req.header("X-Req-Id").getOrElse("none")
-                HttpResponse.ok(reqId).addHeader("X-Echo-Id", reqId)
+                HttpResponse.ok(reqId).setHeader("X-Echo-Id", reqId)
             }
             startTestServer(handler).map { port =>
                 Async.fill(20, 20) {
@@ -1692,8 +1692,8 @@ class HttpServerTest extends Test:
         "returns headers without body" in run {
             val handler = HttpHandler.init(Method.HEAD, "/data") { _ =>
                 HttpResponse.ok("this body should not be sent")
-                    .addHeader("X-Custom", "present")
-                    .addHeader("Content-Length", "35")
+                    .setHeader("X-Custom", "present")
+                    .setHeader("Content-Length", "35")
             }
             startTestServer(handler).map { port =>
                 HttpClient.send(HttpRequest.head(s"http://localhost:$port/data")).map { response =>

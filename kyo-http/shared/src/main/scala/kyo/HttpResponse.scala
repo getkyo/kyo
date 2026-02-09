@@ -19,8 +19,8 @@ import java.time.format.DateTimeFormatter
   *   - Cookie setting with full attribute support
   *   - Cache control, ETag, Content-Disposition, Content-Encoding, and Last-Modified builders
   *
-  * IMPORTANT: `addHeader` replaces existing headers with the same name (filters out then appends). It has set semantics, not append
-  * semantics. Compare with `HttpRequest.addHeader` which appends without replacing.
+  * `addHeader` appends without replacing (consistent with `HttpRequest.addHeader`). Use `setHeader` to replace existing headers with the
+  * same name.
   *
   * IMPORTANT: `bodyAs[A]` wraps decode failure in `Abort[HttpError.ParseError]`. Compare with `HttpRequest.bodyAs[A]` which throws
   * directly.
@@ -91,11 +91,19 @@ final class HttpResponse[+B <: HttpBody] private (
 
     // --- Builders (preserve body type) ---
 
-    /** Replaces any existing header with the same name, then appends (set semantics, not append). */
+    /** Appends a header to the header list. Does NOT replace existing headers with the same name. */
     def addHeader(name: String, value: String): HttpResponse[B] =
-        new HttpResponse(status, _headers.set(name, value), _cookies, body)
+        new HttpResponse(status, _headers.add(name, value), _cookies, body)
 
     def addHeaders(headers: HttpHeaders): HttpResponse[B] =
+        if headers.isEmpty then this
+        else new HttpResponse(status, _headers.concat(headers), _cookies, body)
+
+    /** Replaces any existing header with the same name (set semantics). */
+    def setHeader(name: String, value: String): HttpResponse[B] =
+        new HttpResponse(status, _headers.set(name, value), _cookies, body)
+
+    def setHeaders(headers: HttpHeaders): HttpResponse[B] =
         if headers.isEmpty then this
         else
             var h = _headers
@@ -116,24 +124,24 @@ final class HttpResponse[+B <: HttpBody] private (
 
     def contentDisposition(filename: String, isInline: Boolean): HttpResponse[B] =
         val disposition = if isInline then "inline" else "attachment"
-        addHeader("Content-Disposition", s"""$disposition; filename="$filename"""")
+        setHeader("Content-Disposition", s"""$disposition; filename="$filename"""")
 
     def etag(value: String): HttpResponse[B] =
         val quotedEtag = if value.startsWith("\"") then value else s""""$value""""
-        addHeader("ETag", quotedEtag)
+        setHeader("ETag", quotedEtag)
 
     def lastModified(time: Instant): HttpResponse[B] =
-        addHeader("Last-Modified", HttpResponse.httpDateFormatter.format(time.toJava))
+        setHeader("Last-Modified", HttpResponse.httpDateFormatter.format(time.toJava))
 
     def cacheControl(directive: String): HttpResponse[B] =
-        addHeader("Cache-Control", directive)
+        setHeader("Cache-Control", directive)
 
     def noCache: HttpResponse[B] = cacheControl("no-cache")
 
     def noStore: HttpResponse[B] = cacheControl("no-store")
 
     def contentEncoding(encoding: String): HttpResponse[B] =
-        addHeader("Content-Encoding", encoding)
+        setHeader("Content-Encoding", encoding)
 
     // --- Private / Internal ---
 
@@ -195,7 +203,7 @@ object HttpResponse:
 
     def created[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.Created, body)
     def created[A: Schema](body: A, location: String): HttpResponse[HttpBody.Bytes] =
-        initJson(Status.Created, body).addHeader("Location", location)
+        initJson(Status.Created, body).setHeader("Location", location)
 
     def accepted: HttpResponse[HttpBody.Bytes]                     = apply(Status.Accepted)
     def accepted[A: Schema](body: A): HttpResponse[HttpBody.Bytes] = initJson(Status.Accepted, body)

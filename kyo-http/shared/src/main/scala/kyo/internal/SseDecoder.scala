@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.*
-import scala.annotation.tailrec
 
 /** Stateful SSE (Server-Sent Events) decoder for streaming byte chunks.
   *
@@ -9,28 +8,11 @@ import scala.annotation.tailrec
   * zero or more events depending on how much data has arrived.
   */
 final private[kyo] class SseDecoder[V](schema: Schema[V]):
-    private val utf8   = Utf8StreamDecoder()
-    private var buffer = ""
+    private val lineDecoder = LineBufferedDecoder("\n\n", normalize = true)
 
     /** Decode a chunk of bytes, returning any complete SSE events found. */
     def decode(bytes: Span[Byte]): Seq[HttpEvent[V]] =
-        buffer += utf8.decode(Chunk.from(bytes.toArrayUnsafe)).replace("\r\n", "\n").replace("\r", "\n")
-        val events = Seq.newBuilder[HttpEvent[V]]
-
-        // Split on double-newline (SSE event boundary)
-        @tailrec def loop(): Unit =
-            val idx = buffer.indexOf("\n\n")
-            if idx >= 0 then
-                val block = buffer.substring(0, idx)
-                buffer = buffer.substring(idx + 2)
-                parseEvent(block).foreach(events += _)
-                loop()
-            end if
-        end loop
-        loop()
-
-        events.result()
-    end decode
+        lineDecoder.extract(bytes).flatMap(parseEvent)
 
     private def parseEvent(block: String): Maybe[HttpEvent[V]] =
         val dataLines              = Seq.newBuilder[String]

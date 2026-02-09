@@ -806,7 +806,7 @@ class HttpClientTest extends Test:
 
         "TooManyRedirects when exceeding limit" in run {
             val handler = HttpHandler.get("/redirect") { _ =>
-                HttpResponse(Status.Found).addHeader("Location", "/redirect")
+                HttpResponse(Status.Found).setHeader("Location", "/redirect")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.maxRedirects(3)) {
@@ -1647,7 +1647,7 @@ class HttpClientTest extends Test:
         "HEAD on GET route returns headers without body" in run {
             val handler = HttpHandler.get("/data") { _ =>
                 HttpResponse.ok("some content here")
-                    .addHeader("X-Custom", "test-value")
+                    .setHeader("X-Custom", "test-value")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.timeout(5.seconds)) {

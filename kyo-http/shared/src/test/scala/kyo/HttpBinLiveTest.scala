@@ -190,4 +190,163 @@ class HttpBinLiveTest extends Test:
         }
     }
 
+    // ========================================================================
+    // PATCH / HEAD / OPTIONS
+    // ========================================================================
+
+    "PATCH - with JSON body" in run {
+        val request =
+            HttpRequest.patchText(s"$base/patch", """{"patched":true}""", HttpHeaders.empty.add("Content-Type", "application/json"))
+        HttpClient.send(request).map { response =>
+            assert(response.status == Status.OK)
+            assert(response.bodyText.contains("patched"))
+        }
+    }
+
+    "HEAD - returns status with no body" in run {
+        HttpClient.send(HttpRequest.head(s"$base/get")).map { response =>
+            assert(response.status == Status.OK)
+            assert(response.bodyText.isEmpty)
+        }
+    }
+
+    "OPTIONS - returns Allow header" in run {
+        HttpClient.send(HttpRequest.options(s"$base/get")).map { response =>
+            assert(response.status == Status.OK)
+            assert(response.header("Allow").isDefined)
+        }
+    }
+
+    // ========================================================================
+    // Request bodies: form and multipart
+    // ========================================================================
+
+    "POST - form-encoded body" in run {
+        val request = HttpRequest.postForm(s"$base/post", Seq("field1" -> "value1", "field2" -> "value2"))
+        HttpClient.send(request).map { response =>
+            assert(response.status == Status.OK)
+            val body = response.bodyText
+            assert(body.contains("value1"))
+            assert(body.contains("value2"))
+        }
+    }
+
+    "POST - multipart body" in run {
+        val parts = Seq(
+            HttpRequest.Part("file", Present("test.txt"), Present("text/plain"), "hello world".getBytes("UTF-8"))
+        )
+        val request = HttpRequest.multipart(s"$base/post", parts)
+        HttpClient.send(request).map { response =>
+            assert(response.status == Status.OK)
+            assert(response.bodyText.contains("hello world"))
+        }
+    }
+
+    // ========================================================================
+    // Redirects
+    // ========================================================================
+
+    "redirect - follow redirects" in run {
+        HttpClient.send(s"$base/redirect/3").map { response =>
+            assert(response.status == Status.OK)
+            assert(response.bodyText.contains("httpbin.org"))
+        }
+    }
+
+    "redirect - limit exceeded" in run {
+        Abort.run {
+            HttpClient.withConfig(_.maxRedirects(2)) {
+                HttpClient.send(s"$base/redirect/5")
+            }
+        }.map {
+            case Result.Failure(_: HttpError.TooManyRedirects) => assert(true)
+            case other                                         => fail(s"Expected TooManyRedirects but got $other")
+        }
+    }
+
+    "redirect - disabled returns 302" in run {
+        HttpClient.withConfig(_.followRedirects(false)) {
+            HttpClient.send(s"$base/redirect/1").map { response =>
+                assert(response.status == Status.Found)
+                assert(response.header("Location").isDefined)
+            }
+        }
+    }
+
+    // ========================================================================
+    // Cookies
+    // ========================================================================
+
+    "cookies - Set-Cookie header from response" in run {
+        // Disable redirects to capture the Set-Cookie header directly
+        HttpClient.withConfig(_.followRedirects(false)) {
+            HttpClient.send(s"$base/cookies/set/testname/testvalue").map { response =>
+                assert(response.status.isRedirect)
+                val setCookie = response.header("Set-Cookie")
+                assert(setCookie.isDefined)
+                assert(setCookie.exists(_.contains("testname=testvalue")))
+            }
+        }
+    }
+
+    // ========================================================================
+    // Client filters
+    // ========================================================================
+
+    "GET - basic auth filter" in run {
+        HttpFilter.client.basicAuth("user", "pass").enable {
+            HttpClient.send(HttpRequest.get(s"$base/basic-auth/user/pass")).map { response =>
+                assert(response.status == Status.OK)
+                assert(response.bodyText.contains("\"authenticated\""))
+            }
+        }
+    }
+
+    "GET - addHeader filter" in run {
+        HttpFilter.client.addHeader("X-Test-Header", "kyo-test-value").enable {
+            HttpClient.send(HttpRequest.get(s"$base/headers")).map { response =>
+                assert(response.status == Status.OK)
+                assert(response.bodyText.contains("kyo-test-value"))
+            }
+        }
+    }
+
+    // ========================================================================
+    // Response inspection
+    // ========================================================================
+
+    "GET - content type from /html" in run {
+        HttpClient.send(s"$base/html").map { response =>
+            assert(response.status == Status.OK)
+            assert(response.contentType.exists(_.contains("text/html")))
+        }
+    }
+
+    "GET - status 201" in run {
+        HttpClient.send(HttpRequest.get(s"$base/status/201")).map { response =>
+            assert(response.status == Status.Created)
+        }
+    }
+
+    "GET - status 204" in run {
+        HttpClient.send(HttpRequest.get(s"$base/status/204")).map { response =>
+            assert(response.status == Status.NoContent)
+        }
+    }
+
+    // ========================================================================
+    // Retry
+    // ========================================================================
+
+    "retry - exhausted on 503" in run {
+        Abort.run {
+            HttpClient.withConfig(_.retry(Schedule.fixed(100.millis).take(1))) {
+                HttpClient.send(HttpRequest.get(s"$base/status/503"))
+            }
+        }.map {
+            case Result.Failure(_: HttpError.RetriesExhausted) => assert(true)
+            case other                                         => fail(s"Expected RetriesExhausted but got $other")
+        }
+    }
+
 end HttpBinLiveTest

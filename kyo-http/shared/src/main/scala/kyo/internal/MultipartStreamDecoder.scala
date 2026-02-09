@@ -48,7 +48,7 @@ final private[kyo] class MultipartStreamDecoder(boundary: String):
     /** Try to parse one complete part from the buffer. Returns Absent if not enough data yet. */
     private def tryParsePart(): Maybe[HttpRequest.Part] =
         // Find boundary
-        val boundaryPos = indexOf(buffer, boundaryBytes, 0)
+        val boundaryPos = MultipartUtil.indexOf(buffer, boundaryBytes, 0)
         if boundaryPos < 0 then return Absent
 
         val afterBoundary = boundaryPos + boundaryBytes.length
@@ -71,7 +71,7 @@ final private[kyo] class MultipartStreamDecoder(boundary: String):
         val headerStart = afterBoundary + crlfBytes.length
 
         // Find header end (\r\n\r\n)
-        val headerEnd = indexOf(buffer, headerEndBytes, headerStart)
+        val headerEnd = MultipartUtil.indexOf(buffer, headerEndBytes, headerStart)
         if headerEnd < 0 then return Absent
 
         // Parse headers
@@ -86,8 +86,8 @@ final private[kyo] class MultipartStreamDecoder(boundary: String):
                 val headerName  = line.substring(0, colonIdx).trim.toLowerCase
                 val headerValue = line.substring(colonIdx + 1).trim
                 if headerName == "content-disposition" then
-                    extractDispositionParam(headerValue, "name").foreach(n => name = n)
-                    filename = extractDispositionParam(headerValue, "filename")
+                    MultipartUtil.extractDispositionParam(headerValue, "name").foreach(n => name = n)
+                    filename = MultipartUtil.extractDispositionParam(headerValue, "filename")
                 else if headerName == "content-type" then
                     partContentType = Present(headerValue)
                 end if
@@ -101,7 +101,7 @@ final private[kyo] class MultipartStreamDecoder(boundary: String):
         java.lang.System.arraycopy(crlfBytes, 0, crlfBoundary, 0, crlfBytes.length)
         java.lang.System.arraycopy(boundaryBytes, 0, crlfBoundary, crlfBytes.length, boundaryBytes.length)
 
-        val nextBoundary = indexOf(buffer, crlfBoundary, contentStart)
+        val nextBoundary = MultipartUtil.indexOf(buffer, crlfBoundary, contentStart)
         if nextBoundary < 0 then return Absent
 
         // Extract content
@@ -124,38 +124,6 @@ final private[kyo] class MultipartStreamDecoder(boundary: String):
             tryParsePart()
         end if
     end tryParsePart
-
-    private def extractDispositionParam(disposition: String, param: String): Maybe[String] =
-        val search = param + "=\""
-        val idx    = disposition.indexOf(search)
-        if idx < 0 then Absent
-        else
-            val start  = idx + search.length
-            val endIdx = disposition.indexOf('"', start)
-            if endIdx < 0 then Absent
-            else Present(disposition.substring(start, endIdx))
-        end if
-    end extractDispositionParam
-
-    private def indexOf(data: Array[Byte], pattern: Array[Byte], from: Int): Int =
-        val dataLen    = data.length
-        val patternLen = pattern.length
-        if patternLen == 0 || from + patternLen > dataLen then return -1
-
-        var i = from
-        while i <= dataLen - patternLen do
-            var j     = 0
-            var found = true
-            while j < patternLen && found do
-                if data(i + j) != pattern(j) then
-                    found = false
-                j += 1
-            end while
-            if found then return i
-            i += 1
-        end while
-        -1
-    end indexOf
 
     private def sliceFrom(arr: Array[Byte], from: Int): Array[Byte] =
         if from >= arr.length then Array.empty

@@ -490,7 +490,98 @@ object HttpClient:
             f(rawHost, effectivePort, ssl, rawPath, rawQuery)
         }
 
-    // Pipeline: 1. send via pool → 2. apply timeout → 3. follow redirects → 4. retry on retriable responses
+    /** Send request via connection pool, acquiring and releasing a connection. */
+    private def sendViaPool(
+        pool: ConnectionPool,
+        url: String,
+        request: HttpRequest[HttpBody.Bytes],
+        config: Config
+    )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
+        parseUrl(url) { (host, port, ssl, rawPath, rawQuery) =>
+            val key         = ConnectionPool.PoolKey(host, port, ssl)
+            val reqWithPath = request.withParsedUrl(rawPath, rawQuery)
+            pool.acquire(key, config.connectTimeout).map { conn =>
+                @volatile var completed = false
+                Sync.ensure {
+                    import AllowUnsafe.embrace.danger
+                    if !completed then conn.closeAbruptly()
+                    pool.release(key, conn)
+                } {
+                    conn.send(reqWithPath).map { resp =>
+                        completed = true
+                        resp
+                    }
+                }
+            }
+        }
+
+    /** Apply request-level timeout if configured. */
+    private def applyTimeout(
+        config: Config,
+        doSend: HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError])
+    )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
+        config.timeout match
+            case Present(d) =>
+                Abort.run[kyo.Timeout](Async.timeout(d)(doSend)).map {
+                    case Result.Success(resp) => resp
+                    case Result.Failure(_)    => Abort.fail(HttpError.Timeout(s"Request timed out after $d"))
+                    case Result.Panic(e)      => throw e
+                }
+            case Absent => doSend
+
+    /** Follow HTTP redirects if configured. */
+    private def handleRedirect(
+        pool: ConnectionPool,
+        url: String,
+        request: HttpRequest[HttpBody.Bytes],
+        config: Config,
+        resp: HttpResponse[HttpBody.Bytes],
+        redirectCount: Int,
+        retrySchedule: Maybe[Schedule],
+        attemptCount: Int
+    )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
+        if config.followRedirects && resp.status.isRedirect then
+            if redirectCount >= config.maxRedirects then
+                Abort.fail(HttpError.TooManyRedirects(redirectCount))
+            else
+                resp.header("Location") match
+                    case Present(location) =>
+                        val redirectUrl =
+                            if location.startsWith("http://") || location.startsWith("https://") then
+                                location
+                            else
+                                new URI(url).resolve(location).toString
+                        sendWithPolicies(pool, redirectUrl, request, config, redirectCount + 1, retrySchedule, attemptCount)
+                    case Absent =>
+                        resp
+        else
+            handleRetry(pool, url, request, config, resp, retrySchedule, attemptCount)
+
+    /** Retry on retriable responses using the configured schedule. */
+    private def handleRetry(
+        pool: ConnectionPool,
+        url: String,
+        request: HttpRequest[HttpBody.Bytes],
+        config: Config,
+        resp: HttpResponse[HttpBody.Bytes],
+        retrySchedule: Maybe[Schedule],
+        attemptCount: Int
+    )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
+        retrySchedule match
+            case Present(schedule) if config.retryOn(resp) =>
+                Clock.now.map { now =>
+                    schedule.next(now) match
+                        case Present((delay, nextSchedule)) =>
+                            Async.delay(delay) {
+                                sendWithPolicies(pool, url, request, config, 0, Present(nextSchedule), attemptCount + 1)
+                            }
+                        case Absent =>
+                            Abort.fail(HttpError.RetriesExhausted(attemptCount, resp.status, resp.bodyText))
+                }
+            case _ =>
+                resp
+
+    // Pipeline: send via pool → apply timeout → follow redirects → retry
     private def sendWithPolicies(
         pool: ConnectionPool,
         url: String,
@@ -501,89 +592,8 @@ object HttpClient:
         attemptCount: Int = 1
     )(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         val currentSchedule = retrySchedule.orElse(config.retrySchedule)
-
-        // 1. Send request via pool
-        val doSend: HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
-            parseUrl(url) { (host, port, ssl, rawPath, rawQuery) =>
-                val key         = ConnectionPool.PoolKey(host, port, ssl)
-                val reqWithPath = request.withParsedUrl(rawPath, rawQuery)
-                pool.acquire(key, config.connectTimeout).map { conn =>
-                    @volatile var completed = false
-                    Sync.ensure {
-                        import AllowUnsafe.embrace.danger
-                        // If request was interrupted mid-flight, close the connection so
-                        // the server sees the disconnect. Otherwise return to pool.
-                        if !completed then conn.closeAbruptly()
-                        pool.release(key, conn)
-                    } {
-                        conn.send(reqWithPath).map { resp =>
-                            completed = true
-                            resp
-                        }
-                    }
-                }
-            }
-        end doSend
-
-        // 2. Apply request-level timeout
-        val withTimeout: HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
-            config.timeout match
-                case Present(d) =>
-                    Abort.run[kyo.Timeout](Async.timeout(d)(doSend)).map {
-                        case Result.Success(resp) => resp
-                        case Result.Failure(_)    => Abort.fail(HttpError.Timeout(s"Request timed out after $d"))
-                        case Result.Panic(e)      => throw e
-                    }
-                case Absent => doSend
-
-        withTimeout.map { resp =>
-            // 3. Handle redirects — redirected requests bypass retry (they restart the pipeline)
-            if config.followRedirects && resp.status.isRedirect then
-                if redirectCount >= config.maxRedirects then
-                    Abort.fail(HttpError.TooManyRedirects(redirectCount))
-                else
-                    resp.header("Location") match
-                        case Present(location) =>
-                            val redirectUrl =
-                                if location.startsWith("http://") || location.startsWith("https://") then
-                                    location
-                                else
-                                    // Rare path: relative redirect — use URI.resolve()
-                                    new URI(url).resolve(location).toString
-                            sendWithPolicies(
-                                pool,
-                                redirectUrl,
-                                request,
-                                config,
-                                redirectCount + 1,
-                                currentSchedule,
-                                attemptCount
-                            )
-                        case Absent =>
-                            resp
-            else
-                // 4. Handle retry based on response (only for non-redirect responses)
-                currentSchedule match
-                    case Present(schedule) if config.retryOn(resp) =>
-                        Clock.now.map { now =>
-                            schedule.next(now) match
-                                case Present((delay, nextSchedule)) =>
-                                    Async.delay(delay) {
-                                        sendWithPolicies(
-                                            pool,
-                                            url,
-                                            request,
-                                            config,
-                                            0, // Reset redirect count for retry
-                                            Present(nextSchedule),
-                                            attemptCount + 1
-                                        )
-                                    }
-                                case Absent =>
-                                    Abort.fail(HttpError.RetriesExhausted(attemptCount, resp.status, resp.bodyText))
-                        }
-                    case _ =>
-                        resp
+        applyTimeout(config, sendViaPool(pool, url, request, config)).map { resp =>
+            handleRedirect(pool, url, request, config, resp, redirectCount, currentSchedule, attemptCount)
         }
     end sendWithPolicies
 

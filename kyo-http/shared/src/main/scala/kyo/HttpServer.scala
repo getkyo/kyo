@@ -121,7 +121,7 @@ object HttpServer:
                     )(h*)
                     val json = spec.toJson
                     val openApiHandler = HttpHandler.get(openApiConfig.path) { _ =>
-                        HttpResponse.ok(json).addHeader("Content-Type", "application/json")
+                        HttpResponse.ok(json).setHeader("Content-Type", "application/json")
                     }
                     h :+ openApiHandler
                 case Absent =>
@@ -225,7 +225,7 @@ object HttpServer:
                 error match
                     case HttpRouter.FindError.MethodNotAllowed(allowed) =>
                         val allowHeader = allowed.map(_.name).mkString(", ")
-                        HttpResponse(HttpResponse.Status.MethodNotAllowed).addHeader("Allow", allowHeader)
+                        HttpResponse(HttpResponse.Status.MethodNotAllowed).setHeader("Allow", allowHeader)
                     case HttpRouter.FindError.NotFound =>
                         HttpResponse.notFound
 

@@ -71,7 +71,7 @@ object Schema:
     given Schema[Unit] = new Schema[Unit]:
         val zpiSchema: zio.schema.Schema[Unit] = zio.schema.Schema[Unit]
         override def decode(json: String): Unit =
-            if json.isEmpty || json.trim.isEmpty then ()
+            if json.isEmpty || json.trim.isEmpty || json.trim == "null" then ()
             else
                 zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
                     case Right(a)    => a
