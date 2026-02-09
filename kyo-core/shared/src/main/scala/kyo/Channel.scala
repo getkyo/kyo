@@ -269,8 +269,7 @@ object Channel:
                             Channel.take(self).map { a =>
                                 Abort.run[Closed](Channel.drainUpTo(self)(maxChunkSize - 1)).map {
                                     case Result.Success(ch)     => Emit.value(Chunk(a).concat(ch))
-                                    case Result.Failure(closed) => Emit.value(Chunk(a)).andThen(Abort.fail(closed))
-                                    case Result.Panic(ex)       => Emit.value(Chunk(a)).andThen(Abort.panic(ex))
+                                    case error => Emit.value(Chunk(a)).andThen(Abort.error(error))
                                 }
                             }
 
