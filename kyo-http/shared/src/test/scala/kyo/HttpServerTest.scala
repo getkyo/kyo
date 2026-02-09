@@ -1005,6 +1005,28 @@ class HttpServerTest extends Test:
             }
         }
 
+        "streaming response preserves duplicate Set-Cookie headers" in run {
+            val handler = HttpHandler.get("/multi-cookie") { _ =>
+                val s = Stream.init(Seq(Span.fromUnsafe("ok".getBytes("UTF-8"))))
+                HttpResponse.stream(s)
+                    .addCookie(HttpResponse.Cookie("a", "1"))
+                    .addCookie(HttpResponse.Cookie("b", "2"))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/multi-cookie").map { response =>
+                    assertStatus(response, Status.OK)
+                    // Collect all Set-Cookie header values from raw headers
+                    val setCookies = Seq.newBuilder[String]
+                    response.headers.foreach { (k, v) =>
+                        if k.equalsIgnoreCase("Set-Cookie") then setCookies += v
+                    }
+                    val cookies = setCookies.result()
+                    assert(cookies.exists(_.startsWith("a=1")), s"Expected cookie a=1 in $cookies")
+                    assert(cookies.exists(_.startsWith("b=2")), s"Expected cookie b=2 in $cookies")
+                }
+            }
+        }
+
         "negative contentLength rejected" in {
             assertThrows[IllegalArgumentException] {
                 HttpResponse.stream(Stream.empty[Span[Byte]], -1L, Status.OK)
@@ -1254,11 +1276,8 @@ class HttpServerTest extends Test:
                     s"http://localhost:$port/nonexistent",
                     bodyStream
                 )
-                Abort.run(HttpClient.stream(request)).map {
-                    case Result.Failure(HttpError.StatusError(status, _)) =>
-                        assert(status == Status.NotFound)
-                    case other =>
-                        fail(s"Expected StatusError(404) but got $other")
+                HttpClient.stream(request).map { response =>
+                    assert(response.status == Status.NotFound)
                 }
             }
         }
@@ -1275,6 +1294,198 @@ class HttpServerTest extends Test:
                     HttpRequest.post(s"http://localhost:${server.port}/upload", largeBody)
                 ).map { response =>
                     assertStatus(response, Status.PayloadTooLarge)
+                }
+            }
+        }
+    }
+
+    "Route auth" - {
+
+        "authBasic handler receives decoded username and password" in run {
+            val route = HttpRoute.get("me").authBasic.outputText
+            val handler = route.handle { case (username, password) =>
+                s"user=$username,pass=$password"
+            }
+            startTestServer(handler).map { port =>
+                val encoded = java.util.Base64.getEncoder.encodeToString("alice:secret123".getBytes("UTF-8"))
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Authorization", s"Basic $encoded"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "user=alice,pass=secret123")
+                }
+            }
+        }
+
+        "authBearer handler receives token without Bearer prefix" in run {
+            val route = HttpRoute.get("me").authBearer.outputText
+            val handler = route.handle { token =>
+                s"token=$token"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Authorization", "Bearer mytoken123"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "token=mytoken123")
+                    // Should NOT contain the "Bearer " prefix
+                    val body = response.bodyText
+                    assert(!body.contains("token=Bearer"), s"Token should not include Bearer prefix: $body")
+                }
+            }
+        }
+
+        "authBasic with path param" in run {
+            val route = HttpRoute.get("users" / HttpPath.int("id")).authBasic.outputText
+            val handler = route.handle { case (id, username, password) =>
+                s"id=$id,user=$username,pass=$password"
+            }
+            startTestServer(handler).map { port =>
+                val encoded = java.util.Base64.getEncoder.encodeToString("bob:pass".getBytes("UTF-8"))
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/users/42", HttpHeaders.empty.add("Authorization", s"Basic $encoded"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "id=42,user=bob,pass=pass")
+                }
+            }
+        }
+
+        "authBasic returns 401 when Authorization header missing" in run {
+            val route = HttpRoute.get("me").authBasic.outputText
+            val handler = route.handle { case (username, password) =>
+                s"user=$username"
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/me").map { response =>
+                    assertStatus(response, Status.Unauthorized)
+                }
+            }
+        }
+
+        "authBearer returns 401 when Authorization header missing" in run {
+            val route = HttpRoute.get("me").authBearer.outputText
+            val handler = route.handle { token =>
+                s"token=$token"
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/me").map { response =>
+                    assertStatus(response, Status.Unauthorized)
+                }
+            }
+        }
+
+        "authApiKey handler receives key value" in run {
+            val route = HttpRoute.get("data").authApiKey("X-API-Key").outputText
+            val handler = route.handle { key =>
+                s"key=$key"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/data", HttpHeaders.empty.add("X-API-Key", "abc123"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "key=abc123")
+                }
+            }
+        }
+
+        "authApiKey with path param" in run {
+            val route = HttpRoute.get("data" / HttpPath.string("name")).authApiKey("X-API-Key").outputText
+            val handler = route.handle { case (name, key) =>
+                s"name=$name,key=$key"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/data/test", HttpHeaders.empty.add("X-API-Key", "mykey"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "name=test,key=mykey")
+                }
+            }
+        }
+
+        "authApiKey returns 401 when header missing" in run {
+            val route = HttpRoute.get("data").authApiKey("X-API-Key").outputText
+            val handler = route.handle { key =>
+                s"key=$key"
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/data").map { response =>
+                    assertStatus(response, Status.Unauthorized)
+                }
+            }
+        }
+    }
+
+    "Route cookies" - {
+
+        "cookie handler receives cookie value" in run {
+            val route = HttpRoute.get("me").cookie("session").outputText
+            val handler = route.handle { session =>
+                s"session=$session"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Cookie", "session=abc123"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "session=abc123")
+                }
+            }
+        }
+
+        "cookie with default value when cookie missing" in run {
+            val route = HttpRoute.get("me").cookie("session", "default-session").outputText
+            val handler = route.handle { session =>
+                s"session=$session"
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/me").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "session=default-session")
+                }
+            }
+        }
+
+        "cookie with path param" in run {
+            val route = HttpRoute.get("users" / HttpPath.int("id")).cookie("token").outputText
+            val handler = route.handle { case (id, token) =>
+                s"id=$id,token=$token"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/users/42", HttpHeaders.empty.add("Cookie", "token=xyz"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "id=42,token=xyz")
+                }
+            }
+        }
+
+        "multiple cookies" in run {
+            val route = HttpRoute.get("me").cookie("session").cookie("lang").outputText
+            val handler = route.handle { case (session, lang) =>
+                s"session=$session,lang=$lang"
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(
+                    HttpRequest.get(s"http://localhost:$port/me", HttpHeaders.empty.add("Cookie", "session=abc; lang=en"))
+                ).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "session=abc,lang=en")
+                }
+            }
+        }
+
+        "missing required cookie returns 400" in run {
+            val route = HttpRoute.get("me").cookie("session").outputText
+            val handler = route.handle { session =>
+                s"session=$session"
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/me").map { response =>
+                    assertStatus(response, Status.BadRequest)
                 }
             }
         }

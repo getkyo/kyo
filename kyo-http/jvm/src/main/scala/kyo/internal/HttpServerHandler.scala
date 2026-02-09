@@ -275,10 +275,15 @@ final private[kyo] class HttpServerHandler(
                                 HttpResponseStatus.valueOf(response.status.code)
                             )
                             response.resolvedHeaders.foreach { (k, v) =>
-                                discard(nettyResponse.headers().set(k, v))
+                                discard(nettyResponse.headers().add(k, v))
                             }
                             if !nettyResponse.headers().contains("Content-Length") then
                                 discard(nettyResponse.headers().set("Transfer-Encoding", "chunked"))
+                            if keepAlive then
+                                discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
+                            else
+                                discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
+                            end if
                             discard(ctx.writeAndFlush(nettyResponse))
 
                             Abort.run[Throwable](Abort.catching[Throwable] {
@@ -294,7 +299,10 @@ final private[kyo] class HttpServerHandler(
                                     )
                                 }
                             }).map {
-                                case Result.Success(_) => response
+                                case Result.Success(_) =>
+                                    if !keepAlive && ctx.channel().isActive then
+                                        discard(ctx.close())
+                                    response
                                 case _ =>
                                     if ctx.channel().isActive then discard(ctx.close())
                                     response

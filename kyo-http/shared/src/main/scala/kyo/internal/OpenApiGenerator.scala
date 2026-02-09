@@ -84,7 +84,7 @@ private[kyo] object OpenApiGenerator:
             )
         }
 
-        val headerParams = route.headerParams.map { hp =>
+        val headerParams = route.headerParams.filter(_.authScheme.isEmpty).map { hp =>
             Parameter(
                 name = hp.name,
                 in = "header",
@@ -303,26 +303,26 @@ private[kyo] object OpenApiGenerator:
         end if
     end buildEnumSchema
 
-    /** Infers OpenAPI security scheme type from route metadata: no Authorization header → apiKey, "basic" in name → HTTP basic, else →
-      * bearer.
-      */
+    /** Maps route auth scheme metadata to OpenAPI security scheme definitions. */
     private def collectSecuritySchemes(handlers: Seq[HttpHandler[Any]]): Map[String, SecurityScheme] =
         handlers.flatMap { handler =>
             handler.route.securityScheme.toOption.map { scheme =>
-                val hasAuthHeader = handler.route.headerParams.exists(_.name.equalsIgnoreCase("Authorization"))
-                val schemeObj =
-                    if !hasAuthHeader then
-                        val apiKeyHeader = handler.route.headerParams.lastOption.map(_.name).getOrElse("X-API-Key")
+                val authParam = handler.route.headerParams.find(_.authScheme.isDefined)
+                val schemeObj = authParam.flatMap(_.authScheme.toOption) match
+                    case Some(HttpRoute.AuthScheme.Basic) =>
+                        SecurityScheme(`type` = "http", scheme = Some("basic"), bearerFormat = None, name = None, in = None)
+                    case Some(HttpRoute.AuthScheme.Bearer) =>
+                        SecurityScheme(`type` = "http", scheme = Some("bearer"), bearerFormat = None, name = None, in = None)
+                    case Some(HttpRoute.AuthScheme.ApiKey) =>
+                        val headerName = authParam.map(_.name).getOrElse("X-API-Key")
                         SecurityScheme(
                             `type` = "apiKey",
                             scheme = None,
                             bearerFormat = None,
-                            name = Some(apiKeyHeader),
+                            name = Some(headerName),
                             in = Some("header")
                         )
-                    else if scheme.toLowerCase.contains("basic") then
-                        SecurityScheme(`type` = "http", scheme = Some("basic"), bearerFormat = None, name = None, in = None)
-                    else
+                    case None =>
                         SecurityScheme(`type` = "http", scheme = Some("bearer"), bearerFormat = None, name = None, in = None)
                 scheme -> schemeObj
             }

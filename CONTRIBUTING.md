@@ -161,6 +161,7 @@ Effect operations follow consistent naming:
 - [ ] Use **`.unit`** to discard a result to `Unit < S`.
 - [ ] **Prefer `.map` chains** over for-comprehensions — but use a for-comprehension when it genuinely helps readability (e.g., many dependent steps).
 - [ ] Use **`.handle(Abort.run, Env.run(x))`** for left-to-right handler pipelines instead of nested `Env.run(x)(Abort.run(computation))`.
+- [ ] **Prefer `Abort.recover`** over `Abort.run` + `Result` pattern matching. Use `.handle(Abort.recover[E](onFail))` or `.handle(Abort.recover[E](onFail, onPanic))` instead of `Abort.run[E](computation).map { case Result.Success(...) => ... }`.
 
 ### Performance
 
@@ -286,7 +287,7 @@ When a Kyo primitive exists for a concept, use it instead of the stdlib equivale
 
 | Kyo primitive | Replaces | Notes |
 |---|---|---|
-| `Maybe[A]` | `Option[A]` | `Option` only as conversion input (e.g., `Abort.get(opt: Option[A])`) |
+| `Maybe[A]` | `Option[A]` | `Option` only as conversion input (e.g., `Abort.get(opt: Option[A])`). When stdlib methods return `Option` (e.g., `collectFirst`), convert to `Maybe` as soon as possible via `Maybe.fromOption` |
 | `Result[E, A]` | `Either`, `Try` | Three-way: `Success`/`Failure`/`Panic` — never raw `Either` or `Try` in effect signatures |
 | `Chunk[A]` | `Seq`, `List`, `Vector` | Use internally; accept generic collections in public APIs (see below) |
 | `Duration` | `java.time.Duration`, `scala.concurrent.duration.Duration` | Opaque `Long`-based, zero-allocation |
@@ -723,7 +724,7 @@ All closeable resources follow:
 
 ```scala
 // Closed carries creation context for diagnostics
-class Closed(resource: Text, createdAt: Frame, details: Text = "")(using Frame)
+class Closed(resource: String, createdAt: Frame, details: String = "")(using Frame)
 
 // Unsafe level returns Result[Closed, A]
 def offer(v: A)(using AllowUnsafe): Result[Closed, Boolean]
@@ -837,14 +838,14 @@ All custom exceptions extend `KyoException`, which provides:
 - Environment-aware formatting (rich ANSI in dev, minimal in prod)
 
 ```scala
-class Closed(resource: Text, createdAt: Frame, details: Text = "")(using Frame)
-    extends KyoException(t"$resource created at ${createdAt.position.show} is closed.", details)
+class Closed(resource: String, createdAt: Frame, details: String = "")(using Frame)
+    extends KyoException(s"$resource created at ${createdAt.position.show} is closed.", details)
 ```
 
 Follow this pattern for all new exception types:
 - Extend `KyoException`, not `Exception` or `RuntimeException` — `KyoException` already includes `NoStackTrace`, so you never need to add it yourself
 - Take `(using Frame)` to capture context
-- Use `Text` for messages (not `String`)
+- Use `String` for messages
 - Keep the message concise — the `Frame` provides the location context
 
 ---
@@ -1032,7 +1033,7 @@ All items from "New Type" plus:
 - [ ] Sync/async method pairs if applicable: `offer`/`poll` (immediate) vs `put`/`take` (suspending)
 - [ ] Isolate protocol (`capture`/`isolate`/`restore`) for any method that forks into new fibers
 - [ ] Local-backed service pattern if the type is a swappable service: private `Local`, `get`/`use`/`let` in companion
-- [ ] Custom exceptions extend `KyoException` with `(using Frame)` and `Text` messages
+- [ ] Custom exceptions extend `KyoException` with `(using Frame)` and `String` messages
 
 ### New Effect
 

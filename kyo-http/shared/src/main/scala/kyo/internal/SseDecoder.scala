@@ -14,7 +14,7 @@ final private[kyo] class SseDecoder[V](schema: Schema[V]):
 
     /** Decode a chunk of bytes, returning any complete SSE events found. */
     def decode(bytes: Span[Byte]): Seq[HttpEvent[V]] =
-        buffer += utf8.decode(Chunk.from(bytes.toArrayUnsafe))
+        buffer += utf8.decode(Chunk.from(bytes.toArrayUnsafe)).replace("\r\n", "\n").replace("\r", "\n")
         val events = Seq.newBuilder[HttpEvent[V]]
 
         // Split on double-newline (SSE event boundary)

@@ -73,7 +73,7 @@ class ResponseStreamingHandlerTest extends Test:
             end match
         }
 
-        "handles error status" in {
+        "delivers error status through headers" in {
             val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
             val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
             val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
@@ -83,8 +83,39 @@ class ResponseStreamingHandlerTest extends Test:
             discard(channel.writeInbound(response))
 
             pollHeaders(headerPromise) match
-                case Present(r) => assert(r.isFailure, s"Expected failure for error status but got $r")
-                case Absent     => fail("Expected promise to be completed")
+                case Present(Result.Success(headers)) =>
+                    assert(headers.status == kyo.HttpResponse.Status.InternalServerError)
+                case other =>
+                    fail(s"Expected completed Success with error status but got $other")
+            end match
+        }
+
+        "error status delivers body chunks" in {
+            val headerPromise = Promise.Unsafe.init[StreamingHeaders, Abort[HttpError]]()
+            val byteChannel   = Channel.Unsafe.init[Span[Byte]](32)
+            val handler       = new ResponseStreamingHandler(headerPromise, byteChannel, "localhost", 8080)
+            val channel       = new EmbeddedChannel(handler)
+
+            val response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.BAD_REQUEST)
+            discard(channel.writeInbound(response))
+
+            // Send error body
+            val body = new DefaultLastHttpContent(Unpooled.wrappedBuffer("{\"error\":\"invalid\"}".getBytes("UTF-8")))
+            discard(channel.writeInbound(body))
+
+            // The error body should be available through the byte channel
+            pollHeaders(headerPromise) match
+                case Present(Result.Success(headers)) =>
+                    assert(headers.status == kyo.HttpResponse.Status.BadRequest)
+                    byteChannel.poll() match
+                        case Result.Success(Present(s)) =>
+                            assert(new String(s.toArray, "UTF-8") == "{\"error\":\"invalid\"}")
+                        case other =>
+                            fail(s"Expected error body chunk but got $other")
+                    end match
+                case other =>
+                    fail(s"Expected headers with error status but got $other")
+            end match
         }
 
         "closes byte channel on last content" in {

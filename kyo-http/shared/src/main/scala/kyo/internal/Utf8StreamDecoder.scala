@@ -35,7 +35,7 @@ final private[kyo] class Utf8StreamDecoder private (
         if input.isEmpty then ""
         else
             val inBuf  = ByteBuffer.wrap(input)
-            val outBuf = CharBuffer.allocate(input.length * 2) // UTF-8 worst case
+            var outBuf = CharBuffer.allocate(input.length * 2) // UTF-8 worst case
 
             @tailrec def loop(): Unit =
                 val result = decoder.decode(inBuf, outBuf, false)
@@ -47,7 +47,11 @@ final private[kyo] class Utf8StreamDecoder private (
                 else if result.isMalformed || result.isUnmappable then
                     result.throwException()
                 else if result.isOverflow then
-                    // Output buffer full - shouldn't happen with 2x allocation
+                    // Grow output buffer and retry
+                    val bigger = CharBuffer.allocate(outBuf.capacity() * 2)
+                    outBuf.flip()
+                    discard(bigger.put(outBuf))
+                    outBuf = bigger
                     loop()
                 end if
             end loop

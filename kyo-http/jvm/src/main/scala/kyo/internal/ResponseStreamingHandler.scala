@@ -23,26 +23,19 @@ final private[kyo] class ResponseStreamingHandler(
         if msg.isInstanceOf[io.netty.handler.codec.http.HttpResponse] then
             val response = msg.asInstanceOf[io.netty.handler.codec.http.HttpResponse]
             val status   = HttpResponse.Status(response.status().code())
-            if status.isError then
-                discard(headerPromise.complete(
-                    Result.fail(HttpError.StatusError(status, ""))
-                ))
-                discard(byteChannel.closeAwaitEmpty())
-            else
-                // Extract response headers into flat interleaved array
-                val nettyHeaders = response.headers()
-                val headerCount  = nettyHeaders.size()
-                val arr          = new Array[String](headerCount * 2)
-                val iter         = nettyHeaders.iteratorAsString()
-                @tailrec def fillHeaders(i: Int): Unit =
-                    if i < headerCount && iter.hasNext then
-                        val entry = iter.next()
-                        arr(i * 2) = entry.getKey
-                        arr(i * 2 + 1) = entry.getValue
-                        fillHeaders(i + 1)
-                fillHeaders(0)
-                discard(headerPromise.complete(Result.succeed(StreamingHeaders(status, HttpHeaders.fromFlatArrayNoCopy(arr)))))
-            end if
+            // Extract response headers into flat interleaved array
+            val nettyHeaders = response.headers()
+            val headerCount  = nettyHeaders.size()
+            val arr          = new Array[String](headerCount * 2)
+            val iter         = nettyHeaders.iteratorAsString()
+            @tailrec def fillHeaders(i: Int): Unit =
+                if i < headerCount && iter.hasNext then
+                    val entry = iter.next()
+                    arr(i * 2) = entry.getKey
+                    arr(i * 2 + 1) = entry.getValue
+                    fillHeaders(i + 1)
+            fillHeaders(0)
+            discard(headerPromise.complete(Result.succeed(StreamingHeaders(status, HttpHeaders.fromFlatArrayNoCopy(arr)))))
         end if
         // Body chunks are forwarded to byteChannel for the streaming consumer
         if msg.isInstanceOf[io.netty.handler.codec.http.HttpContent] then

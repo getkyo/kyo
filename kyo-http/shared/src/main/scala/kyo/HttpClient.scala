@@ -5,6 +5,7 @@ import kyo.internal.ConnectionPool
 import kyo.internal.NdjsonDecoder
 import kyo.internal.SseDecoder
 import kyo.internal.UrlParser
+import scala.annotation.tailrec
 import scala.annotation.targetName
 
 /** HTTP client for sending requests with connection pooling, automatic retries, and redirect following.
@@ -262,7 +263,8 @@ object HttpClient:
         val fullPath    = if queryString.isEmpty then pathStr else s"$pathStr?$queryString"
         val headers     = buildRouteHeaders(route.headerParams, route.cookieParams, in, route.path, route.queryParams)
 
-        val bodyIndex = countPathCaptures(route.path) + route.queryParams.size + route.headerParams.size + route.cookieParams.size
+        val bodyIndex = countPathCaptures(route.path) + route.queryParams.size +
+            route.headerParams.map(headerParamInputSize).sum + route.cookieParams.size
 
         val request =
             if route.multipartInput then
@@ -609,6 +611,11 @@ object HttpClient:
             case tuple: Tuple => tuple.productElement(idx)
             case other => if idx == 0 then other else throw new IllegalStateException(s"Cannot extract input at index $idx from $other")
 
+    private def headerParamInputSize(param: HttpRoute.HeaderParam) =
+        param.authScheme match
+            case Present(HttpRoute.AuthScheme.Basic) => 2
+            case _                                   => 1
+
     private def buildRouteHeaders(
         headerParams: Seq[HttpRoute.HeaderParam],
         cookieParams: Seq[HttpRoute.CookieParam],
@@ -616,20 +623,44 @@ object HttpClient:
         path: HttpPath[Any],
         queryParams: Seq[HttpRoute.QueryParam[?]]
     ): HttpHeaders =
-        if headerParams.isEmpty then HttpHeaders.empty
-        else
-            val pathCaptureCount = countPathCaptures(path)
-            val queryParamCount  = queryParams.size
-            val offset           = pathCaptureCount + queryParamCount
-            var headers          = HttpHeaders.empty
-            var i                = 0
-            while i < headerParams.size do
+        val startOffset = countPathCaptures(path) + queryParams.size
+
+        // Build header params with auth transforms
+        @tailrec def loopHeaders(i: Int, offset: Int, headers: HttpHeaders): (HttpHeaders, Int) =
+            if i >= headerParams.size then (headers, offset)
+            else
                 val param = headerParams(i)
-                val value = extractInputAt(in, offset + i)
-                headers = headers.add(param.name, value.toString)
-                i += 1
-            end while
-            headers
+                param.authScheme match
+                    case Present(HttpRoute.AuthScheme.Bearer) =>
+                        val token = extractInputAt(in, offset)
+                        loopHeaders(i + 1, offset + 1, headers.add("Authorization", s"Bearer $token"))
+                    case Present(HttpRoute.AuthScheme.Basic) =>
+                        val username = extractInputAt(in, offset)
+                        val password = extractInputAt(in, offset + 1)
+                        val encoded  = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
+                        loopHeaders(i + 1, offset + 2, headers.add("Authorization", s"Basic $encoded"))
+                    case Present(HttpRoute.AuthScheme.ApiKey) =>
+                        val value = extractInputAt(in, offset)
+                        loopHeaders(i + 1, offset + 1, headers.add(param.name, value.toString))
+                    case Absent =>
+                        val value = extractInputAt(in, offset)
+                        loopHeaders(i + 1, offset + 1, headers.add(param.name, value.toString))
+                end match
+        val (headers, cookieOffset) = loopHeaders(0, startOffset, HttpHeaders.empty)
+
+        // Build Cookie header from cookie params
+        if cookieParams.isEmpty then headers
+        else
+            val cookieParts = new Array[String](cookieParams.size)
+            @tailrec def loopCookies(j: Int): Unit =
+                if j < cookieParams.size then
+                    val cp = cookieParams(j)
+                    cookieParts(j) = s"${cp.name}=${extractInputAt(in, cookieOffset + j)}"
+                    loopCookies(j + 1)
+            loopCookies(0)
+            headers.add("Cookie", cookieParts.mkString("; "))
+        end if
+    end buildRouteHeaders
 
     private def buildRouteQueryString(queryParams: Seq[HttpRoute.QueryParam[?]], in: Any, path: HttpPath[Any]): String =
         if queryParams.isEmpty then ""

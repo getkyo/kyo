@@ -1611,8 +1611,8 @@ class HttpClientTest extends Test:
             "error status" in run {
                 val handler = HttpHandler.const(HttpRequest.Method.GET, "/missing", Status.NotFound)
                 startTestServer(handler).map { port =>
-                    Abort.run(HttpClient.stream(s"http://localhost:$port/missing")).map { result =>
-                        assert(result.isFailure)
+                    HttpClient.stream(s"http://localhost:$port/missing").map { response =>
+                        assert(response.status == Status.NotFound)
                     }
                 }
             }
