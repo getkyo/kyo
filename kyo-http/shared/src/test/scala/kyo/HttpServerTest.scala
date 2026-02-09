@@ -607,6 +607,31 @@ class HttpServerTest extends Test:
             }
         }
 
+        "405 for wrong method on existing path" in run {
+            val handler = HttpHandler.get("/users") { _ => HttpResponse.ok("list") }
+            startTestServer(handler).map { port =>
+                HttpClient.send(HttpRequest.post(s"http://localhost:$port/users", "body")).map { response =>
+                    assertStatus(response, Status.MethodNotAllowed)
+                }
+            }
+        }
+
+        "405 vs 404 distinction" in run {
+            val getUsers  = HttpHandler.get("/users") { _ => HttpResponse.ok("list") }
+            val postUsers = HttpHandler.post("/users") { _ => HttpResponse.created("new") }
+            startTestServer(getUsers, postUsers).map { port =>
+                // DELETE on /users should be 405 (path exists but method doesn't match)
+                HttpClient.send(HttpRequest.delete(s"http://localhost:$port/users")).map { r1 =>
+                    assertStatus(r1, Status.MethodNotAllowed)
+                }.andThen {
+                    // GET on /nonexistent should be 404 (path doesn't exist)
+                    testGet(port, "/nonexistent").map { r2 =>
+                        assertStatus(r2, Status.NotFound)
+                    }
+                }
+            }
+        }
+
         "error handling" in run {
             startTestServer(errorHandler("/error")).map { port =>
                 testGet(port, "/error").map { response =>
@@ -1486,6 +1511,194 @@ class HttpServerTest extends Test:
             startTestServer(handler).map { port =>
                 testGet(port, "/me").map { response =>
                     assertStatus(response, Status.BadRequest)
+                }
+            }
+        }
+    }
+
+    "NoContent and empty body handling" - {
+
+        "204 NoContent has empty body" in run {
+            val handler = HttpHandler.delete("/items/1") { _ =>
+                HttpResponse.noContent
+            }
+            startTestServer(handler).map { port =>
+                testDelete(port, "/items/1").map { response =>
+                    assertStatus(response, Status.NoContent)
+                    assert(response.bodyText.isEmpty)
+                }
+            }
+        }
+
+        "empty body POST handler" in run {
+            val handler = HttpHandler.post("/trigger") { request =>
+                val bodyLen = request.bodyBytes.size
+                HttpResponse.ok(s"received $bodyLen bytes")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(HttpRequest.postText(s"http://localhost:$port/trigger", "")).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyContains(response, "received 0 bytes")
+                }
+            }
+        }
+    }
+
+    "URL encoding through server" - {
+
+        "percent-encoded path segments" in run {
+            val handler = HttpHandler.get("items" / HttpPath.string("name")) { (name, _) =>
+                HttpResponse.ok(s"name=$name")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/items/hello%20world").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "name=hello world")
+                }
+            }
+        }
+
+        "query param with plus sign through route" in run {
+            val handler = HttpHandler.get("search") { request =>
+                val q = request.query("q").getOrElse("missing")
+                HttpResponse.ok(s"q=$q")
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/search?q=hello+world").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "q=hello world")
+                }
+            }
+        }
+
+        "non-ASCII percent-encoded query param through route" in run {
+            val handler = HttpHandler.get("search") { request =>
+                val q = request.query("q").getOrElse("missing")
+                HttpResponse.ok(s"q=$q")
+            }
+            startTestServer(handler).map { port =>
+                // café = caf%C3%A9
+                testGet(port, "/search?q=caf%C3%A9").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "q=café")
+                }
+            }
+        }
+
+        "query param with special characters" in run {
+            val handler = HttpHandler.get("search") { request =>
+                val q = request.query("q").getOrElse("missing")
+                HttpResponse.ok(s"q=$q")
+            }
+            startTestServer(handler).map { port =>
+                // a&b=c encoded: a%26b%3Dc
+                testGet(port, "/search?q=a%26b%3Dc").map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "q=a&b=c")
+                }
+            }
+        }
+    }
+
+    "Multiple Set-Cookie through server" - {
+
+        "buffered response preserves multiple Set-Cookie headers" in run {
+            val handler = HttpHandler.get("/cookies") { _ =>
+                HttpResponse.ok("ok")
+                    .addCookie(HttpResponse.Cookie("a", "1"))
+                    .addCookie(HttpResponse.Cookie("b", "2"))
+                    .addCookie(HttpResponse.Cookie("c", "3"))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/cookies").map { response =>
+                    assertStatus(response, Status.OK)
+                    val setCookies = Seq.newBuilder[String]
+                    response.headers.foreach { (k, v) =>
+                        if k.equalsIgnoreCase("Set-Cookie") then setCookies += v
+                    }
+                    val cookies = setCookies.result()
+                    assert(cookies.exists(_.startsWith("a=1")), s"Expected cookie a=1 in $cookies")
+                    assert(cookies.exists(_.startsWith("b=2")), s"Expected cookie b=2 in $cookies")
+                    assert(cookies.exists(_.startsWith("c=3")), s"Expected cookie c=3 in $cookies")
+                }
+            }
+        }
+
+        "cookie attributes preserved through round-trip" in run {
+            val handler = HttpHandler.get("/cookies") { _ =>
+                HttpResponse.ok("ok")
+                    .addCookie(HttpResponse.Cookie("session", "abc", httpOnly = true, secure = true, path = Present("/api")))
+            }
+            startTestServer(handler).map { port =>
+                testGet(port, "/cookies").map { response =>
+                    assertStatus(response, Status.OK)
+                    val setCookies = Seq.newBuilder[String]
+                    response.headers.foreach { (k, v) =>
+                        if k.equalsIgnoreCase("Set-Cookie") then setCookies += v
+                    }
+                    val cookies = setCookies.result()
+                    assert(cookies.nonEmpty, "Expected Set-Cookie header")
+                    val sessionCookie = cookies.find(_.startsWith("session=abc"))
+                    assert(sessionCookie.isDefined, s"Expected session cookie in $cookies")
+                    val cookieStr = sessionCookie.get
+                    assert(cookieStr.contains("HttpOnly"), s"Expected HttpOnly in $cookieStr")
+                    assert(cookieStr.contains("Secure"), s"Expected Secure in $cookieStr")
+                    assert(cookieStr.contains("Path=/api"), s"Expected Path=/api in $cookieStr")
+                }
+            }
+        }
+    }
+
+    "Concurrent response integrity" - {
+
+        "concurrent requests get correct response bodies (no mixing)" in run {
+            val handler = HttpHandler.get("items" / HttpPath.int("id")) { (id, _) =>
+                // Simulate some work to increase chance of interleaving
+                Async.delay(1.millis)(HttpResponse.ok(s"item-$id"))
+            }
+            startTestServer(handler).map { port =>
+                Async.fill(20, 20) {
+                    val id = scala.util.Random.nextInt(1000)
+                    testGet(port, s"/items/$id").map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyText(response, s"item-$id")
+                    }
+                }.andThen(succeed)
+            }
+        }
+
+        "concurrent requests preserve per-request headers" in run {
+            val handler = HttpHandler.get("/echo") { req =>
+                val reqId = req.header("X-Req-Id").getOrElse("none")
+                HttpResponse.ok(reqId).addHeader("X-Echo-Id", reqId)
+            }
+            startTestServer(handler).map { port =>
+                Async.fill(20, 20) {
+                    val id = java.util.concurrent.ThreadLocalRandom.current().nextInt(100000).toString
+                    HttpClient.send(
+                        HttpRequest.get(s"http://localhost:$port/echo", HttpHeaders.empty.add("X-Req-Id", id))
+                    ).map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyText(response, id)
+                        assertHeader(response, "X-Echo-Id", id)
+                    }
+                }.andThen(succeed)
+            }
+        }
+    }
+
+    "HEAD request" - {
+
+        "returns headers without body" in run {
+            val handler = HttpHandler.init(Method.HEAD, "/data") { _ =>
+                HttpResponse.ok("this body should not be sent")
+                    .addHeader("X-Custom", "present")
+                    .addHeader("Content-Length", "35")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.send(HttpRequest.head(s"http://localhost:$port/data")).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertHeader(response, "X-Custom", "present")
                 }
             }
         }

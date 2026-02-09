@@ -1588,6 +1588,109 @@ class HttpClientTest extends Test:
 
     }
 
+    "Redirect edge cases" - {
+
+        "redirect preserves query parameters in Location" in run {
+            val target   = HttpHandler.get("/target") { req => HttpResponse.ok(s"q=${req.query("q").getOrElse("none")}") }
+            val redirect = HttpHandler.get("/start") { _ => HttpResponse.redirect("/target?q=hello") }
+            startTestServer(target, redirect).map { port =>
+                HttpClient.send(HttpRequest.get(s"http://localhost:$port/start")).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "q=hello")
+                }
+            }
+        }
+
+        "redirect chain (A -> B -> C)" in run {
+            val c = HttpHandler.get("/c") { _ => HttpResponse.ok("final") }
+            val b = HttpHandler.get("/b") { _ => HttpResponse.redirect("/c") }
+            val a = HttpHandler.get("/a") { _ => HttpResponse.redirect("/b") }
+            startTestServer(a, b, c).map { port =>
+                HttpClient.send(HttpRequest.get(s"http://localhost:$port/a")).map { response =>
+                    assertStatus(response, Status.OK)
+                    assertBodyText(response, "final")
+                }
+            }
+        }
+
+        "redirect with absolute URL in Location" in run {
+            val target = HttpHandler.get("/target") { _ => HttpResponse.ok("arrived") }
+            startTestServer(target).map { port =>
+                val redirect = HttpHandler.get("/start") { _ =>
+                    HttpResponse.redirect(s"http://localhost:$port/target")
+                }
+                startTestServer(redirect).map { port2 =>
+                    HttpClient.send(HttpRequest.get(s"http://localhost:$port2/start")).map { response =>
+                        assertStatus(response, Status.OK)
+                        assertBodyText(response, "arrived")
+                    }
+                }
+            }
+        }
+    }
+
+    "204 NoContent client handling" - {
+
+        "send returns 204 with empty body" in run {
+            val handler = HttpHandler.delete("/items/1") { _ => HttpResponse.noContent }
+            startTestServer(handler).map { port =>
+                HttpClient.send(HttpRequest.delete(s"http://localhost:$port/items/1")).map { response =>
+                    assertStatus(response, Status.NoContent)
+                    assert(response.bodyText.isEmpty)
+                }
+            }
+        }
+    }
+
+    "Connection pool error recovery" - {
+
+        "pool works after receiving error responses" in run {
+            var count = 0
+            val handler = HttpHandler.get("/maybe") { _ =>
+                count += 1
+                if count <= 3 then HttpResponse.serverError("fail")
+                else HttpResponse.ok("recovered")
+            }
+            startTestServer(handler).map { port =>
+                HttpClient.init(maxConnectionsPerHost = Present(2), backend = PlatformTestBackend.backend).map { client =>
+                    // First 3 requests get 500
+                    Kyo.foreach(1 to 3) { _ =>
+                        client.send(HttpRequest.get(s"http://localhost:$port/maybe")).map { r =>
+                            assertStatus(r, Status.InternalServerError)
+                        }
+                    }.andThen {
+                        // Pool should still work after error responses
+                        client.send(HttpRequest.get(s"http://localhost:$port/maybe")).map { r =>
+                            assertStatus(r, Status.OK)
+                            assertBodyText(r, "recovered")
+                        }
+                    }
+                }
+            }
+        }
+
+        "pool works after request timeout" in run {
+            val handler = HttpHandler.get("/test") { _ =>
+                HttpResponse.ok("ok")
+            }
+            val slowHandler = neverRespondHandler("/slow")
+            startTestServer(handler, slowHandler).map { port =>
+                HttpClient.init(maxConnectionsPerHost = Present(2), backend = PlatformTestBackend.backend).map { client =>
+                    // Timed out request
+                    HttpClient.withConfig(_.timeout(50.millis)) {
+                        Abort.run(client.send(HttpRequest.get(s"http://localhost:$port/slow")))
+                    }.andThen {
+                        // Pool should still work after timeout
+                        client.send(HttpRequest.get(s"http://localhost:$port/test")).map { r =>
+                            assertStatus(r, Status.OK)
+                            assertBodyText(r, "ok")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "Streaming" - {
 
         case class Item(name: String) derives Schema, CanEqual

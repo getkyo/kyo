@@ -827,6 +827,33 @@ class HttpResponseTest extends Test:
         }
     }
 
+    "Multiple Set-Cookie headers" - {
+
+        "addCookie preserves all cookies in model" in {
+            val response = HttpResponse.ok
+                .addCookie(HttpResponse.Cookie("a", "1"))
+                .addCookie(HttpResponse.Cookie("b", "2"))
+                .addCookie(HttpResponse.Cookie("c", "3"))
+            assert(response.cookies.size == 3)
+            assert(response.cookie("a").map(_.value) == Present("1"))
+            assert(response.cookie("b").map(_.value) == Present("2"))
+            assert(response.cookie("c").map(_.value) == Present("3"))
+        }
+
+        "addHeader replaces same-name header (set semantics)" in {
+            val response = HttpResponse.ok
+                .addHeader("X-Trace", "first")
+                .addHeader("X-Trace", "second")
+            // response addHeader has set semantics — replaces existing
+            assert(response.header("X-Trace") == Present("second"))
+            var count = 0
+            response.headers.foreach { (k, _) =>
+                if k.equalsIgnoreCase("X-Trace") then count += 1
+            }
+            assert(count == 1, s"Expected exactly 1 X-Trace header but got $count")
+        }
+    }
+
     "Body edge cases" - {
         "empty body" in {
             val response = HttpResponse.ok("")

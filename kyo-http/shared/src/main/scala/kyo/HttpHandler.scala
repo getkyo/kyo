@@ -501,7 +501,8 @@ object HttpHandler:
                 val literalSize = HttpPath.countSegments(v)
                 ((), parts.drop(literalSize))
             case HttpPath.Segment.Capture(_, parse) =>
-                val value = parse(parts.head)
+                val decoded = java.net.URLDecoder.decode(parts.head, "UTF-8")
+                val value   = parse(decoded)
                 (value, parts.tail)
             case HttpPath.Segment.Concat(left, right) =>
                 val (leftVal, remaining)   = extractFromSegment(left.asInstanceOf[HttpPath.Segment[?]], parts)

@@ -210,4 +210,101 @@ class MultipartStreamDecoderTest extends Test:
         succeed
     }
 
+    "large binary file (>64KB)" in {
+        val boundary  = "largebinary"
+        val largeData = new Array[Byte](100 * 1024) // 100KB
+        scala.util.Random.nextBytes(largeData)
+        val body    = makeMultipartBody(boundary, Seq(("file", Some("large.bin"), Some("application/octet-stream"), largeData)))
+        val decoder = new MultipartStreamDecoder(boundary)
+        val parts   = decoder.decode(Span.fromUnsafe(body))
+        assert(parts.size == 1)
+        assert(parts(0).name == "file")
+        assert(parts(0).filename == Present("large.bin"))
+        assert(parts(0).content.length == largeData.length)
+        assert(parts(0).content.toSeq == largeData.toSeq)
+        succeed
+    }
+
+    "large binary file streamed in 8KB chunks" in {
+        val boundary  = "chunkedlarge"
+        val largeData = new Array[Byte](100 * 1024) // 100KB
+        scala.util.Random.nextBytes(largeData)
+        val body      = makeMultipartBody(boundary, Seq(("file", Some("big.dat"), Some("application/octet-stream"), largeData)))
+        val decoder   = new MultipartStreamDecoder(boundary)
+        val allParts  = Seq.newBuilder[HttpRequest.Part]
+        val chunkSize = 8192
+        var offset    = 0
+        while offset < body.length do
+            val end   = Math.min(offset + chunkSize, body.length)
+            val chunk = java.util.Arrays.copyOfRange(body, offset, end)
+            allParts ++= decoder.decode(Span.fromUnsafe(chunk))
+            offset = end
+        end while
+        val parts = allParts.result()
+        assert(parts.size == 1)
+        assert(parts(0).content.length == largeData.length)
+        assert(parts(0).content.toSeq == largeData.toSeq)
+        succeed
+    }
+
+    "non-ASCII filename" in {
+        val boundary = "unicodename"
+        val body     = makeMultipartBody(boundary, Seq(("file", Some("文档.pdf"), Some("application/pdf"), "pdf-data".getBytes)))
+        val decoder  = new MultipartStreamDecoder(boundary)
+        val parts    = decoder.decode(Span.fromUnsafe(body))
+        assert(parts.size == 1)
+        assert(parts(0).filename == Present("文档.pdf"))
+        succeed
+    }
+
+    "part content containing boundary-like string" in {
+        val boundary     = "mybnd"
+        val trickContent = s"--mybnd\r\nContent-Disposition: form-data; name=\"fake\"\r\n\r\nfake data".getBytes(StandardCharsets.UTF_8)
+        val body         = makeMultipartBody(boundary, Seq(("real", None, None, trickContent)))
+        val decoder      = new MultipartStreamDecoder(boundary)
+        val parts        = decoder.decode(Span.fromUnsafe(body))
+        assert(parts.size == 1)
+        assert(parts(0).name == "real")
+        assert(parts(0).content.toSeq == trickContent.toSeq)
+        succeed
+    }
+
+    "many small form fields" in {
+        val boundary = "manyfields"
+        val fields   = (1 to 50).map(i => (s"field$i", None, None, s"value$i".getBytes(StandardCharsets.UTF_8)))
+        val body     = makeMultipartBody(boundary, fields)
+        val decoder  = new MultipartStreamDecoder(boundary)
+        val parts    = decoder.decode(Span.fromUnsafe(body))
+        assert(parts.size == 50)
+        (1 to 50).foreach { i =>
+            assert(parts(i - 1).name == s"field$i")
+            assert(new String(parts(i - 1).content, "UTF-8") == s"value$i")
+        }
+        succeed
+    }
+
+    "mixed text fields and binary files" in {
+        val boundary   = "mixedcontent"
+        val binaryData = Array[Byte](0x89.toByte, 0x50, 0x4e, 0x47) // PNG magic bytes
+        val body = makeMultipartBody(
+            boundary,
+            Seq(
+                ("title", None, None, "My Photo".getBytes(StandardCharsets.UTF_8)),
+                ("description", None, None, "A sunset".getBytes(StandardCharsets.UTF_8)),
+                ("image", Some("sunset.png"), Some("image/png"), binaryData)
+            )
+        )
+        val decoder = new MultipartStreamDecoder(boundary)
+        val parts   = decoder.decode(Span.fromUnsafe(body))
+        assert(parts.size == 3)
+        assert(parts(0).name == "title")
+        assert(parts(0).filename == Absent)
+        assert(new String(parts(0).content, "UTF-8") == "My Photo")
+        assert(parts(2).name == "image")
+        assert(parts(2).filename == Present("sunset.png"))
+        assert(parts(2).contentType == Present("image/png"))
+        assert(parts(2).content.toSeq == binaryData.toSeq)
+        succeed
+    }
+
 end MultipartStreamDecoderTest

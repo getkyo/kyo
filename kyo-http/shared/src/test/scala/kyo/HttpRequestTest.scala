@@ -691,6 +691,47 @@ class HttpRequestTest extends Test:
             val request = HttpRequest.get("http://example.com", HttpHeaders.empty.add("Cookie", cookies))
             assert(request.cookies.size == 50)
         }
+
+        "plus sign in query param decoded as space" in {
+            val request = HttpRequest.get("http://example.com/search?q=hello+world")
+            assert(request.query("q") == Present("hello world"))
+        }
+
+        "non-ASCII percent-encoded query param" in {
+            // é = %C3%A9 in UTF-8
+            val request = HttpRequest.get("http://example.com?name=caf%C3%A9")
+            assert(request.query("name") == Present("café"))
+        }
+
+        "CJK percent-encoded query param" in {
+            // 中 = %E4%B8%AD in UTF-8
+            val request = HttpRequest.get("http://example.com?q=%E4%B8%AD%E6%96%87")
+            assert(request.query("q") == Present("中文"))
+        }
+
+        "query param with ampersand in value" in {
+            val request = HttpRequest.get("http://example.com?q=a%26b")
+            assert(request.query("q") == Present("a&b"))
+        }
+
+        "query param with equals in value" in {
+            val request = HttpRequest.get("http://example.com?expr=a%3Db")
+            assert(request.query("expr") == Present("a=b"))
+        }
+
+        "multiple headers with same name preserved on request" in {
+            val request = HttpRequest.get("http://example.com")
+                .addHeader("Accept", "text/html")
+                .addHeader("Accept", "application/json")
+            // Request addHeader appends (multi-value), first match returned
+            assert(request.header("Accept") == Present("text/html"))
+            // Both should exist in headers
+            var count = 0
+            request.headers.foreach { (k, _) =>
+                if k.equalsIgnoreCase("Accept") then count += 1
+            }
+            assert(count == 2)
+        }
     }
 
 end HttpRequestTest

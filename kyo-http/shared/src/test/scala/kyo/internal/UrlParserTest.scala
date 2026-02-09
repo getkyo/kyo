@@ -285,6 +285,58 @@ class UrlParserTest extends AnyFreeSpec with NonImplicitAssertions:
                 assertMatchesUri("https://sub.domain.example.com:9443/api/v1")
             }
         }
+
+        "edge cases" - {
+
+            "double-encoded percent in query" in {
+                // %2520 means literal %20 (the % is encoded as %25)
+                assertMatchesUri("http://example.com/path?q=%2520")
+            }
+
+            "query with plus sign (literal)" in {
+                // + in URLs is literal per RFC 3986 (only means space in form-encoded)
+                assertMatchesUri("http://example.com/search?q=hello+world")
+            }
+
+            "path with trailing slash" in {
+                assertMatchesUri("http://example.com/path/")
+            }
+
+            "path with consecutive slashes" in {
+                assertMatchesUri("http://example.com//double//slashes")
+            }
+
+            "very long URL" in {
+                val longPath = "/" + "a" * 8000
+                assertMatchesUri(s"http://example.com$longPath")
+            }
+
+            "empty path with port" in {
+                assertMatchesUri("http://example.com:8080")
+            }
+
+            "query with empty key" in {
+                assertMatchesUri("http://example.com?=value")
+            }
+
+            "query with only ampersands" in {
+                assertMatchesUri("http://example.com?&&")
+            }
+
+            "fragment only (no path)" in pendingUntilFixed {
+                // Fragment on host-only URL: parser includes fragment in host
+                UrlParser.parseUrlParts("http://example.com#frag") { (scheme, host, port, path, query) =>
+                    assert(scheme == Present("http"))
+                    assert(host == Present("example.com"))
+                    assert(path == "/")
+                    assert(query == Absent)
+                }: Unit
+            }
+
+            "path with dot segments" in {
+                assertMatchesUri("http://example.com/a/b/../c")
+            }
+        }
     }
 
     "splitPathQuery" - {
