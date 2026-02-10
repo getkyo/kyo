@@ -7,7 +7,7 @@ import HttpResponse.Status
 class HttpStreamingMultipartTest extends Test:
 
     def startUploadServer(handlers: HttpHandler[?]*)(using Frame): Int < (Async & Scope) =
-        HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 1024 * 1024), PlatformTestBackend.backend)(handlers*).map(_.port)
+        HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 1024 * 1024), PlatformTestBackend.server)(handlers*).map(_.port)
 
     "single file via streaming multipart" in run {
         val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { parts =>

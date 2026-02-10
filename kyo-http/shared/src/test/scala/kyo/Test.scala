@@ -16,7 +16,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 
     private lazy val testClient: HttpClient =
         import AllowUnsafe.embrace.danger
-        HttpClient.Unsafe.init(backend = PlatformTestBackend.backend)
+        HttpClient.Unsafe.init(backend = PlatformTestBackend.client)
 
     protected def useTestClient: Boolean = true
 
@@ -31,7 +31,7 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
       *   the actual bound port
       */
     def startTestServer(handlers: HttpHandler[?]*)(using Frame): Int < (Async & Scope) =
-        HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handlers*).map(_.port)
+        HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handlers*).map(_.port)
 
     /** Runs a test with a server, ensuring cleanup.
       * @param handlers

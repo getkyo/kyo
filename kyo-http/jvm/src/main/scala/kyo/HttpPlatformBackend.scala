@@ -1,5 +1,7 @@
 package kyo
 
-/** JVM platform default backend — uses Netty for HTTP I/O. */
+/** JVM platform backends — Netty for both client and server. */
 object HttpPlatformBackend:
-    val default: Backend = NettyBackend
+    val client: Backend.Client = NettyClientBackend
+    val server: Backend.Server = NettyServerBackend
+end HttpPlatformBackend

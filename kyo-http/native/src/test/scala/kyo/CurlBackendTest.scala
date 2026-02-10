@@ -58,8 +58,8 @@ class CurlBackendTest extends AnyFreeSpec with NonImplicitAssertions:
 
     "HttpPlatformBackend" - {
 
-        "default is CurlBackend" in {
-            assert(HttpPlatformBackend.default eq CurlBackend)
+        "client is CurlBackend" in {
+            assert(HttpPlatformBackend.client eq CurlBackend)
         }
     }
 

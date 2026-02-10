@@ -124,9 +124,7 @@ final private[kyo] class HttpServerHandler(
                                         Loop.done(())
                                 }
                             }
-                        }.map {
-                            case _ => ()
-                        }
+                        }.unit
                     }
 
                     val request = kyo.HttpRequest.fromRawStreaming(method, uri, headers, bodyStream)
@@ -259,58 +257,56 @@ final private[kyo] class HttpServerHandler(
         import AllowUnsafe.embrace.danger
 
         // Run handler in a separate fiber so Netty's I/O thread isn't blocked
-        val fiber = Sync.Unsafe.evalOrThrow(
-            Fiber.initUnscoped {
-                val respEffect: kyo.HttpResponse[?] < Async = request.body.use(
-                    _ => handler.handle(request.asInstanceOf[kyo.HttpRequest[HttpBody.Bytes]]),
-                    _ => handler.handleStreaming(request.asInstanceOf[kyo.HttpRequest[HttpBody.Streamed]])
+        val fiber = Backend.Unsafe.launchFiber {
+            val respEffect: kyo.HttpResponse[?] < Async = request.body.use(
+                _ => handler.handle(request.asInstanceOf[kyo.HttpRequest[HttpBody.Bytes]]),
+                _ => handler.handleStreaming(request.asInstanceOf[kyo.HttpRequest[HttpBody.Streamed]])
+            )
+
+            respEffect.map { response =>
+                response.body.use(
+                    _ => response: kyo.HttpResponse[?],
+                    streamed =>
+                        val nettyResponse = new DefaultHttpResponse(
+                            HttpVersion.HTTP_1_1,
+                            HttpResponseStatus.valueOf(response.status.code)
+                        )
+                        response.resolvedHeaders.foreach { (k, v) =>
+                            discard(nettyResponse.headers().add(k, v))
+                        }
+                        if !nettyResponse.headers().contains("Content-Length") then
+                            discard(nettyResponse.headers().set("Transfer-Encoding", "chunked"))
+                        if keepAlive then
+                            discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
+                        else
+                            discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
+                        end if
+                        discard(ctx.writeAndFlush(nettyResponse))
+
+                        Abort.run[Throwable](Abort.catching[Throwable] {
+                            streamed.stream.foreach { bytes =>
+                                NettyUtil.await(
+                                    ctx.writeAndFlush(new DefaultHttpContent(
+                                        Unpooled.wrappedBuffer(bytes.toArrayUnsafe)
+                                    ))
+                                )
+                            }.andThen {
+                                NettyUtil.await(
+                                    ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT)
+                                )
+                            }
+                        }).map {
+                            case Result.Success(_) =>
+                                if !keepAlive && ctx.channel().isActive then
+                                    discard(ctx.close())
+                                response
+                            case _ =>
+                                if ctx.channel().isActive then discard(ctx.close())
+                                response
+                        }
                 )
-
-                respEffect.map { response =>
-                    response.body.use(
-                        _ => response: kyo.HttpResponse[?],
-                        streamed =>
-                            val nettyResponse = new DefaultHttpResponse(
-                                HttpVersion.HTTP_1_1,
-                                HttpResponseStatus.valueOf(response.status.code)
-                            )
-                            response.resolvedHeaders.foreach { (k, v) =>
-                                discard(nettyResponse.headers().add(k, v))
-                            }
-                            if !nettyResponse.headers().contains("Content-Length") then
-                                discard(nettyResponse.headers().set("Transfer-Encoding", "chunked"))
-                            if keepAlive then
-                                discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE))
-                            else
-                                discard(nettyResponse.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE))
-                            end if
-                            discard(ctx.writeAndFlush(nettyResponse))
-
-                            Abort.run[Throwable](Abort.catching[Throwable] {
-                                streamed.stream.foreach { bytes =>
-                                    NettyUtil.await(
-                                        ctx.writeAndFlush(new DefaultHttpContent(
-                                            Unpooled.wrappedBuffer(bytes.toArrayUnsafe)
-                                        ))
-                                    )
-                                }.andThen {
-                                    NettyUtil.await(
-                                        ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT)
-                                    )
-                                }
-                            }).map {
-                                case Result.Success(_) =>
-                                    if !keepAlive && ctx.channel().isActive then
-                                        discard(ctx.close())
-                                    response
-                                case _ =>
-                                    if ctx.channel().isActive then discard(ctx.close())
-                                    response
-                            }
-                    )
-                }
             }
-        )
+        }
 
         // Interrupt fiber if client disconnects
         discard {

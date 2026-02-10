@@ -3,8 +3,8 @@ package kyo
 import kyo.internal.CurlBindings
 import kyo.internal.CurlEventLoop
 
-/** Native backend using libcurl for HTTP transport. Client-only — server is not supported. */
-object CurlBackend extends Backend:
+/** Native client backend using libcurl for HTTP transport. */
+object CurlBackend extends Backend.Client:
 
     locally { discard(CurlBindings.curl_global_init(CurlBindings.CURL_GLOBAL_DEFAULT)) }
 
@@ -21,17 +21,5 @@ object CurlBackend extends Backend:
                 Sync.defer(eventLoop.shutdown())
         end new
     end connectionFactory
-
-    def server(
-        port: Int,
-        host: String,
-        maxContentLength: Int,
-        backlog: Int,
-        keepAlive: Boolean,
-        tcpFastOpen: Boolean,
-        flushConsolidationLimit: Int,
-        handler: Backend.ServerHandler
-    )(using Frame): Backend.Server < Async =
-        throw new UnsupportedOperationException("HTTP server is not supported on Scala Native platform")
 
 end CurlBackend

@@ -92,11 +92,11 @@ private[kyo] object ConnectionPool:
         end acquire
 
         def release(conn: Backend.Connection)(using AllowUnsafe, Frame): Unit =
-            if conn.isAlive then
-                idleChannels.offer(conn) match
-                    case Result.Success(true) => ()
-                    case _                    => discardConnection(conn)
-            else discardConnection(conn)
+            // Always offer to idle channel — even dead connections — so that fibers
+            // blocked in waitForActive are woken up and can create fresh connections.
+            idleChannels.offer(conn) match
+                case Result.Success(true) => ()
+                case _                    => discardConnection(conn)
         end release
 
         def close()(using AllowUnsafe, Frame): Unit =

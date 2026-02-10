@@ -26,7 +26,19 @@ final private[kyo] class ResponseStreamingHandler(
             if buf.readableBytes() > 0 then
                 val bytes = new Array[Byte](buf.readableBytes())
                 buf.readBytes(bytes)
-                discard(byteChannel.offer(Span.fromUnsafe(bytes)))
+                val value = Span.fromUnsafe(bytes)
+                byteChannel.offer(value) match
+                    case Result.Success(true)  => // offered successfully
+                    case Result.Success(false) =>
+                        // Channel full — apply backpressure via Netty auto-read
+                        ctx.channel().config().setAutoRead(false)
+                        val fiber = byteChannel.putFiber(value)
+                        fiber.onComplete { _ =>
+                            ctx.channel().config().setAutoRead(true)
+                            discard(ctx.read())
+                        }
+                    case _ => // channel closed, drop
+                end match
             end if
             if content.isInstanceOf[io.netty.handler.codec.http.LastHttpContent] then
                 discard(byteChannel.closeAwaitEmpty())

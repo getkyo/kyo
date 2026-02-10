@@ -316,7 +316,7 @@ object HttpClient:
         connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
         maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
         daemon: Boolean = false,
-        backend: Backend = HttpPlatformBackend.default
+        backend: Backend.Client = HttpPlatformBackend.client
     )(using Frame): HttpClient < (Sync & Scope) =
         initWith(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)(identity)
 
@@ -325,7 +325,7 @@ object HttpClient:
         connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
         maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
         daemon: Boolean = false,
-        backend: Backend = HttpPlatformBackend.default
+        backend: Backend.Client = HttpPlatformBackend.client
     )(f: HttpClient => B < S)(using Frame): B < (S & Sync & Scope) =
         Scope.acquireRelease(initUnscoped(
             maxConnectionsPerHost,
@@ -341,7 +341,7 @@ object HttpClient:
         connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
         maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
         daemon: Boolean = false,
-        backend: Backend = HttpPlatformBackend.default
+        backend: Backend.Client = HttpPlatformBackend.client
     )(using Frame): HttpClient < Sync =
         initUnscopedWith(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)(identity)
 
@@ -350,7 +350,7 @@ object HttpClient:
         connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
         maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
         daemon: Boolean = false,
-        backend: Backend = HttpPlatformBackend.default
+        backend: Backend.Client = HttpPlatformBackend.client
     )(f: HttpClient => B < S)(using Frame): B < (S & Sync) =
         Sync.Unsafe {
             Unsafe.init(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)
@@ -365,7 +365,7 @@ object HttpClient:
             connectionAcquireTimeout: Duration = DefaultConnectionAcquireTimeout,
             maxResponseSizeBytes: Int = DefaultMaxResponseSizeBytes,
             daemon: Boolean = false,
-            backend: Backend = HttpPlatformBackend.default
+            backend: Backend.Client = HttpPlatformBackend.client
         )(using AllowUnsafe): HttpClient =
             maxConnectionsPerHost.foreach(n => require(n > 0, s"maxConnectionsPerHost must be positive: $n"))
             require(connectionAcquireTimeout > Duration.Zero, s"connectionAcquireTimeout must be positive: $connectionAcquireTimeout")

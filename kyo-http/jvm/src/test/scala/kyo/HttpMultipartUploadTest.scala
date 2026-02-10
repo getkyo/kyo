@@ -11,7 +11,7 @@ class HttpMultipartUploadTest extends Test:
 
     // Need larger maxContentLength for multipart payloads
     def startUploadServer(handlers: HttpHandler[?]*)(using Frame): Int < (Async & Scope) =
-        HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 1024 * 1024), PlatformTestBackend.backend)(handlers*).map(_.port)
+        HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 1024 * 1024), PlatformTestBackend.server)(handlers*).map(_.port)
 
     "single file upload" in run {
         val handler = HttpHandler.post("/upload") { request =>

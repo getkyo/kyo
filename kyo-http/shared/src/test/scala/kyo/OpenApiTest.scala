@@ -131,7 +131,7 @@ class OpenApiTest extends Test:
                 val route      = HttpRoute.get("/users").output[List[User]]
                 val apiHandler = HttpOpenApi.handler(route)
 
-                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(apiHandler).map { server =>
+                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(apiHandler).map { server =>
                     testGet(server.port, "/openapi.json").map { response =>
                         assertStatus(response, HttpResponse.Status.OK)
                         assertHeader(response, "Content-Type", "application/json")
@@ -145,7 +145,7 @@ class OpenApiTest extends Test:
                 val route      = HttpRoute.get("/users").output[List[User]]
                 val apiHandler = HttpOpenApi.handler("/api-docs")(route)
 
-                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(apiHandler).map { server =>
+                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(apiHandler).map { server =>
                     testGet(server.port, "/api-docs").map { response =>
                         assertStatus(response, HttpResponse.Status.OK)
                         assertBodyContains(response, "\"openapi\":\"3.0.0\"")
@@ -158,7 +158,7 @@ class OpenApiTest extends Test:
                 val config     = HttpOpenApi.Config(title = "Users API", version = "2.0.0")
                 val apiHandler = HttpOpenApi.handler("/openapi.json", config)(route)
 
-                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(apiHandler).map { server =>
+                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(apiHandler).map { server =>
                     testGet(server.port, "/openapi.json").map { response =>
                         assertBodyContains(response, "\"title\":\"Users API\"")
                         assertBodyContains(response, "\"version\":\"2.0.0\"")
@@ -171,7 +171,7 @@ class OpenApiTest extends Test:
                 val usersHandler = usersRoute.handle(_ => List(User(1, "Alice")))
                 val apiHandler   = HttpOpenApi.handler(usersRoute)
 
-                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(usersHandler, apiHandler).map { server =>
+                HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(usersHandler, apiHandler).map { server =>
                     testGet(server.port, "/users").map { usersResp =>
                         assertBodyContains(usersResp, "Alice")
                     }.andThen {
@@ -191,7 +191,7 @@ class OpenApiTest extends Test:
 
                 val config = HttpServer.Config(port = 0).openApi()
 
-                HttpServer.init(config, PlatformTestBackend.backend)(usersHandler).map { server =>
+                HttpServer.init(config, PlatformTestBackend.server)(usersHandler).map { server =>
                     testGet(server.port, "/openapi.json").map { response =>
                         assertStatus(response, HttpResponse.Status.OK)
                         assertHeader(response, "Content-Type", "application/json")
@@ -207,7 +207,7 @@ class OpenApiTest extends Test:
 
                 val config = HttpServer.Config(port = 0).openApi(path = "/api-docs")
 
-                HttpServer.init(config, PlatformTestBackend.backend)(usersHandler).map { server =>
+                HttpServer.init(config, PlatformTestBackend.server)(usersHandler).map { server =>
                     testGet(server.port, "/api-docs").map { response =>
                         assertStatus(response, HttpResponse.Status.OK)
                         assertBodyContains(response, "\"openapi\":\"3.0.0\"")
@@ -221,7 +221,7 @@ class OpenApiTest extends Test:
 
                 val config = HttpServer.Config(port = 0).openApi(title = "Users API", version = "2.0.0")
 
-                HttpServer.init(config, PlatformTestBackend.backend)(usersHandler).map { server =>
+                HttpServer.init(config, PlatformTestBackend.server)(usersHandler).map { server =>
                     testGet(server.port, "/openapi.json").map { response =>
                         assertBodyContains(response, "\"title\":\"Users API\"")
                         assertBodyContains(response, "\"version\":\"2.0.0\"")
@@ -238,7 +238,7 @@ class OpenApiTest extends Test:
 
                 val config = HttpServer.Config(port = 0).openApi()
 
-                HttpServer.init(config, PlatformTestBackend.backend)(usersHandler, createHandler).map { server =>
+                HttpServer.init(config, PlatformTestBackend.server)(usersHandler, createHandler).map { server =>
                     testGet(server.port, "/openapi.json").map { response =>
                         // Should include both GET and POST /users
                         assertBodyContains(response, "\"/users\"")

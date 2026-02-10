@@ -42,7 +42,7 @@ import kyo.internal.HttpRouter
   *   [[kyo.Backend]]
   */
 final class HttpServer private (
-    private val backendServer: Backend.Server,
+    private val backendServer: Backend.Server.Binding,
     private val handlers: Seq[HttpHandler[Any]]
 ):
     def port: Int    = backendServer.port
@@ -79,9 +79,9 @@ object HttpServer:
         init(Config.default)(handlers*)
 
     def init(config: Config)(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
-        init(config, HttpPlatformBackend.default)(handlers*)
+        init(config, HttpPlatformBackend.server)(handlers*)
 
-    def init(config: Config, backend: Backend)(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(config: Config, backend: Backend.Server)(handlers: HttpHandler[?]*)(using Frame): HttpServer < (Async & Scope) =
         Scope.acquireRelease(initUnscoped(config, backend)(handlers*))(_.closeNow)
 
     def init(
@@ -98,7 +98,7 @@ object HttpServer:
     def initWith[B, S](config: Config)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async & Scope) =
         init(config)(handlers*).map(f)
 
-    def initWith[B, S](config: Config, backend: Backend)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using
+    def initWith[B, S](config: Config, backend: Backend.Server)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using
         Frame
     ): B < (S & Async & Scope) =
         init(config, backend)(handlers*).map(f)
@@ -108,9 +108,9 @@ object HttpServer:
         initUnscoped(Config.default)(handlers*)
 
     def initUnscoped(config: Config)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
-        initUnscoped(config, HttpPlatformBackend.default)(handlers*)
+        initUnscoped(config, HttpPlatformBackend.server)(handlers*)
 
-    def initUnscoped(config: Config, backend: Backend)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(config: Config, backend: Backend.Server)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
         val h = handlers.asInstanceOf[Seq[HttpHandler[Any]]]
         // Filter chain is captured once here — not re-read per request
         HttpFilter.use { filter =>
@@ -159,7 +159,7 @@ object HttpServer:
     def initUnscopedWith[B, S](config: Config)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using Frame): B < (S & Async) =
         initUnscoped(config)(handlers*).map(f)
 
-    def initUnscopedWith[B, S](config: Config, backend: Backend)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using
+    def initUnscopedWith[B, S](config: Config, backend: Backend.Server)(handlers: HttpHandler[?]*)(f: HttpServer => B < S)(using
         Frame
     ): B < (S & Async) =
         initUnscoped(config, backend)(handlers*).map(f)

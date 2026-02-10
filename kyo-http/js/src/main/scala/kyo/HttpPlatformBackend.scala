@@ -1,6 +1,7 @@
 package kyo
 
-/** JS platform default backend using the Fetch API. */
+/** JS platform backends — Fetch API for client, Node.js http for server. */
 object HttpPlatformBackend:
-    val default: Backend = FetchBackend
+    val client: Backend.Client = FetchClientBackend
+    val server: Backend.Server = NodeServerBackend
 end HttpPlatformBackend

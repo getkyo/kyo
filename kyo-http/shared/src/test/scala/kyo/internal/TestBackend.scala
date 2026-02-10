@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 
 /** In-memory Backend for cross-platform tests. Routes client requests directly through stored server handlers without TCP. */
-object TestBackend extends Backend:
+object TestBackend extends Backend.Client with Backend.Server:
 
     private case class ServerEntry(handler: Backend.ServerHandler, maxContentLength: Int, closed: AtomicBoolean.Unsafe)
 
@@ -36,12 +36,12 @@ object TestBackend extends Backend:
         tcpFastOpen: Boolean,
         flushConsolidationLimit: Int,
         handler: Backend.ServerHandler
-    )(using Frame): Backend.Server < Async =
+    )(using Frame): Backend.Server.Binding < Async =
         Sync.Unsafe {
             val assignedPort = if serverPort == 0 then nextPort.getAndIncrement() else serverPort
             val closed       = AtomicBoolean.Unsafe.init(false)
             servers.put(assignedPort, ServerEntry(handler, maxContentLength, closed))
-            new Backend.Server:
+            new Backend.Server.Binding:
                 def port: Int    = assignedPort
                 def host: String = serverHost
                 def close(gracePeriod: Duration)(using Frame): Unit < Async =

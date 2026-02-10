@@ -555,7 +555,8 @@ lazy val `kyo-http` =
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0"
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .nativeSettings(
             `native-settings`,

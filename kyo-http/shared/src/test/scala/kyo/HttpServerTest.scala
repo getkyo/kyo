@@ -116,7 +116,7 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/health") { _ =>
                 HttpResponse.ok("healthy")
             }
-            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 assert(server.port > 0)
                 testGet(server.port, "/health").map { response =>
                     assertStatus(response, Status.OK)
@@ -128,7 +128,7 @@ class HttpServerTest extends Test:
         "with config and handlers" in run {
             val config  = HttpServer.Config(port = 0)
             val handler = HttpHandler.get("/health") { _ => HttpResponse.ok("ok") }
-            HttpServer.init(config, PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.init(config, PlatformTestBackend.server)(handler).map { server =>
                 assert(server.port > 0)
                 testGet(server.port, "/health").map { response =>
                     assertStatus(response, Status.OK)
@@ -140,7 +140,7 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/health") { _ => HttpResponse.ok("ok") }
             HttpServer.init(
                 HttpServer.Config(port = 0, host = "localhost", maxContentLength = 1024 * 1024, idleTimeout = 30.seconds),
-                PlatformTestBackend.backend
+                PlatformTestBackend.server
             )(handler).map { server =>
                 assert(server.port > 0)
                 testGet(server.port, "/health").map { response =>
@@ -151,7 +151,7 @@ class HttpServerTest extends Test:
 
         "with empty handlers" in run {
             // Server with no handlers should return 404 for all requests
-            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)().map { server =>
+            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)().map { server =>
                 testGet(server.port, "/anything").map { response =>
                     assertStatus(response, Status.NotFound)
                 }
@@ -161,7 +161,7 @@ class HttpServerTest extends Test:
         "with multiple handlers" in run {
             val health = HttpHandler.get("/health") { _ => HttpResponse.ok("healthy") }
             val status = HttpHandler.get("/status") { _ => HttpResponse.ok("running") }
-            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(health, status).map { server =>
+            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(health, status).map { server =>
                 for
                     r1 <- testGet(server.port, "/health")
                     r2 <- testGet(server.port, "/status")
@@ -179,7 +179,7 @@ class HttpServerTest extends Test:
 
         "port" in run {
             val handler = HttpHandler.get("/health") { _ => HttpResponse.ok }
-            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 // Should return the actual bound port (may differ from 0)
                 assert(server.port > 0)
             }
@@ -187,14 +187,14 @@ class HttpServerTest extends Test:
 
         "host" in run {
             val handler = HttpHandler.get("/health") { _ => HttpResponse.ok }
-            HttpServer.init(HttpServer.Config(port = 0, host = "localhost"), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.init(HttpServer.Config(port = 0, host = "localhost"), PlatformTestBackend.server)(handler).map { server =>
                 assert(server.host == "localhost" || server.host == "127.0.0.1")
             }
         }
 
         "stop" in run {
             val handler = HttpHandler.get("/health") { _ => HttpResponse.ok("ok") }
-            HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val port = server.port
                 assert(port > 0)
                 testGet(port, "/health").map { response =>
@@ -211,7 +211,7 @@ class HttpServerTest extends Test:
 
         "await" in run {
             val handler = HttpHandler.get("/health") { _ => HttpResponse.ok }
-            HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.initUnscoped(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 assert(server.port > 0)
                 server.closeNow.andThen(succeed)
             }
@@ -220,7 +220,7 @@ class HttpServerTest extends Test:
         "openApi" in run {
             val route   = HttpRoute.get("users").output[Seq[User]].tag("Users")
             val handler = route.handle(_ => Seq(User(1, "Alice")))
-            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec = server.openApi("Test API", "1.0.0")
                 assert(spec.info.title == "Test API")
                 assert(spec.info.version == "1.0.0")
@@ -813,6 +813,45 @@ class HttpServerTest extends Test:
                 }
             }
         }
+
+        "streaming handler fiber should be interrupted when client disconnects" in run {
+            AtomicBoolean.init(false).map { handlerCompleted =>
+                Latch.init(1).map { startedLatch =>
+                    Latch.init(1).map { doneLatch =>
+                        val slowHandler = HttpHandler.get("/slow-stream") { _ =>
+                            startedLatch.release.andThen {
+                                Sync.ensure(doneLatch.release) {
+                                    Async.sleep(10.seconds).andThen {
+                                        handlerCompleted.set(true).andThen {
+                                            HttpResponse.ok("done")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        startTestServer(slowHandler).map { port =>
+                            Fiber.init {
+                                Scope.run {
+                                    HttpClient.stream(s"http://localhost:$port/slow-stream").map { response =>
+                                        response.bodyStream.run.unit
+                                    }
+                                }
+                            }.map { clientFiber =>
+                                startedLatch.await.andThen {
+                                    clientFiber.interrupt.andThen {
+                                        doneLatch.await.andThen {
+                                            handlerCompleted.get.map { completed =>
+                                                assert(!completed, "Handler should have been interrupted")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     "Streaming responses" - {
@@ -1307,12 +1346,71 @@ class HttpServerTest extends Test:
             }
         }
 
+        "large streaming request body with slow handler" in run {
+            val chunkSize  = 4096
+            val numChunks  = 64
+            val totalBytes = chunkSize * numChunks
+            val handler = HttpHandler.streamingBody(Method.POST, "/slow-upload") { request =>
+                // Slow consumer: delay between each chunk to trigger backpressure
+                request.bodyStream.run.map { chunks =>
+                    val received = chunks.foldLeft(0)(_ + _.size)
+                    HttpResponse.ok(s"received $received bytes")
+                }
+            }
+            startTestServer(handler).map { port =>
+                val chunks = Seq.fill(numChunks)(Span.fromUnsafe(new Array[Byte](chunkSize)))
+                // Slow producer: delay between each chunk
+                val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+                    Loop(0) { i =>
+                        if i >= numChunks then Loop.done(())
+                        else Async.sleep(1.millis).andThen(Emit.valueWith(Chunk(chunks(i)))(Loop.continue(i + 1)))
+                    }
+                }
+                val request = HttpRequest.stream(Method.POST, s"http://localhost:$port/slow-upload", bodyStream)
+                Scope.run {
+                    HttpClient.stream(request).map { response =>
+                        response.bodyStream.run.map { body =>
+                            assertStatus(response, Status.OK)
+                            val text = new String(body.foldLeft(Array.empty[Byte])(_ ++ _.toArrayUnsafe))
+                            assert(text.contains(s"received $totalBytes bytes"), s"Expected all bytes received, got: $text")
+                        }
+                    }
+                }
+            }
+        }
+
+        "large streaming response with slow client" in run {
+            val chunkSize  = 4096
+            val numChunks  = 64
+            val totalBytes = chunkSize * numChunks
+            val handler = HttpHandler.get("/slow-stream") { _ =>
+                val chunks = Seq.fill(numChunks)(Span.fromUnsafe(new Array[Byte](chunkSize)))
+                HttpResponse.stream(Stream.init(chunks))
+            }
+            startTestServer(handler).map { port =>
+                Scope.run {
+                    HttpClient.stream(s"http://localhost:$port/slow-stream").map { response =>
+                        assertStatus(response, Status.OK)
+                        AtomicInt.init(0).map { received =>
+                            response.bodyStream.foreach { chunk =>
+                                received.addAndGet(chunk.size).andThen(Async.sleep(1.millis))
+                            }.andThen {
+                                received.get.map { total =>
+                                    assert(total == totalBytes, s"Expected $totalBytes bytes, got $total")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "413 for oversized buffered request" in run {
             val handler = HttpHandler.post("/upload") { request =>
                 HttpResponse.ok(s"received ${request.bodyBytes.size} bytes")
             }
             // Server with small maxContentLength
-            HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 100), PlatformTestBackend.backend)(handler).map { server =>
+            HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 100), PlatformTestBackend.server)(handler).map { server =>
                 // Send a request larger than maxContentLength
                 val largeBody = "x" * 200
                 HttpClient.send(
@@ -1777,7 +1875,7 @@ class HttpServerTest extends Test:
             val handler = HttpHandler.get("/large") { _ =>
                 HttpResponse.ok(largeBody)
             }
-            HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 200 * 1024), PlatformTestBackend.backend)(handler).map {
+            HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 200 * 1024), PlatformTestBackend.server)(handler).map {
                 server =>
                     HttpClient.send(HttpRequest.get(s"http://localhost:${server.port}/large")).map { response =>
                         assertStatus(response, Status.OK)
