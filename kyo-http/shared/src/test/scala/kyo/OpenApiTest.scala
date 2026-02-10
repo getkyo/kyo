@@ -234,7 +234,7 @@ class OpenApiTest extends Test:
                 val usersHandler = usersRoute.handle(_ => List(User(1, "Alice")))
 
                 val createRoute   = HttpRoute.post("/users").input[CreateUser].output[User]
-                val createHandler = createRoute.handle(input => User(2, input.name))
+                val createHandler = createRoute.handle(in => User(2, in.body.name))
 
                 val config = HttpServer.Config(port = 0).openApi()
 

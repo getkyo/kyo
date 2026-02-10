@@ -10,8 +10,8 @@ class EasyRacerJvmTest extends Test:
     "scenario 10 - cancellable computation with load monitoring" in run {
         val sessions = new java.util.concurrent.ConcurrentHashMap[String, (Seq[Double], Duration, JInstant)]()
 
-        val handler = HttpHandler.get("/10") { request =>
-            val queryString = request.url
+        val handler = HttpHandler.get("/10") { in =>
+            val queryString = in.request.url
             val qIdx        = queryString.indexOf('?')
             if qIdx < 0 then
                 HttpResponse(HttpResponse.Status.BadRequest): HttpResponse[?] < (Async & Any)

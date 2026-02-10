@@ -186,10 +186,10 @@ class EasyRacerTest extends Test:
     "scenario 8 - resource acquire/use/release with race" in run {
         AtomicInt.init.map { counter =>
             Promise.init[Promise[String, Nothing], Nothing].map { promise =>
-                val handler = HttpHandler.get("/8") { request =>
-                    val hasOpen  = request.query("open")
-                    val hasUse   = request.query("use")
-                    val hasClose = request.query("close")
+                val handler = HttpHandler.get("/8") { in =>
+                    val hasOpen  = in.request.query("open")
+                    val hasUse   = in.request.query("use")
+                    val hasClose = in.request.query("close")
 
                     hasOpen match
                         case Present(_) =>

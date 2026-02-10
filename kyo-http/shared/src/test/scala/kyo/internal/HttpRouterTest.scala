@@ -114,7 +114,7 @@ class HttpRouterTest extends Test:
 
     "path captures" - {
         "single capture matches any segment" in {
-            val handler = HttpHandler.init(Method.GET, "users" / HttpPath.int("id")) { (_, _) => HttpResponse.ok }
+            val handler = HttpHandler.init(Method.GET, "users" / HttpPath.int("id")) { _ => HttpResponse.ok }
             val router  = HttpRouter(Seq(handler))
             assertFound(router.find(Method.GET, "/users/123"), handler)
             assertFound(router.find(Method.GET, "/users/abc"), handler) // Router matches, validation happens later
@@ -122,7 +122,7 @@ class HttpRouterTest extends Test:
         }
 
         "multiple captures in path" in {
-            val handler = HttpHandler.init(Method.GET, "users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId")) { (_, _, _) =>
+            val handler = HttpHandler.init(Method.GET, "users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId")) { _ =>
                 HttpResponse.ok
             }
             val router = HttpRouter(Seq(handler))
@@ -133,7 +133,7 @@ class HttpRouterTest extends Test:
 
         "literal takes priority over capture" in {
             val literalHandler = HttpHandler.get("/users/admin") { _ => HttpResponse.ok("literal") }
-            val captureHandler = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { (_, _) => HttpResponse.ok("capture") }
+            val captureHandler = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { _ => HttpResponse.ok("capture") }
             val router         = HttpRouter(Seq(literalHandler, captureHandler))
 
             assertFound(router.find(Method.GET, "/users/admin"), literalHandler)
@@ -144,7 +144,7 @@ class HttpRouterTest extends Test:
         "capture with multiple literals at same level" in {
             val adminHandler   = HttpHandler.get("/users/admin") { _ => HttpResponse.ok }
             val meHandler      = HttpHandler.get("/users/me") { _ => HttpResponse.ok }
-            val captureHandler = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { (_, _) => HttpResponse.ok }
+            val captureHandler = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { _ => HttpResponse.ok }
             val router         = HttpRouter(Seq(adminHandler, meHandler, captureHandler))
 
             assertFound(router.find(Method.GET, "/users/admin"), adminHandler)
@@ -273,13 +273,13 @@ class HttpRouterTest extends Test:
         "REST-like routes return correct handlers" in {
             val listUsers  = HttpHandler.get("/api/v1/users") { _ => HttpResponse.ok }
             val createUser = HttpHandler.post("/api/v1/users") { _ => HttpResponse.ok }
-            val getUser    = HttpHandler.init(Method.GET, "api" / "v1" / "users" / HttpPath.int("id")) { (_, _) => HttpResponse.ok }
-            val updateUser = HttpHandler.init(Method.PUT, "api" / "v1" / "users" / HttpPath.int("id")) { (_, _) => HttpResponse.ok }
-            val deleteUser = HttpHandler.init(Method.DELETE, "api" / "v1" / "users" / HttpPath.int("id")) { (_, _) => HttpResponse.ok }
+            val getUser    = HttpHandler.init(Method.GET, "api" / "v1" / "users" / HttpPath.int("id")) { _ => HttpResponse.ok }
+            val updateUser = HttpHandler.init(Method.PUT, "api" / "v1" / "users" / HttpPath.int("id")) { _ => HttpResponse.ok }
+            val deleteUser = HttpHandler.init(Method.DELETE, "api" / "v1" / "users" / HttpPath.int("id")) { _ => HttpResponse.ok }
             val getUserPosts =
-                HttpHandler.init(Method.GET, "api" / "v1" / "users" / HttpPath.int("id") / "posts") { (_, _) => HttpResponse.ok }
+                HttpHandler.init(Method.GET, "api" / "v1" / "users" / HttpPath.int("id") / "posts") { _ => HttpResponse.ok }
             val listPosts = HttpHandler.get("/api/v1/posts") { _ => HttpResponse.ok }
-            val getPost   = HttpHandler.init(Method.GET, "api" / "v1" / "posts" / HttpPath.int("id")) { (_, _) => HttpResponse.ok }
+            val getPost   = HttpHandler.init(Method.GET, "api" / "v1" / "posts" / HttpPath.int("id")) { _ => HttpResponse.ok }
 
             val router = HttpRouter(Seq(listUsers, createUser, getUser, updateUser, deleteUser, getUserPosts, listPosts, getPost))
 
@@ -305,8 +305,8 @@ class HttpRouterTest extends Test:
         "versioned API with v1 and v2" in {
             val v1Users = HttpHandler.get("/api/v1/users") { _ => HttpResponse.ok }
             val v2Users = HttpHandler.get("/api/v2/users") { _ => HttpResponse.ok }
-            val v1User  = HttpHandler.init(Method.GET, "api" / "v1" / "users" / HttpPath.int("id")) { (_, _) => HttpResponse.ok }
-            val v2User  = HttpHandler.init(Method.GET, "api" / "v2" / "users" / HttpPath.string("id")) { (_, _) => HttpResponse.ok }
+            val v1User  = HttpHandler.init(Method.GET, "api" / "v1" / "users" / HttpPath.int("id")) { _ => HttpResponse.ok }
+            val v2User  = HttpHandler.init(Method.GET, "api" / "v2" / "users" / HttpPath.string("id")) { _ => HttpResponse.ok }
             val router  = HttpRouter(Seq(v1Users, v2Users, v1User, v2User))
 
             assertFound(router.find(Method.GET, "/api/v1/users"), v1Users)
@@ -320,11 +320,11 @@ class HttpRouterTest extends Test:
             val getComment = HttpHandler.init(
                 Method.GET,
                 "users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId") / "comments" / HttpPath.int("commentId")
-            ) { (_, _, _, _) => HttpResponse.ok }
+            ) { _ => HttpResponse.ok }
             val listComments = HttpHandler.init(
                 Method.GET,
                 "users" / HttpPath.int("userId") / "posts" / HttpPath.int("postId") / "comments"
-            ) { (_, _, _) => HttpResponse.ok }
+            ) { _ => HttpResponse.ok }
             val router = HttpRouter(Seq(getComment, listComments))
 
             assertFound(router.find(Method.GET, "/users/1/posts/2/comments"), listComments)
@@ -355,8 +355,8 @@ class HttpRouterTest extends Test:
         "admin panel with mixed static and dynamic routes" in {
             val adminDashboard = HttpHandler.get("/admin/dashboard") { _ => HttpResponse.ok }
             val adminUsers     = HttpHandler.get("/admin/users") { _ => HttpResponse.ok }
-            val adminUser      = HttpHandler.init(Method.GET, "admin" / "users" / HttpPath.int("id")) { (_, _) => HttpResponse.ok }
-            val adminUserEdit  = HttpHandler.init(Method.GET, "admin" / "users" / HttpPath.int("id") / "edit") { (_, _) => HttpResponse.ok }
+            val adminUser      = HttpHandler.init(Method.GET, "admin" / "users" / HttpPath.int("id")) { _ => HttpResponse.ok }
+            val adminUserEdit  = HttpHandler.init(Method.GET, "admin" / "users" / HttpPath.int("id") / "edit") { _ => HttpResponse.ok }
             val adminSettings  = HttpHandler.get("/admin/settings") { _ => HttpResponse.ok }
             val router         = HttpRouter(Seq(adminDashboard, adminUsers, adminUser, adminUserEdit, adminSettings))
 
@@ -372,8 +372,8 @@ class HttpRouterTest extends Test:
         "static assets and files" in {
             val css    = HttpHandler.get("/static/css/style.css") { _ => HttpResponse.ok }
             val js     = HttpHandler.get("/static/js/app.js") { _ => HttpResponse.ok }
-            val image  = HttpHandler.init(Method.GET, "images" / HttpPath.string("name")) { (_, _) => HttpResponse.ok }
-            val file   = HttpHandler.init(Method.GET, "files" / HttpPath.string("path")) { (_, _) => HttpResponse.ok }
+            val image  = HttpHandler.init(Method.GET, "images" / HttpPath.string("name")) { _ => HttpResponse.ok }
+            val file   = HttpHandler.init(Method.GET, "files" / HttpPath.string("path")) { _ => HttpResponse.ok }
             val router = HttpRouter(Seq(css, js, image, file))
 
             assertFound(router.find(Method.GET, "/static/css/style.css"), css)
@@ -387,8 +387,8 @@ class HttpRouterTest extends Test:
         "webhooks and callbacks" in {
             val githubWebhook  = HttpHandler.post("/webhooks/github") { _ => HttpResponse.ok }
             val stripeWebhook  = HttpHandler.post("/webhooks/stripe") { _ => HttpResponse.ok }
-            val genericWebhook = HttpHandler.init(Method.POST, "webhooks" / HttpPath.string("provider")) { (_, _) => HttpResponse.ok }
-            val oauthCallback = HttpHandler.init(Method.GET, "auth" / HttpPath.string("provider") / "callback") { (_, _) =>
+            val genericWebhook = HttpHandler.init(Method.POST, "webhooks" / HttpPath.string("provider")) { _ => HttpResponse.ok }
+            val oauthCallback = HttpHandler.init(Method.GET, "auth" / HttpPath.string("provider") / "callback") { _ =>
                 HttpResponse.ok
             }
             val router = HttpRouter(Seq(githubWebhook, stripeWebhook, genericWebhook, oauthCallback))
@@ -422,17 +422,17 @@ class HttpRouterTest extends Test:
         "microservice with multiple resource types" in {
             // Products
             val listProducts = HttpHandler.get("/products") { _ => HttpResponse.ok }
-            val getProduct   = HttpHandler.init(Method.GET, "products" / HttpPath.string("sku")) { (_, _) => HttpResponse.ok }
+            val getProduct   = HttpHandler.init(Method.GET, "products" / HttpPath.string("sku")) { _ => HttpResponse.ok }
             // Orders
             val listOrders  = HttpHandler.get("/orders") { _ => HttpResponse.ok }
             val createOrder = HttpHandler.post("/orders") { _ => HttpResponse.ok }
-            val getOrder    = HttpHandler.init(Method.GET, "orders" / HttpPath.string("id")) { (_, _) => HttpResponse.ok }
-            val cancelOrder = HttpHandler.init(Method.DELETE, "orders" / HttpPath.string("id")) { (_, _) => HttpResponse.ok }
+            val getOrder    = HttpHandler.init(Method.GET, "orders" / HttpPath.string("id")) { _ => HttpResponse.ok }
+            val cancelOrder = HttpHandler.init(Method.DELETE, "orders" / HttpPath.string("id")) { _ => HttpResponse.ok }
             // Order items
-            val getOrderItems = HttpHandler.init(Method.GET, "orders" / HttpPath.string("id") / "items") { (_, _) => HttpResponse.ok }
+            val getOrderItems = HttpHandler.init(Method.GET, "orders" / HttpPath.string("id") / "items") { _ => HttpResponse.ok }
             // Customers
-            val getCustomer = HttpHandler.init(Method.GET, "customers" / HttpPath.string("id")) { (_, _) => HttpResponse.ok }
-            val getCustomerOrders = HttpHandler.init(Method.GET, "customers" / HttpPath.string("id") / "orders") { (_, _) =>
+            val getCustomer = HttpHandler.init(Method.GET, "customers" / HttpPath.string("id")) { _ => HttpResponse.ok }
+            val getCustomerOrders = HttpHandler.init(Method.GET, "customers" / HttpPath.string("id") / "orders") { _ =>
                 HttpResponse.ok
             }
 
@@ -690,8 +690,8 @@ class HttpRouterTest extends Test:
         "conflicting captures at same position - last wins" in {
             // Two routes with captures at same position - they share the same capture child
             // This is a misconfiguration: user probably meant different things
-            val byId   = HttpHandler.init(Method.GET, "users" / HttpPath.int("id")) { (_, _) => HttpResponse.ok("byId") }
-            val byName = HttpHandler.init(Method.GET, "users" / HttpPath.string("name")) { (_, _) => HttpResponse.ok("byName") }
+            val byId   = HttpHandler.init(Method.GET, "users" / HttpPath.int("id")) { _ => HttpResponse.ok("byId") }
+            val byName = HttpHandler.init(Method.GET, "users" / HttpPath.string("name")) { _ => HttpResponse.ok("byName") }
             val router = HttpRouter(Seq(byId, byName))
 
             // Both resolve to the same capture child - last registered wins
@@ -702,8 +702,8 @@ class HttpRouterTest extends Test:
         "ambiguous routes - literal vs capture at different levels" in {
             // /a/:x/c and /a/b/:y - request /a/b/c could match either
             // Behavior: literal "b" takes priority over capture :x
-            val route1 = HttpHandler.init(Method.GET, "a" / HttpPath.string("x") / "c") { (_, _) => HttpResponse.ok("route1") }
-            val route2 = HttpHandler.init(Method.GET, "a" / "b" / HttpPath.string("y")) { (_, _) => HttpResponse.ok("route2") }
+            val route1 = HttpHandler.init(Method.GET, "a" / HttpPath.string("x") / "c") { _ => HttpResponse.ok("route1") }
+            val route2 = HttpHandler.init(Method.GET, "a" / "b" / HttpPath.string("y")) { _ => HttpResponse.ok("route2") }
             val router = HttpRouter(Seq(route1, route2))
 
             // /a/b/c - "b" matches literal, then :y matches "c"
@@ -717,7 +717,7 @@ class HttpRouterTest extends Test:
         "route shadows another - more specific should be registered" in {
             // /users/:id shadows /users/admin if registered in wrong order
             // With literal priority, order shouldn't matter - but let's verify
-            val capture = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { (_, _) => HttpResponse.ok("capture") }
+            val capture = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { _ => HttpResponse.ok("capture") }
             val literal = HttpHandler.get("/users/admin") { _ => HttpResponse.ok("literal") }
 
             // Order 1: capture first, then literal
@@ -734,7 +734,7 @@ class HttpRouterTest extends Test:
         "multiple captures with same name - no collision in routing" in {
             // /users/:id/posts/:id - same capture name used twice
             // Router doesn't care about names, just positions
-            val handler = HttpHandler.init(Method.GET, "users" / HttpPath.int("id") / "posts" / HttpPath.int("id")) { (_, _, _) =>
+            val handler = HttpHandler.init(Method.GET, "users" / HttpPath.int("id") / "posts" / HttpPath.int("id")) { _ =>
                 HttpResponse.ok
             }
             val router = HttpRouter(Seq(handler))
@@ -743,7 +743,7 @@ class HttpRouterTest extends Test:
         }
 
         "only captures route - valid but unusual" in {
-            val handler = HttpHandler.init(Method.GET, HttpPath.string("a") / HttpPath.string("b") / HttpPath.string("c")) { (_, _, _, _) =>
+            val handler = HttpHandler.init(Method.GET, HttpPath.string("a") / HttpPath.string("b") / HttpPath.string("c")) { _ =>
                 HttpResponse.ok
             }
             val router = HttpRouter(Seq(handler))
@@ -792,7 +792,7 @@ class HttpRouterTest extends Test:
         "capture after literal with same prefix" in {
             // /users/list and /users/:id - "list" could be mistaken for an ID
             val list   = HttpHandler.get("/users/list") { _ => HttpResponse.ok("list") }
-            val byId   = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { (_, _) => HttpResponse.ok("byId") }
+            val byId   = HttpHandler.init(Method.GET, "users" / HttpPath.string("id")) { _ => HttpResponse.ok("byId") }
             val router = HttpRouter(Seq(list, byId))
 
             // "list" is a literal, takes priority
@@ -834,7 +834,7 @@ class HttpRouterTest extends Test:
 
         "capture consumes reserved words" in {
             // Capture might accidentally match reserved-looking segments
-            val handler = HttpHandler.init(Method.GET, "api" / HttpPath.string("version") / "users") { (_, _) => HttpResponse.ok }
+            val handler = HttpHandler.init(Method.GET, "api" / HttpPath.string("version") / "users") { _ => HttpResponse.ok }
             val router  = HttpRouter(Seq(handler))
 
             // These all work because :version is just a string capture

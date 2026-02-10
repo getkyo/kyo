@@ -232,8 +232,8 @@ class HttpClientTest extends Test:
 
         "post" - {
             "with typed body" in run {
-                val handler = HttpHandler.post("/users") { req =>
-                    val input = req.bodyAs[CreateUser]
+                val handler = HttpHandler.post("/users") { in =>
+                    val input = in.request.bodyAs[CreateUser]
                     HttpResponse.created(User(1, input.name))
                 }
                 startTestServer(handler).map { port =>
@@ -263,8 +263,8 @@ class HttpClientTest extends Test:
 
         "put" - {
             "with typed body" in run {
-                val handler = HttpHandler.put("/users/1") { req =>
-                    val input = req.bodyAs[CreateUser]
+                val handler = HttpHandler.put("/users/1") { in =>
+                    val input = in.request.bodyAs[CreateUser]
                     HttpResponse.ok(User(1, input.name))
                 }
                 startTestServer(handler).map { port =>
@@ -325,8 +325,8 @@ class HttpClientTest extends Test:
             }
 
             "custom headers" in run {
-                val handler = HttpHandler.get("/auth") { req =>
-                    req.header("Authorization") match
+                val handler = HttpHandler.get("/auth") { in =>
+                    in.request.header("Authorization") match
                         case Present(auth) => HttpResponse.ok(auth)
                         case Absent        => HttpResponse.unauthorized
                 }
@@ -930,8 +930,8 @@ class HttpClientTest extends Test:
         }
 
         "interleaved client and server" in run {
-            val handler = HttpHandler.get("/echo") { req =>
-                HttpResponse.ok(req.header("X-Request-Id").getOrElse("unknown"))
+            val handler = HttpHandler.get("/echo") { in =>
+                HttpResponse.ok(in.request.header("X-Request-Id").getOrElse("unknown"))
             }
             startTestServer(handler).map { port =>
                 Kyo.foreach(1 to iterations) { iter =>
@@ -1081,7 +1081,7 @@ class HttpClientTest extends Test:
             val handler = route.handle(_ => Seq(User(1, "Alice"), User(2, "Bob")))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, ())
+                    HttpClient.call(route, EmptyTuple)
                 }.map { users =>
                     assert(users == Seq(User(1, "Alice"), User(2, "Bob")))
                 }
@@ -1091,10 +1091,10 @@ class HttpClientTest extends Test:
         "route with path params" in run {
             import HttpPath./
             val route   = HttpRoute.get("users" / HttpPath.int("id")).output[User]
-            val handler = route.handle(id => User(id, s"User$id"))
+            val handler = route.handle(in => User(in.id, s"User${in.id}"))
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, 42)
+                    HttpClient.call(route, Tuple1(42))
                 }.map { user =>
                     assert(user == User(42, "User42"))
                 }
@@ -1106,8 +1106,8 @@ class HttpClientTest extends Test:
                 .query[Int]("limit", 20)
                 .query[Int]("offset", 0)
                 .output[Seq[User]]
-            val handler = route.handle { case (limit, offset) =>
-                (offset until (offset + limit)).map(i => User(i, s"User$i"))
+            val handler = route.handle { in =>
+                (in.offset until (in.offset + in.limit)).map(i => User(i, s"User$i"))
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1123,12 +1123,12 @@ class HttpClientTest extends Test:
             val route = HttpRoute.get("users")
                 .header("X-Request-Id")
                 .output[Seq[User]]
-            val handler = route.handle { reqId =>
-                Seq(User(1, reqId))
+            val handler = route.handle { in =>
+                Seq(User(1, in.X_Request_Id))
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, "req-123")
+                    HttpClient.call(route, Tuple1("req-123"))
                 }.map { users =>
                     assert(users.head.name == "req-123")
                 }
@@ -1139,12 +1139,12 @@ class HttpClientTest extends Test:
             val route = HttpRoute.post("users")
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { input =>
-                User(1, input.name)
+            val handler = route.handle { in =>
+                User(1, in.body.name)
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.call(route, CreateUser("Alice", "alice@example.com"))
+                    HttpClient.call(route, Tuple1(CreateUser("Alice", "alice@example.com")))
                 }.map { user =>
                     assert(user == User(1, "Alice"))
                 }
@@ -1156,8 +1156,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.post("users" / HttpPath.int("id"))
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { case (id, input) =>
-                User(id, input.name)
+            val handler = route.handle { in =>
+                User(in.id, in.body.name)
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1173,8 +1173,8 @@ class HttpClientTest extends Test:
                 .query[String]("role")
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { case (role, input) =>
-                User(1, s"${input.name}:$role")
+            val handler = route.handle { in =>
+                User(1, s"${in.body.name}:${in.role}")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1190,8 +1190,8 @@ class HttpClientTest extends Test:
                 .header("X-Tenant")
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { case (tenant, input) =>
-                User(1, s"${input.name}@$tenant")
+            val handler = route.handle { in =>
+                User(1, s"${in.body.name}@${in.X_Tenant}")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1207,8 +1207,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .query[String]("fields")
                 .output[User]
-            val handler = route.handle { case (id, fields) =>
-                User(id, fields)
+            val handler = route.handle { in =>
+                User(in.id, in.fields)
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1225,8 +1225,8 @@ class HttpClientTest extends Test:
                 .query[String]("action")
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { case (id, action, input) =>
-                User(id, s"${input.name}:$action")
+            val handler = route.handle { in =>
+                User(in.id, s"${in.body.name}:${in.action}")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1243,8 +1243,8 @@ class HttpClientTest extends Test:
                 .header("X-Tenant")
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { case (id, tenant, input) =>
-                User(id, s"${input.name}@$tenant")
+            val handler = route.handle { in =>
+                User(in.id, s"${in.body.name}@${in.X_Tenant}")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1262,8 +1262,8 @@ class HttpClientTest extends Test:
                 .header("X-Tenant")
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { case (id, action, tenant, input) =>
-                User(id, s"${input.name}:$action@$tenant")
+            val handler = route.handle { in =>
+                User(in.id, s"${in.body.name}:${in.action}@${in.X_Tenant}")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1279,8 +1279,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.post("orgs" / HttpPath.string("org") / "users" / HttpPath.int("id"))
                 .input[CreateUser]
                 .output[User]
-            val handler = route.handle { case (org, id, input) =>
-                User(id, s"${input.name}@$org")
+            val handler = route.handle { in =>
+                User(in.id, s"${in.body.name}@${in.org}")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1295,16 +1295,16 @@ class HttpClientTest extends Test:
             val route = HttpRoute.post("upload")
                 .inputMultipart
                 .outputText
-            val handler = route.handle { parts =>
-                val summary = parts.map(p => s"${p.name}:${p.content.length}").mkString(",")
-                s"count=${parts.size},$summary"
+            val handler = route.handle { in =>
+                val summary = in.parts.map(p => s"${p.name}:${p.content.length}").mkString(",")
+                s"count=${in.parts.size},$summary"
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     val parts = Seq(
                         HttpRequest.Part("file", Present("test.txt"), Present("text/plain"), "hello".getBytes("UTF-8"))
                     )
-                    HttpClient.call(route, parts)
+                    HttpClient.call(route, Tuple1(parts))
                 }.map { result =>
                     assert(result == "count=1,file:5")
                 }
@@ -1316,8 +1316,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.post("uploads" / HttpPath.string("category"))
                 .inputMultipart
                 .outputText
-            val handler = route.handle { case (category, parts) =>
-                s"category=$category,count=${parts.size}"
+            val handler = route.handle { in =>
+                s"category=${in.category},count=${in.parts.size}"
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1337,8 +1337,8 @@ class HttpClientTest extends Test:
                 .query[String]("tag")
                 .inputMultipart
                 .outputText
-            val handler = route.handle { case (tag, parts) =>
-                s"tag=$tag,count=${parts.size}"
+            val handler = route.handle { in =>
+                s"tag=${in.tag},count=${in.parts.size}"
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
@@ -1356,8 +1356,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.post("upload")
                 .inputMultipart
                 .outputText
-            val handler = route.handle { parts =>
-                val p = parts.head
+            val handler = route.handle { in =>
+                val p = in.parts.head
                 s"name=${p.name},filename=${p.filename.getOrElse("none")},ct=${p.contentType.getOrElse("none")},size=${p.content.length}"
             }
             startTestServer(handler).map { port =>
@@ -1365,7 +1365,7 @@ class HttpClientTest extends Test:
                     val parts = Seq(
                         HttpRequest.Part("photo", Present("sunset.jpg"), Present("image/jpeg"), Array[Byte](1, 2, 3, 4, 5))
                     )
-                    HttpClient.call(route, parts)
+                    HttpClient.call(route, Tuple1(parts))
                 }.map { result =>
                     assert(result == "name=photo,filename=sunset.jpg,ct=image/jpeg,size=5")
                 }
@@ -1376,8 +1376,8 @@ class HttpClientTest extends Test:
             val route = HttpRoute.post("upload")
                 .inputMultipart
                 .outputText
-            val handler = route.handle { parts =>
-                parts.map { p =>
+            val handler = route.handle { in =>
+                in.parts.map { p =>
                     val isFile = p.filename.isDefined
                     val value  = new String(p.content, "UTF-8")
                     s"${p.name}:${if isFile then "file" else "field"}=$value"
@@ -1389,7 +1389,7 @@ class HttpClientTest extends Test:
                         HttpRequest.Part("title", Absent, Absent, "My Doc".getBytes("UTF-8")),
                         HttpRequest.Part("file", Present("doc.txt"), Present("text/plain"), "content".getBytes("UTF-8"))
                     )
-                    HttpClient.call(route, parts)
+                    HttpClient.call(route, Tuple1(parts))
                 }.map { result =>
                     assert(result == "title:field=My Doc;file:file=content")
                 }
@@ -1402,14 +1402,14 @@ class HttpClientTest extends Test:
             val route = HttpRoute.get("users" / HttpPath.int("id"))
                 .output[User]
                 .error[NotFoundError](Status.NotFound)
-            val handler = route.handle { id =>
-                if id == 999 then Abort.fail(NotFoundError("User not found"))
-                else User(id, s"User$id")
+            val handler = route.handle { in =>
+                if in.id == 999 then Abort.fail(NotFoundError("User not found"))
+                else User(in.id, s"User${in.id}")
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
                     // Test successful case
-                    HttpClient.call(route, 1).map { user =>
+                    HttpClient.call(route, Tuple1(1)).map { user =>
                         assert(user == User(1, "User1"))
                     }.andThen {
                         // Test error case - should return 404 with error body
@@ -1620,7 +1620,7 @@ class HttpClientTest extends Test:
     "Redirect edge cases" - {
 
         "redirect preserves query parameters in Location" in run {
-            val target   = HttpHandler.get("/target") { req => HttpResponse.ok(s"q=${req.query("q").getOrElse("none")}") }
+            val target   = HttpHandler.get("/target") { in => HttpResponse.ok(s"q=${in.request.query("q").getOrElse("none")}") }
             val redirect = HttpHandler.get("/start") { _ => HttpResponse.redirect("/target?q=hello") }
             startTestServer(target, redirect).map { port =>
                 HttpClient.send(HttpRequest.get(s"http://localhost:$port/start")).map { response =>
@@ -1693,8 +1693,8 @@ class HttpClientTest extends Test:
     "Redirect with cookies" - {
 
         "redirect target receives cookies set during redirect" in run {
-            val target = HttpHandler.get("/dashboard") { req =>
-                val session = req.cookie("session").map(_.value).getOrElse("none")
+            val target = HttpHandler.get("/dashboard") { in =>
+                val session = in.request.cookie("session").map(_.value).getOrElse("none")
                 HttpResponse.ok(s"session=$session")
             }
             val login = HttpHandler.get("/login") { _ =>
@@ -1925,8 +1925,8 @@ class HttpClientTest extends Test:
             }
 
             "with streaming request body" in run {
-                val handler = HttpHandler.streamingBody(HttpRequest.Method.POST, "/upload") { request =>
-                    request.bodyStream.run.map { chunks =>
+                val handler = HttpHandler.streamingBody(HttpRequest.Method.POST, "/upload") { in =>
+                    in.request.bodyStream.run.map { chunks =>
                         val totalBytes = chunks.foldLeft(0)(_ + _.size)
                         HttpResponse.ok(s"received $totalBytes bytes")
                     }
@@ -1949,8 +1949,8 @@ class HttpClientTest extends Test:
             }
 
             "with HttpRequest object" in run {
-                val handler = HttpHandler.get("/echo") { req =>
-                    req.header("X-Custom") match
+                val handler = HttpHandler.get("/echo") { in =>
+                    in.request.header("X-Custom") match
                         case Present(v) => HttpResponse.ok(v)
                         case Absent     => HttpResponse.ok("no-header")
                 }
@@ -1969,7 +1969,7 @@ class HttpClientTest extends Test:
 
         "streamSse" - {
             "receives SSE events" in run {
-                val handler = HttpHandler.streamSse[Unit, Item, Any]("/events") { _ =>
+                val handler = HttpHandler.streamSse[EmptyTuple, Item, Any]("/events") { _ =>
                     Stream.init(Seq(
                         HttpEvent(Item("a")),
                         HttpEvent(Item("b")),
@@ -1989,7 +1989,7 @@ class HttpClientTest extends Test:
             }
 
             "empty stream" in run {
-                val handler = HttpHandler.streamSse[Unit, Item, Any]("/empty") { _ =>
+                val handler = HttpHandler.streamSse[EmptyTuple, Item, Any]("/empty") { _ =>
                     Stream.empty[HttpEvent[Item]]
                 }
                 startTestServer(handler).map { port =>
@@ -2002,7 +2002,7 @@ class HttpClientTest extends Test:
             }
 
             "with HttpRequest" in run {
-                val handler = HttpHandler.streamSse[Unit, Item, Any]("/events") { _ =>
+                val handler = HttpHandler.streamSse[EmptyTuple, Item, Any]("/events") { _ =>
                     Stream.init(Seq(HttpEvent(Item("x"))))
                 }
                 startTestServer(handler).map { port =>
@@ -2019,7 +2019,7 @@ class HttpClientTest extends Test:
 
         "streamNdjson" - {
             "receives NDJSON values" in run {
-                val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/data") { _ =>
+                val handler = HttpHandler.streamNdjson[EmptyTuple, Item, Any]("/data") { _ =>
                     Stream.init(Seq(Item("x"), Item("y"), Item("z")))
                 }
                 startTestServer(handler).map { port =>
@@ -2035,7 +2035,7 @@ class HttpClientTest extends Test:
             }
 
             "empty stream" in run {
-                val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/empty") { _ =>
+                val handler = HttpHandler.streamNdjson[EmptyTuple, Item, Any]("/empty") { _ =>
                     Stream.empty[Item]
                 }
                 startTestServer(handler).map { port =>
@@ -2048,7 +2048,7 @@ class HttpClientTest extends Test:
             }
 
             "with HttpRequest" in run {
-                val handler = HttpHandler.streamNdjson[Unit, Item, Any]("/data") { _ =>
+                val handler = HttpHandler.streamNdjson[EmptyTuple, Item, Any]("/data") { _ =>
                     Stream.init(Seq(Item("q")))
                 }
                 startTestServer(handler).map { port =>
@@ -2065,8 +2065,8 @@ class HttpClientTest extends Test:
 
         "filter application to streaming" - {
             "applies filter to stream request" in run {
-                val handler = HttpHandler.get("/auth") { req =>
-                    req.header("Authorization") match
+                val handler = HttpHandler.get("/auth") { in =>
+                    in.request.header("Authorization") match
                         case Present(auth) => HttpResponse.ok(auth)
                         case Absent        => HttpResponse.unauthorized
                 }

@@ -14,8 +14,8 @@ class HttpMultipartUploadTest extends Test:
         HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 1024 * 1024), PlatformTestBackend.backend)(handlers*).map(_.port)
 
     "single file upload" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val parts = request.parts
+        val handler = HttpHandler.post("/upload") { in =>
+            val parts = in.request.parts
             if parts.isEmpty then HttpResponse.badRequest("no parts")
             else
                 val part = parts(0)
@@ -33,8 +33,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "multiple file upload" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val parts   = request.parts
+        val handler = HttpHandler.post("/upload") { in =>
+            val parts   = in.request.parts
             val summary = (0 until parts.size).map(i => s"${parts(i).name}:${parts(i).content.length}").mkString(",")
             HttpResponse.ok(s"count=${parts.size},$summary")
         }
@@ -53,8 +53,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "form fields and file mixed" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val parts = request.parts
+        val handler = HttpHandler.post("/upload") { in =>
+            val parts = in.request.parts
             val fields = (0 until parts.size).map { i =>
                 val p       = parts(i)
                 val isFile  = p.filename.isDefined
@@ -78,8 +78,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "filename and content-type preservation" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val part = request.parts(0)
+        val handler = HttpHandler.post("/upload") { in =>
+            val part = in.request.parts(0)
             HttpResponse.ok(
                 s"filename=${part.filename.getOrElse("none")},ct=${part.contentType.getOrElse("none")}"
             )
@@ -95,8 +95,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "binary file content" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val part  = request.parts(0)
+        val handler = HttpHandler.post("/upload") { in =>
+            val part  = in.request.parts(0)
             val bytes = part.content
             // Echo back as comma-separated byte values
             HttpResponse.ok(bytes.map(_ & 0xff).mkString(","))
@@ -113,8 +113,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "large file upload" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val part = request.parts(0)
+        val handler = HttpHandler.post("/upload") { in =>
+            val part = in.request.parts(0)
             HttpResponse.ok(s"size=${part.content.length}")
         }
         startUploadServer(handler).map { port =>
@@ -130,8 +130,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "empty file upload" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val part = request.parts(0)
+        val handler = HttpHandler.post("/upload") { in =>
+            val part = in.request.parts(0)
             HttpResponse.ok(s"name=${part.name},size=${part.content.length}")
         }
         startUploadServer(handler).map { port =>
@@ -145,9 +145,9 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "upload with custom request headers" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val auth = request.header("Authorization").getOrElse("none")
-            val part = request.parts(0)
+        val handler = HttpHandler.post("/upload") { in =>
+            val auth = in.request.header("Authorization").getOrElse("none")
+            val part = in.request.parts(0)
             HttpResponse.ok(s"auth=$auth,file=${part.name}")
         }
         startUploadServer(handler).map { port =>
@@ -165,8 +165,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "upload with content containing CRLF" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val part    = request.parts(0)
+        val handler = HttpHandler.post("/upload") { in =>
+            val part    = in.request.parts(0)
             val content = new String(part.content, "UTF-8")
             HttpResponse.ok(content)
         }
@@ -182,8 +182,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "many parts upload" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val parts = request.parts
+        val handler = HttpHandler.post("/upload") { in =>
+            val parts = in.request.parts
             HttpResponse.ok(s"count=${parts.size}")
         }
         startUploadServer(handler).map { port =>
@@ -199,9 +199,9 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "upload to path with params" in run {
-        val handler = HttpHandler.post("uploads" / HttpPath.string("category")) { (category, request) =>
-            val part = request.parts(0)
-            HttpResponse.ok(s"category=$category,file=${part.name}")
+        val handler = HttpHandler.post("uploads" / HttpPath.string("category")) { in =>
+            val part = in.request.parts(0)
+            HttpResponse.ok(s"category=${in.category},file=${part.name}")
         }
         startUploadServer(handler).map { port =>
             val parts   = Seq(Part("photo", Present("img.png"), Present("image/png"), "pixels".getBytes))
@@ -214,8 +214,8 @@ class HttpMultipartUploadTest extends Test:
     }
 
     "empty parts list" in run {
-        val handler = HttpHandler.post("/upload") { request =>
-            val parts = request.parts
+        val handler = HttpHandler.post("/upload") { in =>
+            val parts = in.request.parts
             HttpResponse.ok(s"count=${parts.size}")
         }
         startUploadServer(handler).map { port =>

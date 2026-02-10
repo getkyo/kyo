@@ -126,8 +126,8 @@ class HttpHandlerTest extends Test:
 
     "path captures" - {
         "int capture" in run {
-            val handler = HttpHandler.get("/items" / HttpPath.int("id")) { (id, req) =>
-                HttpResponse.ok(s"item:$id")
+            val handler = HttpHandler.get("/items" / HttpPath.int("id")) { in =>
+                HttpResponse.ok(s"item:${in.id}")
             }
             for
                 port     <- startTestServer(handler)
@@ -137,8 +137,8 @@ class HttpHandlerTest extends Test:
         }
 
         "string capture" in run {
-            val handler = HttpHandler.get("/greet" / HttpPath.string("name")) { (name, req) =>
-                HttpResponse.ok(s"hello:$name")
+            val handler = HttpHandler.get("/greet" / HttpPath.string("name")) { in =>
+                HttpResponse.ok(s"hello:${in.name}")
             }
             for
                 port     <- startTestServer(handler)
@@ -148,8 +148,8 @@ class HttpHandlerTest extends Test:
         }
 
         "multiple captures" in run {
-            val handler = HttpHandler.get("/users" / HttpPath.string("name") / HttpPath.int("id")) { (name, id, req) =>
-                HttpResponse.ok(s"$name:$id")
+            val handler = HttpHandler.get("/users" / HttpPath.string("name") / HttpPath.int("id")) { in =>
+                HttpResponse.ok(s"${in.name}:${in.id}")
             }
             for
                 port     <- startTestServer(handler)
@@ -159,8 +159,8 @@ class HttpHandlerTest extends Test:
         }
 
         "long capture" in run {
-            val handler = HttpHandler.get("/big" / HttpPath.long("n")) { (n, req) =>
-                HttpResponse.ok(s"n:$n")
+            val handler = HttpHandler.get("/big" / HttpPath.long("n")) { in =>
+                HttpResponse.ok(s"n:${in.n}")
             }
             for
                 port     <- startTestServer(handler)
@@ -170,8 +170,8 @@ class HttpHandlerTest extends Test:
         }
 
         "boolean capture" in run {
-            val handler = HttpHandler.get("/flag" / HttpPath.boolean("b")) { (b, req) =>
-                HttpResponse.ok(s"flag:$b")
+            val handler = HttpHandler.get("/flag" / HttpPath.boolean("b")) { in =>
+                HttpResponse.ok(s"flag:${in.b}")
             }
             for
                 port     <- startTestServer(handler)
@@ -184,8 +184,8 @@ class HttpHandlerTest extends Test:
     "route-based handler" - {
         "JSON input/output" in run {
             val route = HttpRoute.post("/users").input[CreateUser].output[User]
-            val handler = HttpHandler.init(route) { input =>
-                User(1, input.name)
+            val handler = HttpHandler.init(route) { in =>
+                User(1, in.body.name)
             }
             for
                 port     <- startTestServer(handler)
@@ -265,7 +265,7 @@ class HttpHandlerTest extends Test:
     "query parameters" - {
         "required query param" in run {
             val route   = HttpRoute.get("/search").query[String]("q").output[String]
-            val handler = HttpHandler.init(route)(q => s"found:$q")
+            val handler = HttpHandler.init(route)(in => s"found:${in.q}")
             for
                 port <- startTestServer(handler)
                 response <- HttpClient.send(
@@ -277,7 +277,7 @@ class HttpHandlerTest extends Test:
 
         "missing required query param returns 400" in run {
             val route   = HttpRoute.get("/search").query[String]("q").output[String]
-            val handler = HttpHandler.init(route)(q => s"found:$q")
+            val handler = HttpHandler.init(route)(in => s"found:${in.q}")
             for
                 port     <- startTestServer(handler)
                 response <- testGet(port, "/search")
@@ -287,7 +287,7 @@ class HttpHandlerTest extends Test:
 
         "query param with default" in run {
             val route   = HttpRoute.get("/page").query[Int]("n", 1).output[String]
-            val handler = HttpHandler.init(route)(n => s"page:$n")
+            val handler = HttpHandler.init(route)(in => s"page:${in.n}")
             for
                 port     <- startTestServer(handler)
                 response <- testGet(port, "/page")
