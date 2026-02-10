@@ -2,6 +2,7 @@ package kyo
 
 import HttpResponse.Status
 import kyo.HttpRequest.Method
+import kyo.internal.Combine
 import kyo.internal.MultipartUtil
 import scala.annotation.nowarn
 import scala.annotation.tailrec
@@ -14,16 +15,15 @@ import scala.annotation.tailrec
   * Two handler styles:
   *
   * Route-based handlers via `HttpHandler.init(route)(f)` get auto-deserialized typed inputs and auto-serialized typed outputs with error
-  * mapping. The function `f: In => Out` receives the route's accumulated `In` type as a single flat argument — all path captures, query,
-  * header, and body params combined via `Inputs`.
+  * mapping. The function `f: In => Out` receives the route's accumulated `In` named tuple — all path captures, query, header, and body
+  * params combined via `Combine`.
   *
-  * Low-level handlers via `HttpHandler.init(method, path)(f)` receive path captures and the raw `HttpRequest` flattened into a single
-  * function argument via the `Inputs` match type — the request is the last element. With no captures the function takes just the request;
-  * with one capture it takes `(capture, request)`; with multiple captures all values are flattened into a single tuple ending with the
-  * request.
+  * Low-level handlers via `HttpHandler.init(method, path)(f)` receive path captures and the raw `HttpRequest` as a named tuple via the
+  * `Combine` type class — the request is the last field named `request`. With no captures the function takes `(request: HttpRequest[...])`;
+  * with captures all fields are combined into a single named tuple ending with the request field.
   *
   *   - Route-based handlers with automatic JSON serialization/deserialization
-  *   - Low-level handlers with flattened path captures + request via `Inputs` match type
+  *   - Low-level handlers with named tuple path captures + request via `Combine`
   *   - Per-method convenience factories (`get`, `post`, `put`, `patch`, `delete`, `head`, `options`)
   *   - Streaming request body support via `streamingBody`
   *   - SSE and NDJSON streaming response handlers
@@ -60,12 +60,10 @@ end HttpHandler
 
 object HttpHandler:
 
-    /** Creates a route-based handler. `f: In => Out` receives the route's accumulated `In` type as a flat argument — all path captures,
-      * query, header, and body params combined via `Inputs`. Output is serialized to JSON. Errors matching route error schemas get the
-      * corresponding status code; unmatched errors become 500.
+    /** Creates a route-based handler. `f: In => Out` receives the route's accumulated `In` named tuple — all path captures, query, header,
+      * and body params combined via `Combine`. Output is serialized to JSON. Errors matching route error schemas get the corresponding
+      * status code; unmatched errors become 500.
       */
-    // asInstanceOf casts: Schema[Any] due to type erasure, fullInput.asInstanceOf[In] bridges runtime-extracted values
-    // to compile-time types (route DSL builds In via match types, runtime extraction is dynamic), Abort[Any] because Err is erased
     @nowarn("msg=anonymous")
     inline def init[In, Out, Err, S](r: HttpRoute[In, Out, Err])(inline f: In => Out < (Abort[Err] & Async & S))(using
         frame: Frame
@@ -74,7 +72,6 @@ object HttpHandler:
             val route: HttpRoute[?, ?, ?] = r
             private[kyo] def apply(request: HttpRequest[?]): HttpResponse[?] < (Async & S) =
                 try
-                    // Safe cast: server backend materializes the full body before dispatching to non-streaming handlers
                     val req         = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                     val pathInput   = extractPathParams(r.path, req.path)
                     val queryInput  = extractQueryParams(r.queryParams, req)
@@ -82,26 +79,22 @@ object HttpHandler:
                     val cookieInput = extractCookieParams(r.cookieParams, req)
                     val bodyInput =
                         if r.multipartInput then
-                            req.parts.toArrayUnsafe.toSeq
+                            Tuple1(req.parts.toArrayUnsafe.toSeq)
                         else
                             r.inputSchema match
                                 case Present(schema) =>
-                                    schema.asInstanceOf[Schema[Any]].decode(req.bodyText)
+                                    Tuple1(schema.asInstanceOf[Schema[Any]].decode(req.bodyText))
                                 case Absent =>
-                                    ()
-                    // Order must match route's In type: path → query → header → cookie → body
-                    val fullInput = combineAllInputs(pathInput, queryInput, headerInput, cookieInput, bodyInput)
+                                    EmptyTuple
+                    val fullInput = combineAllInputs(pathInput, queryInput, headerInput, cookieInput, bodyInput, r)
                     val computation = f(fullInput.asInstanceOf[In]).map { output =>
                         r.outputSchema match
                             case Present(s) =>
-                                // Cast bridges existential Schema[?] to Schema[Out] (safe: route DSL guarantees type alignment)
                                 val json = s.asInstanceOf[Schema[Out]].encode(output)
                                 HttpResponse.json(json)
                             case Absent =>
                                 HttpResponse.ok
                     }
-                    // Cast Abort[Err] to Abort[Any]: Err is a type parameter so ConcreteTag[Err] is unavailable,
-                    // forcing us to recover with Any. Safe because effects are erased at runtime.
                     computation.asInstanceOf[HttpResponse[?] < (Abort[Any] & Async & S)]
                         .handle(Abort.recover[Any](
                             err =>
@@ -117,28 +110,30 @@ object HttpHandler:
                         HttpResponse(HttpResponse.Status.BadRequest)
             end apply
 
-    /** Creates a low-level handler. The function receives path captures and the request flattened into a single argument via
-      * `Inputs[A, HttpRequest]`. No captures → just the request; one capture → `(capture, request)`; multiple → flat tuple ending with
-      * request.
+    /** Creates a low-level handler. The function receives path captures and the request as a named tuple via `Combine[A, (request:
+      * HttpRequest)]`. No captures -> just `(request: HttpRequest[...])`; with captures -> named tuple with all fields.
       */
     @nowarn("msg=anonymous")
     inline def init[A, S](
         method: Method,
         path: HttpPath[A]
-    )(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S))(using
-        Frame
+    )(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
     ): HttpHandler[S] =
         new HttpHandler[S]:
             val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
             private[kyo] def apply(request: HttpRequest[?]): HttpResponse[?] < (Async & S) =
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
-                val fullInput = combineInputs(pathInput, req)
-                f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]]])
+                val fullInput = combineInputs(pathInput, Tuple1(req))
+                f(fullInput.asInstanceOf[c.Out])
             end apply
 
     /** Creates a GET handler that returns "healthy". */
-    def health(path: HttpPath[Unit] = "/health")(using Frame): HttpHandler[Any] =
+    def health(path: HttpPath[EmptyTuple] = "/health")(using Frame): HttpHandler[Any] =
         init(Method.GET, path)(_ => HttpResponse.ok("healthy"))
 
     /** Creates a handler that always returns a fixed status or response, ignoring the request. */
@@ -154,85 +149,96 @@ object HttpHandler:
             private[kyo] def apply(request: HttpRequest[?]): HttpResponse[?] < Async =
                 response
 
-    inline def get[A, S](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S))(
-        using Frame
+    inline def get[A, S](path: HttpPath[A])(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
     ): HttpHandler[S] =
         init(Method.GET, path)(f)
 
-    inline def post[
-        A,
-        S
-    ](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S))(
-        using Frame
+    inline def post[A, S](path: HttpPath[A])(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
     ): HttpHandler[S] =
         init(Method.POST, path)(f)
 
-    inline def put[A, S](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S))(
-        using Frame
+    inline def put[A, S](path: HttpPath[A])(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
     ): HttpHandler[S] =
         init(Method.PUT, path)(f)
 
-    inline def patch[A, S](path: HttpPath[A])(
-        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S)
-    )(using Frame): HttpHandler[S] =
+    inline def patch[A, S](path: HttpPath[A])(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
+    ): HttpHandler[S] =
         init(Method.PATCH, path)(f)
 
-    inline def delete[A, S](path: HttpPath[A])(
-        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S)
-    )(using Frame): HttpHandler[S] =
+    inline def delete[A, S](path: HttpPath[A])(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
+    ): HttpHandler[S] =
         init(Method.DELETE, path)(f)
 
-    inline def head[
-        A,
-        S
-    ](path: HttpPath[A])(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S))(
-        using Frame
+    inline def head[A, S](path: HttpPath[A])(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
     ): HttpHandler[S] =
         init(Method.HEAD, path)(f)
 
-    inline def options[A, S](path: HttpPath[A])(
-        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => HttpResponse[?] < (Async & S)
-    )(using Frame): HttpHandler[S] =
+    inline def options[A, S](path: HttpPath[A])(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
+    ): HttpHandler[S] =
         init(Method.OPTIONS, path)(f)
 
     // --- Streaming request body ---
 
-    /** Creates a handler that receives a streaming request body.
-      *
-      * The handler receives `HttpRequest[HttpBody.Streamed]` whose `bodyStream` delivers chunks as they arrive from the client, without
-      * buffering the entire body in memory.
-      */
     @nowarn("msg=anonymous")
     inline def streamingBody[A, S](
         method: Method,
         path: HttpPath[A]
-    )(inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Streamed]] => HttpResponse[?] < (Async & S))(using
-        Frame
+    )(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Streamed])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
     ): HttpHandler[S] =
         new HttpHandler[S]:
             val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
             override private[kyo] def streamingRequest: Boolean = true
             private[kyo] def apply(request: HttpRequest[?]): HttpResponse[?] < (Async & S) =
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], request.path)
-                val fullInput = combineInputs(pathInput, request.asInstanceOf[HttpRequest[HttpBody.Streamed]])
-                f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Streamed]]])
+                val fullInput = combineInputs(pathInput, Tuple1(request.asInstanceOf[HttpRequest[HttpBody.Streamed]]))
+                f(fullInput.asInstanceOf[c.Out])
             end apply
         end new
     end streamingBody
 
     // --- Streaming multipart ---
 
-    /** Creates a handler that receives a streaming multipart request.
-      *
-      * The handler receives path captures and a `Stream[HttpRequest.Part, Async]` that yields individual multipart parts as they are parsed
-      * from the streaming request body, without buffering the entire body first.
-      */
     @nowarn("msg=anonymous")
     inline def streamingMultipart[A, S](
         method: Method,
         path: HttpPath[A]
-    )(inline f: HttpPath.Inputs[A, Stream[HttpRequest.Part, Async]] => HttpResponse[?] < (Async & S))(using
-        Frame
+    )(using
+        c: Combine[A, (parts: Stream[HttpRequest.Part, Async])],
+        frame: Frame
+    )(
+        inline f: c.Out => HttpResponse[?] < (Async & S)
     ): HttpHandler[S] =
         new HttpHandler[S]:
             val route: HttpRoute[?, ?, ?] = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
@@ -252,8 +258,8 @@ object HttpHandler:
                                 chunk.foreach(bytes => result ++= decoder.decode(bytes))
                                 result.result()
                             }
-                        val fullInput = combineInputs(pathInput, partStream)
-                        f(fullInput.asInstanceOf[HttpPath.Inputs[A, Stream[HttpRequest.Part, Async]]])
+                        val fullInput = combineInputs(pathInput, Tuple1(partStream))
+                        f(fullInput.asInstanceOf[c.Out])
                     case Absent =>
                         HttpResponse.badRequest("Missing or invalid multipart boundary")
                 end match
@@ -265,26 +271,32 @@ object HttpHandler:
 
     inline def streamSse[A, V: Schema: Tag, S](
         path: HttpPath[A]
+    )(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
     )(
-        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[HttpEvent[V], Async & S]
-    )(using Frame): HttpHandler[S] =
+        inline f: c.Out => Stream[HttpEvent[V], Async & S]
+    ): HttpHandler[S] =
         streamSse(Method.GET, path)(f)
 
     @nowarn("msg=anonymous")
     inline def streamSse[A, V: Schema: Tag, S](
         method: Method,
         path: HttpPath[A]
+    )(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
     )(
-        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[HttpEvent[V], Async & S]
-    )(using Frame): HttpHandler[S] =
+        inline f: c.Out => Stream[HttpEvent[V], Async & S]
+    ): HttpHandler[S] =
         val schema = Schema[V]
         new HttpHandler[S]:
             val route = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
             private[kyo] def apply(request: HttpRequest[?]) =
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
-                val fullInput = combineInputs(pathInput, req)
-                val stream    = f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]]])
+                val fullInput = combineInputs(pathInput, Tuple1(req))
+                val stream    = f(fullInput.asInstanceOf[c.Out])
                 HttpResponse.streamSse(stream.asInstanceOf[Stream[HttpEvent[Any], Async]])(using schema.asInstanceOf[Schema[Any]])
             end apply
         end new
@@ -294,26 +306,32 @@ object HttpHandler:
 
     inline def streamNdjson[A, V: Schema: Tag, S](
         path: HttpPath[A]
+    )(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
     )(
-        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[V, Async & S]
-    )(using Frame): HttpHandler[S] =
+        inline f: c.Out => Stream[V, Async & S]
+    ): HttpHandler[S] =
         streamNdjson(Method.GET, path)(f)
 
     @nowarn("msg=anonymous")
     inline def streamNdjson[A, V: Schema: Tag, S](
         method: Method,
         path: HttpPath[A]
+    )(using
+        c: Combine[A, (request: HttpRequest[HttpBody.Bytes])],
+        frame: Frame
     )(
-        inline f: HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]] => Stream[V, Async & S]
-    )(using Frame): HttpHandler[S] =
+        inline f: c.Out => Stream[V, Async & S]
+    ): HttpHandler[S] =
         val schema = Schema[V]
         new HttpHandler[S]:
             val route = HttpRoute(method, path.asInstanceOf[HttpPath[Any]], Status.OK, Absent, Absent)
             private[kyo] def apply(request: HttpRequest[?]) =
                 val req       = request.asInstanceOf[HttpRequest[HttpBody.Bytes]]
                 val pathInput = extractPathParams(path.asInstanceOf[HttpPath[Any]], req.path)
-                val fullInput = combineInputs(pathInput, req)
-                val stream    = f(fullInput.asInstanceOf[HttpPath.Inputs[A, HttpRequest[HttpBody.Bytes]]])
+                val fullInput = combineInputs(pathInput, Tuple1(req))
+                val stream    = f(fullInput.asInstanceOf[c.Out])
                 HttpResponse.streamNdjson(stream.asInstanceOf[Stream[Any, Async]])(using schema.asInstanceOf[Schema[Any]])
             end apply
         end new
@@ -347,13 +365,11 @@ object HttpHandler:
         loop(errorSchemas)
     end findErrorResponse
 
-    // Note: isInstanceOf[Unit] is used here because we're working with Any at runtime.
-    // At compile time, the Inputs[A, B] match type handles Unit specially, but at runtime
-    // we need to detect Unit values to avoid wrapping them in tuples. This is a consequence
-    // of the type-level DSL design where compile-time types don't match runtime representations.
-    private[kyo] def combineInputs(a: Any, b: Any): Any =
-        if a.isInstanceOf[Unit] then b
-        else if b.isInstanceOf[Unit] then a
+    // Combines two tuple values. EmptyTuple is the identity element.
+    // All extraction methods return either EmptyTuple or proper Tuple values.
+    private def combineInputs(a: Any, b: Any): Any =
+        if a.isInstanceOf[EmptyTuple] then b
+        else if b.isInstanceOf[EmptyTuple] then a
         else
             (a, b) match
                 case (v1: Tuple, v2: Tuple) => Tuple.fromArray((v1.toArray ++ v2.toArray))
@@ -361,19 +377,65 @@ object HttpHandler:
                 case (v1, v2: Tuple)        => Tuple.fromArray(v1 +: v2.toArray)
                 case (v1, v2)               => (v1, v2)
 
-    // Combines in declaration order: path → query → header → cookie → body (must match route's In type accumulation)
-    private def combineAllInputs(pathInput: Any, queryInput: Any, headerInput: Any, cookieInput: Any, bodyInput: Any): Any =
-        val combined1 = combineInputs(pathInput, queryInput)
-        val combined2 = combineInputs(combined1, headerInput)
-        val combined3 = combineInputs(combined2, cookieInput)
-        combineInputs(combined3, bodyInput)
+    // Combines inputs in declaration order using param ids.
+    // Each category's first param id determines its position. Path is always first.
+    private def combineAllInputs(
+        pathInput: Any,
+        queryInput: Any,
+        headerInput: Any,
+        cookieInput: Any,
+        bodyInput: Any,
+        route: HttpRoute[?, ?, ?]
+    ): Any =
+        // Get first-declared id for each category (-1 = not present)
+        val qId = if route.queryParams.nonEmpty then route.queryParams.head.id else -1
+        val hId = if route.headerParams.nonEmpty then route.headerParams.head.id else -1
+        val cId = if route.cookieParams.nonEmpty then route.cookieParams.head.id else -1
+        val bId = route.bodyId
+
+        // Build (id, input) pairs for present categories, then sort by id
+        var count  = 0
+        val ids    = new Array[Int](4)
+        val inputs = new Array[Any](4)
+        if qId >= 0 then
+            ids(count) = qId; inputs(count) = queryInput; count += 1
+        if hId >= 0 then
+            ids(count) = hId; inputs(count) = headerInput; count += 1
+        if cId >= 0 then
+            ids(count) = cId; inputs(count) = cookieInput; count += 1
+        if bId >= 0 then
+            ids(count) = bId; inputs(count) = bodyInput; count += 1
+
+        // Simple insertion sort (at most 4 elements)
+        var i = 1
+        while i < count do
+            val key    = ids(i)
+            val keyVal = inputs(i)
+            var j      = i - 1
+            while j >= 0 && ids(j) > key do
+                ids(j + 1) = ids(j)
+                inputs(j + 1) = inputs(j)
+                j -= 1
+            end while
+            ids(j + 1) = key
+            inputs(j + 1) = keyVal
+            i += 1
+        end while
+
+        // Combine in sorted order
+        var result: Any = pathInput
+        i = 0
+        while i < count do
+            result = combineInputs(result, inputs(i))
+            i += 1
+        result
     end combineAllInputs
 
     private def extractQueryParams(queryParams: Seq[HttpRoute.QueryParam[?]], request: HttpRequest[?])(using Frame): Any =
         val size = queryParams.size
-        if size == 0 then ()
+        if size == 0 then EmptyTuple
         else if size == 1 then
-            extractQueryParam(queryParams.head, request)
+            Tuple1(extractQueryParam(queryParams.head, request))
         else
             val arr = new Array[Any](size)
             @tailrec def loop(i: Int): Unit =
@@ -388,7 +450,6 @@ object HttpHandler:
     private def extractQueryParam(param: HttpRoute.QueryParam[?], request: HttpRequest[?])(using Frame): Any =
         request.query(param.name) match
             case Present(value) =>
-                // Decode using the schema
                 param.schema.asInstanceOf[Schema[Any]].decode(value)
             case Absent =>
                 param.default match
@@ -397,9 +458,14 @@ object HttpHandler:
 
     private def extractHeaderParams(headerParams: Seq[HttpRoute.HeaderParam], request: HttpRequest[?])(using Frame): Any =
         val size = headerParams.size
-        if size == 0 then ()
+        if size == 0 then EmptyTuple
         else if size == 1 then
-            extractHeaderParam(headerParams.head, request)
+            val result = extractHeaderParam(headerParams.head, request)
+            result match
+                // Basic auth returns (username, password) which is already a Tuple2
+                case t: Tuple if headerParams.head.authScheme == Present(HttpRoute.AuthScheme.Basic) => t
+                case other                                                                           => Tuple1(other)
+            end match
         else
             @tailrec def computeSize(i: Int, acc: Int): Int =
                 if i < size then computeSize(i + 1, acc + headerParamInputSize(headerParams(i)))
@@ -458,9 +524,9 @@ object HttpHandler:
 
     private def extractCookieParams(cookieParams: Seq[HttpRoute.CookieParam], request: HttpRequest[?])(using Frame): Any =
         val size = cookieParams.size
-        if size == 0 then ()
+        if size == 0 then EmptyTuple
         else if size == 1 then
-            extractCookieParam(cookieParams.head, request)
+            Tuple1(extractCookieParam(cookieParams.head, request))
         else
             val arr = new Array[Any](size)
             @tailrec def loop(i: Int): Unit =
@@ -480,7 +546,7 @@ object HttpHandler:
                     case Present(d) => d
                     case Absent     => throw new MissingParamException(s"Missing required cookie: ${param.name}")
 
-    // Internal control-flow exceptions — caught in route handler try-catch, never escape. HttpError is a sealed client-side hierarchy.
+    // Internal control-flow exceptions — caught in route handler try-catch, never escape.
     final private class MissingAuthException(name: String)(using Frame)
         extends KyoException(name)
     final private class InvalidAuthException(msg: String)(using Frame)
@@ -488,9 +554,9 @@ object HttpHandler:
     final private class MissingParamException(msg: String)(using Frame)
         extends KyoException(msg)
 
-    private[kyo] def extractPathParams(routePath: HttpPath[Any], requestPath: String): Any =
+    private def extractPathParams(routePath: HttpPath[Any], requestPath: String): Any =
         routePath match
-            case s: String => ()
+            case s: String => EmptyTuple
             case segment: HttpPath.Segment[?] =>
                 val parts = HttpPath.parseSegments(requestPath)
                 extractFromSegment(segment, parts)._1
@@ -498,14 +564,13 @@ object HttpHandler:
     private def extractFromSegment(segment: HttpPath.Segment[?], parts: List[String]): (Any, List[String]) =
         segment match
             case HttpPath.Segment.Literal(v) =>
-                // Skip literal parts
                 val literalSize = HttpPath.countSegments(v)
-                ((), parts.drop(literalSize))
+                (EmptyTuple, parts.drop(literalSize))
             case HttpPath.Segment.Capture(_, parse) =>
                 // Escape + before decoding: in URL paths, + is literal (only means space in form-encoded queries)
                 val decoded = java.net.URLDecoder.decode(parts.head.replace("+", "%2B"), "UTF-8")
                 val value   = parse(decoded)
-                (value, parts.tail)
+                (Tuple1(value), parts.tail)
             case HttpPath.Segment.Concat(left, right) =>
                 val (leftVal, remaining)   = extractFromSegment(left.asInstanceOf[HttpPath.Segment[?]], parts)
                 val (rightVal, remaining2) = extractFromSegment(right.asInstanceOf[HttpPath.Segment[?]], remaining)

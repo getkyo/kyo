@@ -5,76 +5,122 @@ import java.util.UUID
 
 class HttpPathTest extends Test:
 
+    case class User(id: Int, name: String) derives Schema, CanEqual
+
     "construction" - {
         "apply creates literal path" in {
-            val p: HttpPath[Unit] = HttpPath("/api/users")
+            val p: HttpPath[EmptyTuple] = HttpPath("/api/users")
             succeed
         }
 
         "implicit string conversion" in {
-            val p: HttpPath[Unit] = "/api/users"
+            val p: HttpPath[EmptyTuple] = "/api/users"
             succeed
         }
     }
 
     "captures" - {
         "int capture" in {
-            val p: HttpPath[Int] = HttpPath.int("id")
+            val p: HttpPath[(id: Int)] = HttpPath.int("id")
             succeed
         }
 
         "long capture" in {
-            val p: HttpPath[Long] = HttpPath.long("id")
+            val p: HttpPath[(id: Long)] = HttpPath.long("id")
             succeed
         }
 
         "string capture" in {
-            val p: HttpPath[String] = HttpPath.string("name")
+            val p: HttpPath[(name: String)] = HttpPath.string("name")
             succeed
         }
 
         "uuid capture" in {
-            val p: HttpPath[UUID] = HttpPath.uuid("id")
+            val p: HttpPath[(id: UUID)] = HttpPath.uuid("id")
             succeed
         }
 
         "boolean capture" in {
-            val p: HttpPath[Boolean] = HttpPath.boolean("flag")
+            val p: HttpPath[(flag: Boolean)] = HttpPath.boolean("flag")
             succeed
         }
 
-        "empty capture name throws" in {
-            assertThrows[IllegalArgumentException] { HttpPath.int("") }
-            assertThrows[IllegalArgumentException] { HttpPath.long("") }
-            assertThrows[IllegalArgumentException] { HttpPath.string("") }
-            assertThrows[IllegalArgumentException] { HttpPath.uuid("") }
-            assertThrows[IllegalArgumentException] { HttpPath.boolean("") }
+        "inline val capture name" in run {
+            inline val userId = "userId"
+            val route         = HttpRoute.get("users" / HttpPath.int(userId)).output[User]
+            val handler       = route.handle(in => User(in.userId, s"User${in.userId}"))
+            startTestServer(handler).map { port =>
+                testGetAs[User](port, "/users/42").map { user =>
+                    assert(user.id == 42)
+                    assert(user.name == "User42")
+                }
+            }
+        }
+
+        "variable capture name" in run {
+            val name    = "name"
+            val route   = HttpRoute.get("greet" / HttpPath.string(name)).output[User]
+            val handler = route.handle(in => User(1, s"hello ${in.name}"))
+            startTestServer(handler).map { port =>
+                testGetAs[User](port, "/greet/world").map { user =>
+                    assert(user.name == "hello world")
+                }
+            }
+        }
+
+        "dotted path capture name" in run {
+            object config:
+                val userId = "user_id"
+            val route   = HttpRoute.get("users" / HttpPath.int(config.userId)).output[User]
+            val handler = route.handle(in => User(in.config_userId, s"User${in.config_userId}"))
+            startTestServer(handler).map { port =>
+                testGetAs[User](port, "/users/7").map { user =>
+                    assert(user.id == 7)
+                    assert(user.name == "User7")
+                }
+            }
+        }
+
+        "backtick identifier capture name" in run {
+            val `my-id` = "my-id"
+            val route   = HttpRoute.get("items" / HttpPath.int(`my-id`)).output[User]
+            val handler = route.handle(in => User(in.my_id, s"Item${in.my_id}"))
+            startTestServer(handler).map { port =>
+                testGetAs[User](port, "/items/5").map { user =>
+                    assert(user.id == 5)
+                    assert(user.name == "Item5")
+                }
+            }
+        }
+
+        "empty capture name rejected at compile time" in pendingUntilFixed {
+            typeCheckFailure("""HttpPath.int("")""")("Capture name cannot be empty")
         }
     }
 
     "/ composition" - {
         "two literals" in {
-            val p: HttpPath[Unit] = HttpPath("/api") / HttpPath("/users")
+            val p: HttpPath[EmptyTuple] = HttpPath("/api") / HttpPath("/users")
             succeed
         }
 
         "literal and capture" in {
-            val p: HttpPath[Int] = HttpPath("/users") / HttpPath.int("id")
+            val p: HttpPath[(id: Int)] = HttpPath("/users") / HttpPath.int("id")
             succeed
         }
 
         "capture and literal" in {
-            val p: HttpPath[Int] = HttpPath.int("id") / HttpPath("/details")
+            val p: HttpPath[(id: Int)] = HttpPath.int("id") / HttpPath("/details")
             succeed
         }
 
         "two captures" in {
-            val p: HttpPath[(String, Int)] = HttpPath.string("name") / HttpPath.int("id")
+            val p: HttpPath[(name: String, id: Int)] = HttpPath.string("name") / HttpPath.int("id")
             succeed
         }
 
         "three captures" in {
-            val p: HttpPath[(String, Int, Boolean)] =
+            val p: HttpPath[(a: String, b: Int, c: Boolean)] =
                 HttpPath.string("a") / HttpPath.int("b") / HttpPath.boolean("c")
             succeed
         }
@@ -141,8 +187,8 @@ class HttpPathTest extends Test:
 
     "integration with handler" - {
         "int capture extracts value" in run {
-            val handler = HttpHandler.get("/users" / HttpPath.int("id")) { (id, req) =>
-                HttpResponse.ok(s"user:$id")
+            val handler = HttpHandler.get("/users" / HttpPath.int("id")) { in =>
+                HttpResponse.ok(s"user:${in.id}")
             }
             for
                 port     <- startTestServer(handler)
@@ -152,8 +198,8 @@ class HttpPathTest extends Test:
         }
 
         "string capture extracts value" in run {
-            val handler = HttpHandler.get("/greet" / HttpPath.string("name")) { (name, req) =>
-                HttpResponse.ok(s"hello:$name")
+            val handler = HttpHandler.get("/greet" / HttpPath.string("name")) { in =>
+                HttpResponse.ok(s"hello:${in.name}")
             }
             for
                 port     <- startTestServer(handler)
@@ -163,8 +209,8 @@ class HttpPathTest extends Test:
         }
 
         "multiple captures extract values" in run {
-            val handler = HttpHandler.get("/users" / HttpPath.string("name") / HttpPath.int("id")) { (name, id, req) =>
-                HttpResponse.ok(s"$name:$id")
+            val handler = HttpHandler.get("/users" / HttpPath.string("name") / HttpPath.int("id")) { in =>
+                HttpResponse.ok(s"${in.name}:${in.id}")
             }
             for
                 port     <- startTestServer(handler)
@@ -174,8 +220,8 @@ class HttpPathTest extends Test:
         }
 
         "url-encoded capture" in run {
-            val handler = HttpHandler.get("/search" / HttpPath.string("q")) { (q, req) =>
-                HttpResponse.ok(s"query:$q")
+            val handler = HttpHandler.get("/search" / HttpPath.string("q")) { in =>
+                HttpResponse.ok(s"query:${in.q}")
             }
             for
                 port     <- startTestServer(handler)

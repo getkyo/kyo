@@ -41,8 +41,8 @@ class HttpFilterTest extends Test:
 
         "init creates request-transforming filter" in run {
             var receivedHeader: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { req =>
-                receivedHeader = req.header("X-Init-Test")
+            val handler = HttpHandler.get("/test") { in =>
+                receivedHeader = in.request.header("X-Init-Test")
                 HttpResponse.ok
             }
             HttpFilter.let(HttpFilter.request(_.addHeader("X-Init-Test", "works"))) {
@@ -414,8 +414,8 @@ class HttpFilterTest extends Test:
     "HttpFilter.client" - {
         "addHeader adds header to request" in run {
             var receivedHeader: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { req =>
-                receivedHeader = req.header("X-Custom")
+            val handler = HttpHandler.get("/test") { in =>
+                receivedHeader = in.request.header("X-Custom")
                 HttpResponse.ok
             }
             HttpFilter.client.addHeader("X-Custom", "test-value").enable {
@@ -428,8 +428,8 @@ class HttpFilterTest extends Test:
 
         "basicAuth adds Authorization header" in run {
             var receivedAuth: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { req =>
-                receivedAuth = req.header("Authorization")
+            val handler = HttpHandler.get("/test") { in =>
+                receivedAuth = in.request.header("Authorization")
                 HttpResponse.ok
             }
             HttpFilter.client.basicAuth("user", "pass").enable {
@@ -444,8 +444,8 @@ class HttpFilterTest extends Test:
 
         "bearerAuth adds Bearer token" in run {
             var receivedAuth: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { req =>
-                receivedAuth = req.header("Authorization")
+            val handler = HttpHandler.get("/test") { in =>
+                receivedAuth = in.request.header("Authorization")
                 HttpResponse.ok
             }
             HttpFilter.client.bearerAuth("my-token").enable {
@@ -458,8 +458,8 @@ class HttpFilterTest extends Test:
 
         "customHeader adds header to request" in run {
             var receivedHeader: Maybe[String] = Absent
-            val handler = HttpHandler.get("/test") { req =>
-                receivedHeader = req.header("X-Trace-Id")
+            val handler = HttpHandler.get("/test") { in =>
+                receivedHeader = in.request.header("X-Trace-Id")
                 HttpResponse.ok
             }
             HttpFilter.client.addHeader("X-Trace-Id", "abc-123").enable {

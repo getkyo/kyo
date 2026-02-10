@@ -1,6 +1,5 @@
 package kyo
 
-import HttpPath.Inputs
 import HttpRequest.Method
 import HttpRequest.Part
 import HttpResponse.Status
@@ -12,9 +11,11 @@ import HttpResponse.Status
   * body schema, response body schema, and typed error responses with status codes — so server and client stay in sync by construction.
   *
   * The `In` type parameter accumulates as parameters are added — each `.query`, `.header`, and `.input` call appends to the input type via
-  * the `Inputs` match type, which flattens `Unit` and concatenates tuples. A single parameter is a bare type; multiple parameters build a
-  * flat tuple. The request body (via `.input[A]`) becomes a flat parameter alongside path/query/header params — not accessed through the
-  * request object.
+  * the `Combine` type class, which concatenates named tuple types. Named tuple fields are accessed by name (e.g., `in.id`, `in.limit`,
+  * `in.body`). The field name matches the parameter name string literal.
+  *
+  * For example, `HttpRoute.get("users" / HttpPath.int("id")).query[Int]("limit")` produces
+  * `HttpRoute[(id: Int, limit: Int), Unit, Nothing]`.
   *
   * Routes carry OpenAPI documentation metadata (tag, summary, description, operationId, deprecated, security) which feeds into automatic
   * spec generation via `HttpOpenApi`.
@@ -34,7 +35,7 @@ import HttpResponse.Status
   * IMPORTANT: Error types passed to `.error[E](status)` require `ConcreteTag[E]` — must be concrete types, not type parameters or unions.
   *
   * @tparam In
-  *   Accumulated input type from path captures, query, header, and body parameters
+  *   Accumulated input type from path captures, query, header, and body parameters (named tuple or EmptyTuple)
   * @tparam Out
   *   Response body type
   * @tparam Err
@@ -69,88 +70,158 @@ case class HttpRoute[In, Out, Err](
     externalDocsUrl: Maybe[String] = Absent,
     externalDocsDesc: Maybe[String] = Absent,
     securityScheme: Maybe[String] = Absent,
-    multipartInput: Boolean = false
+    multipartInput: Boolean = false,
+    private[kyo] paramCounter: Int = 0,
+    private[kyo] bodyId: Int = -1
 ):
     import HttpRoute.*
 
     // --- Query Parameters ---
 
-    /** Appends a required query parameter to `In` via `Inputs[In, A]`. Deserialized from the query string via `Schema[A]`. */
-    def query[A: Schema](name: String): HttpRoute[Inputs[In, A], Out, Err] =
-        require(name.nonEmpty, "Query parameter name cannot be empty")
-        copy(queryParams = queryParams :+ QueryParam(name, Schema[A], Absent))
-            .asInstanceOf[HttpRoute[Inputs[In, A], Out, Err]]
-    end query
+    /** Appends a required query parameter to `In` via `Combine`. The field name in the named tuple matches the parameter name. */
+    transparent inline def query[A: Schema](inline name: String): Any =
+        ${
+            internal.CaptureNameMacro.addField[HttpRoute[In, Out, Err], In, Out, Err, A](
+                '{ copy(queryParams = queryParams :+ QueryParam(name, Schema[A], Absent, paramCounter), paramCounter = paramCounter + 1) },
+                '{ name }
+            )
+        }
 
     /** Appends an optional query parameter with a default value. */
-    def query[A: Schema](name: String, default: A): HttpRoute[Inputs[In, A], Out, Err] =
-        require(name.nonEmpty, "Query parameter name cannot be empty")
-        copy(queryParams = queryParams :+ QueryParam(name, Schema[A], Present(default)))
-            .asInstanceOf[HttpRoute[Inputs[In, A], Out, Err]]
-    end query
+    transparent inline def query[A: Schema](inline name: String, default: A): Any =
+        ${
+            internal.CaptureNameMacro.addField[HttpRoute[In, Out, Err], In, Out, Err, A](
+                '{
+                    copy(
+                        queryParams = queryParams :+ QueryParam(name, Schema[A], Present(default), paramCounter),
+                        paramCounter = paramCounter + 1
+                    )
+                },
+                '{ name }
+            )
+        }
 
     // --- Headers ---
 
-    /** Appends a required header parameter (always `String`) to `In` via `Inputs[In, String]`. */
-    def header(name: String): HttpRoute[Inputs[In, String], Out, Err] =
-        require(name.nonEmpty, "Header name cannot be empty")
-        copy(headerParams = headerParams :+ HeaderParam(name, Absent))
-            .asInstanceOf[HttpRoute[Inputs[In, String], Out, Err]]
-    end header
+    /** Appends a required header parameter (always `String`) to `In` via `Combine`. */
+    transparent inline def header(inline name: String): Any =
+        ${
+            internal.CaptureNameMacro.addField[HttpRoute[In, Out, Err], In, Out, Err, String](
+                '{ copy(headerParams = headerParams :+ HeaderParam(name, Absent, id = paramCounter), paramCounter = paramCounter + 1) },
+                '{ name }
+            )
+        }
 
     /** Appends an optional header parameter with a default value. */
-    def header(name: String, default: String): HttpRoute[Inputs[In, String], Out, Err] =
-        require(name.nonEmpty, "Header name cannot be empty")
-        copy(headerParams = headerParams :+ HeaderParam(name, Present(default)))
-            .asInstanceOf[HttpRoute[Inputs[In, String], Out, Err]]
-    end header
+    transparent inline def header(inline name: String, default: String): Any =
+        ${
+            internal.CaptureNameMacro.addField[HttpRoute[In, Out, Err], In, Out, Err, String](
+                '{
+                    copy(
+                        headerParams = headerParams :+ HeaderParam(name, Present(default), id = paramCounter),
+                        paramCounter = paramCounter + 1
+                    )
+                },
+                '{ name }
+            )
+        }
 
     // --- Cookies ---
 
-    def cookie(name: String): HttpRoute[Inputs[In, String], Out, Err] =
-        require(name.nonEmpty, "Cookie name cannot be empty")
-        copy(cookieParams = cookieParams :+ CookieParam(name, Absent))
-            .asInstanceOf[HttpRoute[Inputs[In, String], Out, Err]]
-    end cookie
+    transparent inline def cookie(inline name: String): Any =
+        ${
+            internal.CaptureNameMacro.addField[HttpRoute[In, Out, Err], In, Out, Err, String](
+                '{ copy(cookieParams = cookieParams :+ CookieParam(name, Absent, paramCounter), paramCounter = paramCounter + 1) },
+                '{ name }
+            )
+        }
 
-    def cookie(name: String, default: String): HttpRoute[Inputs[In, String], Out, Err] =
-        require(name.nonEmpty, "Cookie name cannot be empty")
-        copy(cookieParams = cookieParams :+ CookieParam(name, Present(default)))
-            .asInstanceOf[HttpRoute[Inputs[In, String], Out, Err]]
-    end cookie
+    transparent inline def cookie(inline name: String, default: String): Any =
+        ${
+            internal.CaptureNameMacro.addField[HttpRoute[In, Out, Err], In, Out, Err, String](
+                '{
+                    copy(cookieParams = cookieParams :+ CookieParam(name, Present(default), paramCounter), paramCounter = paramCounter + 1)
+                },
+                '{ name }
+            )
+        }
 
     // --- Auth ---
 
-    def authBearer: HttpRoute[Inputs[In, String], Out, Err] =
-        copy(headerParams = headerParams :+ HeaderParam("Authorization", Absent, Present(AuthScheme.Bearer)))
-            .asInstanceOf[HttpRoute[Inputs[In, String], Out, Err]]
+    transparent inline def authBearer: Any =
+        ${
+            internal.CaptureNameMacro.addFieldFixed[HttpRoute[In, Out, Err], In, Out, Err, String](
+                '{
+                    copy(
+                        headerParams = headerParams :+ HeaderParam("Authorization", Absent, Present(AuthScheme.Bearer), paramCounter),
+                        paramCounter = paramCounter + 1
+                    )
+                },
+                "bearer"
+            )
+        }
 
-    def authBasic: HttpRoute[Inputs[In, (String, String)], Out, Err] =
-        copy(headerParams = headerParams :+ HeaderParam("Authorization", Absent, Present(AuthScheme.Basic)))
-            .asInstanceOf[HttpRoute[Inputs[In, (String, String)], Out, Err]]
+    transparent inline def authBasic: Any =
+        ${
+            internal.CaptureNameMacro.addTwoFieldsFixed[HttpRoute[In, Out, Err], In, Out, Err, String, String](
+                '{
+                    copy(
+                        headerParams = headerParams :+ HeaderParam("Authorization", Absent, Present(AuthScheme.Basic), paramCounter),
+                        paramCounter = paramCounter + 1
+                    )
+                },
+                "username",
+                "password"
+            )
+        }
 
-    def authApiKey(name: String): HttpRoute[Inputs[In, String], Out, Err] =
-        require(name.nonEmpty, "API key header name cannot be empty")
-        copy(headerParams = headerParams :+ HeaderParam(name, Absent, Present(AuthScheme.ApiKey)))
-            .asInstanceOf[HttpRoute[Inputs[In, String], Out, Err]]
-    end authApiKey
+    transparent inline def authApiKey(inline name: String): Any =
+        ${
+            internal.CaptureNameMacro.addField[HttpRoute[In, Out, Err], In, Out, Err, String](
+                '{
+                    copy(
+                        headerParams = headerParams :+ HeaderParam(name, Absent, Present(AuthScheme.ApiKey), paramCounter),
+                        paramCounter = paramCounter + 1
+                    )
+                },
+                '{ name }
+            )
+        }
 
     // --- Request Body ---
 
-    /** Sets the request body schema. The deserialized body becomes a flat parameter in the handler alongside path/query/header params. */
-    def input[A: Schema]: HttpRoute[Inputs[In, A], Out, Err] =
-        copy(inputSchema = Present(Schema[A]))
-            .asInstanceOf[HttpRoute[Inputs[In, A], Out, Err]]
+    /** Sets the request body schema. The deserialized body becomes a named field `body` in the handler input. */
+    transparent inline def input[A: Schema]: Any =
+        ${
+            internal.CaptureNameMacro.addFieldFixed[HttpRoute[In, Out, Err], In, Out, Err, A](
+                '{ copy(inputSchema = Present(Schema[A]), bodyId = paramCounter, paramCounter = paramCounter + 1) },
+                "body"
+            )
+        }
 
-    def inputText: HttpRoute[Inputs[In, String], Out, Err] =
-        input[String]
+    transparent inline def inputText: Any =
+        ${
+            internal.CaptureNameMacro.addFieldFixed[HttpRoute[In, Out, Err], In, Out, Err, String](
+                '{ copy(inputSchema = Present(Schema[String]), bodyId = paramCounter, paramCounter = paramCounter + 1) },
+                "body"
+            )
+        }
 
-    def inputForm[A: Schema]: HttpRoute[Inputs[In, A], Out, Err] =
-        input[A]
+    transparent inline def inputForm[A: Schema]: Any =
+        ${
+            internal.CaptureNameMacro.addFieldFixed[HttpRoute[In, Out, Err], In, Out, Err, A](
+                '{ copy(inputSchema = Present(Schema[A]), bodyId = paramCounter, paramCounter = paramCounter + 1) },
+                "body"
+            )
+        }
 
-    def inputMultipart: HttpRoute[Inputs[In, Seq[Part]], Out, Err] =
-        copy(multipartInput = true)
-            .asInstanceOf[HttpRoute[Inputs[In, Seq[Part]], Out, Err]]
+    transparent inline def inputMultipart: Any =
+        ${
+            internal.CaptureNameMacro.addFieldFixed[HttpRoute[In, Out, Err], In, Out, Err, Seq[Part]](
+                '{ copy(multipartInput = true, bodyId = paramCounter, paramCounter = paramCounter + 1) },
+                "parts"
+            )
+        }
 
     // --- Response Body ---
 
@@ -201,8 +272,8 @@ case class HttpRoute[In, Out, Err](
 
     // --- Server ---
 
-    /** Converts this route into an HttpHandler. `f` receives the accumulated flat `In` tuple — path captures, then query, then header, then
-      * body params — and returns the output type. Errors matching route error schemas get the corresponding status code.
+    /** Converts this route into an HttpHandler. `f` receives the accumulated `In` named tuple — path captures, then query, then header,
+      * then body params — and returns the output type. Errors matching route error schemas get the corresponding status code.
       */
     def handle[S](f: In => Out < (Abort[Err] & Async & S))(using Frame): HttpHandler[S] =
         HttpHandler.init(this)(f)
@@ -213,15 +284,16 @@ object HttpRoute:
 
     // --- Internal param types ---
 
-    case class QueryParam[A](name: String, schema: Schema[A], default: Maybe[A])
-    enum AuthScheme derives CanEqual:
+    private[kyo] case class QueryParam[A](name: String, schema: Schema[A], default: Maybe[A], id: Int = 0)
+    private[kyo] enum AuthScheme derives CanEqual:
         case Bearer
         case Basic
         case ApiKey
     end AuthScheme
 
-    case class HeaderParam(name: String, default: Maybe[String], authScheme: Maybe[AuthScheme] = Absent) derives CanEqual
-    case class CookieParam(name: String, default: Maybe[String]) derives CanEqual
+    private[kyo] case class HeaderParam(name: String, default: Maybe[String], authScheme: Maybe[AuthScheme] = Absent, id: Int = 0)
+        derives CanEqual
+    private[kyo] case class CookieParam(name: String, default: Maybe[String], id: Int = 0) derives CanEqual
 
     // --- Route factory methods ---
 

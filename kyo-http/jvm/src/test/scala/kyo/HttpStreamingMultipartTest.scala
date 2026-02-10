@@ -10,8 +10,8 @@ class HttpStreamingMultipartTest extends Test:
         HttpServer.init(HttpServer.Config(port = 0, maxContentLength = 1024 * 1024), PlatformTestBackend.server)(handlers*).map(_.port)
 
     "single file via streaming multipart" in run {
-        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { parts =>
-            parts.run.map { chunk =>
+        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { in =>
+            in.parts.run.map { chunk =>
                 if chunk.isEmpty then HttpResponse.badRequest("no parts")
                 else
                     val part = chunk(0)
@@ -29,8 +29,8 @@ class HttpStreamingMultipartTest extends Test:
     }
 
     "multiple files via streaming multipart" in run {
-        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { parts =>
-            parts.run.map { chunk =>
+        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { in =>
+            in.parts.run.map { chunk =>
                 val summary = (0 until chunk.size).map(i => s"${chunk(i).name}:${chunk(i).content.length}").mkString(",")
                 HttpResponse.ok(s"count=${chunk.size},$summary")
             }
@@ -50,8 +50,8 @@ class HttpStreamingMultipartTest extends Test:
     }
 
     "mixed text fields and file fields" in run {
-        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { parts =>
-            parts.run.map { chunk =>
+        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { in =>
+            in.parts.run.map { chunk =>
                 val fields = (0 until chunk.size).map { i =>
                     val p       = chunk(i)
                     val isFile  = p.filename.isDefined
@@ -76,8 +76,8 @@ class HttpStreamingMultipartTest extends Test:
     }
 
     "large file via streaming multipart" in run {
-        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { parts =>
-            parts.run.map { chunk =>
+        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { in =>
+            in.parts.run.map { chunk =>
                 if chunk.isEmpty then HttpResponse.badRequest("no parts")
                 else HttpResponse.ok(s"size=${chunk(0).content.length}")
             }
@@ -95,10 +95,10 @@ class HttpStreamingMultipartTest extends Test:
     }
 
     "streaming multipart with path params" in run {
-        val handler = HttpHandler.streamingMultipart(Method.POST, "uploads" / HttpPath.string("category")) { (category, parts) =>
-            parts.run.map { chunk =>
+        val handler = HttpHandler.streamingMultipart(Method.POST, "uploads" / HttpPath.string("category")) { in =>
+            in.parts.run.map { chunk =>
                 if chunk.isEmpty then HttpResponse.badRequest("no parts")
-                else HttpResponse.ok(s"category=$category,file=${chunk(0).name}")
+                else HttpResponse.ok(s"category=${in.category},file=${chunk(0).name}")
             }
         }
         startUploadServer(handler).map { port =>
@@ -112,8 +112,8 @@ class HttpStreamingMultipartTest extends Test:
     }
 
     "empty parts list" in run {
-        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { parts =>
-            parts.run.map { chunk =>
+        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { in =>
+            in.parts.run.map { chunk =>
                 HttpResponse.ok(s"count=${chunk.size}")
             }
         }
@@ -127,8 +127,8 @@ class HttpStreamingMultipartTest extends Test:
     }
 
     "binary content preservation" in run {
-        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { parts =>
-            parts.run.map { chunk =>
+        val handler = HttpHandler.streamingMultipart(Method.POST, "/upload") { in =>
+            in.parts.run.map { chunk =>
                 if chunk.isEmpty then HttpResponse.badRequest("no parts")
                 else
                     val bytes = chunk(0).content

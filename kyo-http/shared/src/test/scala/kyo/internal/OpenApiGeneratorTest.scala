@@ -61,7 +61,7 @@ class OpenApiGeneratorTest extends Test:
 
         "generates path for POST route" in run {
             val route   = HttpRoute.post("/users").input[CreateUser].output[User]
-            val handler = route.handle(create => User(1, create.name))
+            val handler = route.handle(in => User(1, in.body.name))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec     = server.openApi
                 val pathItem = spec.paths("/users")
@@ -76,7 +76,7 @@ class OpenApiGeneratorTest extends Test:
         "generates path parameters" in run {
             import HttpPath./
             val route   = HttpRoute.get("/users" / HttpPath.int("id")).output[User]
-            val handler = route.handle(id => User(id, s"User$id"))
+            val handler = route.handle(in => User(in.id, s"User${in.id}"))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec = server.openApi
                 assert(spec.paths.contains("/users/{id}"))
@@ -92,7 +92,7 @@ class OpenApiGeneratorTest extends Test:
                 .query[Int]("limit")
                 .query[Int]("offset", 0)
                 .output[List[User]]
-            val handler = route.handle { case (limit, offset) =>
+            val handler = route.handle { in =>
                 List(User(1, "Alice"))
             }
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
@@ -197,7 +197,7 @@ class OpenApiGeneratorTest extends Test:
             val getRoute    = HttpRoute.get("/users").output[List[User]]
             val postRoute   = HttpRoute.post("/users").input[CreateUser].output[User]
             val getHandler  = getRoute.handle(_ => List(User(1, "Alice")))
-            val postHandler = postRoute.handle(create => User(1, create.name))
+            val postHandler = postRoute.handle(in => User(1, in.body.name))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(getHandler, postHandler).map { server =>
                 val spec     = server.openApi
                 val pathItem = spec.paths("/users")
@@ -256,7 +256,7 @@ class OpenApiGeneratorTest extends Test:
 
         "generates PUT method" in run {
             val route   = HttpRoute.put("/users").input[User].output[User]
-            val handler = route.handle(user => user)
+            val handler = route.handle(in => in.body)
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec = server.openApi
                 assert(spec.paths("/users").put.isDefined)
@@ -274,7 +274,7 @@ class OpenApiGeneratorTest extends Test:
 
         "generates PATCH method" in run {
             val route   = HttpRoute.patch("/users").input[User].output[User]
-            val handler = route.handle(user => user)
+            val handler = route.handle(in => in.body)
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec = server.openApi
                 assert(spec.paths("/users").patch.isDefined)
@@ -283,7 +283,7 @@ class OpenApiGeneratorTest extends Test:
 
         "generates custom success status" in run {
             val route   = HttpRoute.post("/users").input[CreateUser].output[User](Status.Created)
-            val handler = route.handle(create => User(1, create.name))
+            val handler = route.handle(in => User(1, in.body.name))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec = server.openApi
                 val op   = spec.paths("/users").post.get
@@ -295,7 +295,7 @@ class OpenApiGeneratorTest extends Test:
         "generates integer schema for Int path param" in run {
             import HttpPath./
             val route   = HttpRoute.get("/users" / HttpPath.int("id")).output[User]
-            val handler = route.handle(id => User(id, s"User$id"))
+            val handler = route.handle(in => User(in.id, s"User${in.id}"))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec    = server.openApi
                 val op      = spec.paths("/users/{id}").get.get
@@ -308,7 +308,7 @@ class OpenApiGeneratorTest extends Test:
         "generates long schema for Long path param" in run {
             import HttpPath./
             val route   = HttpRoute.get("/items" / HttpPath.long("id")).output[User]
-            val handler = route.handle(id => User(id.toInt, s"Item$id"))
+            val handler = route.handle(in => User(in.id.toInt, s"Item${in.id}"))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec    = server.openApi
                 val op      = spec.paths("/items/{id}").get.get
@@ -322,7 +322,7 @@ class OpenApiGeneratorTest extends Test:
         "generates uuid schema for UUID path param" in run {
             import HttpPath./
             val route   = HttpRoute.get("/items" / HttpPath.uuid("id")).output[User]
-            val handler = route.handle(id => User(1, id.toString))
+            val handler = route.handle(in => User(1, in.id.toString))
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec    = server.openApi
                 val op      = spec.paths("/items/{id}").get.get
@@ -350,7 +350,7 @@ class OpenApiGeneratorTest extends Test:
         "generates multiple path parameters" in run {
             import HttpPath./
             val route   = HttpRoute.get("/orgs" / HttpPath.string("org") / "repos" / HttpPath.string("repo")).output[User]
-            val handler = route.handle { case (org, repo) => User(1, s"$org/$repo") }
+            val handler = route.handle { in => User(1, s"${in.org}/${in.repo}") }
             HttpServer.init(HttpServer.Config(port = 0), PlatformTestBackend.server)(handler).map { server =>
                 val spec   = server.openApi
                 val op     = spec.paths("/orgs/{org}/repos/{repo}").get.get
