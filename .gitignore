@@ -16,3 +16,4 @@ jmh-result.json
 test-output
 .DS_Store
 .jvmopts
+.aiinthefiles
