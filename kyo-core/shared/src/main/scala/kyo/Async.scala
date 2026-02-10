@@ -773,14 +773,14 @@ object Async extends AsyncPlatformSpecific:
     /** Converts a Future to an asynchronous computation.
       *
       * This method allows integration of existing Future-based code with Kyo's asynchronous system. It handles successful completion and
-      * failures, wrapping any exceptions in an Abort effect.
+      * failures. Failed futures result in a panic.
       *
       * @param f
       *   The Future to convert into an asynchronous computation
       * @return
-      *   An asynchronous computation that completes with the result of the Future or aborts with Throwable
+      *   An asynchronous computation that completes with the result of the Future
       */
-    def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
+    def fromFuture[A](f: Future[A])(using frame: Frame): A < Async =
         Fiber.fromFuture(f).map(_.get)
 
     private[kyo] inline def get[E, A](v: IOPromise[? <: E, ? <: A])(using Frame): A < (Abort[E] & Async) =
