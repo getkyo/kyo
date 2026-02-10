@@ -266,10 +266,13 @@ object Channel:
                     drainEffect.map:
                         case chunk if chunk.nonEmpty => Emit.value(chunk)
                         case _ =>
-                            for
-                                a  <- Channel.take(self)
-                                ch <- Channel.drainUpTo(self)(maxChunkSize - 1)
-                            yield Emit.value(Chunk(a).concat(ch))
+                            Channel.take(self).map { a =>
+                                Channel.drainUpTo(self)(maxChunkSize - 1)
+                                    .map(ch => Emit.value(Chunk(a).concat(ch)))
+                                    .handle(
+                                        Abort.recover[Closed](e => Emit.value(Chunk(a)).andThen(Abort.fail(e)))
+                                    )
+                            }
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
