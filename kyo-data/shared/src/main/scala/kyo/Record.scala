@@ -18,6 +18,23 @@ import scala.language.implicitConversions
   * combinations with static type checking, making them ideal for configuration, data transformation, and API integrations where the shape
   * of data needs to be flexible but still type-safe.
   *
+  * =Record vs Row=
+  * Record and [[Row]] both provide type-safe named fields, but represent different abstractions:
+  *
+  * '''Record''' is a '''labeled set''' — fields are unordered, a record with more fields can be used where fewer are expected (structural
+  * subtyping), and the same name can appear with different types. Use Record when different consumers need different field subsets or when
+  * composing fields from multiple sources.
+  *
+  * '''Row''' is a '''labeled sequence''' — fields have a fixed order, each name is unique, and the type must match exactly. Use Row when
+  * field order matters, when you need positional operations (head/tail/take/drop), or when working with case classes.
+  *
+  * The two interconvert freely:
+  * {{{
+  * val record = "name" ~ "Alice" & "age" ~ 30
+  * val row  = Row.fromRecord(record)    // Record -> Row (rejects duplicate field names)
+  * val back = row.toRecord               // Row -> Record
+  * }}}
+  *
   * =Creation=
   * Records can be created through direct field construction using the `~` operator and combined with `&`:
   * {{{
@@ -128,22 +145,9 @@ export Record.`~`
 object Record:
     /** Creates an empty Record
       */
-    val empty: Record[Any] = Record[Any](Map())
+    val empty: Record[Any] = Record[Any](Map.empty)
 
-    /** Returns the set of fields in this Record.
-      *
-      * @return
-      *   A Set of Field instances
-      */
-    def fieldsOf[Fields](record: Record[Fields]): Set[Field[?, ?]] =
-        record.toMap.keySet
-
-    /** Returns the number of fields in this Record.
-      */
-    def sizeOf[Fields](record: Record[Fields]): Int =
-        record.toMap.size
-
-    private def unsafeFrom[Fields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
+    private[kyo] def unsafeFrom[Fields](map: Map[Field[?, ?], Any]): Record[Fields] = Record(map)
 
     inline def stage[Fields]: StageOps[Fields] = new StageOps[Fields](())
 
@@ -172,12 +176,30 @@ object Record:
 
         type MapValue[F[_]] = Map[[n, v] =>> F[v]]
 
-        type MapName[F[_]] = Map[[n, v] =>> F[n]]
     end `~`
+
+    type FieldsOf[Names <: Tuple, Values <: Tuple] = (Names, Values) match
+        case (EmptyTuple, EmptyTuple)           => Any
+        case (n *: EmptyTuple, v *: EmptyTuple) => n ~ v
+        case (n *: ns, v *: vs)                 => (n ~ v) & FieldsOf[ns, vs]
+
+    type ZipLookup[N <: String, T <: Tuple] = T match
+        case (N ~ v) *: _ => v
+        case _ *: rest    => ZipLookup[N, rest]
+
+    type ZipFields[T1 <: Tuple, T2 <: Tuple] = T1 match
+        case EmptyTuple             => Any
+        case (n ~ v1) *: EmptyTuple => n ~ (v1, ZipLookup[n, T2])
+        case (n ~ v1) *: rest       => (n ~ (v1, ZipLookup[n, T2])) & ZipFields[rest, T2]
 
     /** Creates a Record from a product type (case class or tuple).
       */
     def fromProduct[A](value: A)(using ar: AsRecord[A]): Record[ar.Fields] = ar.asRecord(value)
+
+    /** Creates a Record from a Row.
+      */
+    inline def fromRow[A <: NamedTuple.AnyNamedTuple](row: Row[A]): Record[Row.ToRecordFields[Row.Names[A], Row.Values[A]]] =
+        row.toRecord
 
     /** A field in a Record, containing a name and associated type information.
       *
@@ -189,11 +211,54 @@ object Record:
     case class Field[Name <: String, Value](name: Name, tag: Tag[Value])
 
     extension [Fields](self: Record[Fields])
-        /** Creates a new Record containing only the fields specified in the type parameter Fields.
-          *
-          * @return
-          *   A new Record with only the specified fields
-          */
+
+        def size: Int = self.toMap.size
+
+        inline def fields(using ti: TypeIntersection[Fields]): List[String] =
+            collectFieldNames[ti.AsTuple]
+
+        inline def values(using ti: TypeIntersection[Fields]): Row.FieldValues[ti.AsTuple] =
+            collectValues[ti.AsTuple](self.toMap).asInstanceOf[Row.FieldValues[ti.AsTuple]]
+
+        def update[Name <: String & Singleton, Value](name: Name, value: Value)(using
+            @implicitNotFound("""
+        Invalid field update: ${Name}
+
+        Record[${Fields}]
+
+        Possible causes:
+          1. The field does not exist in this Record
+          2. The field exists but has a different type than expected
+            """)
+            ev: Fields <:< Name ~ Value,
+            tag: Tag[Value]
+        ): Record[Fields] =
+            Record.unsafeFrom(self.toMap.updated(Field(name, tag), value))
+
+        inline def map[F[_]](using
+            ti: TypeIntersection[Fields]
+        )(
+            f: [t] => t => F[t]
+        ): Record[ti.Map[~.MapValue[F]]] =
+            mapFields([t] => (_: Field[?, t], v: t) => f[t](v))
+
+        inline def mapFields[F[_]](using
+            ti: TypeIntersection[Fields]
+        )(
+            f: [t] => (Field[?, t], t) => F[t]
+        ): Record[ti.Map[~.MapValue[F]]] =
+            Record.unsafeFrom[ti.Map[~.MapValue[F]]](
+                mapFieldsImpl[ti.AsTuple, F](self.toMap, f)
+            )
+
+        inline def zip[Fields2](other: Record[Fields2])(using
+            ti1: TypeIntersection[Fields],
+            ti2: TypeIntersection[Fields2]
+        ): Record[ZipFields[ti1.AsTuple, ti2.AsTuple]] =
+            Record.unsafeFrom[ZipFields[ti1.AsTuple, ti2.AsTuple]](
+                zipImpl[ti1.AsTuple, ti2.AsTuple](self.toMap, other.toMap)
+            )
+
         def compact(using AsFields[Fields]): Record[Fields] =
             Record(self.toMap.view.filterKeys(AsFields[Fields].contains(_)).toMap)
     end extension
@@ -226,24 +291,17 @@ object Record:
 
     object AsRecord:
 
-        type FieldsOf[Names <: Tuple, Values <: Tuple] = Names match
-            case nHead *: EmptyTuple => Values match
-                    case vHead *: _ => (nHead ~ vHead)
-            case nHead *: nTail => Values match
-                    case vHead *: vTail => (nHead ~ vHead) & FieldsOf[nTail, vTail]
-            case _ => Any
-
         type RMirror[A, Names <: Tuple, Values <: Tuple] = Mirror.ProductOf[A] {
             type MirroredElemLabels = Names
             type MirroredElemTypes  = Values
         }
 
         trait RecordContents[Names <: Tuple, Values <: Tuple]:
-            def values(product: Tuple): List[(Field[?, ?], Any)]
+            def addTo(product: Product, idx: Int, map: Map[Field[?, ?], Any]): Map[Field[?, ?], Any]
 
         object RecordContents:
             given empty: RecordContents[EmptyTuple, EmptyTuple] with
-                def values(product: Tuple): List[(Field[?, ?], Any)] = Nil
+                def addTo(product: Product, idx: Int, map: Map[Field[?, ?], Any]): Map[Field[?, ?], Any] = map
 
             given nonEmpty[NH <: (String & Singleton), NT <: Tuple, VH, VT <: Tuple](
                 using
@@ -251,8 +309,8 @@ object Record:
                 vo: ValueOf[NH],
                 next: RecordContents[NT, VT]
             ): RecordContents[NH *: NT, VH *: VT] with
-                def values(product: Tuple): List[(Field[?, ?], Any)] =
-                    (Field[NH, VH](vo.value, tag), product.head) +: next.values(product.tail)
+                def addTo(product: Product, idx: Int, map: Map[Field[?, ?], Any]): Map[Field[?, ?], Any] =
+                    next.addTo(product, idx + 1, map.updated(Field[NH, VH](vo.value, tag), product.productElement(idx)))
             end nonEmpty
         end RecordContents
 
@@ -260,12 +318,10 @@ object Record:
             mir: RMirror[A, Names, Values],
             rc: RecordContents[Names, Values]
         ): AsRecord[A] with
-            type Fields = FieldsOf[Names, Values]
+            type Fields = Record.FieldsOf[Names, Values]
 
             def asRecord(value: A): Record[Fields] =
-                val record_contents = rc.values(Tuple.fromProduct(value))
-                val map             = Map(record_contents*)
-                Record(map).asInstanceOf[Record[Fields]]
+                Record(rc.addTo(value, 0, Map.empty)).asInstanceOf[Record[Fields]]
             end asRecord
         end given
     end AsRecord
@@ -318,20 +374,16 @@ object Record:
         inline def apply[T]: (String, Render[?]) =
             inline erasedValue[T] match
                 case _: (n ~ v) =>
-                    val ev   = summonInline[n <:< String]
-                    val inst = summonInline[Render[v]]
-                    ev(constValue[n]) -> inst
+                    constValue[n & String] -> summonInline[Render[v]]
     end RenderInliner
 
     inline given [Fields: TypeIntersection]: Render[Record[Fields]] =
         val insts = TypeIntersection.inlineAll[Fields](RenderInliner).toMap
         Render.from: (value: Record[Fields]) =>
-            value.toMap.foldLeft(Vector[String]()) { case (acc, (field, value)) =>
-                insts.get(field.name) match
-                    case Some(r: Render[x]) =>
-                        acc :+ (field.name + " ~ " + r.asText(value.asInstanceOf[x]))
-                    case None => acc
-                end match
+            value.toMap.iterator.collect {
+                case (field, v) if insts.contains(field.name) =>
+                    val r = insts(field.name).asInstanceOf[Render[Any]]
+                    field.name + " ~ " + r.asText(v)
             }.mkString(" & ")
     end given
 
@@ -350,6 +402,54 @@ object Record:
                         ForSome2(stage[n, v](Field(name, prevTag)))
                     )
     end StageAs
+
+    private inline def collectFieldNames[T <: Tuple]: List[String] =
+        inline erasedValue[T] match
+            case _: EmptyTuple => Nil
+            case _: ((n ~ v) *: rest) =>
+                constValue[n & String] :: collectFieldNames[rest]
+            case _: (_ *: rest) =>
+                collectFieldNames[rest]
+
+    private inline def collectValues[T <: Tuple](
+        map: Map[Field[?, ?], Any]
+    ): Tuple =
+        inline erasedValue[T] match
+            case _: EmptyTuple => EmptyTuple
+            case _: ((n ~ v) *: rest) =>
+                val name = constValue[n & String]
+                val tag  = summonInline[Tag[v]]
+                map(Field(name, tag)) *: collectValues[rest](map)
+
+    private inline def mapFieldsImpl[T <: Tuple, F[_]](
+        map: Map[Field[?, ?], Any],
+        f: [t] => (Field[?, t], t) => F[t]
+    ): Map[Field[?, ?], Any] =
+        inline erasedValue[T] match
+            case _: EmptyTuple => Map.empty
+            case _: ((n ~ v) *: rest) =>
+                val name    = constValue[n & String]
+                val prevTag = summonInline[Tag[v]]
+                val nextTag = summonInline[Tag[F[v]]]
+                val field   = Field(name, prevTag)
+                val value   = map(field).asInstanceOf[v]
+                val result  = f[v](field, value)
+                mapFieldsImpl[rest, F](map, f).updated(Field(name, nextTag), result)
+
+    private inline def zipImpl[T1 <: Tuple, T2 <: Tuple](
+        map1: Map[Field[?, ?], Any],
+        map2: Map[Field[?, ?], Any]
+    ): Map[Field[?, ?], Any] =
+        inline erasedValue[T1] match
+            case _: EmptyTuple => Map.empty
+            case _: ((n ~ v1) *: rest) =>
+                val name    = constValue[n & String]
+                val tag1    = summonInline[Tag[v1]]
+                val tag2    = summonInline[Tag[ZipLookup[n, T2]]]
+                val pairTag = summonInline[Tag[(v1, ZipLookup[n, T2])]]
+                val value1  = map1(Field(name, tag1))
+                val value2  = map2(Field(name, tag2))
+                zipImpl[rest, T2](map1, map2).updated(Field(name, pairTag), (value1, value2))
 end Record
 
 object AsFieldsInternal:
