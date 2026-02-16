@@ -25,7 +25,6 @@ When a test fails or code doesn't compile, **diagnose the root cause before chan
 - **Never block a thread.** No `Thread.sleep`, `synchronized`, `Future.await`, `CountDownLatch.await`, or any blocking primitive. Use `Async`-based suspension (`Channel.put`, `Fiber.get`, `Clock.sleep`). 
 - **Minimize allocations.** Use opaque types over wrapper classes. Provide pure variants (`mapPure`, `filterPure`) for hot paths. Fast-path degenerate cases (empty, single-element) before entering general logic. Prefer `@tailrec` loops over recursive allocations.
 - **Keep it simple.** Don't over-engineer. No unnecessary abstractions, no speculative generality. Three similar lines are better than a premature abstraction.
-- **No security vulnerabilities.** No command injection, no unchecked input in unsafe contexts. Validate at system boundaries.
 
 The goal is always improvement. Making things compile and pass is not the goal — correct, well-designed code is.
 

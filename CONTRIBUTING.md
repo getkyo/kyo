@@ -387,6 +387,9 @@ Ordered by increasing arity/complexity within each group.
 
 ### Pending Type (`A < S`)
 
+`A < S` represents a computation that produces an `A` with pending effects `S`. Kyo automatically lifts plain values into computations — any `A` can be used where `A < S` is expected, with no wrapping needed. Use `Kyo.lift` only when the compiler struggles with type inference.
+
+- Avoid nested computations (`(A < S1) < S2`) — they require `.flatten` and make code harder to follow. Use `.map` chains or for-comprehensions to keep computations flat. `Kyo.lift` exists to wrap a value as a nested computation when unavoidable, but needing it usually signals the code should be restructured.
 - Use `.map`, not `.flatMap` — identical on pending types; `flatMap` exists for for-comprehensions only
 - Use `.andThen(next)` to sequence, not `.map(_ => next)`
 - Use `.unit` to discard a result to `Unit < S`
@@ -396,6 +399,7 @@ Ordered by increasing arity/complexity within each group.
 
 ### Scala Conventions
 
+- **Prefer functional style** — no mutable `var`s, no `while` loops, no `throw`/`catch` for control flow. Use `val`, recursion (with `@tailrec`), `Loop`, and `Abort` for errors. Mutable state is acceptable only in performance-critical internals (atomics, bit-packing) where it's encapsulated behind a pure interface.
 - Use `discard(expr)` to suppress unused value warnings, not `val _ = expr`
 - Provide `CanEqual` for all comparable types — use `derives CanEqual` on case classes and enums. Skip types with non-comparable fields like functions.
 - Minimize explicit type parameters at call sites — APIs should infer well from value arguments. If a user must write `Abort.fail[String]("error")` instead of `Abort.fail("error")`, that's a design smell. Use the `(using Frame)` type parameter separator pattern (see [Method Signatures](#method-signatures)) when user-specified types are unavoidable
@@ -537,16 +541,12 @@ This ordering matters because it determines how quickly a contributor can orient
 Use `// ---...` separators with section names in all files:
 
 ```scala
-// -------------------------------------------------
-// Generic
-// -------------------------------------------------
+// --- Generic ---
 
 def foreach[...] = ...
 def filter[...] = ...
 
-// -------------------------------------------------
-// List
-// -------------------------------------------------
+// --- List ---
 
 def foreach[A, B, S](source: List[A])(...) = ...
 ```
@@ -583,7 +583,7 @@ Use sparingly — only for types that users reference frequently enough that qua
 - Use opaque types — never wrap when you can alias. See [Zero-Cost Type Design](#zero-cost-type-design)
 - Use `inline` strategically — inline creation paths, not handling paths. See [Inline Guidelines](#inline-guidelines)
 - Prefer `@tailrec` loops — allocate continuations only when effects force suspension
-- **Never block a thread** — use `Async`-based suspension (`Channel.put`, `Fiber.get`, `Clock.sleep`) instead of blocking primitives (`Thread.sleep`, `CountDownLatch.await`, `synchronized`, `Future.await`). Blocking a thread starves the fiber scheduler and defeats Kyo's concurrency model
+- **Never block a thread** — use `Async`-based suspension (`Channel.put`, `Fiber.get`, `Clock.sleep`) instead of blocking primitives (`Thread.sleep`, `CountDownLatch.await`, `synchronized`, `Future.await`). 
 - Prefer lock-free algorithms (CAS + `@tailrec`) over blocking synchronization
 - Bit-pack atomically-updated composite state to avoid wrapper allocations. Always include a layout comment:
   ```scala
@@ -664,9 +664,7 @@ When in doubt, don't inline. The cost of unnecessary inlining (code bloat, slowe
 | Category                                 | Examples                                                    | Why                                                                                          |
 | ---------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | Effect suspend/create calls              | `Abort.fail`, `Var.set`, `Emit.value`, `Choice.evalSeq`     | Direct calls to `ArrowEffect.suspend`/`suspendWith` — must be zero-cost                      |
-| Thin wrappers and redirects              | `Var.get` → `use(identity)`, `Maybe.isDefined` → `!isEmpty` | Compiler folds them away entirely                                                            |
 | Kernel framework entry points            | `ArrowEffect.handle`, `ArrowEffect.suspend`                 | Backbone of the effect system; enables compile-time specialization                           |
-| Simple predicates and branches           | `Maybe.getOrElse`, `Maybe.filter`, `Abort.when`             | Lets the compiler optimize branches at each call site                                        |
 | `private[kyo]` hot-path helpers          | `Var.runWith`, internal handler implementations             | Optimizes internal glue without affecting public API size                                    |
 | Methods with function/by-name parameters | `Maybe.map`, `Maybe.flatMap`, `Var.use`, `Result.fold`      | Eliminates `Function1` allocation — the lambda body is substituted directly at the call site |
 
@@ -685,7 +683,7 @@ Similarly for data types like `Maybe`:
 - `Maybe.map`, `Maybe.flatMap`, `Maybe.filter`, `Maybe.getOrElse` → **inline** (simple branches)
 - `Maybe.get`, `Maybe.zip`, `Maybe.contains`, `Maybe.flatten` → **not inline** (complex logic)
 
-**`@nowarn` for inlined lambdas** — when inlining a function parameter causes the compiler to warn about unused anonymous classes, use `@nowarn("msg=anonymous")` — the class elimination is intentional.
+**`@nowarn` for inlined lambdas** — when inlining a function parameter causes the compiler to warn about new anonymous classes, use `@nowarn("msg=anonymous")`.
 
 ---
 
