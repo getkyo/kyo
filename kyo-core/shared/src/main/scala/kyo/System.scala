@@ -64,20 +64,20 @@ object System:
     def apply(u: Unsafe): System =
         new System:
             def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & Sync) =
-                Sync.Unsafe {
+                Sync.Unsafe.defer {
                     u.env(name) match
                         case Absent     => Absent
                         case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
             def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & Sync) =
-                Sync.Unsafe {
+                Sync.Unsafe.defer {
                     u.property(name) match
                         case Absent     => Absent
                         case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
-            def lineSeparator(using Frame): String < Sync = Sync.Unsafe(u.lineSeparator())
-            def userName(using Frame): String < Sync      = Sync.Unsafe(u.userName())
-            def operatingSystem(using Frame): OS < Sync   = Sync.Unsafe(u.operatingSystem())
+            def lineSeparator(using Frame): String < Sync = Sync.Unsafe.defer(u.lineSeparator())
+            def userName(using Frame): String < Sync      = Sync.Unsafe.defer(u.userName())
+            def operatingSystem(using Frame): OS < Sync   = Sync.Unsafe.defer(u.operatingSystem())
             def unsafe: Unsafe                            = u
 
     private val local = Local.init(live)

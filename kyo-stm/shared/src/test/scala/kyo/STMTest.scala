@@ -995,7 +995,7 @@ class STMTest extends Test:
     "large tick values (overflow)" - {
 
         "basic read and write with tick near Int.MaxValue" in run {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong - 10)
             }.andThen {
                 for
@@ -1007,7 +1007,7 @@ class STMTest extends Test:
         }
 
         "basic read and write with tick beyond Int.MaxValue" in run {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
@@ -1019,7 +1019,7 @@ class STMTest extends Test:
         }
 
         "conflict detection with large ticks" in run {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
@@ -1040,7 +1040,7 @@ class STMTest extends Test:
         }
 
         "concurrent transactions with large ticks" in runNotJS {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
@@ -1052,7 +1052,7 @@ class STMTest extends Test:
         }
 
         "nested transactions with large ticks" in run {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 for
@@ -1075,7 +1075,7 @@ class STMTest extends Test:
         }
 
         "opacity with large ticks" in runJVM {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 STM.Tick.testOnlySet(Int.MaxValue.toLong + 1000)
             }.andThen {
                 val retrySchedule = STM.defaultRetrySchedule.forever

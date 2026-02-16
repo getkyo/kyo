@@ -168,7 +168,7 @@ object Async extends AsyncPlatformSpecific:
             isolate.capture { state =>
                 Fiber.initUnscoped(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
-                        Sync.Unsafe {
+                        Sync.Unsafe.defer {
                             val sleepFiber = clock.unsafe.sleep(after)
                             sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
@@ -743,7 +743,7 @@ object Async extends AsyncPlatformSpecific:
       *   A nested computation that returns the memoized result
       */
     def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
@@ -752,14 +752,14 @@ object Async extends AsyncPlatformSpecific:
                         val promise = Promise.Unsafe.init[A, Any]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
-                                Sync.Unsafe {
+                                Sync.Unsafe.defer {
                                     if !r.isSuccess then
                                         ref.set(Absent)
                                     promise.completeDiscard(r.map(Kyo.lift))
                                     Abort.get(r)
                                 }
                             }.handle(Sync.ensure {
-                                Sync.Unsafe {
+                                Sync.Unsafe.defer {
                                     if !promise.done() then
                                         ref.set(Absent)
                                 }

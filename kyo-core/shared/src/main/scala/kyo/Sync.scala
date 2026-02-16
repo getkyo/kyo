@@ -89,7 +89,7 @@ object Sync:
     inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
         inline frame: Frame
     ): A < (Sync & S) =
-        Unsafe(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
+        Unsafe.defer(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *
@@ -114,7 +114,7 @@ object Sync:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
-        inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
+        inline def defer[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
             Effect.deferInline {
                 f(using AllowUnsafe.embrace.danger)
             }
