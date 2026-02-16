@@ -281,5 +281,5 @@ object StreamSubscriber:
         strategy: EmitStrategy = EmitStrategy.Eager
     )(
         using Frame
-    ): StreamSubscriber[V] < Sync = Sync.Unsafe(new StreamSubscriber(bufferSize, strategy))
+    ): StreamSubscriber[V] < Sync = Sync.Unsafe.defer(new StreamSubscriber(bufferSize, strategy))
 end StreamSubscriber

@@ -134,7 +134,7 @@ object STM:
                     // Consult the schedule for the next retry delay, or fail if exhausted
                     def retry: A < (Async & Abort[E | FailedTransaction]) =
                         schedule.next(Clock.live.unsafe.now()).map { (delay, next) =>
-                            Async.delay(delay)(Sync.Unsafe(loop(next)))
+                            Async.delay(delay)(Sync.Unsafe.defer(loop(next)))
                         }.getOrElse {
                             Abort.fail(FailedTransaction())
                         }

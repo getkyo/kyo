@@ -24,7 +24,7 @@ object ZLayers:
       */
     def get[E, A: ZTag: Tag](layer: => ZLayer[Any, E, A])(using Frame, Trace): Layer[A, Abort[E] & Async & Scope] =
         Layer {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 val scope = Unsafe.unsafely(ZScope.unsafe.make)
 
                 Scope.ensure(ex => ZIOs.get(scope.close(ex.fold(Exit.unit)(_.toExit)))).andThen:

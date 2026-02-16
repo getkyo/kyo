@@ -13,7 +13,7 @@ class TTRefLogTest extends Test:
         }
 
         "put" in run {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 val tick  = STM.Tick.next()
                 val ref   = new TRef[Int](Write(tick, 0))
                 val entry = Write(tick, 42)
@@ -25,7 +25,7 @@ class TTRefLogTest extends Test:
         }
 
         "get" in run {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 val tick  = STM.Tick.next()
                 val ref   = new TRef[Int](Write(tick, 0))
                 val entry = Write(tick, 42)
@@ -36,7 +36,7 @@ class TTRefLogTest extends Test:
         }
 
         "toSeq" in run {
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 val tick   = STM.Tick.next()
                 val ref1   = new TRef[Int](Write(tick, 0))
                 val ref2   = new TRef[Int](Write(tick, 0))
