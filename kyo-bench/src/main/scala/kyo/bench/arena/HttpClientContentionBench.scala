@@ -1,6 +1,7 @@
 package kyo.bench.arena
 
 import org.http4s.ember.client.EmberClientBuilder
+import org.openjdk.jmh.annotations.*
 
 class HttpClientContentionBench
     extends ArenaBench.ForkOnly(Seq.fill(Runtime.getRuntime().availableProcessors())("pong")):
@@ -31,7 +32,7 @@ class HttpClientContentionBench
 
     lazy val kyoClient =
         import kyo.*
-        PlatformBackend.default
+        HttpPlatformBackend.client
 
     val kyoUrl =
         import sttp.client3.*
@@ -42,6 +43,17 @@ class HttpClientContentionBench
 
         Async.fill(concurrency, concurrency)(Requests(_.get(kyoUrl)))
     end kyoBenchFiber
+
+    @Benchmark
+    def forkKyoHttp(warmup: WarmupJITProfile.KyoForkWarmup): kyo.Chunk[String] =
+        import kyo.*
+        import AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(
+            Fiber.initUnscoped(
+                Async.fill(concurrency, concurrency)(HttpClient.send(HttpRequest.get(url)).map(_.bodyText))
+            ).flatMap(_.block(Duration.Infinity))
+        ).getOrThrow
+    end forkKyoHttp
 
     val zioUrl =
         import zio.http.*
