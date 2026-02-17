@@ -75,7 +75,10 @@ class ZIOsTest extends Test:
     "Envs[Int & Double]" in {
         typeCheckFailure("""
             val a = ZIOs.get(ZIO.service[Int] *> ZIO.service[Double])
-        """)("could not find implicit value for izumi.reflect.Tag[Int & Double]")
+        """)(
+            """ZIO environments are not supported yet. Please handle them before calling this method.
+You must not use an intersection type, yet have provided scala.Int & scala.Double"""
+        )
     }
 
     "A < ZIOs" in runKyo {

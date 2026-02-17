@@ -20,7 +20,7 @@ abstract private[kyo] class StreamPublisher[V, S](
     end subscribe
 
     private[StreamPublisher] def getSubscription(subscriber: Subscriber[? >: V])(using Frame): StreamSubscription[V, S] < Sync =
-        Sync.Unsafe(new StreamSubscription[V, S](stream, subscriber))
+        Sync.Unsafe.defer(new StreamSubscription[V, S](stream, subscriber))
     end getSubscription
 
 end StreamPublisher
@@ -64,7 +64,7 @@ object StreamPublisher:
                 Scope.acquireRelease(Channel.init[Subscriber[? >: V]](capacity))(
                     _.close.map(_.foreach(_.foreach(discardSubscriber(_))))
                 )
-            publisher <- Sync.Unsafe {
+            publisher <- Sync.Unsafe.defer {
                 new StreamPublisher[V, S](stream):
                     override protected def bind(
                         subscriber: Subscriber[? >: V]

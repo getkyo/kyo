@@ -590,8 +590,8 @@ class FiberTest extends Test:
     "unsafe" - {
         import AllowUnsafe.embrace.danger
         "Fiber" - {
-            "init" in run {
-                val fiber = Fiber.Unsafe.init(Result.succeed(()))
+            "fromResult" in run {
+                val fiber = Fiber.Unsafe.fromResult(Result.succeed(()))
                 assert(fiber.done())
             }
 
@@ -616,7 +616,7 @@ class FiberTest extends Test:
 
             "flatMap" in run {
                 val fiber           = Promise.Unsafe.init[Int, Any]()
-                val flatMappedFiber = fiber.flatMap(x => Fiber.Unsafe.init(Result.succeed(x.toString)))
+                val flatMappedFiber = fiber.flatMap(x => Fiber.Unsafe.fromResult(Result.succeed(x.toString)))
                 discard(fiber.complete(Result.succeed(42)))
                 for
                     result <- flatMappedFiber.safe.get

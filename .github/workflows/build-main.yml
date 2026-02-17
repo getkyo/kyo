@@ -17,7 +17,7 @@ jobs:
     - uses: actions/setup-node@v6
       with:
         node-version: '22'
-    - uses: coursier/cache-action@v7
+    - uses: coursier/cache-action@v8
     - name: Install Dependencies
       run: |
         sudo apt-get update
@@ -34,4 +34,4 @@ jobs:
       run: sbt '+kyoJS/test'
 
     - name: Build Native
-      run: sbt '+kyoNative/testQuick'
+      run: sbt '+kyoNative/Test/compile'

@@ -72,7 +72,7 @@ object Channel:
           * @return
           *   The number of elements currently in the channel
           */
-        def size(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.size()))
+        def size(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.size()))
 
         /** Returns the number of fibers currently waiting to put values into the channel.
           *
@@ -83,7 +83,7 @@ object Channel:
           * @return
           *   The number of fibers waiting to put values into the channel
           */
-        def pendingPuts(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.pendingPuts()))
+        def pendingPuts(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.pendingPuts()))
 
         /** Returns the number of fibers currently waiting to take values from the channel.
           *
@@ -94,7 +94,7 @@ object Channel:
           * @return
           *   The number of fibers waiting to take values from the channel
           */
-        def pendingTakes(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.pendingTakes()))
+        def pendingTakes(using Frame): Int < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.pendingTakes()))
 
         /** Attempts to offer an element to the channel without blocking.
           *
@@ -103,21 +103,21 @@ object Channel:
           * @return
           *   true if the element was added to the channel, false otherwise
           */
-        def offer(value: A)(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.offer(value)))
+        def offer(value: A)(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.offer(value)))
 
         /** Offers an element to the channel without returning a result.
           *
           * @param v
           *   The element to offer
           */
-        def offerDiscard(value: A)(using Frame): Unit < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.offer(value).unit))
+        def offerDiscard(value: A)(using Frame): Unit < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.offer(value).unit))
 
         /** Attempts to poll an element from the channel without blocking.
           *
           * @return
           *   Maybe containing the polled element, or empty if the channel is empty
           */
-        def poll(using Frame): Maybe[A] < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.poll()))
+        def poll(using Frame): Maybe[A] < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.poll()))
 
         /** Puts an element into the channel, asynchronously blocking if necessary.
           *
@@ -125,7 +125,7 @@ object Channel:
           *   The element to put
           */
         def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 self.offer(value).foldError(
                     {
                         case true  => ()
@@ -143,9 +143,9 @@ object Channel:
         def putBatch(values: Seq[A])(using Frame): Unit < (Abort[Closed] & Async) =
             if values.isEmpty then ()
             else if self.capacity == 0 then
-                Sync.Unsafe(self.putBatchFiber(values).safe.get)
+                Sync.Unsafe.defer(self.putBatchFiber(values).safe.get)
             else
-                Sync.Unsafe {
+                Sync.Unsafe.defer {
                     self.offerAll(values) match
                         case Result.Success(remaining) =>
                             if remaining.isEmpty then ()
@@ -162,7 +162,7 @@ object Channel:
           *   The taken element
           */
         def take(using Frame): A < (Abort[Closed] & Async) =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 self.poll().foldError(
                     {
                         case Present(value) => value
@@ -200,21 +200,21 @@ object Channel:
           * @return
           *   A sequence containing all elements that were in the channel
           */
-        def drain(using Frame): Chunk[A] < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.drain()))
+        def drain(using Frame): Chunk[A] < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.drain()))
 
         /** Takes up to [[max]] elements from the channel.
           *
           * @return
           *   a sequence of up to [[max]] elements that were in the channel.
           */
-        def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe(Abort.get(self.drainUpTo(max)))
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (Sync & Abort[Closed]) = Sync.Unsafe.defer(Abort.get(self.drainUpTo(max)))
 
         /** Closes the channel.
           *
           * @return
           *   A sequence of remaining elements
           */
-        def close(using Frame): Maybe[Seq[A]] < Sync = Sync.Unsafe(self.close())
+        def close(using Frame): Maybe[Seq[A]] < Sync = Sync.Unsafe.defer(self.close())
 
         /** Closes the channel and asynchronously waits until it's empty.
           *
@@ -225,7 +225,7 @@ object Channel:
           * @return
           *   `true` if the channel was successfully closed and emptied, `false` if it was already closed
           */
-        def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe(self.closeAwaitEmpty().safe.get)
+        def closeAwaitEmpty(using Frame): Boolean < Async = Sync.Unsafe.defer(self.closeAwaitEmpty().safe.get)
 
         // TODO: I think this can be removed now.
         /** Closes the channel and returns the [[Fiber]] waits until it's empty.
@@ -253,7 +253,7 @@ object Channel:
           * @return
           *   `true` if the channel is closed, `false` otherwise
           */
-        def closed(using Frame): Boolean < Sync = Sync.Unsafe(self.closed())
+        def closed(using Frame): Boolean < Sync = Sync.Unsafe.defer(self.closed())
 
         /** Checks if the channel is open.
           *
@@ -269,14 +269,14 @@ object Channel:
           * @return
           *   true if the channel is empty, false otherwise
           */
-        def empty(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.empty()))
+        def empty(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.empty()))
 
         /** Checks if the channel is full.
           *
           * @return
           *   true if the channel is full, false otherwise
           */
-        def full(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe(Abort.get(self.full()))
+        def full(using Frame): Boolean < (Abort[Closed] & Sync) = Sync.Unsafe.defer(Abort.get(self.full()))
 
         private def emitChunks(maxChunkSize: Int = Int.MaxValue)(
             using
@@ -296,10 +296,13 @@ object Channel:
                     drainEffect.map:
                         case chunk if chunk.nonEmpty => Emit.value(chunk)
                         case _ =>
-                            for
-                                a  <- Channel.take(self)
-                                ch <- Channel.drainUpTo(self)(maxChunkSize - 1)
-                            yield Emit.value(Chunk(a).concat(ch))
+                            Channel.take(self).map { a =>
+                                Channel.drainUpTo(self)(maxChunkSize - 1)
+                                    .map(ch => Emit.value(Chunk(a).concat(ch)))
+                                    .handle(
+                                        Abort.recover[Closed](e => Emit.value(Chunk(a)).andThen(Abort.fail(e)))
+                                    )
+                            }
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
@@ -360,7 +363,7 @@ object Channel:
     inline def initWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
     )(using inline frame: Frame): B < (S & Sync & Scope) =
-        Sync.Unsafe:
+        Sync.Unsafe.defer:
             val channel = Unsafe.init[A](capacity, access)
             Scope.ensure(Channel.close(channel)).andThen:
                 f(channel)
@@ -374,7 +377,7 @@ object Channel:
     inline def use[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
     )(using inline frame: Frame): B < (S & Sync) =
-        Sync.Unsafe:
+        Sync.Unsafe.defer:
             val channel = Unsafe.init[A](capacity, access)
             Sync.ensure(Channel.close(channel)):
                 f(channel)
@@ -412,7 +415,7 @@ object Channel:
     inline def initUnscopedWith[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)[B, S](
         inline f: Channel[A] => B < S
     )(using inline frame: Frame): B < (S & Sync) =
-        Sync.Unsafe(f(Unsafe.init[A](capacity, access)))
+        Sync.Unsafe.defer(f(Unsafe.init[A](capacity, access)))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe[A] extends Serializable:
@@ -629,7 +632,7 @@ object Channel:
             end close
 
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
-                Fiber.Unsafe.init(Result.succeed(close().isDefined))
+                Fiber.Unsafe.fromResult(Result.succeed(close().isDefined))
 
             def empty()(using AllowUnsafe, Frame) = succeedIfOpen(true)
             def full()(using AllowUnsafe, Frame)  = succeedIfOpen(true)

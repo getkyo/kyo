@@ -901,6 +901,23 @@ class ChannelTest extends Test:
                 case Result.Panic(ex)          => fail(s"Stream panicked unexpectedly: ${ex}")
         }
 
+        "should deliver all items when wrapped in Abort.run with closeAwaitEmpty" in run {
+            (for
+                size <- Choice.eval(1, 2, 4, 32)
+                c    <- Channel.initUnscoped[Int](size)
+                producerFiber <- Fiber.initUnscoped {
+                    Kyo.foreach(1 to 5)(c.put(_)).andThen(c.closeAwaitEmpty)
+                }
+                wrappedStream = Stream[Int, Async] {
+                    Abort.run[Closed](c.stream().emit).unit
+                }
+                result <- wrappedStream.run
+                _      <- producerFiber.get
+            yield assert(result == Chunk(1, 2, 3, 4, 5), s"capacity=$size: expected Chunk(1,2,3,4,5) but got $result"))
+                .handle(Choice.run, _.unit, Loop.repeat(1000))
+                .andThen(succeed)
+        }
+
         "should stream concurrently with ingest via putBatch, yielding consistent chunk sizes" in run {
             for
                 c  <- Channel.init[Int](9)
@@ -1009,6 +1026,34 @@ class ChannelTest extends Test:
                 r <- Fiber.get(f)
             yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
             end for
+        }
+
+        "should deliver all items with closeAwaitEmpty" in run {
+            (for
+                size <- Choice.eval(1, 2, 4, 32)
+                c    <- Channel.initUnscoped[Int](size)
+                producerFiber <- Fiber.initUnscoped {
+                    Kyo.foreach(1 to 5)(c.put(_)).andThen(c.closeAwaitEmpty)
+                }
+                result <- c.streamUntilClosed().run
+                _      <- producerFiber.get
+            yield assert(result == Chunk(1, 2, 3, 4, 5), s"capacity=$size: expected Chunk(1,2,3,4,5) but got $result"))
+                .handle(Choice.run, _.unit, Loop.repeat(1000))
+                .andThen(succeed)
+        }
+
+        "should deliver all items with closeAwaitEmpty and maxChunkSize" in run {
+            (for
+                size <- Choice.eval(1, 2, 4, 32)
+                c    <- Channel.initUnscoped[Int](size)
+                producerFiber <- Fiber.initUnscoped {
+                    Kyo.foreach(1 to 5)(c.put(_)).andThen(c.closeAwaitEmpty)
+                }
+                result <- c.streamUntilClosed(2).run
+                _      <- producerFiber.get
+            yield assert(result == Chunk(1, 2, 3, 4, 5), s"capacity=$size chunkSize=2: expected Chunk(1,2,3,4,5) but got $result"))
+                .handle(Choice.run, _.unit, Loop.repeat(1000))
+                .andThen(succeed)
         }
     }
 

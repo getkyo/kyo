@@ -190,7 +190,7 @@ object Meter:
       *   A Meter effect that represents a semaphore.
       */
     def initSemaphoreUnscoped(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < Sync =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             new Base(concurrency, reentrant):
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
@@ -241,7 +241,7 @@ object Meter:
       *   A Meter effect that represents a rate limiter.
       */
     def initRateLimiterUnscoped(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < Sync =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             new Base(rate, reentrant):
                 val timerTask =
                     // Schedule periodic task to replenish permits
@@ -435,21 +435,21 @@ object Meter:
         end tryRun
 
         final def availablePermits(using Frame) =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 state.get() match
                     case Int.MinValue => closed.safe.get
                     case st           => Math.max(0, st)
             }
 
         final def pendingWaiters(using Frame) =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 state.get() match
                     case Int.MinValue => closed.safe.get
                     case st           => Math.min(0, st).abs
             }
 
         final def close(using frame: Frame): Boolean < Sync =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 val st = state.getAndSet(Int.MinValue)
                 val ok = st != Int.MinValue // The meter wasn't already closed
                 if ok then

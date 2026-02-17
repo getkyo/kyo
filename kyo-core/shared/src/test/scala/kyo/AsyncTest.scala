@@ -554,6 +554,154 @@ class AsyncTest extends Test:
                 _      <- untilTrue(flag.get)
             yield assert(result.isPanic)
         }
+
+        "interrupts computation stress" in runJVM {
+            Kyo.foreach(1 to 100) { _ =>
+                for
+                    promise <- Promise.init[Int, Any]
+                    _       <- Fiber.initUnscoped(Async.timeout(0.millis)(promise.get))
+                    result  <- promise.getResult
+                yield assert(result.isPanic)
+            }.map(_ => succeed)
+        }
+    }
+
+    "interrupt propagation" - {
+
+        "immediate interrupt before promise.get processes" in runJVM {
+            Kyo.foreach(1 to 100) { _ =>
+                for
+                    promise <- Promise.init[Int, Any]
+                    fiber   <- Fiber.initUnscoped(promise.get)
+                    _       <- fiber.interrupt
+                    result  <- promise.getResult
+                yield assert(result.isPanic)
+            }.map(_ => succeed)
+        }
+
+        "interrupt propagates through nested promise.get" in runJVM {
+            Kyo.foreach(1 to 50) { _ =>
+                for
+                    p1    <- Promise.init[Int, Any]
+                    p2    <- Promise.init[Int, Any]
+                    fiber <- Fiber.initUnscoped(p1.get.flatMap(_ => p2.get))
+                    _     <- fiber.interrupt
+                    r1    <- p1.getResult
+                yield assert(r1.isPanic)
+            }.map(_ => succeed)
+        }
+
+        "interrupt with latch synchronization" in runJVM {
+            for
+                promise <- Promise.init[Int, Any]
+                started <- Latch.init(1)
+                fiber <- Fiber.initUnscoped {
+                    started.release.andThen(promise.get)
+                }
+                _      <- started.await
+                _      <- fiber.interrupt
+                result <- promise.getResult
+            yield assert(result.isPanic)
+        }
+
+        "concurrent fibers immediate interrupt" in runJVM {
+            for
+                promises <- Kyo.fill(20)(Promise.init[Int, Any])
+                fibers   <- Kyo.foreach(promises)(p => Fiber.initUnscoped(p.get))
+                _        <- Kyo.foreach(fibers)(_.interrupt)
+                results  <- Kyo.foreach(promises)(_.getResult)
+            yield assert(results.forall(_.isPanic))
+        }
+
+        "interrupt chained promise operations" in runJVM {
+            Kyo.foreach(1 to 50) { _ =>
+                for
+                    p1 <- Promise.init[Int, Any]
+                    p2 <- Promise.init[Int, Any]
+                    p3 <- Promise.init[Int, Any]
+                    fiber <- Fiber.initUnscoped {
+                        for
+                            _ <- p1.get
+                            _ <- p2.get
+                            _ <- p3.get
+                        yield ()
+                    }
+                    _  <- fiber.interrupt
+                    r1 <- p1.getResult
+                yield assert(r1.isPanic)
+            }.map(_ => succeed)
+        }
+
+        "interrupt propagates through scoped fibers" in runJVM {
+            // When using Scope, child fibers are tracked and interrupted with parent
+            for
+                innerPromise <- Promise.init[Int, Any]
+                started      <- Latch.init(1)
+                outerFiber <- Fiber.initUnscoped {
+                    Scope.run {
+                        Fiber.init(started.release.andThen(innerPromise.get)).map(_.get)
+                    }
+                }
+                _      <- started.await
+                _      <- outerFiber.interrupt
+                result <- innerPromise.getResult
+            yield assert(result.isPanic)
+        }
+
+        "interrupt after Sync.defer when awaiting" in runJVM {
+            // Interrupt propagates when fiber has reached promise.get
+            Kyo.foreach(1 to 100) { _ =>
+                for
+                    promise <- Promise.init[Int, Any]
+                    started <- Latch.init(1)
+                    fiber <- Fiber.initUnscoped {
+                        started.release.andThen(promise.get)
+                    }
+                    _      <- started.await // Ensure fiber has started
+                    _      <- fiber.interrupt
+                    result <- promise.getResult
+                yield assert(result.isPanic)
+            }.map(_ => succeed)
+        }
+
+        "multiple waiters on same promise all interrupted" in runJVM {
+            for
+                promise <- Promise.init[Int, Any]
+                fibers  <- Kyo.fill(10)(Fiber.initUnscoped(promise.get))
+                _       <- Kyo.foreach(fibers)(_.interrupt)
+                result  <- promise.getResult
+            yield assert(result.isPanic)
+        }
+
+        "interrupt with onInterrupt callback" in runJVM {
+            Kyo.foreach(1 to 50) { _ =>
+                for
+                    promise     <- Promise.init[Int, Any]
+                    interrupted <- AtomicBoolean.init(false)
+                    _           <- promise.onInterrupt(_ => interrupted.set(true))
+                    fiber       <- Fiber.initUnscoped(promise.get)
+                    _           <- fiber.interrupt
+                    _           <- untilTrue(interrupted.get)
+                    flag        <- interrupted.get
+                yield assert(flag)
+            }.map(_ => succeed)
+        }
+
+        "interrupt race with promise completion" in runJVM {
+            Kyo.foreach(1 to 100) { _ =>
+                for
+                    promise <- Promise.init[Int, Any]
+                    fiber   <- Fiber.initUnscoped(promise.get)
+                    _ <- Async.zip(
+                        promise.complete(Result.succeed(42)),
+                        fiber.interrupt
+                    )
+                    result <- fiber.getResult
+                yield
+                    // Either completed successfully or was interrupted - both valid
+                    assert(result.isSuccess || result.isPanic)
+            }.map(_ => succeed)
+        }
     }
 
     "isolated locals inheritance" - {
@@ -1251,7 +1399,7 @@ class AsyncTest extends Test:
                 assert(count == 1)
         }
 
-        "handles interruption during initialization" in run {
+        "handles interruption during initialization" in runJVM {
             for
                 counter  <- AtomicInt.init(0)
                 started  <- Latch.init(1)

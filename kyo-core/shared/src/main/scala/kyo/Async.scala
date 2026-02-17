@@ -168,7 +168,7 @@ object Async extends AsyncPlatformSpecific:
             isolate.capture { state =>
                 Fiber.initUnscoped(isolate.isolate(state, v)).map { task =>
                     Clock.use { clock =>
-                        Sync.Unsafe {
+                        Sync.Unsafe.defer {
                             val sleepFiber = clock.unsafe.sleep(after)
                             sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(Result.Failure(Timeout(Present(after))))))
                             task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
@@ -756,7 +756,7 @@ object Async extends AsyncPlatformSpecific:
       *   A nested computation that returns the memoized result
       */
     def memoize[A, S](v: A < S)(using Frame): A < (S & Async) < Sync =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val ref = AtomicRef.Unsafe.init(Maybe.empty[Promise.Unsafe[A, Any]])
             @tailrec def loop(): A < (S & Async) =
                 ref.get() match
@@ -765,14 +765,14 @@ object Async extends AsyncPlatformSpecific:
                         val promise = Promise.Unsafe.init[A, Any]()
                         if ref.compareAndSet(Absent, Present(promise)) then
                             Abort.run(v).map { r =>
-                                Sync.Unsafe {
+                                Sync.Unsafe.defer {
                                     if !r.isSuccess then
                                         ref.set(Absent)
                                     promise.completeDiscard(r.map(Kyo.lift))
                                     Abort.get(r)
                                 }
                             }.handle(Sync.ensure {
-                                Sync.Unsafe {
+                                Sync.Unsafe.defer {
                                     if !promise.done() then
                                         ref.set(Absent)
                                 }
@@ -786,14 +786,14 @@ object Async extends AsyncPlatformSpecific:
     /** Converts a Future to an asynchronous computation.
       *
       * This method allows integration of existing Future-based code with Kyo's asynchronous system. It handles successful completion and
-      * failures, wrapping any exceptions in an Abort effect.
+      * failures. Failed futures result in a panic.
       *
       * @param f
       *   The Future to convert into an asynchronous computation
       * @return
-      *   An asynchronous computation that completes with the result of the Future or aborts with Throwable
+      *   An asynchronous computation that completes with the result of the Future
       */
-    def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
+    def fromFuture[A](f: Future[A])(using frame: Frame): A < Async =
         Fiber.fromFuture(f).map(_.get)
 
     private[kyo] inline def get[E, A](v: IOPromise[? <: E, ? <: A])(using Frame): A < (Abort[E] & Async) =

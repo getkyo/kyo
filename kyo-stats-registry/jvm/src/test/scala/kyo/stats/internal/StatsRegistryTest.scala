@@ -1,5 +1,7 @@
 package kyo.stats.internal
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kyo.stats.internal.*
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -141,6 +143,47 @@ class StatsRegistryTest extends AnyFreeSpec {
             assert(counterGauge.getLast() == Long.MaxValue - 10)
             assert(counterGauge.delta() == 20)
             assert(counterGauge.getLast() == 10)
+        }
+    }
+
+    "StatsRefresh" - {
+        "thread executes the scheduled refresh task" in {
+            // This test verifies the fix for the ThreadFactory bug where
+            // the Runnable was not passed to the Thread constructor.
+
+            // Use a unique identifier to avoid conflicts with other tests
+            val testId                  = s"refresh_test_${System.nanoTime()}"
+            val latch                   = new CountDownLatch(1)
+            @volatile var refreshCalled = false
+
+            val testExporter = new StatsExporter {
+                override def counter(path: List[String], description: String, delta: Long): Unit =
+                    if (path.headOption.contains(testId)) {
+                        refreshCalled = true
+                        latch.countDown()
+                    }
+
+                override def histogram(path: List[String], description: String, summary: Summary): Unit = ()
+                override def gauge(path: List[String], description: String, currentValue: Double): Unit = ()
+            }
+
+            // Add exporter - this triggers StatsRefresh initialization
+            StatsRegistry.addExporter(testExporter)
+
+            // Create a counter that will be exported
+            val scope   = StatsRegistry.scope(testId)
+            val counter = scope.counter("test_counter", "Test counter for refresh thread")
+            counter.inc()
+
+            // Wait for automatic refresh (default interval is 1000ms)
+            // If ThreadFactory bug exists, this will timeout
+            val refreshed = latch.await(3, TimeUnit.SECONDS)
+
+            // Cleanup before assertions
+            StatsRegistry.removeExporter(testExporter)
+
+            assert(refreshed, "StatsRefresh thread should have called refresh() within 3 seconds")
+            assert(refreshCalled, "Exporter should have been called by automatic refresh")
         }
     }
 }

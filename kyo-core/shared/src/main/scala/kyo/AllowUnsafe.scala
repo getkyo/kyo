@@ -11,7 +11,7 @@ Options (in order of preference):
    def myFunction(implicit allow: AllowUnsafe) = // unsafe code here
 
 2. Suspend the operation with Sync
-   Sync.Unsafe { // unsafe code here }
+   Sync.Unsafe.defer { // unsafe code here }
 
 3. Import implicit evidence (last resort)
    import AllowUnsafe.embrace.danger
