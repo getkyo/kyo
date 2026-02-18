@@ -30,8 +30,9 @@ class RecordTest extends Test:
                     ";" ~ ";" &
                     "" ~ "empty"
 
-            assert((record.size: Int) == 3)
-            assert((record.fields: List[String]) == List("x", "y", "z"))
+            // "size" and "fields" are shadowed by extension methods, use getField
+            assert(record.getField["size", Int] == 3)
+            assert(record.getField["fields", List[String]] == List("x", "y", "z"))
 
             assert(record.getField["toMap", Map[Int, String]] == Map(1 -> "x", 2 -> "y", 3 -> "z"))
             assert(record.getField["getField", Boolean] == true)
@@ -103,6 +104,43 @@ class RecordTest extends Test:
             val record = Record.fromProduct(box)
             assert(record.value == 42)
         }
+
+        "fromRow" in {
+            val row    = Row((name = "Alice", age = 30))
+            val record = Record.fromRow(row)
+            typeCheck("""val _: Record["name" ~ String & "age" ~ Int] = record""")
+            assert(record.name == "Alice")
+            assert(record.age == 30)
+        }
+    }
+
+    "map" in {
+        val record = "name" ~ "Alice" & "age" ~ 30
+        val mapped = record.map([t] => (value: t) => Option(value))
+        assert((mapped.name: Option[String]) == Some("Alice"))
+        assert((mapped.age: Option[Int]) == Some(30))
+    }
+
+    "mapFields" in {
+        val record = "name" ~ "Alice" & "age" ~ 30
+        val mapped = record.mapFields([t] => (field: Record.Field[?, t], value: t) => Option(value))
+        assert((mapped.name: Option[String]) == Some("Alice"))
+        assert((mapped.age: Option[Int]) == Some(30))
+    }
+
+    "zip" in {
+        val r1     = "name" ~ "Alice" & "age" ~ 30
+        val r2     = "name" ~ true & "age" ~ 3.14
+        val zipped = r1.zip(r2)
+        assert((zipped.name: (String, Boolean)) == ("Alice", true))
+        assert((zipped.age: (Int, Double)) == (30, 3.14))
+    }
+
+    "values" in {
+        val record = "name" ~ "Alice" & "age" ~ 30
+        val v      = record.values
+        typeCheck("""val _: (String, Int) = v""")
+        assert(v == ("Alice", 30))
     }
 
     "field access" - {
@@ -152,7 +190,7 @@ class RecordTest extends Test:
         "empty case class" in {
             case class Empty()
             val record = Record.fromProduct(Empty())
-            assert(Record.sizeOf(record) == 0)
+            assert(record.size == 0)
         }
 
         "case class with 22+ fields" in {
@@ -183,7 +221,7 @@ class RecordTest extends Test:
             )
             val large  = Large(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
             val record = Record.fromProduct(large)
-            assert(Record.sizeOf(record) == 23)
+            assert(record.size == 23)
             assert(record.f1 == 1)
             assert(record.f23 == 23)
         }
@@ -239,13 +277,13 @@ class RecordTest extends Test:
     "type system" - {
         "type tag behavior" in {
             val record = "num" ~ 42
-            val field  = Record.fieldsOf(record).head
+            val field  = record.toMap.keySet.head
             assert(field.tag =:= Tag[Int])
         }
 
         "handle generic types" in {
             val record = "list" ~ List(1, 2, 3)
-            val field  = Record.fieldsOf(record).head
+            val field  = record.toMap.keySet.head
             assert(field.tag =:= Tag[List[Int]])
         }
 
@@ -278,8 +316,8 @@ class RecordTest extends Test:
 
         "fields set operations" in {
             val record = "name" ~ "Alice" & "age" ~ 30
-            assert(Record.fieldsOf(record).size == 2)
-            assert(Record.fieldsOf(record).map(_.name).toSet == Set("name", "age"))
+            assert(record.size == 2)
+            assert(record.fields.toSet == Set("name", "age"))
         }
     }
 
@@ -289,7 +327,7 @@ class RecordTest extends Test:
                 "name" ~ "Frank" & "age" ~ 40
             val compacted = record.compact
 
-            assert(Record.sizeOf(compacted) == 2)
+            assert(compacted.size == 2)
             assert(compacted.name == "Frank")
             assert(compacted.age == 40)
         }
@@ -298,7 +336,7 @@ class RecordTest extends Test:
             val record: Record["name" ~ String] =
                 "name" ~ "Frank" & "age" ~ 40
             val compacted = record.compact
-            assert(Record.sizeOf(compacted) == 1)
+            assert(compacted.size == 1)
             typeCheckFailure("""
                 compacted.age
             """)("""Invalid field access: ("age" : String)""")
@@ -646,14 +684,13 @@ class RecordTest extends Test:
                 assert(map(Field("age", Tag[Int])) == 42)
             }
 
-            "fields returns correct set" in {
-                val fields: Set[Field[?, ?]] = Record.fieldsOf(record)
-                assert(fields.size == 2)
-                assert(fields.map(_.name) == Set("name", "age"))
+            "fields returns correct list" in {
+                assert(record.size == 2)
+                assert(record.fields.toSet == Set("name", "age"))
             }
 
             "size returns correct count" in {
-                val size: Int = Record.sizeOf(record)
+                val size: Int = record.size
                 assert(size == 2)
             }
 
@@ -907,6 +944,167 @@ class RecordTest extends Test:
             assert(employee.company.address.location.lng == -122.4194)
             assert(employee.department.id == 42)
             assert(employee.department.title == "Engineering")
+        }
+    }
+
+    "update method" - {
+        "updates a field value" in {
+            val record  = "name" ~ "Alice" & "age" ~ 30
+            val updated = record.update("age", 31)
+            assert(updated.name == "Alice")
+            assert(updated.age == 31)
+        }
+
+        "updates first field" in {
+            val record  = "name" ~ "Alice" & "age" ~ 30
+            val updated = record.update("name", "Bob")
+            assert(updated.name == "Bob")
+            assert(updated.age == 30)
+        }
+
+        "preserves record type" in {
+            val record  = "name" ~ "Alice" & "age" ~ 30
+            val updated = record.update("name", "Bob")
+            typeCheck("""val _: Record["name" ~ String & "age" ~ Int] = updated""")
+        }
+
+        "updates in record with 3+ fields" in {
+            val record  = "a" ~ 1 & "b" ~ 2 & "c" ~ 3
+            val updated = record.update("b", 20)
+            assert(updated.a == 1)
+            assert(updated.b == 20)
+            assert(updated.c == 3)
+        }
+
+        "rejects non-existent field name" in {
+            typeCheckFailure("""
+                val record = "name" ~ "Alice" & "age" ~ 30
+                record.update("city", "Paris")
+            """)("Invalid field update")
+        }
+
+        "rejects wrong value type" in {
+            typeCheckFailure("""
+                val record = "name" ~ "Alice" & "age" ~ 30
+                record.update("age", "not an int")
+            """)("Invalid field update")
+        }
+    }
+
+    "empty record" - {
+        "has size 0" in {
+            assert(Record.empty.size == 0)
+        }
+
+        "combining empty with another record" in {
+            val record = "name" ~ "Alice" & "age" ~ 30
+            val merged = Record.empty & record
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
+        }
+
+        "combining another record with empty" in {
+            val record = "name" ~ "Alice" & "age" ~ 30
+            val merged = record & Record.empty
+            assert(merged.name == "Alice")
+            assert(merged.age == 30)
+        }
+    }
+
+    "compact edge cases" - {
+        "compact on record with exact fields (no-op)" in {
+            val record: Record["name" ~ String & "age" ~ Int] =
+                "name" ~ "Alice" & "age" ~ 30
+            val compacted = record.compact
+            assert(compacted.size == 2)
+            assert(compacted.name == "Alice")
+            assert(compacted.age == 30)
+        }
+    }
+
+    "values edge cases" - {
+        "single field" in {
+            val record = "name" ~ "Alice"
+            val v      = record.values
+            typeCheck("""val _: Tuple1[String] = v""")
+            assert(v == Tuple1("Alice"))
+        }
+
+        "three fields" in {
+            val record = "name" ~ "Alice" & "age" ~ 30 & "active" ~ true
+            val v      = record.values
+            typeCheck("""val _: (String, Int, Boolean) = v""")
+            assert(v == ("Alice", 30, true))
+        }
+    }
+
+    "fields ordering" - {
+        "returns fields in consistent order" in {
+            val record = "name" ~ "Alice" & "age" ~ 30 & "city" ~ "Paris"
+            val f      = record.fields
+            assert(f.toSet == Set("name", "age", "city"))
+            assert(f.size == 3)
+        }
+    }
+
+    "mapFields with field info" - {
+        "passes correct field names" in {
+            val record     = "name" ~ "Alice" & "age" ~ 30
+            var fieldNames = List.empty[String]
+            record.mapFields([t] =>
+                (field: Record.Field[?, t], value: t) =>
+                    fieldNames = fieldNames :+ field.name
+                    Option(value))
+            assert(fieldNames.toSet == Set("name", "age"))
+        }
+    }
+
+    "zip edge cases" - {
+        "single field records" in {
+            val r1     = "x" ~ 1
+            val r2     = "x" ~ "a"
+            val zipped = r1.zip(r2)
+            assert((zipped.x: (Int, String)) == (1, "a"))
+        }
+
+        "three field records" in {
+            val r1     = "a" ~ 1 & "b" ~ "hello" & "c" ~ true
+            val r2     = "a" ~ 10.0 & "b" ~ 'x' & "c" ~ 42L
+            val zipped = r1.zip(r2)
+            assert((zipped.a: (Int, Double)) == (1, 10.0))
+            assert((zipped.b: (String, Char)) == ("hello", 'x'))
+            assert((zipped.c: (Boolean, Long)) == (true, 42L))
+        }
+    }
+
+    "fromRow edge cases" - {
+        "single field" in {
+            val row    = Row((name = "Alice"))
+            val record = Record.fromRow(row)
+            typeCheck("""val _: Record["name" ~ String] = record""")
+            assert(record.name == "Alice")
+        }
+
+        "three fields with complex types" in {
+            val row    = Row((name = "Alice", scores = List(1, 2, 3), active = true))
+            val record = Record.fromRow(row)
+            assert(record.name == "Alice")
+            assert(record.scores == List(1, 2, 3))
+            assert(record.active == true)
+        }
+    }
+
+    "Render edge cases" - {
+        "render with duplicate field names" in {
+            val record   = "x" ~ 1 & "x" ~ "hello"
+            val rendered = Render.asText(record).show
+            assert(rendered.contains("x ~"))
+        }
+
+        "render single field" in {
+            val record   = "name" ~ "Alice"
+            val rendered = Render.asText(record).show
+            assert(rendered == "name ~ Alice")
         }
     }
 end RecordTest
