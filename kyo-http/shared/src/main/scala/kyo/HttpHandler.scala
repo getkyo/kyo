@@ -10,6 +10,26 @@ import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuilder
 
+/** Sealed handler that maps an HTTP request to an HTTP response for a given route.
+  *
+  * Handlers are created either from an `HttpRoute` via `route.handle(f)` (typed, with automatic input extraction and output serialization)
+  * or via low-level `HttpHandler.init`/`HttpHandler.get`/etc. (untyped, receiving the raw `HttpRequest`). Convenience methods like
+  * `health`, `const`, `streamSse`, and `streamNdjson` cover common patterns.
+  *
+  * Handlers are passed to `HttpServer.init` for serving. The `HttpRouter` dispatches incoming requests to the correct handler based on
+  * method and path. The handler's `route` field is used for routing, OpenAPI spec generation, and streaming detection.
+  *
+  * @tparam S
+  *   the effect type required by the handler function beyond `Async`
+  * @see
+  *   [[kyo.HttpRoute]]
+  * @see
+  *   [[kyo.HttpServer]]
+  * @see
+  *   [[kyo.HttpRouter]]
+  * @see
+  *   [[kyo.HttpOpenApi]]
+  */
 sealed abstract class HttpHandler[-S]:
     def route: HttpRoute[?, ?, ?, ?]
     private[kyo] def streamingRequest: Boolean =
@@ -39,30 +59,30 @@ object HttpHandler:
         new HttpHandler[S]:
             val route = r
             private[kyo] def apply(request: HttpRequest[?]): HttpResponse[?] < (Async & S) =
-                try
-                    val pathValues  = extractPath(r.path, request.path)
-                    val inputValues = extractInputs(r.request.inputFields, request)
-                    val allValues   = concat(pathValues, inputValues, request)
-                    val row         = Tuple.fromArray(allValues).asInstanceOf[Row[FullInput[PathIn, In]]]
-
-                    // Standard Kyo pattern: widen Abort[Err] → Abort[Any] for uniform error handling
-                    // (same cast used in kyo-combinators/AbortCombinators.scala)
-                    Abort.run[Any](
-                        f(row).map(output => buildResponse(r.response, output))
-                            .asInstanceOf[HttpResponse[?] < (Abort[Any] & Async & S)]
-                    ).map {
-                        case Result.Success(response) => response
-                        case Result.Failure(err) =>
-                            matchError(err, r.response.errorMappings)
-                                .getOrElse(HttpResponse.serverError(err.toString))
-                        case Result.Panic(ex) => HttpResponse.serverError(ex.getMessage)
-                    }
-                catch
-                    case _: MissingAuthException =>
+                val pathValues = extractPath(r.path, request.path)
+                Abort.run[HttpError](extractInputs(r.request.inputFields, request)).map {
+                    case Result.Success(inputValues) =>
+                        val allValues = concat(pathValues, inputValues, request)
+                        val row       = Tuple.fromArray(allValues).asInstanceOf[Row[FullInput[PathIn, In]]]
+                        Abort.run[Any](
+                            f(row).map(output => buildResponse(r.response, output))
+                                .asInstanceOf[HttpResponse[?] < (Abort[Any] & Async & S)]
+                        ).map {
+                            case Result.Success(response) => response
+                            case Result.Failure(err) =>
+                                matchError(err, r.response.errorMappings)
+                                    .getOrElse(HttpResponse.serverError(err.toString))
+                            case Result.Panic(ex) => HttpResponse.serverError(ex.getMessage)
+                        }
+                    case Result.Failure(_: HttpError.MissingAuth) | Result.Failure(_: HttpError.InvalidAuth) =>
                         HttpResponse(HttpStatus.Unauthorized)
                             .setHeader("WWW-Authenticate", "Basic realm=\"Restricted\"")
-                    case _: MissingParamException =>
+                    case Result.Failure(_: HttpError.MissingParam) =>
                         HttpResponse(HttpStatus.BadRequest)
+                    case Result.Failure(err) =>
+                        HttpResponse.serverError(err.toString)
+                    case Result.Panic(ex) => HttpResponse.serverError(ex.getMessage)
+                }
             end apply
 
     // ==================== Low-level handler ====================
@@ -223,35 +243,37 @@ object HttpHandler:
                 (Array(remaining), Nil)
     end extractPathSegments
 
-    private def extractInputs(fields: Seq[InputField], request: HttpRequest[?])(using Frame): Array[Any] =
-        val result = ArrayBuilder.make[Any]
-        fields.foreach:
-            case InputField.Query(name, codec, default, optional, _) =>
-                result += extractParam(request.query(name), codec, default, optional, "query", name)
-
-            case InputField.Header(name, codec, default, optional, _) =>
-                result += extractParam(request.header(name), codec, default, optional, "header", name)
-
-            case InputField.Cookie(name, codec, default, optional, _) =>
-                val raw = request.cookie(name).map(_.value)
-                result += extractParam(raw, codec, default, optional, "cookie", name)
-
-            case InputField.Body(content, _) =>
-                result += extractBody(content, request)
-
-            case InputField.Auth(scheme) =>
-                scheme match
-                    case AuthScheme.Bearer =>
-                        result += extractBearer(request)
-                    case AuthScheme.BasicUsername =>
-                        val (user, _) = extractBasicAuth(request)
-                        result += user
-                    case AuthScheme.BasicPassword =>
-                        val (_, pass) = extractBasicAuth(request)
-                        result += pass
-                    case AuthScheme.ApiKey(name, location) =>
-                        result += extractApiKey(request, name, location)
-        result.result()
+    private def extractInputs(fields: Seq[InputField], request: HttpRequest[?])(using Frame): Array[Any] < (Sync & Abort[HttpError]) =
+        Kyo.foldLeft(fields)(ArrayBuilder.make[Any]) { (result, field) =>
+            field match
+                case InputField.Query(name, codec, default, optional, _) =>
+                    Abort.get(extractParam(request.query(name), codec, default, optional, "query", name)).map { v =>
+                        result += v; result
+                    }
+                case InputField.Header(name, codec, default, optional, _) =>
+                    Abort.get(extractParam(request.header(name), codec, default, optional, "header", name)).map { v =>
+                        result += v; result
+                    }
+                case InputField.Cookie(name, codec, default, optional, _) =>
+                    val raw = request.cookie(name).map(_.value)
+                    Abort.get(extractParam(raw, codec, default, optional, "cookie", name)).map { v =>
+                        result += v; result
+                    }
+                case InputField.Body(content, _) =>
+                    extractBody(content, request).map { body =>
+                        result += body
+                        result
+                    }
+                case InputField.Auth(scheme) =>
+                    val extracted = scheme match
+                        case AuthScheme.Bearer                 => extractBearer(request)
+                        case AuthScheme.BasicUsername          => extractBasicAuth(request).map(_(0))
+                        case AuthScheme.BasicPassword          => extractBasicAuth(request).map(_(1))
+                        case AuthScheme.ApiKey(name, location) => extractApiKey(request, name, location)
+                    Abort.get(extracted).map { v =>
+                        result += v; result
+                    }
+        }.map(_.result())
     end extractInputs
 
     private def extractParam(
@@ -261,98 +283,53 @@ object HttpHandler:
         optional: Boolean,
         kind: String,
         name: String
-    )(using Frame): Any =
+    )(using Frame): Result[HttpError.MissingParam, Any] =
         raw match
             case Present(v) =>
                 val parsed = codec.asInstanceOf[HttpCodec[Any]].parse(v)
-                if optional then Present(parsed) else parsed
+                Result.succeed(if optional then Present(parsed) else parsed)
             case Absent =>
                 default match
-                    case Present(d) => if optional then Present(d) else d
-                    case Absent => if optional then Absent
-                        else throw new MissingParamException(s"Missing required $kind: $name")
-
-    private def extractBody(content: Content.Input, request: HttpRequest[?])(using Frame): Any =
-        content match
-            case Content.Json(schema) =>
-                schema.decode(request.asInstanceOf[HttpRequest[HttpBody.Bytes]].bodyText)
-            case Content.Text =>
-                request.asInstanceOf[HttpRequest[HttpBody.Bytes]].bodyText
-            case Content.Binary =>
-                request.asInstanceOf[HttpRequest[HttpBody.Bytes]].bodyBytes
-            case Content.ByteStream =>
-                request.asInstanceOf[HttpRequest[HttpBody.Streamed]].bodyStream
-            case Content.Form(schema) =>
-                schema.decode(request.asInstanceOf[HttpRequest[HttpBody.Bytes]].bodyText)
-            case Content.Multipart =>
-                request.asInstanceOf[HttpRequest[HttpBody.Bytes]].parts.toArrayUnsafe.toSeq
-            case Content.MultipartStream =>
-                val streamReq = request.asInstanceOf[HttpRequest[HttpBody.Streamed]]
-                val boundary = request.contentType match
-                    case Present(ct) => MultipartUtil.extractBoundary(ct)
-                    case Absent      => Absent
-                boundary match
-                    case Present(b) =>
-                        val decoder = new internal.MultipartStreamDecoder(b)
-                        streamReq.bodyStream.mapChunkPure[Span[Byte], HttpRequest.Part] { chunk =>
-                            val result = Seq.newBuilder[HttpRequest.Part]
-                            chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                            result.result()
-                        }
+                    case Present(d) => Result.succeed(if optional then Present(d) else d)
                     case Absent =>
-                        throw new IllegalArgumentException("Missing multipart boundary")
-                end match
-            case Content.Ndjson(schema, _) =>
-                val streamReq = request.asInstanceOf[HttpRequest[HttpBody.Streamed]]
-                val decoder   = new internal.NdjsonDecoder[Any](schema)
-                streamReq.bodyStream.mapChunkPure[Span[Byte], Any] { chunk =>
-                    val result = Seq.newBuilder[Any]
-                    chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                    result.result()
-                }
+                        if optional then Result.succeed(Absent)
+                        else Result.fail(HttpError.MissingParam(s"Missing required $kind: $name"))
+
+    private def extractBody(content: Content, request: HttpRequest[?])(using Frame): Any < (Sync & Abort[HttpError]) =
+        content match
+            case c: Content.Input       => Abort.get(c.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]))
+            case c: Content.StreamInput => c.decodeFrom(request.asInstanceOf[HttpRequest[HttpBody.Streamed]])
     end extractBody
 
-    private def extractBearer(request: HttpRequest[?])(using Frame): String =
-        val raw = request.header("Authorization") match
-            case Present(v) => v
-            case Absent     => throw new MissingAuthException("Authorization")
-        if raw.startsWith("Bearer ") then raw.substring(7)
-        else throw new InvalidAuthException("Expected Bearer token")
-    end extractBearer
+    private def extractBearer(request: HttpRequest[?])(using Frame): Result[HttpError, String] =
+        request.header("Authorization") match
+            case Absent => Result.fail(HttpError.MissingAuth("Authorization"))
+            case Present(raw) =>
+                if raw.startsWith("Bearer ") then Result.succeed(raw.substring(7))
+                else Result.fail(HttpError.InvalidAuth("Expected Bearer token"))
 
-    // Cache parsed basic auth per request to avoid double-parsing for username/password
-    @volatile private var lastBasicAuth: (HttpRequest[?], (String, String)) = (null, null)
+    private def extractBasicAuth(request: HttpRequest[?])(using Frame): Result[HttpError, (String, String)] =
+        request.header("Authorization") match
+            case Absent => Result.fail(HttpError.MissingAuth("Authorization"))
+            case Present(raw) =>
+                if !raw.startsWith("Basic ") then Result.fail(HttpError.InvalidAuth("Expected Basic auth"))
+                else
+                    val decoded  = new String(java.util.Base64.getDecoder.decode(raw.substring(6)), "UTF-8")
+                    val colonIdx = decoded.indexOf(':')
+                    if colonIdx < 0 then Result.fail(HttpError.InvalidAuth("Invalid Basic auth format"))
+                    else Result.succeed((decoded.substring(0, colonIdx), decoded.substring(colonIdx + 1)))
 
-    private def extractBasicAuth(request: HttpRequest[?])(using Frame): (String, String) =
-        val cached = lastBasicAuth
-        if (cached ne null) && (cached._1 eq request) then return cached._2
-
-        val raw = request.header("Authorization") match
-            case Present(v) => v
-            case Absent     => throw new MissingAuthException("Authorization")
-        if !raw.startsWith("Basic ") then throw new InvalidAuthException("Expected Basic auth")
-        val decoded  = new String(java.util.Base64.getDecoder.decode(raw.substring(6)), "UTF-8")
-        val colonIdx = decoded.indexOf(':')
-        if colonIdx < 0 then throw new InvalidAuthException("Invalid Basic auth format")
-        val result = (decoded.substring(0, colonIdx), decoded.substring(colonIdx + 1))
-        lastBasicAuth = (request, result)
-        result
-    end extractBasicAuth
-
-    private def extractApiKey(request: HttpRequest[?], name: String, location: AuthLocation)(using Frame): String =
-        location match
-            case AuthLocation.Header =>
-                request.header(name) match
-                    case Present(v) => v
-                    case Absent     => throw new MissingAuthException(name)
-            case AuthLocation.Query =>
-                request.query(name) match
-                    case Present(v) => v
-                    case Absent     => throw new MissingAuthException(name)
-            case AuthLocation.Cookie =>
-                request.cookie(name) match
-                    case Present(c) => c.value
-                    case Absent     => throw new MissingAuthException(name)
+    private def extractApiKey(request: HttpRequest[?], name: String, location: AuthLocation)(using
+        Frame
+    ): Result[HttpError.MissingAuth, String] =
+        val value = location match
+            case AuthLocation.Header => request.header(name)
+            case AuthLocation.Query  => request.query(name)
+            case AuthLocation.Cookie => request.cookie(name).map(_.value)
+        value match
+            case Present(v) => Result.succeed(v)
+            case Absent     => Result.fail(HttpError.MissingAuth(name))
+    end extractApiKey
 
     // ==================== Private: Output Serialization ====================
 
@@ -360,51 +337,47 @@ object HttpHandler:
         val fields = responseDef.outputFields
         val status = responseDef.status
 
-        if fields.isEmpty then
-            return HttpResponse(status)
+        if fields.isEmpty then HttpResponse(status)
+        else
+            val isSingle = fields.size == 1
 
-        val isSingle                  = fields.size == 1
-        var response: HttpResponse[?] = null
-        var fieldIdx                  = 0
-
-        fields.foreach:
-            case OutputField.Body(content, _) =>
-                val value = extractOutput(output, fieldIdx, isSingle)
-                response = serializeBody(content, value, status)
-                fieldIdx += 1
-
-            case OutputField.Header(name, codec, optional, _) =>
-                val value = extractOutput(output, fieldIdx, isSingle)
-                val base  = if response ne null then response else HttpResponse(status)
-                if !optional then
-                    response = base.setHeader(name, codec.asInstanceOf[HttpCodec[Any]].serialize(value))
+            @tailrec def loop(i: Int, fieldIdx: Int, response: Maybe[HttpResponse[?]]): HttpResponse[?] =
+                if i >= fields.size then response.getOrElse(HttpResponse(status))
                 else
-                    value.asInstanceOf[Maybe[Any]] match
-                        case Present(v) =>
-                            response = base.setHeader(name, codec.asInstanceOf[HttpCodec[Any]].serialize(v))
-                        case Absent =>
-                            response = base
-                end if
-                fieldIdx += 1
+                    fields(i) match
+                        case OutputField.Body(content, _) =>
+                            val value = extractOutput(output, fieldIdx, isSingle)
+                            loop(i + 1, fieldIdx + 1, Present(serializeBody(content, value, status)))
 
-            case OutputField.Cookie(name, codec, optional, attrs, _) =>
-                val value = extractOutput(output, fieldIdx, isSingle)
-                val base  = if response ne null then response else HttpResponse(status)
-                if !optional then
-                    val serialized = codec.asInstanceOf[HttpCodec[Any]].serialize(value)
-                    response = base.addCookie(buildCookie(name, serialized, attrs))
-                else
-                    value.asInstanceOf[Maybe[Any]] match
-                        case Present(v) =>
-                            val serialized = codec.asInstanceOf[HttpCodec[Any]].serialize(v)
-                            response = base.addCookie(buildCookie(name, serialized, attrs))
-                        case Absent =>
-                            response = base
-                end if
-                fieldIdx += 1
+                        case OutputField.Header(name, codec, optional, _) =>
+                            val value = extractOutput(output, fieldIdx, isSingle)
+                            val base  = response.getOrElse(HttpResponse(status))
+                            val next =
+                                if !optional then
+                                    base.setHeader(name, codec.asInstanceOf[HttpCodec[Any]].serialize(value))
+                                else
+                                    value.asInstanceOf[Maybe[Any]] match
+                                        case Present(v) =>
+                                            base.setHeader(name, codec.asInstanceOf[HttpCodec[Any]].serialize(v))
+                                        case Absent => base
+                            loop(i + 1, fieldIdx + 1, Present(next))
 
-        if response eq null then HttpResponse(status)
-        else response
+                        case OutputField.Cookie(name, codec, optional, attrs, _) =>
+                            val value = extractOutput(output, fieldIdx, isSingle)
+                            val base  = response.getOrElse(HttpResponse(status))
+                            val next =
+                                if !optional then
+                                    val serialized = codec.asInstanceOf[HttpCodec[Any]].serialize(value)
+                                    base.addCookie(buildCookie(name, serialized, attrs))
+                                else
+                                    value.asInstanceOf[Maybe[Any]] match
+                                        case Present(v) =>
+                                            val serialized = codec.asInstanceOf[HttpCodec[Any]].serialize(v)
+                                            base.addCookie(buildCookie(name, serialized, attrs))
+                                        case Absent => base
+                            loop(i + 1, fieldIdx + 1, Present(next))
+            loop(0, 0, Absent)
+        end if
     end buildResponse
 
     private def extractOutput(output: Any, fieldIdx: Int, isSingle: Boolean): Any =
@@ -449,17 +422,22 @@ object HttpHandler:
     end serializeBody
 
     private def buildCookie(name: String, value: String, attrs: CookieAttributes): HttpResponse.Cookie =
-        var cookie = HttpResponse.Cookie(name, value)
-        if attrs.httpOnly then cookie = cookie.httpOnly(true)
-        if attrs.secure then cookie = cookie.secure(true)
-        attrs.sameSite.foreach:
-            case SameSite.Strict => cookie = cookie.sameSite(HttpResponse.Cookie.SameSite.Strict)
-            case SameSite.Lax    => cookie = cookie.sameSite(HttpResponse.Cookie.SameSite.Lax)
-            case SameSite.None   => cookie = cookie.sameSite(HttpResponse.Cookie.SameSite.None)
-        attrs.maxAge.foreach(s => cookie = cookie.maxAge(Duration.fromUnits(s.toLong, Duration.Units.Seconds)))
-        attrs.domain.foreach(d => cookie = cookie.domain(d))
-        attrs.path.foreach(p => cookie = cookie.path(p))
-        cookie
+        val c0 = HttpResponse.Cookie(name, value)
+        val c1 = if attrs.httpOnly then c0.httpOnly(true) else c0
+        val c2 = if attrs.secure then c1.secure(true) else c1
+        val c3 = attrs.sameSite match
+            case Present(ss) => c2.sameSite(ss)
+            case Absent      => c2
+        val c4 = attrs.maxAge match
+            case Present(s) => c3.maxAge(Duration.fromUnits(s.toLong, Duration.Units.Seconds))
+            case Absent     => c3
+        val c5 = attrs.domain match
+            case Present(d) => c4.domain(d)
+            case Absent     => c4
+        val c6 = attrs.path match
+            case Present(p) => c5.path(p)
+            case Absent     => c5
+        c6
     end buildCookie
 
     // ==================== Private: Error Handling ====================
@@ -490,21 +468,12 @@ object HttpHandler:
     private def concat(pathValues: Array[Any], inputValues: Array[Any], request: Any): Array[Object] =
         val total = pathValues.length + inputValues.length + 1
         val arr   = new Array[Object](total)
-        var i     = 0
-        while i < pathValues.length do
-            arr(i) = pathValues(i).asInstanceOf[Object]
-            i += 1
-        var j = 0
-        while j < inputValues.length do
-            arr(i + j) = inputValues(j).asInstanceOf[Object]
-            j += 1
-        arr(i + j) = request.asInstanceOf[Object]
+        java.lang.System.arraycopy(pathValues.asInstanceOf[Array[Object]], 0, arr, 0, pathValues.length)
+        java.lang.System.arraycopy(inputValues.asInstanceOf[Array[Object]], 0, arr, pathValues.length, inputValues.length)
+        arr(total - 1) = request.asInstanceOf[Object]
         arr
     end concat
 
     // Control-flow exceptions — caught in handler try-catch, never escape
-    final private class MissingAuthException(name: String)(using Frame) extends KyoException(name)
-    final private class InvalidAuthException(msg: String)(using Frame)  extends KyoException(msg)
-    final private class MissingParamException(msg: String)(using Frame) extends KyoException(msg)
 
 end HttpHandler

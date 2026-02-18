@@ -119,7 +119,7 @@ class HttpRequestTest extends Test:
             "with typed body" in {
                 val request = HttpRequest.post("http://example.com/users", User("Alice", "alice@example.com"))
                 assert(request.method == Method.POST)
-                assert(request.bodyAs[User] == User("Alice", "alice@example.com"))
+                assert(Abort.run(request.bodyAs[User]).eval == Result.succeed(User("Alice", "alice@example.com")))
             }
 
             "with headers" in {
@@ -144,7 +144,7 @@ class HttpRequestTest extends Test:
             "with typed body" in {
                 val request = HttpRequest.put("http://example.com/users/1", User("Bob", "bob@example.com"))
                 assert(request.method == Method.PUT)
-                assert(request.bodyAs[User] == User("Bob", "bob@example.com"))
+                assert(Abort.run(request.bodyAs[User]).eval == Result.succeed(User("Bob", "bob@example.com")))
             }
 
             "with headers" in {
@@ -534,21 +534,17 @@ class HttpRequestTest extends Test:
         "bodyAs" - {
             "deserializes JSON body" in {
                 val request = HttpRequest.post("http://example.com", User("Alice", "alice@example.com"))
-                assert(request.bodyAs[User] == User("Alice", "alice@example.com"))
+                assert(Abort.run(request.bodyAs[User]).eval == Result.succeed(User("Alice", "alice@example.com")))
             }
 
             "fails on invalid JSON" in {
                 val request = HttpRequest.post("http://example.com", "not json")
-                assertThrows[Exception] {
-                    request.bodyAs[User]
-                }
+                assert(Abort.run(request.bodyAs[User]).eval.isFailure)
             }
 
             "fails on type mismatch" in {
                 val request = HttpRequest.post("http://example.com", """{"wrong": "structure"}""")
-                assertThrows[Exception] {
-                    request.bodyAs[User]
-                }
+                assert(Abort.run(request.bodyAs[User]).eval.isFailure)
             }
         }
 

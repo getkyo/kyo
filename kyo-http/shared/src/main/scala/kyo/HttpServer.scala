@@ -43,7 +43,7 @@ import kyo.internal.HttpRouter
   */
 final class HttpServer private (
     private val backendServer: Backend.Server.Binding,
-    private val handlers: Seq[HttpHandler[Any]]
+    private val handlers: Seq[HttpHandler[?]]
 ):
     def port: Int    = backendServer.port
     def host: String = backendServer.host
@@ -111,7 +111,7 @@ object HttpServer:
         initUnscoped(config, HttpPlatformBackend.server)(handlers*)
 
     def initUnscoped(config: Config, backend: Backend.Server)(handlers: HttpHandler[?]*)(using Frame): HttpServer < Async =
-        val h = handlers.asInstanceOf[Seq[HttpHandler[Any]]]
+        val h = handlers
         // Filter chain is captured once here — not re-read per request
         HttpFilter.use { filter =>
             val allHandlers = config.openApi match
@@ -213,7 +213,7 @@ object HttpServer:
     // --- Private: build a Backend.ServerHandler from handlers + filter ---
 
     private[kyo] def buildServerHandler(
-        handlers: Seq[HttpHandler[Any]],
+        handlers: Seq[HttpHandler[?]],
         config: Config,
         filter: HttpFilter
     )(using Frame): Backend.ServerHandler =
@@ -244,7 +244,7 @@ object HttpServer:
                 router.find(request.method, request.path) match
                     case Result.Success(handler) =>
                         val req = if config.strictCookieParsing then request.withStrictCookieParsing(true) else request
-                        filter(req, handler.apply)
+                        filter(req, handler.asInstanceOf[HttpHandler[Any]].apply)
                     case Result.Failure(e) => errorResponse(e)
                     case Result.Panic(e)   => HttpResponse.serverError(e.getMessage)
                 end match
@@ -253,7 +253,7 @@ object HttpServer:
             def handleStreaming(request: HttpRequest[HttpBody.Streamed])(using Frame): HttpResponse[?] < Async =
                 router.find(request.method, request.path) match
                     case Result.Success(handler) =>
-                        filter(request, handler.apply)
+                        filter(request, handler.asInstanceOf[HttpHandler[Any]].apply)
                     case Result.Failure(e) => errorResponse(e)
                     case Result.Panic(e)   => HttpResponse.serverError(e.getMessage)
                 end match

@@ -1,5 +1,16 @@
 package kyo
 
+/** HTTP response status code with category classification.
+  *
+  * A sealed hierarchy covering all standard HTTP status codes organized into `Informational` (1xx), `Success` (2xx), `Redirect` (3xx),
+  * `ClientError` (4xx), and `ServerError` (5xx) enums, plus a `Custom` case for non-standard codes. Use the companion `apply` to resolve an
+  * integer code to its known case or wrap it in `Custom`.
+  *
+  * @see
+  *   [[kyo.HttpResponse]]
+  * @see
+  *   [[kyo.HttpRoute]]
+  */
 sealed abstract class HttpStatus(val code: Int) derives CanEqual:
     def isInformational: Boolean = code >= 100 && code < 200
     def isSuccess: Boolean       = code >= 200 && code < 300

@@ -14,7 +14,7 @@ import scala.annotation.tailrec
   */
 final private[kyo] class HttpRouter private (
     private val nodes: Array[HttpRouter.Node],
-    private val handlers: Array[HttpHandler[Any]]
+    private val handlers: Array[HttpHandler[?]]
 ):
     import HttpRouter.*
 
@@ -22,7 +22,7 @@ final private[kyo] class HttpRouter private (
       *
       * Per RFC 9110 §9.3.2, HEAD is implicitly supported wherever GET is registered.
       */
-    def find(method: Method, path: String): Result[FindError, HttpHandler[Any]] =
+    def find(method: Method, path: String): Result[FindError, HttpHandler[?]] =
         val methodIdx = HttpRouter.methodIndex(method)
         val nodeIdx   = findNodeIndex(path)
 
@@ -138,7 +138,7 @@ private[kyo] object HttpRouter:
         val allowedMethods: Set[Method]
     )
 
-    def apply(handlers: Seq[HttpHandler[Any]]): HttpRouter =
+    def apply(handlers: Seq[HttpHandler[?]]): HttpRouter =
         if handlers.isEmpty then
             val emptyNode = new Node(Array.empty, Array.empty, -1, Array.fill(MethodCount)(-1), Set.empty)
             new HttpRouter(Array(emptyNode), Array.empty)
@@ -151,7 +151,7 @@ private[kyo] object HttpRouter:
 
             val (nodeCount, handlerCount) = countNodes(root)
             val flatNodes                 = new Array[Node](nodeCount)
-            val flatHandlers              = new Array[HttpHandler[Any]](handlerCount)
+            val flatHandlers              = new Array[HttpHandler[?]](handlerCount)
             val state                     = new SerializeState(flatNodes, flatHandlers)
             discard(serialize(root, state))
 
@@ -162,12 +162,12 @@ private[kyo] object HttpRouter:
     // ==================== Build Phase ====================
 
     final private class MutableNode(
-        var handlers: Map[Method, HttpHandler[Any]] = Map.empty,
+        var handlers: Map[Method, HttpHandler[?]] = Map.empty,
         var literalChildren: Map[String, MutableNode] = Map.empty,
         var captureChild: MutableNode | Null = null
     )
 
-    private def insert(node: MutableNode, segments: List[Segment], method: Method, handler: HttpHandler[Any]): Unit =
+    private def insert(node: MutableNode, segments: List[Segment], method: Method, handler: HttpHandler[?]): Unit =
         segments match
             case Nil =>
                 node.handlers = node.handlers + (method -> handler)
@@ -193,23 +193,22 @@ private[kyo] object HttpRouter:
     end insert
 
     private def countNodes(root: MutableNode): (Int, Int) =
-        var nodeCount    = 0
-        var handlerCount = 0
-        def visit(node: MutableNode): Unit =
-            nodeCount += 1
-            handlerCount += node.handlers.size
-            node.literalChildren.values.foreach(visit)
-            node.captureChild match
-                case null     => ()
+        def visit(node: MutableNode): (Int, Int) =
+            val childCounts = node.literalChildren.values.foldLeft((0, 0)) { case ((n, h), child) =>
+                val (cn, ch) = visit(child)
+                (n + cn, h + ch)
+            }
+            val captureCounts = node.captureChild match
+                case null     => (0, 0)
                 case existing => visit(existing)
+            (1 + childCounts._1 + captureCounts._1, node.handlers.size + childCounts._2 + captureCounts._2)
         end visit
         visit(root)
-        (nodeCount, handlerCount)
     end countNodes
 
     private class SerializeState(
         val nodes: Array[Node],
-        val handlers: Array[HttpHandler[Any]]
+        val handlers: Array[HttpHandler[?]]
     ):
         var nextNodeIdx: Int    = 0
         var nextHandlerIdx: Int = 0
@@ -239,12 +238,11 @@ private[kyo] object HttpRouter:
             case existing => serialize(existing, state)
 
         val handlerIndices = Array.fill(MethodCount)(-1)
-        var allowedMethods = Set.empty[Method]
-        node.handlers.foreach { case (method, handler) =>
+        val allowedMethods = node.handlers.foldLeft(Set.empty[Method]) { case (methods, (method, handler)) =>
             val handlerIdx = state.allocHandlerIdx()
             state.handlers(handlerIdx) = handler
             handlerIndices(methodIndex(method)) = handlerIdx
-            allowedMethods = allowedMethods + method
+            methods + method
         }
 
         state.nodes(nodeIdx) = new Node(literalSegments, literalIndices, captureChildIdx, handlerIndices, allowedMethods)

@@ -10,7 +10,7 @@ import scala.collection.mutable
 /** Generates OpenAPI 3.0 specification from HttpHandler definitions. */
 private[kyo] object OpenApiGenerator:
 
-    def generate(handlers: Seq[HttpHandler[Any]], config: HttpOpenApi.Config = HttpOpenApi.Config()): HttpOpenApi =
+    def generate(handlers: Seq[HttpHandler[?]], config: HttpOpenApi.Config = HttpOpenApi.Config()): HttpOpenApi =
         val paths           = buildPaths(handlers)
         val securitySchemes = collectSecuritySchemes(handlers)
         HttpOpenApi(
@@ -26,12 +26,12 @@ private[kyo] object OpenApiGenerator:
         )
     end generate
 
-    private def buildPaths(handlers: Seq[HttpHandler[Any]]): Map[String, PathItem] =
+    private def buildPaths(handlers: Seq[HttpHandler[?]]): Map[String, PathItem] =
         handlers.groupBy(h => pathToOpenApi(h.route.path)).map { case (path, handlers) =>
             path -> buildPathItem(handlers)
         }
 
-    private def buildPathItem(handlers: Seq[HttpHandler[Any]]): PathItem =
+    private def buildPathItem(handlers: Seq[HttpHandler[?]]): PathItem =
         val ops = handlers.map(h => h.route.method -> buildOperation(h.route)).toMap
         PathItem(
             get = ops.get(Method.GET),
@@ -121,29 +121,24 @@ private[kyo] object OpenApiGenerator:
 
     /** Infer OpenAPI schema type from HttpCodec by probing with sample values. */
     private def inferCodecSchema(codec: HttpCodec[?]): SchemaObject =
-        val c = codec.asInstanceOf[HttpCodec[Any]]
-        try
-            c.parse("1") match
-                case _: Int     => return SchemaObject.integer
-                case _: Long    => return SchemaObject.long
-                case _: Boolean => return SchemaObject.boolean
-                case _          => ()
-        catch case _: Exception => ()
-        end try
-        try
-            c.parse("true") match
-                case _: Boolean => return SchemaObject.boolean
-                case _          => ()
-        catch case _: Exception => ()
-        end try
-        try
-            c.parse("00000000-0000-0000-0000-000000000000") match
-                case _: java.util.UUID =>
-                    return SchemaObject(Some("string"), Some("uuid"), None, None, None, None, None, None, None)
-                case _ => ()
-        catch case _: Exception => ()
-        end try
-        SchemaObject.string
+        val c = codec
+
+        def tryProbe(input: String)(pf: PartialFunction[Any, SchemaObject]): Maybe[SchemaObject] =
+            try
+                val result = c.parse(input)
+                if pf.isDefinedAt(result) then Present(pf(result))
+                else Absent
+            catch case _: Exception => Absent
+
+        tryProbe("1") {
+            case _: Int     => SchemaObject.integer
+            case _: Long    => SchemaObject.long
+            case _: Boolean => SchemaObject.boolean
+        }.orElse(tryProbe("true") {
+            case _: Boolean => SchemaObject.boolean
+        }).orElse(tryProbe("00000000-0000-0000-0000-000000000000") {
+            case _: java.util.UUID => SchemaObject(Some("string"), Some("uuid"), None, None, None, None, None, None, None)
+        }).getOrElse(SchemaObject.string)
     end inferCodecSchema
 
     private def buildRequestBody(route: HttpRoute[?, ?, ?, ?]): Maybe[RequestBody] =
@@ -306,7 +301,7 @@ private[kyo] object OpenApiGenerator:
     end buildEnumSchema
 
     /** Collects security schemes from auth input fields. */
-    private def collectSecuritySchemes(handlers: Seq[HttpHandler[Any]]): Map[String, SecurityScheme] =
+    private def collectSecuritySchemes(handlers: Seq[HttpHandler[?]]): Map[String, SecurityScheme] =
         handlers.flatMap { handler =>
             val meta = handler.route.metadata
             meta.security.toOption.flatMap { schemeName =>

@@ -233,8 +233,9 @@ class HttpClientTest extends Test:
         "post" - {
             "with typed body" in run {
                 val handler = HttpHandler.post("/users") { in =>
-                    val input = in.request.bodyAs[CreateUser]
-                    HttpResponse.created(User(1, input.name))
+                    in.request.bodyAs[CreateUser].map(input =>
+                        HttpResponse.created(User(1, input.name))
+                    )
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.post[User, CreateUser](
@@ -264,8 +265,9 @@ class HttpClientTest extends Test:
         "put" - {
             "with typed body" in run {
                 val handler = HttpHandler.put("/users/1") { in =>
-                    val input = in.request.bodyAs[CreateUser]
-                    HttpResponse.ok(User(1, input.name))
+                    in.request.bodyAs[CreateUser].map(input =>
+                        HttpResponse.ok(User(1, input.name))
+                    )
                 }
                 startTestServer(handler).map { port =>
                     HttpClient.put[User, CreateUser](
@@ -826,7 +828,7 @@ class HttpClientTest extends Test:
             startTestServer(handler).map { port =>
                 Abort.run(HttpClient.get[User](s"http://localhost:$port/html")).map {
                     case Result.Failure(HttpError.ParseError(msg, _)) =>
-                        assert(msg.contains("Failed to parse"))
+                        assert(msg.contains("decode error") || msg.contains("Failed to parse"))
                     case other =>
                         fail(s"Expected ParseError but got $other")
                 }
@@ -2158,13 +2160,12 @@ class HttpClientTest extends Test:
                 }
             }
 
-            "with HttpRequest" in run {
+            "with URL" in run {
                 val handler = HttpHandler.streamSse[Item]("/events") { _ =>
                     Stream.init(Seq(HttpEvent(Item("x"))))
                 }
                 startTestServer(handler).map { port =>
-                    val request = HttpRequest.get(s"http://localhost:$port/events")
-                    HttpClient.streamSse[Item](request).map { stream =>
+                    HttpClient.streamSse[Item](s"http://localhost:$port/events").map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0).data == Item("x"))
@@ -2204,13 +2205,12 @@ class HttpClientTest extends Test:
                 }
             }
 
-            "with HttpRequest" in run {
+            "with URL" in run {
                 val handler = HttpHandler.streamNdjson[Item]("/data") { _ =>
                     Stream.init(Seq(Item("q")))
                 }
                 startTestServer(handler).map { port =>
-                    val request = HttpRequest.get(s"http://localhost:$port/data")
-                    HttpClient.streamNdjson[Item](request).map { stream =>
+                    HttpClient.streamNdjson[Item](s"http://localhost:$port/data").map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0) == Item("q"))

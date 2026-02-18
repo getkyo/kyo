@@ -2,6 +2,7 @@ package kyo.internal
 
 import java.nio.charset.StandardCharsets
 import kyo.*
+import scala.annotation.tailrec
 
 /** Shared multipart parsing utilities used by both buffered (HttpRequest) and streaming (MultipartStreamDecoder) parsers. */
 private[kyo] object MultipartUtil:
@@ -10,21 +11,20 @@ private[kyo] object MultipartUtil:
     def indexOf(data: Array[Byte], pattern: Array[Byte], from: Int): Int =
         val dataLen    = data.length
         val patternLen = pattern.length
-        if patternLen == 0 || from + patternLen > dataLen then return -1
+        if patternLen == 0 || from + patternLen > dataLen then -1
+        else
+            @tailrec def matchAt(i: Int, j: Int): Boolean =
+                if j >= patternLen then true
+                else if data(i + j) != pattern(j) then false
+                else matchAt(i, j + 1)
 
-        var i = from
-        while i <= dataLen - patternLen do
-            var j     = 0
-            var found = true
-            while j < patternLen && found do
-                if data(i + j) != pattern(j) then
-                    found = false
-                j += 1
-            end while
-            if found then return i
-            i += 1
-        end while
-        -1
+            @tailrec def search(i: Int): Int =
+                if i > dataLen - patternLen then -1
+                else if matchAt(i, 0) then i
+                else search(i + 1)
+
+            search(from)
+        end if
     end indexOf
 
     /** Extract a quoted parameter value from a Content-Disposition header. */

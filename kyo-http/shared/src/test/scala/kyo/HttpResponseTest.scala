@@ -805,8 +805,8 @@ class HttpResponseTest extends Test:
             val response = HttpResponse.ok
                 .addHeader("X-Multi", "first")
                 .addHeader("X-Multi", "second")
-            // addHeader appends — both values present, last returned by header()
-            assert(response.header("X-Multi") == Present("second"))
+            // addHeader appends — both values present, first returned by header()
+            assert(response.header("X-Multi") == Present("first"))
         }
 
         "setHeader replaces existing" in {
@@ -858,7 +858,7 @@ class HttpResponseTest extends Test:
                 .addHeader("X-Trace", "first")
                 .addHeader("X-Trace", "second")
             // response addHeader now has append semantics (consistent with HttpRequest)
-            assert(response.header("X-Trace") == Present("second"))
+            assert(response.header("X-Trace") == Present("first"))
             var count = 0
             response.headers.foreach { (k, _) =>
                 if k.equalsIgnoreCase("X-Trace") then count += 1

@@ -22,8 +22,7 @@ import java.time.format.DateTimeFormatter
   * `addHeader` appends without replacing (consistent with `HttpRequest.addHeader`). Use `setHeader` to replace existing headers with the
   * same name.
   *
-  * IMPORTANT: `bodyAs[A]` wraps decode failure in `Abort[HttpError.ParseError]`. Compare with `HttpRequest.bodyAs[A]` which throws
-  * directly.
+  * `bodyAs[A]` wraps decode failure in `Abort[HttpError]`, consistent with `HttpRequest.bodyAs[A]`.
   *
   * Note: `header(name)` returns the last matching header (consistent with replace semantics). Compare with `HttpRequest.header(name)` which
   * returns the first.
@@ -56,7 +55,7 @@ final class HttpResponse[+B <: HttpBody] private (
     // --- Header accessors ---
 
     def header(name: String): Maybe[String] =
-        _headers.getLast(name)
+        _headers.get(name)
 
     def headers: HttpHeaders = _headers
 

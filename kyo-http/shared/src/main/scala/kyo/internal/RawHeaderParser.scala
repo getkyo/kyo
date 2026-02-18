@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import scala.annotation.tailrec
 
 /** Parses raw HTTP header lines ("Name: Value\r\n...") into HttpHeaders.
   *
@@ -9,20 +10,20 @@ import kyo.*
 private[kyo] object RawHeaderParser:
 
     def parseHeaders(raw: String): HttpHeaders =
-        var headers = HttpHeaders.empty
-        val lines   = raw.split("\r\n")
-        var i       = 0
-        while i < lines.length do
-            val line     = lines(i)
-            val colonIdx = line.indexOf(':')
-            if colonIdx > 0 then
-                val name  = line.substring(0, colonIdx).trim
-                val value = line.substring(colonIdx + 1).trim
-                headers = headers.add(name, value)
-            end if
-            i += 1
-        end while
-        headers
+        val lines = raw.split("\r\n")
+        @tailrec def loop(i: Int, headers: HttpHeaders): HttpHeaders =
+            if i >= lines.length then headers
+            else
+                val line     = lines(i)
+                val colonIdx = line.indexOf(':')
+                if colonIdx > 0 then
+                    val name  = line.substring(0, colonIdx).trim
+                    val value = line.substring(colonIdx + 1).trim
+                    loop(i + 1, headers.add(name, value))
+                else
+                    loop(i + 1, headers)
+                end if
+        loop(0, HttpHeaders.empty)
     end parseHeaders
 
 end RawHeaderParser

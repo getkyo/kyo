@@ -133,22 +133,19 @@ object HttpHeaders:
 
         /** Iterates over all headers as name-value pairs. */
         inline def foreach(inline f: (String, String) => Unit): Unit =
-            var i = 0
-            while i < self.length do
-                f(self(i), self(i + 1))
-                i += 2
-            end while
+            def loop(i: Int): Unit =
+                if i < self.length then
+                    f(self(i), self(i + 1))
+                    loop(i + 2)
+            loop(0)
         end foreach
 
         /** Folds over all headers as name-value pairs. */
         inline def foldLeft[A](init: A)(inline f: (A, String, String) => A): A =
-            var i   = 0
-            var acc = init
-            while i < self.length do
-                acc = f(acc, self(i), self(i + 1))
-                i += 2
-            end while
-            acc
+            def loop(i: Int, acc: A): A =
+                if i >= self.length then acc
+                else loop(i + 2, f(acc, self(i), self(i + 1)))
+            loop(0, init)
         end foldLeft
 
     end extension

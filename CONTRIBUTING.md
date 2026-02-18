@@ -176,7 +176,7 @@ Effect operations follow consistent naming:
   ```
 - [ ] **Use opaque types** — never wrap when you can alias. All core types (`<`, `Queue`, `Channel`, `Fiber`, `Context`) are opaque for zero runtime cost.
 - [ ] **Use `inline` strategically** — inline the creation path, not the handling path. The goal is zero overhead where effects are born, while keeping handlers as normal methods to avoid code bloat. See the "Inline Guidelines" section below for the full decision framework.
-- [ ] **Prefer `@tailrec` loops.** Pure progress should be tail-recursive. Allocate continuations (`KyoContinue`) only when effects force suspension.
+- [ ] **Avoid impure language features** — `var`, `while`, `return`, mutable collections, and `null` are strongly discouraged. Use `@tailrec` recursive functions instead of `var`+`while` loops, `val` instead of `var`, immutable collections, and `Maybe`/`Option` instead of `null`. These impure features may be used only when strictly necessary for performance (e.g., hot-path parsers, opaque type internals over arrays). Pure progress should be tail-recursive; allocate continuations (`KyoContinue`) only when effects force suspension.
 - [ ] **Bit-pack atomically-updated composite state** to avoid wrapper allocations. Always include a layout comment:
   ```scala
   // Bit allocation:

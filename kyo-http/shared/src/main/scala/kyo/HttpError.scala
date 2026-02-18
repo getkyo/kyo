@@ -58,9 +58,25 @@ object HttpError:
     case class ParseError(message: String, cause: Throwable)(using Frame)
         extends HttpError(s"Failed to parse response: $message", cause)
 
+    object ParseError:
+        def apply(message: String)(using Frame): ParseError = ParseError(message, null)
+    end ParseError
+
     /** Retry schedule exhausted while still getting retriable responses. */
     case class RetriesExhausted(attempts: Int, lastStatus: HttpStatus, lastBody: String)(using Frame)
         extends HttpError(s"Retries exhausted after $attempts attempts (last status: ${lastStatus.code})", lastBody)
+
+    /** Missing required authentication credential. */
+    case class MissingAuth(name: String)(using Frame)
+        extends HttpError(s"Missing required authentication: $name")
+
+    /** Invalid authentication credential format. */
+    case class InvalidAuth(message: String)(using Frame)
+        extends HttpError(s"Invalid authentication: $message")
+
+    /** Missing required request parameter (query, header, or cookie). */
+    case class MissingParam(message: String)(using Frame)
+        extends HttpError(s"Missing required parameter: $message")
 
     /** Convert a Throwable to an HttpError based on its type. */
     private[kyo] def fromThrowable(cause: Throwable, host: String, port: Int)(using Frame): HttpError =

@@ -42,9 +42,7 @@ final private[kyo] class ConnectionPool(
     /** Shut down all pools and the underlying factory. */
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.Unsafe.defer {
-            val iter = pools.values().iterator()
-            while iter.hasNext do
-                iter.next().close()
+            pools.values().forEach(_.close())
             pools.clear()
         }.andThen(factory.close(gracePeriod))
 

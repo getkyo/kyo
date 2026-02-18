@@ -20,7 +20,7 @@ final private[kyo] class Utf8StreamDecoder private (
     private var leftover: Array[Byte]
 ):
     /** Decode a chunk of bytes, returning decoded string. Incomplete trailing bytes are buffered for the next chunk. */
-    def decode(chunk: Chunk[Byte]): String =
+    def decode(chunk: Chunk[Byte])(using AllowUnsafe): String =
         val bytes = chunk.toArray
         // Prepend incomplete multi-byte sequence from previous chunk
         val input =
@@ -34,36 +34,38 @@ final private[kyo] class Utf8StreamDecoder private (
 
         if input.isEmpty then ""
         else
-            val inBuf  = ByteBuffer.wrap(input)
-            var outBuf = CharBuffer.allocate(input.length * 2) // UTF-8 worst case
+            val inBuf = ByteBuffer.wrap(input)
 
-            @tailrec def loop(): Unit =
+            @tailrec def loop(outBuf: CharBuffer): CharBuffer =
                 val result = decoder.decode(inBuf, outBuf, false)
                 if result.isUnderflow then
                     // Underflow with remaining bytes means an incomplete multi-byte sequence at the end
                     if inBuf.hasRemaining then
                         leftover = new Array[Byte](inBuf.remaining)
                         discard(inBuf.get(leftover))
+                    outBuf
                 else if result.isMalformed || result.isUnmappable then
                     result.throwException()
+                    outBuf // unreachable but needed for return type
                 else if result.isOverflow then
                     // Grow output buffer and retry
                     val bigger = CharBuffer.allocate(outBuf.capacity() * 2)
                     outBuf.flip()
                     discard(bigger.put(outBuf))
-                    outBuf = bigger
-                    loop()
+                    loop(bigger)
+                else
+                    outBuf
                 end if
             end loop
 
-            loop()
-            outBuf.flip()
-            outBuf.toString
+            val finalBuf = loop(CharBuffer.allocate(input.length * 2))
+            finalBuf.flip()
+            finalBuf.toString
         end if
     end decode
 
     /** Flush any remaining buffered bytes at end of stream. */
-    def flush(): String =
+    def flush()(using AllowUnsafe): String =
         if leftover.isEmpty then
             decoder.reset()
             ""
@@ -89,10 +91,10 @@ final private[kyo] class Utf8StreamDecoder private (
 end Utf8StreamDecoder
 
 private[kyo] object Utf8StreamDecoder:
-    def apply(): Utf8StreamDecoder =
+    def init()(using AllowUnsafe): Utf8StreamDecoder =
         val decoder = StandardCharsets.UTF_8.newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
         new Utf8StreamDecoder(decoder, Array.empty)
-    end apply
+    end init
 end Utf8StreamDecoder

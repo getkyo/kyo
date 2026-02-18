@@ -31,10 +31,10 @@ abstract class Schema[A]:
     def encode(value: A): String =
         zio.schema.codec.JsonCodec.jsonEncoder(zpiSchema).encodeJson(value, None).toString
 
-    def decode(json: String): A =
+    def decode(json: String): Result[String, A] =
         zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
-            case Right(a)    => a
-            case Left(error) => throw new IllegalArgumentException(s"JSON decode error: $error")
+            case Right(a)    => Result.succeed(a)
+            case Left(error) => Result.fail(s"JSON decode error: $error")
 end Schema
 
 object Schema:
@@ -62,20 +62,20 @@ object Schema:
     // String: if JSON decode fails, return raw text (supports both JSON strings and plain text)
     given Schema[String] = new Schema[String]:
         val zpiSchema: zio.schema.Schema[String] = zio.schema.Schema[String]
-        override def decode(json: String): String =
+        override def decode(json: String): Result[String, String] =
             zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
-                case Right(a) => a
-                case Left(_)  => json // Return raw text as fallback
+                case Right(a) => Result.succeed(a)
+                case Left(_)  => Result.succeed(json) // Return raw text as fallback
 
     // Unit: accept empty body or JSON null
     given Schema[Unit] = new Schema[Unit]:
         val zpiSchema: zio.schema.Schema[Unit] = zio.schema.Schema[Unit]
-        override def decode(json: String): Unit =
-            if json.isEmpty || json.trim.isEmpty || json.trim == "null" then ()
+        override def decode(json: String): Result[String, Unit] =
+            if json.isEmpty || json.trim.isEmpty || json.trim == "null" then Result.succeed(())
             else
                 zio.schema.codec.JsonCodec.jsonDecoder(zpiSchema).decodeJson(json) match
-                    case Right(a)    => a
-                    case Left(error) => throw new IllegalArgumentException(s"JSON decode error: $error")
+                    case Right(a)    => Result.succeed(a)
+                    case Left(error) => Result.fail(s"JSON decode error: $error")
 
     // Collection instances
     given [A](using s: Schema[A]): Schema[Seq[A]] =

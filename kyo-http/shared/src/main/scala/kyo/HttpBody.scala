@@ -42,8 +42,7 @@ object HttpBody:
         def span: Span[Byte] = Span.fromUnsafe(_data)
         def as[A: Schema](using Frame): A < Abort[HttpError] =
             val t = text
-            try Schema[A].decode(t)
-            catch case e: Throwable => Abort.fail(HttpError.ParseError(s"Failed to parse response body", e))
+            Abort.get(Schema[A].decode(t).mapFailure(HttpError.ParseError(_)))
         end as
         def isEmpty: Boolean = _data.isEmpty
     end Bytes

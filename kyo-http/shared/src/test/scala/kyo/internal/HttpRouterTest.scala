@@ -8,17 +8,17 @@ import kyo.HttpRequest.Method
 class HttpRouterTest extends Test:
 
     // Helper to assert handler matches
-    def assertFound(result: Result[HttpRouter.FindError, HttpHandler[Any]], expected: HttpHandler[Any]): Assertion =
+    def assertFound(result: Result[HttpRouter.FindError, HttpHandler[?]], expected: HttpHandler[?]): Assertion =
         result match
             case Result.Success(h) => assert(h eq expected, s"Expected handler $expected but got $h")
             case other             => fail(s"Expected Success with handler, got $other")
 
-    def assertNotFound(result: Result[HttpRouter.FindError, HttpHandler[Any]]): Assertion =
+    def assertNotFound(result: Result[HttpRouter.FindError, HttpHandler[?]]): Assertion =
         result match
             case Result.Failure(HttpRouter.FindError.NotFound) => succeed
             case other                                         => fail(s"Expected NotFound, got $other")
 
-    def assertMethodNotAllowed(result: Result[HttpRouter.FindError, HttpHandler[Any]], expected: Set[Method]): Assertion =
+    def assertMethodNotAllowed(result: Result[HttpRouter.FindError, HttpHandler[?]], expected: Set[Method]): Assertion =
         result match
             case Result.Failure(HttpRouter.FindError.MethodNotAllowed(allowed)) =>
                 assert(allowed == expected, s"Expected allowed methods $expected but got $allowed")

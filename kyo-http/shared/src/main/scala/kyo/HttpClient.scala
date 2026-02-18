@@ -4,46 +4,29 @@ import HttpRoute.*
 import java.net.URI
 import kyo.internal.ConnectionPool
 import kyo.internal.Content
-import kyo.internal.NdjsonDecoder
-import kyo.internal.SseDecoder
 import kyo.internal.UrlParser
 import scala.NamedTuple.AnyNamedTuple
-import scala.annotation.implicitNotFound
-import scala.util.NotGiven
+import scala.annotation.tailrec
 
-/** HTTP client for sending requests with connection pooling, automatic retries, and redirect following.
+/** HTTP client with connection pooling, automatic retries, and redirect following.
   *
-  * Dual API: instance methods for per-client operations, companion methods delegate through a shared `Local`-backed client. Most code uses
-  * companion convenience methods; explicit `init` only when custom pool config is needed.
+  * The primary API is route-based: define an `HttpRoute` and use `HttpClient.call(route, input)` for type-safe request/response handling.
+  * Convenience methods (`get`, `post`, `put`, `delete`) provide shorthand for common JSON request patterns. Streaming methods (`streamSse`,
+  * `streamNdjson`) return typed streams via routes.
   *
-  * Connection lifecycle: pooled connections for buffered `send`, non-pooled scoped connections for `stream`. Connections are pooled per
-  * (host, port, ssl) triple. Request pipeline: filters → base URL resolution → timeout → redirect following → retry with `Schedule`. Each
-  * concern is layered independently.
-  *
-  * Two API tiers on the companion: `send` returns the response regardless of status code, while typed convenience methods (`get`, `post`,
-  * `put`, `delete`) auto-deserialize via `Schema` and fail with `HttpError.StatusError` on error status (4xx/5xx).
-  *
-  *   - Buffered send with connection pooling and automatic keep-alive
-  *   - Streaming responses (SSE, NDJSON, raw byte streams)
   *   - Automatic redirect following with configurable limit
   *   - Retry with `Schedule`-based policies
   *   - Per-request timeout and connect timeout support
   *   - `Config` for base URL, timeout, redirect, and retry settings (request-level via `Local`)
   *   - `warmupUrl`/`warmupUrls` for pre-establishing connections
-  *   - Route-based typed client via `call`
-  *
-  * IMPORTANT: `send` returns any response including errors. The typed convenience methods (`get`, `post`, etc.) fail with
-  * `HttpError.StatusError` on error status (4xx/5xx). 3xx responses (when redirects are disabled) pass through without error.
-  *
-  * IMPORTANT: `stream` bypasses the redirect/retry/timeout pipeline entirely. Streaming requests only get filters, base URL resolution, and
-  * connect timeout. They do NOT get redirect following, retry, or request timeout. The connection is non-pooled and scoped to the enclosing
-  * `Scope`.
   *
   * Note: `Config` is per-request (applied via `Local` with `withConfig`), not per-client. Pool-level settings (maxConnectionsPerHost, etc.)
   * are set at `init` time.
   *
   * Note: The shared client uses daemon threads so the JVM can exit without explicit shutdown.
   *
+  * @see
+  *   [[kyo.HttpRoute]]
   * @see
   *   [[kyo.HttpRequest]]
   * @see
@@ -52,8 +35,6 @@ import scala.util.NotGiven
   *   [[kyo.HttpFilter]]
   * @see
   *   [[kyo.HttpError]]
-  * @see
-  *   [[kyo.HttpServer]]
   * @see
   *   [[kyo.HttpClient.Config]]
   */
@@ -140,53 +121,11 @@ final class HttpClient private (
             }
         }
 
-    def send(url: String)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
+    private[kyo] def send(url: String)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         send(HttpRequest.get(url))
 
-    def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    private[kyo] def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
         stream(HttpRequest.get(url))
-
-    /** Streams Server-Sent Events from the given URL. */
-    def streamSse[V: Schema: Tag](url: String)(using
-        Frame,
-        Tag[Emit[Chunk[HttpEvent[V]]]]
-    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
-        streamSse[V](HttpRequest.get(url))
-
-    /** Streams Server-Sent Events from the given request. */
-    def streamSse[V: Schema: Tag](request: HttpRequest[?])(using
-        Frame,
-        Tag[Emit[Chunk[HttpEvent[V]]]]
-    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
-        stream(request).map { response =>
-            val decoder = new SseDecoder[V](Schema[V])
-            response.bodyStream.mapChunkPure[Span[Byte], HttpEvent[V]] { chunk =>
-                val result = Seq.newBuilder[HttpEvent[V]]
-                chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                result.result()
-            }
-        }
-
-    /** Streams NDJSON values from the given URL. */
-    def streamNdjson[V: Schema: Tag](url: String)(using
-        Frame,
-        Tag[Emit[Chunk[V]]]
-    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
-        streamNdjson[V](HttpRequest.get(url))
-
-    /** Streams NDJSON values from the given request. */
-    def streamNdjson[V: Schema: Tag](request: HttpRequest[?])(using
-        Frame,
-        Tag[Emit[Chunk[V]]]
-    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
-        stream(request).map { response =>
-            val decoder = new NdjsonDecoder[V](Schema[V])
-            response.bodyStream.mapChunkPure[Span[Byte], V] { chunk =>
-                val result = Seq.newBuilder[V]
-                chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                result.result()
-            }
-        }
 
     /** Pre-establishes connections to reduce first-request latency.
       *
@@ -232,18 +171,27 @@ object HttpClient:
     // --- Convenience methods (use shared client) ---
 
     def get[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
-        send(HttpRequest.get(url)).map(checkStatusAndParse[A])
+        send(url).map(decodeResponse[A])
 
     def post[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
-        send(HttpRequest.post(url, body)).map(checkStatusAndParse[A])
+        send(HttpRequest.post(url, body)).map(decodeResponse[A])
 
     def put[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
-        send(HttpRequest.put(url, body)).map(checkStatusAndParse[A])
+        send(HttpRequest.put(url, body)).map(decodeResponse[A])
 
     def delete[A: Schema](url: String)(using Frame): A < (Async & Abort[HttpError]) =
-        send(HttpRequest.delete(url)).map(checkStatusAndParse[A])
+        send(HttpRequest.delete(url)).map(decodeResponse[A])
 
-    def send(url: String)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
+    def patch[A: Schema, B: Schema](url: String, body: B)(using Frame): A < (Async & Abort[HttpError]) =
+        send(HttpRequest.patch(url, body)).map(decodeResponse[A])
+
+    private def decodeResponse[A: Schema](response: HttpResponse[HttpBody.Bytes])(using Frame): A < Abort[HttpError] =
+        if response.status.isError then
+            Abort.fail(HttpError.StatusError(response.status, response.bodyText))
+        else
+            Abort.get(Schema[A].decode(response.bodyText).mapFailure(HttpError.ParseError(_)))
+
+    private[kyo] def send(url: String)(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         clientLocal.use(_.send(url))
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
@@ -252,68 +200,61 @@ object HttpClient:
     def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
         clientLocal.use(_.stream(request))
 
-    def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
+    private[kyo] def stream(url: String)(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
         clientLocal.use(_.stream(HttpRequest.get(url)))
 
     def streamSse[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[HttpEvent[V]]]]
-    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
-        clientLocal.use(_.streamSse[V](url))
-
-    def streamSse[V: Schema: Tag](request: HttpRequest[?])(using
-        Frame,
-        Tag[Emit[Chunk[HttpEvent[V]]]]
-    ): Stream[HttpEvent[V], Async] < (Async & Scope & Abort[HttpError]) =
-        clientLocal.use(_.streamSse[V](request))
+    ): Stream[HttpEvent[V], Async & Scope] < (Async & Scope & Abort[HttpError]) =
+        call(HttpRoute.get(url).response(_.bodySse[V]))
 
     def streamNdjson[V: Schema: Tag](url: String)(using
         Frame,
         Tag[Emit[Chunk[V]]]
-    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
-        clientLocal.use(_.streamNdjson[V](url))
+    ): Stream[V, Async & Scope] < (Async & Scope & Abort[HttpError]) =
+        call(HttpRoute.get(url).response(_.bodyNdjson[V]))
 
-    def streamNdjson[V: Schema: Tag](request: HttpRequest[?])(using
-        Frame,
-        Tag[Emit[Chunk[V]]]
-    ): Stream[V, Async] < (Async & Scope & Abort[HttpError]) =
-        clientLocal.use(_.streamNdjson[V](request))
-
-    // --- Route-based client ---
+    // --- Route-based client: single `call` method ---
 
     /** Calls a route with no inputs (no path captures, query, header, or body params). */
     def call[Out <: AnyNamedTuple, Err](route: HttpRoute[Row.Empty, Row.Empty, Out, Err])(using
-        Frame,
-        BufferedOutput[OutputValue[Out]]
-    ): OutputValue[Out] < (Async & Abort[HttpError] & Abort[Err]) =
+        Frame
+    ): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
         callImpl(route, EmptyTuple)
 
-    /** Calls a route with typed inputs. The input tuple contains path captures followed by request params, in declaration order.
-      */
+    /** Calls a route with typed inputs. The input tuple contains path captures followed by request params, in declaration order. */
     def call[PathIn <: AnyNamedTuple, In <: AnyNamedTuple, Out <: AnyNamedTuple, Err](
         route: HttpRoute[PathIn, In, Out, Err],
         in: InputValue[PathIn, In]
-    )(using Frame, BufferedOutput[OutputValue[Out]]): OutputValue[Out] < (Async & Abort[HttpError] & Abort[Err]) =
+    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
         callImpl(route, in)
 
     private def callImpl[Out <: AnyNamedTuple, Err](
         route: HttpRoute[?, ?, Out, Err],
         in: Any
-    )(using Frame, BufferedOutput[OutputValue[Out]]): OutputValue[Out] < (Async & Abort[HttpError] & Abort[Err]) =
-        val request          = buildRouteRequest(route, in)
-        val isStreamingInput = hasStreamingInput(route)
-        if isStreamingInput then
-            Scope.run {
-                stream(request).map { response =>
+    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
+        val request         = buildRouteRequest(route, in)
+        val hasStreamingOut = hasStreamingOutput(route)
+        val hasStreamingIn  = hasStreamingInput(route)
+
+        if hasStreamingOut || hasStreamingIn then
+            // Streaming path: use non-pooled scoped connection, leave Scope pending
+            stream(request).map { response =>
+                if response.status.isError then
                     response.ensureBytes.map { buffered =>
-                        if buffered.status.isError then
-                            handleErrorResponse(route, buffered.status, buffered.bodyText)
-                        else
-                            decodeBufferedBody[Out](route, buffered)
+                        handleErrorResponse(route, buffered.status, buffered.bodyText)
                     }
-                }
+                else if hasStreamingOut then
+                    decodeStreamBody[Out](route, response)
+                else
+                    response.ensureBytes.map { buffered =>
+                        decodeBufferedBody[Out](route, buffered)
+                    }
             }
         else
+            // Buffered input/output: use pooled connection
+            // Safe to cast: we know the request has no streaming body
             send(request.asInstanceOf[HttpRequest[HttpBody.Bytes]]).map { response =>
                 if response.status.isError then
                     handleErrorResponse(route, response.status, response.bodyText)
@@ -323,141 +264,92 @@ object HttpClient:
         end if
     end callImpl
 
-    /** Calls a route with streaming output (SSE, NDJSON). Requires `Scope` for the streaming connection lifecycle. */
-    def callStream[Out <: AnyNamedTuple, Err](route: HttpRoute[Row.Empty, Row.Empty, Out, Err])(using
-        Frame
-    ): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
-        callStreamImpl(route, EmptyTuple)
-
-    /** Calls a streaming route with typed inputs. */
-    def callStream[PathIn <: AnyNamedTuple, In <: AnyNamedTuple, Out <: AnyNamedTuple, Err](
-        route: HttpRoute[PathIn, In, Out, Err],
-        in: InputValue[PathIn, In]
-    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
-        callStreamImpl(route, in)
-
-    private def callStreamImpl[Out <: AnyNamedTuple, Err](
-        route: HttpRoute[?, ?, Out, Err],
-        in: Any
-    )(using Frame): OutputValue[Out] < (Async & Scope & Abort[HttpError] & Abort[Err]) =
-        val request = buildRouteRequest(route, in)
-        stream(request).map { response =>
-            if response.status.isError then
-                response.ensureBytes.map { buffered =>
-                    handleErrorResponse(route, buffered.status, buffered.bodyText)
-                }
-            else
-                decodeStreamBody[Out](route, response)
-        }
-    end callStreamImpl
+    private case class RouteRequestState(
+        queryParts: List[String] = Nil,
+        headers: HttpHeaders = HttpHeaders.empty,
+        cookieParts: List[String] = Nil,
+        bodyValue: Maybe[Any] = Absent,
+        bodyContent: Maybe[Content] = Absent
+    )
 
     private def buildRouteRequest(route: HttpRoute[?, ?, ?, ?], in: Any): HttpRequest[?] =
-        val (pathStr, pathCount)              = buildRoutePath(route.path, in, 0)
-        var queryParts                        = List.empty[String]
-        var headers                           = HttpHeaders.empty
-        var cookieParts                       = List.empty[String]
-        var bodyValue: Any                    = null
-        var bodyContent: Content.Input | Null = null
+        val (pathStr, pathCount) = buildRoutePath(route.path, in, 0)
+        val fields               = route.request.inputFields
 
-        var fieldIdx = pathCount
-        route.request.inputFields.foreach:
-            case InputField.Query(name, codec, _, optional, _) =>
-                val raw = extractAt(in, fieldIdx)
-                if optional then
-                    raw.asInstanceOf[Maybe[Any]] match
-                        case Present(v) =>
-                            queryParts :+= s"$name=${java.net.URLEncoder.encode(codec.asInstanceOf[HttpCodec[Any]].serialize(v), "UTF-8")}"
-                        case Absent => ()
-                else
-                    queryParts :+= s"$name=${java.net.URLEncoder.encode(codec.asInstanceOf[HttpCodec[Any]].serialize(raw), "UTF-8")}"
-                end if
-                fieldIdx += 1
+        @tailrec def loop(i: Int, fieldIdx: Int, s: RouteRequestState): RouteRequestState =
+            if i >= fields.size then s
+            else
+                fields(i) match
+                    case field @ InputField.Query(_, _, _, _, _) =>
+                        val raw = extractAt(in, fieldIdx)
+                        val newQuery = field.serialize(raw) match
+                            case Present(q) => q :: s.queryParts
+                            case Absent     => s.queryParts
+                        loop(i + 1, fieldIdx + 1, s.copy(queryParts = newQuery))
 
-            case InputField.Header(name, codec, _, optional, _) =>
-                val raw = extractAt(in, fieldIdx)
-                if optional then
-                    raw.asInstanceOf[Maybe[Any]] match
-                        case Present(v) => headers = headers.add(name, codec.asInstanceOf[HttpCodec[Any]].serialize(v))
-                        case Absent     => ()
-                else
-                    headers = headers.add(name, codec.asInstanceOf[HttpCodec[Any]].serialize(raw))
-                end if
-                fieldIdx += 1
+                    case field @ InputField.Header(name, codec, _, optional, _) =>
+                        val raw = extractAt(in, fieldIdx)
+                        val newHeaders = field.serializeHeader(raw) match
+                            case Present((n, v)) => s.headers.add(n, v)
+                            case Absent          => s.headers
+                        loop(i + 1, fieldIdx + 1, s.copy(headers = newHeaders))
 
-            case InputField.Cookie(name, codec, _, optional, _) =>
-                val raw = extractAt(in, fieldIdx)
-                if optional then
-                    raw.asInstanceOf[Maybe[Any]] match
-                        case Present(v) => cookieParts :+= s"$name=${codec.asInstanceOf[HttpCodec[Any]].serialize(v)}"
-                        case Absent     => ()
-                else
-                    cookieParts :+= s"$name=${codec.asInstanceOf[HttpCodec[Any]].serialize(raw)}"
-                end if
-                fieldIdx += 1
+                    case field @ InputField.Cookie(_, _, _, _, _) =>
+                        val raw = extractAt(in, fieldIdx)
+                        val newCookies = field.serialize(raw) match
+                            case Present(c) => c :: s.cookieParts
+                            case Absent     => s.cookieParts
+                        loop(i + 1, fieldIdx + 1, s.copy(cookieParts = newCookies))
 
-            case InputField.Body(content, _) =>
-                bodyValue = extractAt(in, fieldIdx)
-                bodyContent = content
-                fieldIdx += 1
+                    case InputField.Body(content, _) =>
+                        loop(i + 1, fieldIdx + 1, s.copy(bodyValue = Present(extractAt(in, fieldIdx)), bodyContent = Present(content)))
 
-            case InputField.Auth(scheme) =>
-                scheme match
-                    case AuthScheme.Bearer =>
-                        val token = extractAt(in, fieldIdx)
-                        headers = headers.add("Authorization", s"Bearer $token")
-                    case AuthScheme.BasicUsername =>
-                        val username = extractAt(in, fieldIdx)
-                        val password = extractAt(in, fieldIdx + 1) // peek ahead — BasicPassword follows
-                        val encoded  = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
-                        headers = headers.add("Authorization", s"Basic $encoded")
-                    case AuthScheme.BasicPassword =>
-                        () // already handled by BasicUsername
-                    case AuthScheme.ApiKey(name, location) =>
-                        val value = extractAt(in, fieldIdx)
-                        location match
-                            case AuthLocation.Header =>
-                                headers = headers.add(name, value.toString)
-                            case AuthLocation.Query =>
-                                queryParts :+= s"$name=${java.net.URLEncoder.encode(value.toString, "UTF-8")}"
-                            case AuthLocation.Cookie =>
-                                cookieParts :+= s"$name=$value"
-                        end match
-                end match
-                fieldIdx += 1
+                    case InputField.Auth(scheme) =>
+                        val next = scheme match
+                            case AuthScheme.Bearer =>
+                                val token = extractAt(in, fieldIdx)
+                                s.copy(headers = s.headers.add("Authorization", s"Bearer $token"))
+                            case AuthScheme.BasicUsername =>
+                                val username = extractAt(in, fieldIdx)
+                                val password = extractAt(in, fieldIdx + 1)
+                                val encoded  = java.util.Base64.getEncoder.encodeToString(s"$username:$password".getBytes("UTF-8"))
+                                s.copy(headers = s.headers.add("Authorization", s"Basic $encoded"))
+                            case AuthScheme.BasicPassword =>
+                                s // already handled by BasicUsername
+                            case AuthScheme.ApiKey(name, location) =>
+                                val value = extractAt(in, fieldIdx)
+                                location match
+                                    case AuthLocation.Header =>
+                                        s.copy(headers = s.headers.add(name, value.toString))
+                                    case AuthLocation.Query =>
+                                        s.copy(queryParts =
+                                            s"$name=${java.net.URLEncoder.encode(value.toString, "UTF-8")}" :: s.queryParts
+                                        )
+                                    case AuthLocation.Cookie =>
+                                        s.copy(cookieParts = s"$name=$value" :: s.cookieParts)
+                                end match
+                        loop(i + 1, fieldIdx + 1, next)
 
-        if cookieParts.nonEmpty then
-            headers = headers.add("Cookie", cookieParts.mkString("; "))
+        val state = loop(0, pathCount, RouteRequestState())
+        val headers =
+            if state.cookieParts.nonEmpty then state.headers.add("Cookie", state.cookieParts.reverse.mkString("; ")) else state.headers
+        val queryStr  = state.queryParts.reverse.mkString("&")
+        val fullPath  = if queryStr.isEmpty then pathStr else s"$pathStr?$queryStr"
+        val bodyValue = state.bodyValue.getOrElse(null)
 
-        val queryStr = queryParts.mkString("&")
-        val fullPath = if queryStr.isEmpty then pathStr else s"$pathStr?$queryStr"
-
-        bodyContent match
-            case Content.Multipart =>
+        state.bodyContent match
+            case Present(Content.Multipart) =>
                 HttpRequest.multipart(fullPath, bodyValue.asInstanceOf[Seq[HttpRequest.Part]], headers)
-            case Content.ByteStream =>
-                HttpRequest.stream(route.method, fullPath, bodyValue.asInstanceOf[Stream[Span[Byte], Async]], headers)
-            case Content.MultipartStream =>
-                throw new UnsupportedOperationException(
-                    "Streaming multipart client calls are not yet supported. Use bodyMultipart for buffered multipart."
-                )
-            case Content.Json(schema) =>
-                val encoded = schema.asInstanceOf[Schema[Any]].encode(bodyValue)
-                HttpRequest.initBytes(route.method, fullPath, encoded.getBytes("UTF-8"), headers, "application/json")
-            case Content.Text =>
-                HttpRequest.initBytes(route.method, fullPath, bodyValue.toString.getBytes("UTF-8"), headers, "text/plain")
-            case Content.Binary =>
-                val bytes = bodyValue.asInstanceOf[Span[Byte]]
-                HttpRequest.initBytes(route.method, fullPath, bytes.toArray, headers, "application/octet-stream")
-            case Content.Form(schema) =>
-                val encoded = schema.asInstanceOf[Schema[Any]].encode(bodyValue)
-                HttpRequest.initBytes(route.method, fullPath, encoded.getBytes("UTF-8"), headers, "application/x-www-form-urlencoded")
-            case Content.Ndjson(schema, _) =>
+            case Present(streamContent: Content.StreamInput) =>
                 given Frame = Frame.internal
-                val ndjsonStream = bodyValue.asInstanceOf[Stream[Any, Async]].map { v =>
-                    Span.fromUnsafe((schema.asInstanceOf[Schema[Any]].encode(v) + "\n").getBytes("UTF-8"))
-                }
-                HttpRequest.stream(route.method, fullPath, ndjsonStream, headers)
-            case null =>
+                HttpRequest.stream(route.method, fullPath, streamContent.encodeStreamTo(bodyValue), headers)
+            case Present(content: Content.Input) =>
+                content.encodeTo(bodyValue) match
+                    case Present((bytes, contentType)) =>
+                        HttpRequest.initBytes(route.method, fullPath, bytes, headers, contentType)
+                    case Absent =>
+                        HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
+            case _ =>
                 HttpRequest.initBytes(route.method, fullPath, Array.empty[Byte], headers, "")
         end match
     end buildRouteRequest
@@ -467,15 +359,16 @@ object HttpClient:
         responseStatus: HttpStatus,
         body: String
     )(using Frame): Nothing < Abort[Err | HttpError] =
-        val statusCode = responseStatus.code
-        val errOpt = route.response.errorMappings.collectFirst {
-            case mapping if mapping.status.code == statusCode =>
-                try Some(mapping.schema.asInstanceOf[Schema[Any]].decode(body))
-                catch case _: Exception => None
-        }.flatten
-        errOpt match
-            case Some(err) => Abort.fail(err.asInstanceOf[Err])
-            case None      => Abort.fail(HttpError.InvalidResponse(s"HTTP error: $responseStatus"))
+        @tailrec def tryMappings(remaining: Seq[ErrorMapping]): Nothing < Abort[Err | HttpError] =
+            remaining match
+                case Seq() => Abort.fail(HttpError.InvalidResponse(s"HTTP error: $responseStatus"))
+                case mapping +: tail =>
+                    mapping.decode(responseStatus, body) match
+                        // Err is a union type from error mappings — each mapping.decode returns its specific type.
+                        // The cast is safe because the decoded value came from a Schema[E] where E is part of Err.
+                        case Present(err) => Abort.fail(err.asInstanceOf[Err])
+                        case Absent       => tryMappings(tail)
+        tryMappings(route.response.errorMappings)
     end handleErrorResponse
 
     // --- Context management ---
@@ -780,17 +673,19 @@ object HttpClient:
     // --- Route call helpers ---
 
     private def hasStreamingInput(route: HttpRoute[?, ?, ?, ?]): Boolean =
-        route.request.inputFields.exists:
-            case InputField.Body(Content.ByteStream | Content.MultipartStream | Content.Ndjson(_, _), _) => true
-            case _                                                                                       => false
+        route.request.inputFields.exists(_.isStreaming)
+
+    private def hasStreamingOutput(route: HttpRoute[?, ?, ?, ?]): Boolean =
+        route.response.outputFields.exists(_.isStreaming)
 
     private def buildRoutePath(path: HttpPath[?], in: Any, offset: Int): (String, Int) =
         path match
             case HttpPath.Literal(s) => (s, offset)
-            case HttpPath.Capture(_, _, codec) =>
-                val value   = extractAt(in, offset)
-                val encoded = java.net.URLEncoder.encode(codec.asInstanceOf[HttpCodec[Any]].serialize(value), "UTF-8")
-                ("/" + encoded, offset + 1)
+            case capture: HttpPath.Capture[?, ?] =>
+                val value = extractAt(in, offset)
+                // Cast is at the boundary: value came from a typed InputValue tuple,
+                // but we lost the type when storing in Any. The capture's codec type matches.
+                ("/" + capture.serializeValue(value.asInstanceOf), offset + 1)
             case HttpPath.Concat(left, right) =>
                 val (leftStr, nextOffset)  = buildRoutePath(left, in, offset)
                 val (rightStr, lastOffset) = buildRoutePath(right, in, nextOffset)
@@ -810,60 +705,32 @@ object HttpClient:
     private def decodeBufferedBody[Out <: AnyNamedTuple](
         route: HttpRoute[?, ?, Out, ?],
         response: HttpResponse[HttpBody.Bytes]
-    ): OutputValue[Out] =
-        findBodyContent(route.response.outputFields) match
-            case Present(Content.Json(schema)) =>
-                schema.decode(response.bodyText).asInstanceOf[OutputValue[Out]]
-            case Present(Content.Text) =>
-                response.bodyText.asInstanceOf[OutputValue[Out]]
-            case Present(Content.Binary) =>
-                response.bodyBytes.asInstanceOf[OutputValue[Out]]
-            case _ =>
+    )(using Frame): OutputValue[Out] < Abort[HttpError] =
+        findBodyField(route.response.outputFields) match
+            case Present(bodyField) =>
+                bodyField.extract(response).map(_.asInstanceOf[OutputValue[Out]])
+            case Absent =>
                 ().asInstanceOf[OutputValue[Out]]
 
     private def decodeStreamBody[Out <: AnyNamedTuple](
         route: HttpRoute[?, ?, Out, ?],
         response: HttpResponse[HttpBody.Streamed]
-    )(using Frame): OutputValue[Out] < (Async & Scope) =
-        findBodyContent(route.response.outputFields) match
-            case Present(Content.Sse(schema, emitTag)) =>
-                val decoder                            = new SseDecoder[Any](schema)
-                given Tag[Emit[Chunk[HttpEvent[Any]]]] = emitTag.asInstanceOf[Tag[Emit[Chunk[HttpEvent[Any]]]]]
-                response.bodyStream.mapChunkPure[Span[Byte], HttpEvent[Any]] { chunk =>
-                    val result = Seq.newBuilder[HttpEvent[Any]]
-                    chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                    result.result()
-                }.asInstanceOf[OutputValue[Out]]
-            case Present(Content.Ndjson(schema, emitTag)) =>
-                val decoder                 = new NdjsonDecoder[Any](schema)
-                given Tag[Emit[Chunk[Any]]] = emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]]
-                response.bodyStream.mapChunkPure[Span[Byte], Any] { chunk =>
-                    val result = Seq.newBuilder[Any]
-                    chunk.foreach(bytes => result ++= decoder.decode(bytes))
-                    result.result()
-                }.asInstanceOf[OutputValue[Out]]
-            case Present(Content.Json(schema)) =>
-                response.ensureBytes.map { buffered =>
-                    schema.decode(buffered.bodyText).asInstanceOf[OutputValue[Out]]
-                }
-            case _ =>
+    )(using Frame): OutputValue[Out] < (Async & Abort[HttpError]) =
+        findBodyField(route.response.outputFields) match
+            case Present(bodyField) =>
+                // OutputField.extractStream delegates to Content.decodeStreamFrom
+                bodyField.extractStream(response).map(_.asInstanceOf[OutputValue[Out]])
+            case Absent =>
                 ().asInstanceOf[OutputValue[Out]]
 
-    private def findBodyContent(fields: Seq[OutputField]): Maybe[Content.Output] =
-        var i = 0
-        while i < fields.size do
-            fields(i) match
-                case OutputField.Body(content, _) => return Present(content)
-                case _                            => ()
-            i += 1
-        end while
-        Absent
-    end findBodyContent
-
-    /** Evidence that `Out` is not a streaming type. Prevents `call()` from being used with `outputSse`/`outputNdjson` routes. */
-    @implicitNotFound("call() cannot be used with streaming output routes (bodySse/bodyNdjson). Use callStream() instead.")
-    sealed trait BufferedOutput[A]
-    object BufferedOutput:
-        given [A](using NotGiven[A <:< Stream[?, ?]]): BufferedOutput[A] with {}
+    private def findBodyField(fields: Seq[OutputField]): Maybe[OutputField] =
+        @tailrec def loop(i: Int): Maybe[OutputField] =
+            if i >= fields.size then Absent
+            else
+                fields(i) match
+                    case body @ OutputField.Body(_, _) => Present(body)
+                    case _                             => loop(i + 1)
+        loop(0)
+    end findBodyField
 
 end HttpClient

@@ -5,6 +5,23 @@ import scala.NamedTuple.AnyNamedTuple
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 
+/** Type-safe URL path pattern with compile-time capture tracking via named tuples.
+  *
+  * Paths are composed from four cases: `Literal` for fixed segments, `Capture` for typed path parameters, `Concat` for joining path
+  * segments, and `Rest` for trailing wildcard capture. The type parameter `A` tracks captured values as a named tuple — composing paths
+  * with `/` concatenates their capture types.
+  *
+  * Strings implicitly convert to `Literal` paths, enabling `"/users" / Capture[Int]("id")` syntax.
+  *
+  * @tparam A
+  *   named tuple of captured path parameter types
+  * @see
+  *   [[kyo.HttpRoute]]
+  * @see
+  *   [[kyo.HttpHandler]]
+  * @see
+  *   [[kyo.HttpCodec]]
+  */
 enum HttpPath[+A <: AnyNamedTuple]:
     case Concat[A <: AnyNamedTuple, B <: AnyNamedTuple](left: HttpPath[A], right: HttpPath[B]) extends HttpPath[Row.Concat[A, B]]
     case Capture[N <: String, A](wireName: String, fieldName: N, codec: HttpCodec[A])          extends HttpPath[Row.Init[N, A]]
@@ -52,11 +69,22 @@ object HttpPath:
     extension [A <: AnyNamedTuple](self: HttpPath[A])
         def /[B <: AnyNamedTuple](next: HttpPath[B]): HttpPath[NamedTuple.Concat[A, B]] =
             Concat(self, next)
-    end extension
 
     extension (self: String)
-        def /[B <: AnyNamedTuple](next: HttpPath[B]): HttpPath[B] =
-            Concat(Literal[Row.Empty](self), next).asInstanceOf[HttpPath[B]]
+        def /[B <: AnyNamedTuple](next: HttpPath[B]): HttpPath[NamedTuple.Concat[Row.Empty, B]] =
+            Literal[Row.Empty](self) / next
+
+    // --- Capture type-safe helpers (Scala 3 enum cases with type params can't have bodies) ---
+
+    extension [N <: String, A](self: Capture[N, A])
+        /** Server-side: parse a URL segment into the capture's typed value. */
+        private[kyo] def parseSegment(segment: String): A =
+            val decoded = java.net.URLDecoder.decode(segment.replace("+", "%2B"), "UTF-8")
+            self.codec.parse(decoded)
+
+        /** Client-side: serialize a typed value into a URL-encoded segment. */
+        private[kyo] def serializeValue(value: A): String =
+            java.net.URLEncoder.encode(self.codec.serialize(value), "UTF-8")
     end extension
 
     // --- Path parsing utilities (used by HttpRouter and HttpHandler) ---

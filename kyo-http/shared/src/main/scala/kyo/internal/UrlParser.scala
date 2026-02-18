@@ -34,11 +34,10 @@ private[kyo] object UrlParser:
             val hashIdx     = url.indexOf('#', afterScheme)
             // Authority ends at the first of /, ?, or # (whichever comes first)
             val authorityEnd =
-                var min = url.length
-                if slashIdx >= 0 && slashIdx < min then min = slashIdx
-                if qIdx >= 0 && qIdx < min then min = qIdx
-                if hashIdx >= 0 && hashIdx < min then min = hashIdx
-                min
+                val m0 = url.length
+                val m1 = if slashIdx >= 0 && slashIdx < m0 then slashIdx else m0
+                val m2 = if qIdx >= 0 && qIdx < m1 then qIdx else m1
+                if hashIdx >= 0 && hashIdx < m2 then hashIdx else m2
             end authorityEnd
             val authority = url.substring(afterScheme, authorityEnd)
             val remaining = if authorityEnd >= url.length then "/" else url.substring(authorityEnd)

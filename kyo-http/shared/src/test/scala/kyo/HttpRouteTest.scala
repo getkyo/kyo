@@ -718,7 +718,7 @@ class HttpRouteTest extends Test:
             }
         }
 
-        "callStream with SSE route" in run {
+        "call streamingwith SSE route" in run {
             val route = HttpRoute.get("events").response(_.bodySse[User])
             val handler = route.handle { _ =>
                 Stream.init(Seq(
@@ -728,7 +728,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.callStream(route).map { stream =>
+                    HttpClient.call(route).map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 2)
                             assert(chunk(0).data == User(1, "Alice"))
@@ -739,14 +739,14 @@ class HttpRouteTest extends Test:
             }
         }
 
-        "callStream with NDJSON route" in run {
+        "call streamingwith NDJSON route" in run {
             val route = HttpRoute.get("data").response(_.bodyNdjson[User])
             val handler = route.handle { _ =>
                 Stream.init(Seq(User(1, "Alice"), User(2, "Bob")))
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.callStream(route).map { stream =>
+                    HttpClient.call(route).map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 2)
                             assert(chunk(0) == User(1, "Alice"))
@@ -775,7 +775,7 @@ class HttpRouteTest extends Test:
             }
         }
 
-        "callStream with streaming input and SSE output" in run {
+        "call streamingwith streaming input and SSE output" in run {
             val route = HttpRoute.post("process")
                 .request(_.bodyStream)
                 .response(_.bodySse[User])
@@ -788,7 +788,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 val bodyStream = Stream.init(Seq(Span.fromUnsafe("test".getBytes("UTF-8"))))
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.callStream(route, bodyStream).map { stream =>
+                    HttpClient.call(route, bodyStream).map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0).data == User(4, "test"))
@@ -1162,7 +1162,7 @@ class HttpRouteTest extends Test:
 
     "Streaming with mixed inputs" - {
 
-        "callStream SSE with path capture and query" in run {
+        "call streamingSSE with path capture and query" in run {
             val route = HttpRoute.get("events" / Capture[Int]("id"))
                 .request(_.query[String]("filter"))
                 .response(_.bodySse[User])
@@ -1171,7 +1171,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.callStream(route, (id = 42, filter = "active")).map { stream =>
+                    HttpClient.call(route, (id = 42, filter = "active")).map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0).data == User(42, "active"))
@@ -1181,7 +1181,7 @@ class HttpRouteTest extends Test:
             }
         }
 
-        "callStream NDJSON with path capture and header" in run {
+        "call streamingNDJSON with path capture and header" in run {
             val route = HttpRoute.get("data" / Capture[String]("category"))
                 .request(_.header[String]("X-Tenant"))
                 .response(_.bodyNdjson[User])
@@ -1190,7 +1190,7 @@ class HttpRouteTest extends Test:
             }
             startTestServer(handler).map { port =>
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.callStream(route, (category = "books", `X-Tenant` = "acme")).map { stream =>
+                    HttpClient.call(route, (category = "books", `X-Tenant` = "acme")).map { stream =>
                         stream.run.map { chunk =>
                             assert(chunk.size == 1)
                             assert(chunk(0) == User(1, "books@acme"))
@@ -1243,7 +1243,7 @@ class HttpRouteTest extends Test:
             }
         }
 
-        "callStream streaming input + SSE output with query and auth" in run {
+        "call streaming input + SSE output with query and auth" in run {
             val route = HttpRoute.post("process")
                 .request(_.query[String]("mode").authBearer.bodyStream)
                 .response(_.bodySse[User])
@@ -1256,7 +1256,7 @@ class HttpRouteTest extends Test:
             startTestServer(handler).map { port =>
                 val bodyStream = Stream.init(Seq(Span.fromUnsafe("test".getBytes("UTF-8"))))
                 HttpClient.withConfig(_.baseUrl(s"http://localhost:$port")) {
-                    HttpClient.callStream(
+                    HttpClient.call(
                         route,
                         (mode = "fast", bearer = "secret", body = bodyStream)
                     ).map { stream =>

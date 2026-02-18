@@ -3,6 +3,7 @@ package kyo
 import java.nio.charset.StandardCharsets
 import kyo.internal.MultipartUtil
 import kyo.internal.UrlParser
+import scala.annotation.tailrec
 
 /** Immutable HTTP request used on both sides of the wire — client code builds and sends requests, server code receives and inspects them.
   *
@@ -21,8 +22,7 @@ import kyo.internal.UrlParser
   *   - Common header convenience accessors (`authorization`, `accept`, `userAgent`, etc.)
   *   - Immutable builder pattern for headers
   *
-  * IMPORTANT: `bodyAs[A]` on requests throws on decode failure (it's pure, no `Abort` effect). Compare with `HttpResponse.bodyAs[A]` which
-  * wraps failure in `Abort[HttpError]`.
+  * `bodyAs[A]` wraps decode failure in `Abort[HttpError]`, consistent with `HttpResponse.bodyAs[A]`.
   *
   * Note: `addHeader` appends to the header list (does NOT replace). Compare with `HttpResponse.addHeader` which replaces.
   *
@@ -186,9 +186,9 @@ final class HttpRequest[+B <: HttpBody] private (
     /** Returns the request body as a Span[Byte]. Only available for buffered requests. */
     def bodyBytes(using ev: B <:< HttpBody.Bytes): Span[Byte] = ev(body).span
 
-    /** Parses the request body as type A via Schema. Throws on decode failure (no Abort effect). Only available for buffered requests. */
-    def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes): A =
-        Schema[A].decode(bodyText)
+    /** Parses the request body as type A via Schema. Returns Abort[HttpError] on decode failure. Only available for buffered requests. */
+    def bodyAs[A: Schema](using ev: B <:< HttpBody.Bytes)(using Frame): A < Abort[HttpError] =
+        Abort.get(Schema[A].decode(bodyText).mapFailure(HttpError.ParseError(_)))
 
     /** Returns multipart parts from the request body. Only available for buffered requests. */
     def parts(using ev: B <:< HttpBody.Bytes): Span[HttpRequest.Part] =
@@ -226,6 +226,37 @@ final class HttpRequest[+B <: HttpBody] private (
             _pathParams,
             _strictCookieParsing
         )
+
+    /** Sets a header, replacing any existing values for the same name. */
+    def setHeader(name: String, value: String): HttpRequest[B] =
+        new HttpRequest(
+            method,
+            _rawPath,
+            _rawQuery,
+            _headers.set(name, value),
+            body,
+            _contentType,
+            _scheme,
+            _pathParams,
+            _strictCookieParsing
+        )
+
+    /** Sets multiple headers, replacing any existing values for the same names. */
+    def setHeaders(headers: HttpHeaders): HttpRequest[B] =
+        var h = _headers
+        headers.foreach((name, value) => h = h.set(name, value))
+        new HttpRequest(
+            method,
+            _rawPath,
+            _rawQuery,
+            h,
+            body,
+            _contentType,
+            _scheme,
+            _pathParams,
+            _strictCookieParsing
+        )
+    end setHeaders
 
     def addHeaders(headers: HttpHeaders): HttpRequest[B] =
         new HttpRequest(
@@ -500,94 +531,85 @@ object HttpRequest:
     // --- Cookie parsing (pure Scala, no Netty) ---
 
     private def parseCookies(cookieHeader: String, strict: Boolean): Span[Cookie] =
-        val result = Seq.newBuilder[Cookie]
-        var pos    = 0
-        val len    = cookieHeader.length
+        val len = cookieHeader.length
 
-        while pos < len do
-            // Skip whitespace
-            while pos < len && (cookieHeader.charAt(pos) == ' ' || cookieHeader.charAt(pos) == '\t') do
-                pos += 1
+        @tailrec def skipWs(pos: Int): Int =
+            if pos < len && (cookieHeader.charAt(pos) == ' ' || cookieHeader.charAt(pos) == '\t') then skipWs(pos + 1)
+            else pos
 
-            if pos < len then
-                // Find '='
-                val eqIdx = cookieHeader.indexOf('=', pos)
-                if eqIdx < 0 then
-                    pos = len // malformed, skip rest
+        @tailrec def loop(pos: Int, acc: List[Cookie]): List[Cookie] =
+            val start = skipWs(pos)
+            if start >= len then acc.reverse
+            else
+                val eqIdx = cookieHeader.indexOf('=', start)
+                if eqIdx < 0 then acc.reverse // malformed, stop
                 else
-                    val name = cookieHeader.substring(pos, eqIdx).trim
-                    pos = eqIdx + 1
-
-                    // Find end of value (';' or end of string)
-                    val semiIdx = cookieHeader.indexOf(';', pos)
+                    val name    = cookieHeader.substring(start, eqIdx).trim
+                    val semiIdx = cookieHeader.indexOf(';', eqIdx + 1)
                     val endIdx  = if semiIdx < 0 then len else semiIdx
-                    val value   = cookieHeader.substring(pos, endIdx).trim
-                    pos = if semiIdx < 0 then len else semiIdx + 1
+                    val value   = cookieHeader.substring(eqIdx + 1, endIdx).trim
+                    val next    = if semiIdx < 0 then len else semiIdx + 1
 
                     if name.nonEmpty then
-                        // Strip quotes from value if present (LAX mode)
                         val unquotedValue =
                             if value.length >= 2 && value.charAt(0) == '"' && value.charAt(value.length - 1) == '"' then
                                 value.substring(1, value.length - 1)
                             else
                                 value
-                        result += Cookie(name, unquotedValue)
+                        loop(next, Cookie(name, unquotedValue) :: acc)
+                    else
+                        loop(next, acc)
                     end if
                 end if
             end if
-        end while
+        end loop
 
-        val arr = result.result()
-        if arr.isEmpty then Span.empty[Cookie]
-        else Span.fromUnsafe(arr.toArray)
+        val cookies = loop(0, Nil)
+        if cookies.isEmpty then Span.empty[Cookie]
+        else Span.fromUnsafe(cookies.toArray)
     end parseCookies
 
     // --- Query string parsing (pure Scala, no Netty) ---
 
     private def parseQueryParam(queryString: String, name: String): Maybe[String] =
-        var pos = 0
         val len = queryString.length
-        while pos < len do
-            val ampIdx = queryString.indexOf('&', pos)
-            val end    = if ampIdx < 0 then len else ampIdx
-            val eqIdx  = queryString.indexOf('=', pos)
-
-            if eqIdx >= 0 && eqIdx < end then
-                val key = decodeUrl(queryString.substring(pos, eqIdx))
-                if key == name then
-                    return Present(decodeUrl(queryString.substring(eqIdx + 1, end)))
+        @tailrec def loop(pos: Int): Maybe[String] =
+            if pos >= len then Absent
             else
-                // Flag-style parameter (no =)
-                val key = decodeUrl(queryString.substring(pos, end))
-                if key == name then
-                    return Present("")
-            end if
-            pos = if ampIdx < 0 then len else ampIdx + 1
-        end while
-        Absent
+                val ampIdx = queryString.indexOf('&', pos)
+                val end    = if ampIdx < 0 then len else ampIdx
+                val eqIdx  = queryString.indexOf('=', pos)
+                if eqIdx >= 0 && eqIdx < end then
+                    val key = decodeUrl(queryString.substring(pos, eqIdx))
+                    if key == name then Present(decodeUrl(queryString.substring(eqIdx + 1, end)))
+                    else loop(if ampIdx < 0 then len else ampIdx + 1)
+                else
+                    val key = decodeUrl(queryString.substring(pos, end))
+                    if key == name then Present("")
+                    else loop(if ampIdx < 0 then len else ampIdx + 1)
+                end if
+        loop(0)
     end parseQueryParam
 
     private def parseQueryParamAll(queryString: String, name: String): Seq[String] =
-        val result = Seq.newBuilder[String]
-        var pos    = 0
-        val len    = queryString.length
-        while pos < len do
-            val ampIdx = queryString.indexOf('&', pos)
-            val end    = if ampIdx < 0 then len else ampIdx
-            val eqIdx  = queryString.indexOf('=', pos)
-
-            if eqIdx >= 0 && eqIdx < end then
-                val key = decodeUrl(queryString.substring(pos, eqIdx))
-                if key == name then
-                    result += decodeUrl(queryString.substring(eqIdx + 1, end))
+        val len = queryString.length
+        @tailrec def loop(pos: Int, acc: List[String]): Seq[String] =
+            if pos >= len then acc.reverse
             else
-                val key = decodeUrl(queryString.substring(pos, end))
-                if key == name then
-                    result += ""
-            end if
-            pos = if ampIdx < 0 then len else ampIdx + 1
-        end while
-        result.result()
+                val ampIdx = queryString.indexOf('&', pos)
+                val end    = if ampIdx < 0 then len else ampIdx
+                val eqIdx  = queryString.indexOf('=', pos)
+                val next   = if ampIdx < 0 then len else ampIdx + 1
+                if eqIdx >= 0 && eqIdx < end then
+                    val key = decodeUrl(queryString.substring(pos, eqIdx))
+                    if key == name then loop(next, decodeUrl(queryString.substring(eqIdx + 1, end)) :: acc)
+                    else loop(next, acc)
+                else
+                    val key = decodeUrl(queryString.substring(pos, end))
+                    if key == name then loop(next, "" :: acc)
+                    else loop(next, acc)
+                end if
+        loop(0, Nil)
     end parseQueryParamAll
 
     private def decodeUrl(s: String): String =
@@ -595,68 +617,81 @@ object HttpRequest:
 
     /** Parses multipart/form-data body. Format: --boundary\r\n headers \r\n\r\n content \r\n--boundary... --boundary-- */
     private def parseMultipart(data: Array[Byte], boundary: String): Span[Part] =
-        val boundaryBytes = ("--" + boundary).getBytes(StandardCharsets.UTF_8)
-        val crlfBytes     = "\r\n".getBytes(StandardCharsets.UTF_8)
-        val result        = Seq.newBuilder[Part]
+        val boundaryBytes  = ("--" + boundary).getBytes(StandardCharsets.UTF_8)
+        val headerEndBytes = "\r\n\r\n".getBytes(StandardCharsets.UTF_8)
 
-        var pos = MultipartUtil.indexOf(data, boundaryBytes, 0)
-        if pos < 0 then return Span.empty[Part]
-        pos += boundaryBytes.length
+        val firstBoundary = MultipartUtil.indexOf(data, boundaryBytes, 0)
+        if firstBoundary < 0 then Span.empty[Part]
+        else
+            @tailrec def loop(pos: Int, acc: List[Part]): Span[Part] =
+                if pos >= data.length then toSpan(acc.reverse)
+                // "--" after boundary means end of multipart
+                else if pos + 2 <= data.length && data(pos) == '-' && data(pos + 1) == '-' then toSpan(acc.reverse)
+                else
+                    val partStart =
+                        if pos + 2 <= data.length && data(pos) == '\r' && data(pos + 1) == '\n' then pos + 2
+                        else pos
 
-        while pos < data.length do
-            // "--" after boundary means end of multipart
-            if pos + 2 <= data.length && data(pos) == '-' && data(pos + 1) == '-' then
-                return toSpan(result.result())
+                    val headerEnd = MultipartUtil.indexOf(data, headerEndBytes, partStart)
+                    if headerEnd < 0 then toSpan(acc.reverse)
+                    else
+                        val headerSection                     = new String(data, partStart, headerEnd - partStart, StandardCharsets.UTF_8)
+                        val (name, filename, partContentType) = parsePartHeaders(headerSection)
 
-            if pos + 2 <= data.length && data(pos) == '\r' && data(pos + 1) == '\n' then
-                pos += 2
+                        val contentStart = headerEnd + 4
+                        val nextBoundary = MultipartUtil.indexOf(data, boundaryBytes, contentStart)
+                        if nextBoundary < 0 then toSpan(acc.reverse)
+                        else
+                            val contentEnd = nextBoundary - 2
+                            val content =
+                                if contentEnd > contentStart then
+                                    val arr = new Array[Byte](contentEnd - contentStart)
+                                    java.lang.System.arraycopy(data, contentStart, arr, 0, contentEnd - contentStart)
+                                    arr
+                                else
+                                    Array.empty[Byte]
 
-            // Each part has MIME-style headers terminated by \r\n\r\n
-            var name: String                   = ""
-            var filename: Maybe[String]        = Absent
-            var partContentType: Maybe[String] = Absent
+                            val nextAcc =
+                                if name.nonEmpty then Part(name, filename, partContentType, content) :: acc
+                                else acc
+                            loop(nextBoundary + boundaryBytes.length, nextAcc)
+                        end if
+                    end if
+            loop(firstBoundary + boundaryBytes.length, Nil)
+        end if
+    end parseMultipart
 
-            var headerEnd = MultipartUtil.indexOf(data, "\r\n\r\n".getBytes(StandardCharsets.UTF_8), pos)
-            if headerEnd < 0 then return toSpan(result.result())
-
-            val headerSection = new String(data, pos, headerEnd - pos, StandardCharsets.UTF_8)
-            headerSection.split("\r\n").foreach { line =>
+    private def parsePartHeaders(headerSection: String): (String, Maybe[String], Maybe[String]) =
+        val lines = headerSection.split("\r\n")
+        @tailrec def loop(
+            i: Int,
+            name: String,
+            filename: Maybe[String],
+            contentType: Maybe[String]
+        ): (String, Maybe[String], Maybe[String]) =
+            if i >= lines.length then (name, filename, contentType)
+            else
+                val line     = lines(i)
                 val colonIdx = line.indexOf(':')
                 if colonIdx > 0 then
                     val headerName  = line.substring(0, colonIdx).trim.toLowerCase
                     val headerValue = line.substring(colonIdx + 1).trim
                     if headerName == "content-disposition" then
-                        MultipartUtil.extractDispositionParam(headerValue, "name").foreach(n => name = n)
-                        filename = MultipartUtil.extractDispositionParam(headerValue, "filename")
+                        val n = MultipartUtil.extractDispositionParam(headerValue, "name").getOrElse(name)
+                        val f = MultipartUtil.extractDispositionParam(headerValue, "filename") match
+                            case Present(v) => Present(v)
+                            case Absent     => filename
+                        loop(i + 1, n, f, contentType)
                     else if headerName == "content-type" then
-                        partContentType = Present(headerValue)
+                        loop(i + 1, name, filename, Present(headerValue))
+                    else
+                        loop(i + 1, name, filename, contentType)
                     end if
-                end if
-            }
-
-            pos = headerEnd + 4
-
-            // Content runs from here to \r\n before the next boundary marker
-            val nextBoundary = MultipartUtil.indexOf(data, boundaryBytes, pos)
-            if nextBoundary < 0 then return toSpan(result.result())
-
-            val contentEnd = nextBoundary - 2
-            val content =
-                if contentEnd > pos then
-                    val arr = new Array[Byte](contentEnd - pos)
-                    java.lang.System.arraycopy(data, pos, arr, 0, contentEnd - pos)
-                    arr
                 else
-                    Array.empty[Byte]
-
-            if name.nonEmpty then
-                result += Part(name, filename, partContentType, content)
-
-            pos = nextBoundary + boundaryBytes.length
-        end while
-
-        toSpan(result.result())
-    end parseMultipart
+                    loop(i + 1, name, filename, contentType)
+                end if
+        loop(0, "", Absent, Absent)
+    end parsePartHeaders
 
     private def toSpan(parts: Seq[Part]): Span[Part] =
         if parts.isEmpty then Span.empty[Part]
@@ -689,7 +724,7 @@ object HttpRequest:
         val CONNECT: Method = "CONNECT"
 
         /** Create a Method from a string name. */
-        private[kyo] def apply(name: String): Method = name
+        def apply(name: String): Method = name
 
         extension (m: Method)
             def name: String = m
