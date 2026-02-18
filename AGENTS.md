@@ -30,7 +30,7 @@ The goal is always improvement. Making things compile and pass is not the goal �
 
 ## Build & Test
 
-Building automatically formats the code — no need to run formatting separately.
+Building automatically formats the code — no need to run formatting separately. Re-read any files you've edited after building, since formatting may have changed them.
 
 ```sh
 # Set JVM options (required for stable builds)

@@ -575,10 +575,10 @@ Use sparingly — only for types that users reference frequently enough that qua
 - Provide pure-function variants (`mapPure`, `filterPure`) when a hot transformation doesn't need suspension
 - Fast-path before slow-path — always check for degenerate cases (empty, single-element, already-resolved) before entering the general/expensive path:
   ```scala
-  source match
-      case Nil          => Chunk.empty           // empty: return immediately
-      case head :: Nil  => f(head).map(Chunk(_)) // single: avoid Loop setup
-      case list         => Loop.indexed(...)      // general case
+  if source.isEmpty then Chunk.empty              // empty: return immediately
+  else if source.sizeIs == 1 then
+      f(source.head).map(Chunk(_))                // single: avoid Loop setup
+  else Loop.indexed(...)                           // general case
   ```
 - Use opaque types — never wrap when you can alias. See [Zero-Cost Type Design](#zero-cost-type-design)
 - Use `inline` strategically — inline creation paths, not handling paths. See [Inline Guidelines](#inline-guidelines)
@@ -967,7 +967,7 @@ Types that offer a `close` method must provide three variants. The parameterized
 // Canonical — takes an explicit grace period
 def close(gracePeriod: Duration)(using Frame): Unit < Async
 
-// Default — delegates with a sensible default (typically 30 seconds)
+// Default — delegates with a default grace period
 def close(using Frame): Unit < Async = close(30.seconds)
 
 // Immediate — delegates with zero grace period
