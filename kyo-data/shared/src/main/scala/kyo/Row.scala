@@ -170,14 +170,18 @@ object Row:
     // --- Type aliases ---
 
     /** Derives the named tuple type from a product type (case class or tuple). */
+    export NamedTuple.Concat
     export NamedTuple.From
 
     /** The type of a Row with no fields. */
     type Empty = NamedTuple.Empty
 
+    type Init[N <: String, V] =
+        NamedTuple.NamedTuple[N *: EmptyTuple, V *: EmptyTuple]
+
     /** The result of appending field `N: V` to the end of row type `A`. */
     type Append[A <: AnyNamedTuple, N <: String, V] =
-        NamedTuple.Concat[A, NamedTuple.NamedTuple[N *: EmptyTuple, V *: EmptyTuple]]
+        NamedTuple.Concat[A, Init[N, V]]
 
     /** Extracts the name tuple from a named tuple type. */
     type Names[A <: AnyNamedTuple] = NamedTuple.Names[A]
@@ -217,6 +221,26 @@ object Row:
 
     /** Converts name and value tuples to a Record field intersection type. */
     type ToRecordFields[Ns <: Tuple, Vs <: Tuple] = Record.FieldsOf[Ns, Vs]
+
+    // --- Duplicate field detection ---
+
+    /** Evidence that name `N` exists in tuple `Ns`. */
+    // TODO can't we make UniqueField just NotGiven[HasName[...]]?
+    sealed trait HasName[Ns <: Tuple, N <: String]
+    given hasNameHead[N <: String, Ns <: Tuple]: HasName[N *: Ns, N]                          = HasName.instance.asInstanceOf
+    given hasNameTail[H, N <: String, Ns <: Tuple](using HasName[Ns, N]): HasName[H *: Ns, N] = HasName.instance.asInstanceOf
+
+    private object HasName:
+        val instance: HasName[Nothing, Nothing] = new HasName[Nothing, Nothing] {}
+
+    /** Evidence that field name `N` does not already exist in row type `A`. */
+    @implicitNotFound("Duplicate field '${N}' in row")
+    sealed trait UniqueField[A <: AnyNamedTuple, N <: String]
+    given uniqueField[A <: AnyNamedTuple, N <: String](using scala.util.NotGiven[HasName[Names[A], N]]): UniqueField[A, N] =
+        UniqueField.instance.asInstanceOf
+
+    private object UniqueField:
+        val instance: UniqueField[Nothing, Nothing] = new UniqueField[Nothing, Nothing] {}
 
     // --- Private helpers ---
 

@@ -37,7 +37,7 @@ object TestBackend extends Backend.Client with Backend.Server:
         flushConsolidationLimit: Int,
         handler: Backend.ServerHandler
     )(using Frame): Backend.Server.Binding < Async =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val assignedPort = if serverPort == 0 then nextPort.getAndIncrement() else serverPort
             val closed       = AtomicBoolean.Unsafe.init(false)
             servers.put(assignedPort, ServerEntry(handler, maxContentLength, closed))
@@ -45,7 +45,7 @@ object TestBackend extends Backend.Client with Backend.Server:
                 def port: Int    = assignedPort
                 def host: String = serverHost
                 def close(gracePeriod: Duration)(using Frame): Unit < Async =
-                    Sync.Unsafe {
+                    Sync.Unsafe.defer {
                         closed.set(true)
                         discard(servers.remove(assignedPort))
                     }

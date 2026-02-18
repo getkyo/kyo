@@ -41,7 +41,7 @@ final private[kyo] class ConnectionPool(
 
     /** Shut down all pools and the underlying factory. */
     def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val iter = pools.values().iterator()
             while iter.hasNext do
                 iter.next().close()
@@ -69,7 +69,7 @@ private[kyo] object ConnectionPool:
             connectTimeout: Maybe[Duration],
             acquireTimeout: Duration
         )(using Frame): Backend.Connection < (Async & Abort[HttpError]) =
-            Sync.Unsafe {
+            Sync.Unsafe.defer {
                 // First try to reuse an idle connection (fast path, no I/O)
                 pollActive() match
                     case Present(conn) => conn
@@ -146,7 +146,7 @@ private[kyo] object ConnectionPool:
                     // Connection may have gone stale while idle — discard and retry
                     if conn.isAlive then conn
                     else
-                        Sync.Unsafe {
+                        Sync.Unsafe.defer {
                             discardConnection(conn)
                         }.andThen(acquire(factory, host, port, ssl, connectTimeout, Duration.Infinity))
                 case Result.Failure(_) =>

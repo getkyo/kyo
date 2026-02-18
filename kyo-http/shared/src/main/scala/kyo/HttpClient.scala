@@ -62,7 +62,7 @@ import scala.util.NotGiven
 final class HttpClient private (
     private val pool: ConnectionPool,
     private val factory: Backend.ConnectionFactory
-): 
+):
     /** Sends a buffered request through the filter/redirect/retry pipeline. Returns the response regardless of status code. */
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
         HttpFilter.use { filter =>
@@ -492,7 +492,7 @@ object HttpClient:
         daemon: Boolean = false,
         backend: Backend.Client = HttpPlatformBackend.client
     )(f: HttpClient => B < S)(using Frame): B < (S & Sync) =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             Unsafe.init(maxConnectionsPerHost, connectionAcquireTimeout, maxResponseSizeBytes, daemon, backend)
         }.map(f)
     end initUnscopedWith

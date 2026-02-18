@@ -27,7 +27,7 @@ object NodeServerBackend extends Backend.Server:
         flushConsolidationLimit: Int,
         handler: Backend.ServerHandler
     )(using Frame): Backend.Server.Binding < Async =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val p = Promise.Unsafe.init[Backend.Server.Binding, Any]()
 
             val options = js.Dynamic.literal(
@@ -59,7 +59,7 @@ object NodeServerBackend extends Backend.Server:
                         def port: Int    = actualPort
                         def host: String = actualHost
                         def close(gracePeriod: Duration)(using Frame): Unit < Async =
-                            Sync.Unsafe {
+                            Sync.Unsafe.defer {
                                 // Stop accepting new connections first
                                 discard(nodeServer.close { () =>
                                     import AllowUnsafe.embrace.danger

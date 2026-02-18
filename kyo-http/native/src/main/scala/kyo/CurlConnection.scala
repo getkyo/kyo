@@ -67,7 +67,7 @@ final private[kyo] class CurlConnection(
 
     def isAlive(using AllowUnsafe): Boolean = alive.get()
 
-    def close(using Frame): Unit < Async = Sync.Unsafe { alive.set(false) }
+    def close(using Frame): Unit < Async = Sync.Unsafe.defer { alive.set(false) }
 
     private[kyo] def closeAbruptly()(using AllowUnsafe): Unit = alive.set(false)
 

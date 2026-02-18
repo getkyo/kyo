@@ -24,7 +24,7 @@ final private[kyo] class NettyConnection(
 ) extends Backend.Connection:
 
     def send(request: HttpRequest[HttpBody.Bytes])(using Frame): HttpResponse[HttpBody.Bytes] < (Async & Abort[HttpError]) =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             val nettyMethod = HttpMethod.valueOf(request.method.name)
             val bodyData    = request.body.data
             val content     = if bodyData.isEmpty then Unpooled.EMPTY_BUFFER else Unpooled.wrappedBuffer(bodyData)
@@ -57,7 +57,7 @@ final private[kyo] class NettyConnection(
     end send
 
     def stream(request: HttpRequest[?])(using Frame): HttpResponse[HttpBody.Streamed] < (Async & Scope & Abort[HttpError]) =
-        Sync.Unsafe {
+        Sync.Unsafe.defer {
             // Buffered body → FullHttpRequest; streaming body → headers-only HttpRequest
             val nettyMethod = HttpMethod.valueOf(request.method.name)
             val nettyReq = request.body.use(

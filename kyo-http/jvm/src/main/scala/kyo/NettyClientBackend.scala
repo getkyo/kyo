@@ -39,7 +39,7 @@ object NettyClientBackend extends Backend.Client:
                     discard(b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Integer.valueOf(timeout.toMillis.toInt)))
                 }
                 val connectFuture = b.connect()
-                Sync.Unsafe {
+                Sync.Unsafe.defer {
                     val p = Promise.Unsafe.init[Backend.Connection, Abort[HttpError]]()
                     connectFuture.addListener { (future: ChannelFuture) =>
                         import AllowUnsafe.embrace.danger
